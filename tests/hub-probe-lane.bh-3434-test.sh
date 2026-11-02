@@ -204,6 +204,20 @@ check "C6b deferred, not run" '[ "$(cnt "^hp_run")" = 0 ] && jq -e ".result==\"p
 # C6c: a cap of 25 with count 20 runs.
 reset; echo '{"count":20}' > "$T/jobs/count"; HUB_PROBE_DAILY_CAP=25 tick
 check "C6c under the cap runs" '[ "$(cnt "^hp_run")" = 1 ]'
+# C6d (BH-8744): ready-facts is in HP_UNCAPPED_PROBES. At the cap it still runs
+# and is stored as a finished row, so it never stays the oldest pending row and
+# never blocks a newer row of another probe. The capped probe in the same claim
+# still defers.
+reset; echo '{"count":20}' > "$T/jobs/count"
+jq -nc '{rows:[{id:8, project:"bp", ticket_key:"BH-12", probe:"ready-facts", args:["bp"]},
+  {id:9, project:"bp", ticket_key:"BH-12", probe:"app-status-write",
+   args:["o/r","0123456789abcdef0123456789abcdef01234567"]}]}' > "$T/jobs/claim"
+tick
+check "C6d ready-facts at the cap runs" '[ "$(cnt "^hp_run ready-facts bp")" = 1 ]'
+check "C6d ready-facts stored finished, not pending" 'jq -e "select(.id==8) | .result==\"pass\"" "$T/body-result" >/dev/null && ! jq -e "select(.id==8) | .result==\"pending\"" "$T/body-result" >/dev/null'
+check "C6d count read only for the capped probe" '[ "$(cnt /api/hub-probe/count-today)" = 1 ]'
+check "C6d capped probe still defers" 'jq -e "select(.id==9) | .result==\"pending\" and .note==\"deferred: daily cap\"" "$T/body-result" >/dev/null'
+check "C6d ready-facts is silent, no POST" '[ "$(posts)" = 0 ] && summary | grep -q "silent=1"'
 
 # ── C7: hp_on_pass runs once on a stored PASS, never on a FAIL ───────────────
 reset; tick

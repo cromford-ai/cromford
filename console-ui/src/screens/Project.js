@@ -135,6 +135,7 @@ export function ProjectScreen({ project }) {
           <${Link} to=${`/history?project=${encodeURIComponent(project)}`} class="btn">FULL HISTORY<//>
           <${Link} to=${`/needs?project=${encodeURIComponent(project)}`} class="btn">NEEDS<//>
           <${Link} to=${`/connections?project=${encodeURIComponent(project)}`} class="btn">CONNECTION<//>
+          <${Link} to=${`/projects/${encodeURIComponent(project)}/ready`} class="btn">READY<//>
           <${SetupRunLink} project=${project}/>
           <button class="btn" disabled=${busy !== null}
             onClick=${() => act('run_triage', 'FORCE TRIAGE')}>

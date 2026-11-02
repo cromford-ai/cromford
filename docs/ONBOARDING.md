@@ -224,3 +224,31 @@ seed) it only counts.
 
 Other settings rows: `onboarding.log_excerpt_max_bytes` (4096) and
 `onboarding.list_limit_max` (20), read by the runner routes.
+
+## Ready screen
+
+`/projects/<project>/ready` (BH-8744) shows what a project can still connect.
+Open it from the READY link in the Project page header.
+
+- The screen makes one read: `GET /api/onboarding/ready/<project>`
+  (`worker/jobs/src/routes/onboarding-ready.js`). A project with no
+  `registry_projects` row answers 404 `unknown_project`, and the route files
+  nothing for it.
+- The route files one `ready-facts` hub-probe row per project per
+  `onboarding.ready_bucket_s` seconds (default 300). The hub runs
+  `bin/lib/hub-probes/ready-facts.sh`, which prints three booleans:
+  `vercel` (the project is in `vercel.conf`), `qa_account`
+  (`QA_CLERK_SECRET_KEY` and `QA_TEST_USER_ID` set in `<project>.env`) and
+  `migration_token` (`MIGRATION_TOKEN` set). It reads the env file with awk
+  and never sources it, and it prints no value.
+- Tags: a fresh pass shows `connected` or `not set`. A pass older than
+  `onboarding.ready_stale_s` seconds (default 3600) shows `stale`. A fail or an
+  unparseable answer shows `unknown`. No finished row shows `checking`.
+  Production URL, Fly builder pool and the box card read stored rows. Fly
+  builder pool is `connected` when the D1 `routing` row has `builder` `fly1`
+  or `pool` (the row `PUT /api/routing` writes). Alerts
+  shows `fleet default` and Tracker shows `not checked`: neither has a stored
+  source yet. The AI account card shows the `account.<project>` pin, or
+  `fleet pool`.
+- Eight card buttons open `/config`. The AI account card opens the AI account
+  sheet; a written pin reads the screen again.

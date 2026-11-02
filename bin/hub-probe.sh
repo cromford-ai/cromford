@@ -20,6 +20,9 @@
 #   6. per row: hp_count_today <probe> >= HUB_PROBE_DAILY_CAP, or a count that
 #      could not be read, sends the row back to pending with the note
 #      `deferred: daily cap` / `deferred: count unknown` (defer, never drop).
+#      A probe in HP_UNCAPPED_PROBES (ready-facts, BH-8744) skips the count
+#      and the cap: it reads local files only, and a deferred row would stay the
+#      oldest pending row and starve every newer row of other probes.
 #      Otherwise hp_run, then hp_result with the output capped at 4096 bytes.
 #      A failed store posts nothing. A probe in HP_SCREEN_PROBES (tracker-test,
 #      BH-7936) stops at the store: a console screen reads its row, no comment
@@ -206,9 +209,14 @@ while IFS= read -r r; do
   [[ "$id" =~ ^[0-9]+$ ]] || { inc bad-key; note "bad-row id=$id"; continue; }
   args_json=$(jq -c '(.args // (.args_json | fromjson?)) as $a
     | if ($a | type) == "array" and all($a[]; type == "string" and (contains("\n") | not)) then $a else empty end' <<<"$r" 2>/dev/null)
-  n=$(hp_count_today "$probe") || n=""
-  if ! [[ "$n" =~ ^[0-9]+$ ]]; then defer "$id" "deferred: count unknown"; continue; fi
-  if [ "$n" -ge "$DAY_CAP" ]; then defer "$id" "deferred: daily cap"; continue; fi
+  # HP_UNCAPPED_PROBES is a common.sh constant, not a knob: no :- read (BH-8744).
+  case " $HP_UNCAPPED_PROBES " in
+    *" $probe "*) ;;
+    *)
+      n=$(hp_count_today "$probe") || n=""
+      if ! [[ "$n" =~ ^[0-9]+$ ]]; then defer "$id" "deferred: count unknown"; continue; fi
+      if [ "$n" -ge "$DAY_CAP" ]; then defer "$id" "deferred: daily cap"; continue; fi ;;
+  esac
   HP_HTTP_STATUS=""
   if [ -z "$args_json" ]; then
     args_json='[]'; prc=2

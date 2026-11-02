@@ -108,6 +108,13 @@ tests/nightly-ticket-split.bh-6838-test.sh:generic-api-key:262
 tests/no-client-identifiers-test.sh:aws-access-token:51
 tests/onboard-envelope.bh-7937-test.sh:generic-api-key:180
 tests/onboard-envelope.bh-7937-test.sh:generic-api-key:183
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:49
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:51
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:115
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
+tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:123
 tests/onboard-run-vendor-budget.bh-7934-test.sh:generic-api-key:57
 tests/onboard-run.bh-7934-test.sh:generic-api-key:76
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21

@@ -10,6 +10,7 @@ import './ui/TrackerSheets.css';
 import './settings-shell.css';
 import './ai-accounts.css';
 import './onboard.css';
+import './project-ready.css';
 
 // Off unless VITE_SENTRY_DSN was set at build time (BH-5619).
 initSentry(import.meta.env);

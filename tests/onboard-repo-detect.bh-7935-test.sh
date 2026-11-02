@@ -5,7 +5,8 @@
 #          fixtures and counts calls, bad paths read nothing, an unarmed box
 #          runs no process, the armed path mints, reads once and releases
 #   V1-V6  bin/lib/hub-probes/common.sh: the three screen probes' validators,
-#          the placeholder dispatch (not-implemented), and the board allowlist
+#          the dispatch (repo-create not-implemented, ready-facts implemented
+#          since BH-8744), and the board allowlist
 #          (request.sh) that stays closed to them
 #   R1-R6  bin/lib/hub-probes/repo-detect.sh through the REAL hp_run, and one
 #          REAL bin/hub-probe.sh tick that claims a repo-detect row
@@ -170,11 +171,14 @@ SCR=$(bash -c '. "$1/common.sh" && printf "%s|%s|%s" "$HP_SCREEN_PROBES" "$HP_TE
 check "V4 HP_SCREEN_PROBES, HP_TEMPLATE_KEYS, HP_PROBES" \
   '[ "$SCR" = "tracker-test repo-detect ready-facts repo-create|nextjs worker empty|app-status-write app-permissions app-installation-repos d1-count" ]'
 
-# ── V5: the placeholders answer not-implemented ─────────────────────────────
+# ── V5: the repo-create placeholder answers not-implemented ─────────────────
+# ready-facts is implemented since BH-8744 (tests/onboard-ready-facts.bh-8744-test.sh
+# holds its cases): it answers one JSON object of three booleans, rc 0.
 hr() { env HARNESS="$T/h" HARNESS_ENV_DIR="$T/env" ONBOARD_GITHUB_FAKE="${FAKE:-}" HPD="$HPD" \
   bash -c '. "$HPD/common.sh" && hp_run "$@"' _ "$@" > "$T/out" 2> "$T/err"; echo $? > "$T/rc"; }
 hr ready-facts project-11
-check "V5 ready-facts prints not-implemented, rc 1" '[ "$(rc)" = 1 ] && [ "$(out)" = not-implemented ]'
+check "V5 ready-facts prints one object of three booleans, rc 0" \
+  '[ "$(rc)" = 0 ] && [ "$(grep -c . "$T/out")" = 1 ] && jq -e "(keys == [\"migration_token\",\"qa_account\",\"vercel\"]) and ([.[] | type] | unique == [\"boolean\"])" "$T/out" >/dev/null'
 hr repo-create example-org x nextjs
 check "V5 repo-create prints not-implemented, rc 1" '[ "$(rc)" = 1 ] && [ "$(out)" = not-implemented ]'
 hr repo-create example-org x rails

@@ -37,6 +37,13 @@ HP_PROBES="app-status-write app-permissions app-installation-repos d1-count"
 # onboarding routes (worker/jobs/src/routes/onboarding-repo.js and siblings).
 # request.sh files HP_PROBES only, so a build's HUB_PROBE: line cannot file them.
 HP_SCREEN_PROBES="tracker-test repo-detect ready-facts repo-create"
+# HP_UNCAPPED_PROBES skip HUB_PROBE_DAILY_CAP in bin/hub-probe.sh (BH-8744).
+# ready-facts reads only local files on the hub (no vendor, no metered call),
+# and its volume is bounded by the Ready route's onboarding.ready_bucket_s
+# bucket. A capped row would go back to pending with its old requested_at, stay
+# the oldest pending row, and be re-claimed and deferred every tick, so newer
+# rows of every other probe would never be claimed until 00:00 UTC.
+HP_UNCAPPED_PROBES="ready-facts"
 HP_TRACKER_KINDS="linear jira board"
 HP_TEMPLATE_KEYS="nextjs worker empty"
 HP_D1_TABLES="jobs ledgers split_watchdog_actions hub_probe_requests"

@@ -1,0 +1,31 @@
+/* /projects/:project/ready (BH-8744, BH-7935.3): the Ready screen. Theme
+   tokens only, no colour literal. Every rule is scoped to .project-ready. The
+   card grid is one column at 390px, and long text wraps, so the body never
+   scrolls sideways. */
+
+.project-ready { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.project-ready .project-ready__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.project-ready .project-ready__band {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.project-ready .project-ready__band-title {
+  margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); color: var(--text-strong);
+}
+.project-ready .project-ready__grid {
+  display: grid; gap: 12px; min-width: 0;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+.project-ready .project-ready__card {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-md);
+}
+.project-ready .project-ready__card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
+.project-ready .project-ready__title {
+  margin: 0; font-family: var(--font-body); font-size: var(--fs-md); color: var(--text-strong); overflow-wrap: anywhere;
+}
+.project-ready .project-ready__card-head .tag { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-ready .project-ready__sentence { margin: 0; flex: 1; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+.project-ready .project-ready__action { align-self: flex-start; min-height: 40px; }
+.project-ready .project-ready__note { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--faint); }
+.project-ready .project-ready__note--bad { color: var(--red-lt); }
