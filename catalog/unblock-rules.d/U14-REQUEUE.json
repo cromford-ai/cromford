@@ -1,0 +1,22 @@
+{
+  "id": "U14-REQUEUE",
+  "priority": 140,
+  "family": "lifecycle",
+  "class": "queue-requeue",
+  "cites": ["G1", "G12"],
+  "note": "BH-8736 (lifecycle 6/6). A ticket sat in phase ejected past its limit, its PR is open, not merged, and its head is known. Put the PR back in the queue once, then move the ticket to in_queue (actor lifecycle). This rule owns an ejected ticket's PR whatever its labels; U4's merge-queue label filter stays for U4 only. One decision per stuck episode: a new ejection has a new phase_at.",
+  "match": {
+    "kind": "ticket-ejected",
+    "all": [
+      ".pr_state == \"open\"",
+      ".merged == false",
+      "(.head | type) == \"string\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "requeue",
+    "args": {"ticket_key": ".ticket_key"}
+  },
+  "key": ["project", "ticket_key", "episode", "id"]
+}

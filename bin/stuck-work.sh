@@ -38,8 +38,9 @@
 # fd 8. Either held = summary `busy`, exit 0.
 #
 # One run:
-#   1. gather FACTS lines: swf_pr_facts <repo>, then swf_ticket_facts <repo>
-#      <file of PR items>. Any rc but 0 from either is incomplete=1; the items a
+#   1. gather FACTS lines: swf_pr_facts <repo>, then (only with
+#      STUCK_WORK_TICKET_FACTS=1, default 0 since BH-8736) swf_ticket_facts
+#      <repo> <file of PR items>. Any rc but 0 from either is incomplete=1; the items a
 #      reader did not print are simply not looked at this run.
 #   2. per item: sw_state, sw_sla_s, sw_age_s, the stuck_work row for
 #      <sw_key>, sw_decide. The row is read from the local mirror
@@ -284,7 +285,11 @@ else
   cat "$TMP/prs" >> "$TMP/facts"
   cut -f2 "$TMP/prs" > "$TMP/pr-items"
   # A project with no ticket prefix has no GitHub-Issues board: PRs only.
-  if [ -n "$PFX" ]; then
+  # BH-8736: the ticket facts are retired by default. The Tackler's lifecycle
+  # family (bin/lib/unblock/collectors/lifecycle.sh) reads stuck tickets from
+  # the ledger now. STUCK_WORK_TICKET_FACTS=1 (the settings row
+  # lane.stuck-work.stuck_work_ticket_facts) restores this read.
+  if [ -n "$PFX" ] && [ "${STUCK_WORK_TICKET_FACTS:-0}" = 1 ]; then
     rc=0; STUCK_WORK_KEY_PREFIX=$PFX swf_ticket_facts "$REPO" "$TMP/pr-items" >> "$TMP/facts" || rc=$?
     [ "$rc" = 0 ] || incomplete=1
   fi

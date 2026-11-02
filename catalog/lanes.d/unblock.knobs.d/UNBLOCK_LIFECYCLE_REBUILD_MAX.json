@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LIFECYCLE_REBUILD_MAX",
+  "read_in": "bin/lib/unblock/collectors/lifecycle.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 5,
+  "unit": "abandons",
+  "zero_means": "off",
+  "note": "BH-8736: copied into rebuild_max on every ticket-abandoned record. U14-REBUILD rebuilds a ticket whose abandon count is at most this; a higher count falls to the U12 card. 0 = the first abandon escalates (no rebuild). A bad value is the code fallback 1.",
+  "settable": true
+}

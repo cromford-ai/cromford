@@ -301,8 +301,10 @@ SH
 cat > "$H/bin/lib/stuck-work/facts-ticket.sh" <<'SH'
 swf_ticket_facts() { printf '%s\n' "$1" > "$FXT/tk-args"; cat "$2" > "$FXT/tk-items"; return "$(cat "$FXT/tk-rc")"; }
 SH
+# TEST-CHANGE (BH-8736): the ticket reader is retired by default
+# (STUCK_WORK_TICKET_FACTS=0); L13 pins the reader's wiring, so each run turns it on.
 cp "$FX/scenario-ready-8m.txt" "$T/pr-lines"; echo 3 > "$T/pr-rc"; echo 0 > "$T/tk-rc"
-reset; run "$N" - GH_TOKEN=test-token STUCK_WORK_SLA_READY_MIN=5
+reset; run "$N" - GH_TOKEN=test-token STUCK_WORK_SLA_READY_MIN=5 STUCK_WORK_TICKET_FACTS=1
 check "L13 rc 0 ($(cat "$T/out"))" '[ "$(cat "$T/rc")" = 0 ]'
 check "L13 the PR reader was asked for the repo ($(cat "$T/pr-args" 2>/dev/null))" '[ "$(cat "$T/pr-args" 2>/dev/null)" = example-org/cromford ]'
 check "L13 the 1 item it printed is processed ($(pages))" '[ "$(pages)" = 1 ]'
@@ -311,10 +313,10 @@ check "L13 the ticket reader got the repo and a file of PR items ($(cat "$T/tk-i
   '[ "$(cat "$T/tk-args" 2>/dev/null)" = example-org/cromford ] && [ "$(cat "$T/tk-items" 2>/dev/null)" = "example-org/cromford#120" ]'
 check "L13 snapshot complete:false" '[ "$(snap | jq -c .complete)" = false ]'
 echo 0 > "$T/pr-rc"; echo 1 > "$T/tk-rc"
-reset; run "$N" - GH_TOKEN=test-token
+reset; run "$N" - GH_TOKEN=test-token STUCK_WORK_TICKET_FACTS=1
 check "L13 ticket reader rc 1 (the stub): incomplete=1 ($(last))" 'last | grep -qE " incomplete=1$"'
 echo 0 > "$T/tk-rc"
-reset; run "$N" - GH_TOKEN=test-token
+reset; run "$N" - GH_TOKEN=test-token STUCK_WORK_TICKET_FACTS=1
 check "L13 both readers rc 0: incomplete=0 ($(last))" 'last | grep -qE " incomplete=0$"'
 check "L13 no request left the fake worker ($(cat "$T/other-urls" 2>/dev/null | head -2))" '[ ! -s "$T/other-urls" ]'
 

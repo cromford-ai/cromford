@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_ASK_QUESTION_MAX",
+  "read_in": "bin/lib/unblock/act.sh",
+  "type": "int",
+  "default": 2000,
+  "min": 1,
+  "max": 2000,
+  "unit": "chars",
+  "zero_means": null,
+  "note": "BH-8736: the longest stored plan question the ask action (U14-ASK) accepts; a longer one is bad input and the decision records failed bad-input. The ceiling is the #8731 lifecycle route's QUESTION_MAX (2000). The card text cuts the question to fit UNBLOCK_CARD_MAX (900). A bad value is the code fallback 2000.",
+  "settable": true
+}

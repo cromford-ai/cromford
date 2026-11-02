@@ -30,10 +30,20 @@
 #      ledger, #7722). No answer or not a 2xx = "did not answer", nothing
 #      recorded. No row = "no open card".
 #   4. An option outside 1..<the card's option count> = "not an option".
+#   4b. A U14-ASK card (BH-8736) answered 1, whose card.lifecycle names a
+#      project and a ticket key: lifecycle_transition <project> <key> planned
+#      lifecycle "answered by <email> on card <id>" (bin/lib/jobs/lifecycle.sh,
+#      #8731) BEFORE the answer POST, so a recorded answer always has its move.
+#      rc 0, or a 409 whose current is planned = "moved <KEY> to planned"; a
+#      409 with another current goes on and says "the ticket is already
+#      <current>"; no lib, rc 1 or rc 2 = "not recorded", NO answer POST, so
+#      the owner can send it again. hold, option 2 and every other rule's
+#      card make no lifecycle call.
 #   5. POST /api/unblock/decisions/<row id>/answer {answer, answered_by,
 #      command_id[, note]}. 2xx, or 409 (the worker already holds that command
 #      id), writes the marker. Anything else = "not recorded", no marker.
-# The answer only records. The next Tackler tick (UNB-0/UNB-4) acts on it.
+# The answer only records (step 4b excepted). The next Tackler tick
+# (UNB-0/UNB-4) acts on it.
 #
 # INPUT (set by bin/orchestrate.sh from the message sidecar): UNBLOCK_TRANSPORT,
 # UNBLOCK_FROM_USER, UNBLOCK_CMD_ID. Log: logs/unblock-reply.log.
@@ -48,6 +58,10 @@ HENV=$(harness_env_dir "$H")
 [ -r "$HENV/global.env" ] && { set -a; . "$HENV/global.env" 2>/dev/null; set +a; }
 # shellcheck source=bin/jobs-client.sh
 . "$SELF/jobs-client.sh" 2>/dev/null || { echo "unblock-reply: cannot load bin/jobs-client.sh" >&2; exit 1; }
+# lifecycle_transition (#8731), for step 4b. Absent = a U14-ASK answer 1 is not
+# recorded.
+# shellcheck source=bin/lib/jobs/lifecycle.sh
+[ -r "$SELF/lib/jobs/lifecycle.sh" ] && . "$SELF/lib/jobs/lifecycle.sh"
 
 LOG="$H/logs/unblock-reply.log"
 MARKS="$H/state/unblock-replies"
@@ -87,7 +101,7 @@ req() {
 }
 
 intercept() {
-  local t="$1" first id ans note="" who cmd mark row rid n subject body
+  local t="$1" first id ans note="" who cmd mark row rid n subject body moved="" lp lk lout lrc cur
   first="${t%%$'\n'*}"
   if [[ $t == *$'\n'* ]] && [[ $first =~ ^\[(telegram|slack):\ from\ .*\]$ ]]; then t="${t#*$'\n'}"; fi
   t="${t#"${t%%[![:space:]]*}"}"; t="${t%"${t##*[![:space:]]}"}"
@@ -123,6 +137,27 @@ intercept() {
   fi
   [ "$ans" = hold ] || ans=$((10#$ans))
 
+  # 4b. U14-ASK answered 1: the ticket moves to planned before the answer is recorded.
+  if [ "$ans" = 1 ] && [ "$(jq -r '.rule_id // ""' <<<"$row")" = U14-ASK ]; then
+    lp=$(jq -r '.card.lifecycle.project // "" | tostring' <<<"$row")
+    lk=$(jq -r '.card.lifecycle.ticket_key // "" | tostring' <<<"$row")
+    if [[ $lp =~ ^[a-z0-9._-]+$ ]] && [[ $lk =~ ^[A-Z][A-Z0-9]*-[0-9]+([.][0-9]+)?$ ]]; then
+      if declare -F lifecycle_transition >/dev/null; then
+        lout=$(lifecycle_transition "$lp" "$lk" planned lifecycle "answered by $who on card $id" 2>/dev/null); lrc=$?
+      else
+        lrc=lib
+      fi
+      case "$lrc" in
+        0) moved="moved $lk to planned" ;;
+        9) cur=$(jq -r '.current // ""' <<<"$lout" 2>/dev/null); cur=$(printf '%s' "$cur" | tr -c 'A-Za-z0-9_-' '_')
+           if [ "$cur" = planned ]; then moved="moved $lk to planned"; else moved="the ticket is already ${cur:-unknown}"; fi ;;
+        *) log "card $id: lifecycle_transition $lp $lk planned rc=$lrc; answer not posted"
+           echo "Tackler: answer 1 for $id was not recorded (the ticket move failed: rc $lrc)."; return 0 ;;
+      esac
+      log "card $id: $lp $lk -> planned by $who (rc $lrc)"
+    fi
+  fi
+
   body=$(jq -nc --arg a "$ans" --arg w "$who" --arg c "$cmd" --arg n "$note" \
     '{answer: $a, answered_by: $w, command_id: (if $c == "" then null else $c end)} + (if $a == "hold" and $n != "" then {note: $n} else {} end)')
   req POST "/api/unblock/decisions/$rid/answer" "$body"
@@ -132,6 +167,7 @@ intercept() {
       log "card $id: answer $ans by $who recorded (row $rid, command ${cmd:-none}, rc $RC)"
       if [ "$RC" = 9 ]; then echo "Tackler: already recorded under command ${cmd:-none}."
       elif [ "$ans" = hold ]; then echo "Tackler: recorded hold for $id ($subject). It stays parked."
+      elif [ -n "$moved" ]; then echo "Tackler: recorded answer $ans for $id ($subject); $moved."
       else echo "Tackler: recorded answer $ans for $id ($subject). It runs on the next Tackler tick."; fi ;;
     *)
       log "card $id: answer POST rc=$RC http=${JOBS_HTTP:-none}"

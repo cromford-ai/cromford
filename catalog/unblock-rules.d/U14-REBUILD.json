@@ -1,0 +1,20 @@
+{
+  "id": "U14-REBUILD",
+  "priority": 141,
+  "family": "lifecycle",
+  "class": "triage-launch",
+  "cites": ["G1"],
+  "note": "BH-8736 (lifecycle 6/6). A ticket sat in phase abandoned past its limit and was abandoned no more than rebuild_max times (UNBLOCK_LIFECYCLE_REBUILD_MAX, default 1). Move it to planned (actor lifecycle), then start one build through bin/launch-fastpath.sh. A second abandon matches no U14 rule and falls to the U12 card: it escalates and does not rebuild. An unread history (abandons null) never matches.",
+  "match": {
+    "kind": "ticket-abandoned",
+    "all": [
+      "(.abandons | type) == \"number\" and (.rebuild_max | type) == \"number\" and .abandons <= .rebuild_max"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "rebuild",
+    "args": {"key": ".ticket_key"}
+  },
+  "key": ["project", "ticket_key", "episode", "id"]
+}

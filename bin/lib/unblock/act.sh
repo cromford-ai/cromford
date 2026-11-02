@@ -17,7 +17,10 @@
 #   lead_rerequest) also needs repo <owner>/<name>, pr > 0, head (40 hex).
 #   action.args, per action:
 #     post_block, post_findings  {lines: [non-empty strings]}
-#     requeue                    {}
+#     requeue                    {ticket_key?} (BH-8736: with ticket_key, a
+#                                done requeued also moves that ticket to
+#                                in_queue, actor lifecycle; the detail gains
+#                                `; phase in_queue` or `; phase rc <n>`)
 #     queue_approve              {verdict: MERGE|MERGE-WITH-NOTES}
 #     dismiss_review             {review_id}
 #     fix_round                  {brief, ticket?}
@@ -28,10 +31,23 @@
 #     box_restart                {box_id, account?}
 #     setting_set                {key, value, old, min, max, why}
 #     send_card                  {card_id, text}
+#     rebuild                    {key} (BH-8736, U14-REBUILD; not a PR action):
+#                                lifecycle_transition <p> <key> planned
+#                                lifecycle, then launch_fastpath with that key
+#     ask                        {key, question, age_min?} (BH-8736, U14-ASK;
+#                                not a PR action): one critical card with the
+#                                question, no model call. Outcome escalated
+#                                and UB_ACT_CARD = the card JSON (the tick
+#                                records it); bin/unblock-reply.sh reads its
+#                                .lifecycle {project, ticket_key}
+#   A ticket key is [A-Z][A-Z0-9]*-<n>[.<n>]; a question is 1 to
+#   UNBLOCK_ASK_QUESTION_MAX chars.
 #
-# OUTPUT: one stdout line `<outcome>\t<detail>`, and UB_ACT_OUTCOME and
-#   UB_ACT_DETAIL set in the caller's shell (so call it in the caller's shell,
-#   never inside $( )). Outcomes: would, done, failed, refused.
+# OUTPUT: one stdout line `<outcome>\t<detail>`, and UB_ACT_OUTCOME,
+#   UB_ACT_DETAIL and UB_ACT_CARD set in the caller's shell (so call it in the
+#   caller's shell, never inside $( )). Outcomes: would, done, failed,
+#   refused, escalated (ask only: the card was sent, the row waits for the
+#   answer). UB_ACT_CARD is empty for every other outcome and action.
 #   rc 0 = handled (any outcome). rc 1 = bad input: nothing read, nothing
 #   written, both variables empty.
 #   refused = a policy stop (never-auto, no opt-in, head moved, allowlist ...).
@@ -65,6 +81,10 @@
 #                         / mc_dequeue_label (bin/lib/mc/*)
 #   queue_approve         mc_enqueue_mergify
 #   fix_round             fix_round_enqueue (bin/lib/fix-round-queue.sh)
+#   rebuild, ask          lifecycle_transition (bin/lib/jobs/lifecycle.sh,
+#                         #8731), else failed lifecycle-libs-not-loaded; ask
+#                         also unblock_card_id / unblock_card_scrub (card.sh),
+#                         else failed card-libs-not-loaded
 #   setting_set           _jobs_req (bin/lib/jobs/req.sh), for the row's actor
 #   every PR action       gh_auth_for / gh_auth_reset (bin/lib/gh-app-auth.sh):
 #                         when loaded, the App token is armed before the first
@@ -76,6 +96,9 @@
 #   UNBLOCK_FASTPATH_TIMEOUT_S 300  the wall-clock bound on launch_fastpath
 #   UNBLOCK_NOTES_MAX_CHARS    300  the longest lead_rerequest notes accepted
 #   UNBLOCK_DECLINE_MAX_CHARS  200  the decline reason kept in the detail
+#   UNBLOCK_CARD_TTL_H         72   the ask card's deadline (card.sh's knob)
+#   UNBLOCK_ASK_QUESTION_MAX   2000 the longest question an ask accepts (the
+#                                   #8731 route's QUESTION_MAX is the ceiling)
 # Rows: unblock.project.<p>.mode; unblock.knob_allowlist (comma list, `*`
 #   matches one dot-free segment). Absent -> the code list below. A key under
 #   unblock.* or lane.unblock.* is refused whatever the row says.
@@ -91,10 +114,11 @@
 
 UB_NEVER_CLASSES="spend production live-probe client-board merge deploy governance"
 UB_NEVER_ACTIONS="merge force_push deploy pause_project"
-UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath"
+UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath rebuild ask"
 UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest"
 UB_KNOB_ALLOWLIST_DEFAULT="lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*"
 UB_MARKER_PAGES=5
+UB_TICKET_RE='^[A-Z][A-Z0-9]*-[0-9]+([.][0-9]+)?$'
 
 _ub_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 # _ub_knob_int <value> <default> — a whole number from 1 to 999999, else the default.
@@ -169,6 +193,12 @@ _ub_valid() {
       for f in key value old min max; do [ -n "$(_ub_arg "$f")" ] || return 1; done
       [[ "$(_ub_arg key)" =~ ^[a-z0-9_.-]{1,64}$ ]] || [[ "$(_ub_arg key)" =~ ^[A-Z0-9_]{1,64}$ ]] || return 1 ;;
     send_card) [[ "$(_ub_arg card_id)" =~ ^[A-Za-z0-9._-]+$ ]] || return 1 ;;
+    requeue) f=$(_ub_arg ticket_key); [ -z "$f" ] || [[ "$f" =~ $UB_TICKET_RE ]] || return 1 ;;
+    rebuild) [[ "$(_ub_arg key)" =~ $UB_TICKET_RE ]] || return 1 ;;
+    ask)
+      [[ "$(_ub_arg key)" =~ $UB_TICKET_RE ]] || return 1
+      f=$(_ub_arg question)
+      [ -n "$f" ] && [ "${#f}" -le "$(_ub_knob_int "${UNBLOCK_ASK_QUESTION_MAX:-}" 2000)" ] || return 1 ;;
   esac
   return 0
 }
@@ -277,12 +307,25 @@ _ub_requeue() {
     || { _ub_out failed requeued-mark-unwritable; return 0; }
   out=$(mc_requeue_mergify "$_UB_SLUG" "$_UB_URL" "$_UB_HEAD" 2>/dev/null); rc=$?
   case "$rc" in
-    0) _ub_out done requeued ;;
+    0) _ub_requeue_phase ;;
     2) _ub_out done merged-meanwhile ;;
     3) _ub_out failed requeue-unacknowledged ;;
     4) _ub_out refused human-verdict-required ;;
     *) out="${out%%$'\n'*}"; _ub_out failed "requeue rc $rc: ${out//$'\t'/ }" ;;
   esac
+}
+
+# _ub_requeue_phase — after a requeue answered rc 0. With a ticket_key
+# (U14-REQUEUE) the ticket moves ejected -> in_queue, actor lifecycle (#8731's
+# owner map gives every move out of ejected to lifecycle). The requeue happened
+# whatever the phase write answers, so the outcome stays done.
+_ub_requeue_phase() {
+  local tk rc
+  tk=$(_ub_arg ticket_key)
+  [ -n "$tk" ] || { _ub_out done requeued; return 0; }
+  declare -F lifecycle_transition >/dev/null || { _ub_out done "requeued; phase lifecycle-libs-not-loaded"; return 0; }
+  lifecycle_transition "$_UB_P" "$tk" in_queue lifecycle "$_UB_RULE requeue, decision $_UB_K12" "$_UB_PR" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = 0 ]; then _ub_out done "requeued; phase in_queue"; else _ub_out done "requeued; phase rc $rc"; fi
 }
 
 _ub_queue_approve() {
@@ -462,8 +505,76 @@ _ub_send_card() {
   _ub_out done sent
 }
 
+# _ub_to_planned <reason> — lifecycle_transition <p> <key> planned lifecycle.
+# rc 0 = the ticket is planned now (moved, or a 409 whose current is planned);
+# rc 1 = an outcome was already given.
+_ub_to_planned() {
+  local out rc cur
+  out=$(lifecycle_transition "$_UB_P" "$(_ub_arg key)" planned lifecycle "$1" 2>/dev/null); rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    9) cur=$(jq -r '.current // ""' <<<"$out" 2>/dev/null)
+       [ "$cur" = planned ] && return 0
+       _ub_out refused "phase-moved:$(printf '%s' "${cur:-unknown}" | tr -c 'A-Za-z0-9_-' '_')"; return 1 ;;
+    2) _ub_out refused no-row; return 1 ;;
+    *) _ub_out failed "transition rc $rc"; return 1 ;;
+  esac
+}
+
+# rebuild (BH-8736, U14-REBUILD): the phase first (after #8734 the queue
+# refuses an abandoned key), then the existing deterministic launcher. A
+# decline after the move leaves the ticket planned and says why.
+_ub_rebuild() {
+  _ub_to_planned "$_UB_RULE rebuild, decision $_UB_K12" || return 0
+  _ub_launch_fastpath >/dev/null
+  case "$UB_ACT_OUTCOME" in
+    refused) _ub_out refused "planned; $UB_ACT_DETAIL" ;;
+    failed) _ub_out failed "planned; $UB_ACT_DETAIL" ;;
+    *) printf '%s\t%s\n' "$UB_ACT_OUTCOME" "$UB_ACT_DETAIL" ;;
+  esac
+}
+
+# _ub_ask_text <card id> <ticket key> <age_min> <question> — the card text.
+_ub_ask_text() {
+  printf 'Tackler %s: %s %s has been plan_blocked for %s min. The plan asked: %s. Answer on the issue thread, then reply `Tackler %s 1` to plan it again, or `Tackler %s hold` to keep it parked.' \
+    "$1" "$_UB_P" "$2" "$3" "$4" "$1" "$1"
+}
+
+# ask (BH-8736, U14-ASK): one deterministic card, no model call. The question
+# is scrubbed, then cut first so the text stays at most UNBLOCK_CARD_MAX
+# (card.sh, 900) chars. The card is sent before the outcome: escalated only on
+# lane-alert rc 0.
+_ub_ask() {
+  local key q age id text card dl ttl keep max="${UNBLOCK_CARD_MAX:-900}"
+  key=$(_ub_arg key); age=$(_ub_arg age_min)
+  [[ "$age" =~ ^[0-9]+([.][0-9]+)?$ ]] || age="?"
+  id=$(unblock_card_id "$_UB_KEY")
+  q=$(_ub_arg question)
+  q=$(printf '%s' "$q" | tr '\r\n\t' '   ' | unblock_card_scrub) || { _ub_out failed card-scrub-failed; return 0; }
+  ttl="${UNBLOCK_CARD_TTL_H:-72}"; [[ $ttl =~ ^[1-9][0-9]{0,4}$ ]] || ttl=72
+  dl=$(jq -nr --argjson t "$(( $(_ub_now) + ttl * 3600 ))" '$t | todate')
+  text=$(_ub_ask_text "$id" "$key" "$age" "$q")
+  if [ "${#text}" -gt "$max" ]; then
+    keep=$(( ${#q} - (${#text} - max) - 3 )); [ "$keep" -ge 0 ] || keep=0
+    q="${q:0:$keep}..."
+    text=$(_ub_ask_text "$id" "$key" "$age" "$q")
+  fi
+  [ "${#text}" -le "$max" ] || { _ub_out failed card-invalid; return 0; }
+  card=$(jq -nc --arg id "$id" --arg k "$_UB_KEY" --arg s "$_UB_P:$key" --arg q "$q" --arg dl "$dl" \
+    --arg t "$text" --arg p "$_UB_P" --arg tk "$key" '
+    {id: $id, key: $k, subject: $s, what: "plan_blocked: \($q)",
+     options: ["plan again: I answered on the thread", "hold: keep it parked"],
+     recommendation: 1, default: "hold", deadline_at: $dl, text: $t,
+     lifecycle: {project: $p, ticket_key: $tk}}') || { _ub_out failed card-invalid; return 0; }
+  if ! "$(_ub_root)/bin/lane-alert.sh" --critical --severity critical --id "unblock-$id" unblock "$text" >/dev/null 2>&1; then
+    _ub_out failed send-failed; return 0
+  fi
+  UB_ACT_CARD="$card"
+  _ub_out escalated "card $id"
+}
+
 ub_act() {
-  UB_ACT_OUTCOME="" UB_ACT_DETAIL=""
+  UB_ACT_OUTCOME="" UB_ACT_DETAIL="" UB_ACT_CARD=""
   local h mode w
   h=$(_ub_root)
   [ -n "$h" ] || return 1
@@ -499,6 +610,13 @@ ub_act() {
     post_block) declare -F mc_dequeue_label >/dev/null || { _ub_out failed conductor-libs-not-loaded; return 0; } ;;
     queue_approve) declare -F mc_enqueue_mergify >/dev/null || { _ub_out failed conductor-libs-not-loaded; return 0; } ;;
     fix_round) declare -F fix_round_enqueue >/dev/null || { _ub_out failed fix-round-libs-not-loaded; return 0; } ;;
+    rebuild|ask)
+      declare -F lifecycle_transition >/dev/null || { _ub_out failed lifecycle-libs-not-loaded; return 0; }
+      if [ "$_UB_ACTION" = ask ]; then
+        for w in unblock_card_id unblock_card_scrub; do
+          declare -F "$w" >/dev/null || { _ub_out failed card-libs-not-loaded; return 0; }
+        done
+      fi ;;
   esac
   # 4. the verdict source
   case "$_UB_ACTION" in
@@ -522,6 +640,8 @@ ub_act() {
     setting_set)    _ub_setting_set ;;
     send_card)      _ub_send_card ;;
     launch_fastpath) _ub_launch_fastpath ;;
+    rebuild)        _ub_rebuild ;;
+    ask)            _ub_ask ;;
   esac
   _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS" && _ub_gh_reset
   return 0

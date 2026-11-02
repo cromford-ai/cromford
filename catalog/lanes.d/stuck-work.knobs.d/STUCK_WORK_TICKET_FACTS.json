@@ -1,0 +1,12 @@
+{
+  "env": "STUCK_WORK_TICKET_FACTS",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "read_in": "bin/stuck-work.sh",
+  "note": "BH-8736: 0 (default) = the ticket facts are retired: bin/stuck-work.sh does not call swf_ticket_facts, and the Tackler's lifecycle family (bin/lib/unblock/collectors/lifecycle.sh) watches stuck tickets from the ledger. 1 = the old ticket read runs again (rollback; bin/lib/stuck-work/facts-ticket.sh stays on the tree). Read as ${STUCK_WORK_TICKET_FACTS:-0}; any value but 1 is off.",
+  "settable": true
+}

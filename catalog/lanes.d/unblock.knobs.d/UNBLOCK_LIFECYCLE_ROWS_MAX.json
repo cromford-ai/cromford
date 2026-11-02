@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_LIFECYCLE_ROWS_MAX",
+  "read_in": "bin/lib/unblock/collectors/lifecycle.sh",
+  "type": "int",
+  "default": 50,
+  "min": 1,
+  "max": 200,
+  "unit": "rows",
+  "zero_means": null,
+  "note": "BH-8736: the stuck tickets (ejected, abandoned, plan_blocked) the lifecycle collector turns into records per project per tick, oldest phase_at first; the rest are counted in the meta line's truncated. Each costs at most one history read and one PR read. A bad value is the code fallback 50.",
+  "settable": true
+}

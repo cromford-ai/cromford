@@ -1,0 +1,20 @@
+{
+  "id": "U14-ASK",
+  "priority": 142,
+  "family": "lifecycle",
+  "class": "escalate",
+  "cites": ["G6", "G18"],
+  "note": "BH-8736 (lifecycle 6/6). A ticket sat in phase plan_blocked past its limit and the plan stored a question. Send the operator one card with the question text (bin/lib/unblock/act.sh ask, no model call). Answer 1 (bin/unblock-reply.sh) moves the ticket to planned with actor lifecycle; hold keeps it parked. No stored question = no match (U12 takes it).",
+  "match": {
+    "kind": "ticket-plan-blocked",
+    "all": [
+      "(.question | type) == \"string\" and (.question | length) > 0"
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "ask",
+    "args": {"key": ".ticket_key", "question": ".question", "age_min": ".age_min"}
+  },
+  "key": ["project", "ticket_key", "episode", "id"]
+}

@@ -50,7 +50,9 @@
 #      (decision JSON, model, claim mode) and prints {outcome, detail, model_calls,
 #      cost_usd, card?}; anything else is RECORD failed.
 #   7. ACT: ub_act in this shell, with act.sh's input shape; RECORD
-#      UB_ACT_OUTCOME / UB_ACT_DETAIL. rc 1 = RECORD failed bad-input.
+#      UB_ACT_OUTCOME / UB_ACT_DETAIL, and UB_ACT_CARD as the row's card when
+#      act.sh set one (ask: outcome escalated, BH-8736). rc 1 = RECORD failed
+#      bad-input.
 #   8. One summary line per project:
 #      <UTC> tick <p> mode=<m> collectors=<n> unwired=<n> failed=<n>
 #        records=<n> decisions=<n> claimed=<n> rows=<n> deferred=<n>
@@ -59,6 +61,8 @@
 #
 # THE SEAMS (S0 defines them; the families and stages wire to them):
 #   ub_collect_<family> <project> <repo>  in collectors/<family>.sh -> JSONL
+#     families: queue, review, infra, lifecycle (BH-8736: stuck tickets from
+#     GET /api/lifecycle/stuck, subject_kind build, rules U14-*)
 #   ub_rules_eval < records.jsonl         -> decisions JSONL, each:
 #     {decision_key, project, repo, subject_kind, subject, pr?, head?,
 #      stall_class, rule_id, cites[], class, decision, action:{name,args}|null,
@@ -128,6 +132,11 @@ HENV=$(harness_env_dir "$H")
 # are null (unknown) and those arms answer conductor-libs-not-loaded.
 # shellcheck source=bin/lib/merge-conductor-lib.sh
 [ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh"
+# lifecycle_stuck and lifecycle_transition (#8731), for the lifecycle collector
+# and act.sh's requeue (ticket_key), rebuild and ask arms (BH-8736). Not on the
+# tree = the collector is FAILED and those arms answer lifecycle-libs-not-loaded.
+# shellcheck source=bin/lib/jobs/lifecycle.sh
+[ -r "$SELF/lib/jobs/lifecycle.sh" ] && . "$SELF/lib/jobs/lifecycle.sh"
 # fix_round_enqueue, for act.sh's fix_round arm (U10).
 # shellcheck source=bin/lib/fix-round-queue.sh
 [ -r "$SELF/lib/fix-round-queue.sh" ] && . "$SELF/lib/fix-round-queue.sh"
@@ -262,12 +271,12 @@ ubt_decide() {
   case "$seam" in
     refuse) ubt_record "$key" refused "rule refused" 0 0 ;;
     ub_act)
-      UB_ACT_OUTCOME="" UB_ACT_DETAIL=""
+      UB_ACT_OUTCOME="" UB_ACT_DETAIL="" UB_ACT_CARD=""
       ub_act "$(jq -c '{decision_key, project, repo, subject_kind, subject, pr, head, rule_id, class,
           cites, action: {name: (.action.name // ""), args: (.action.args // {})}}' <<<"$d")" >/dev/null
       rc=$?
       if [ "$rc" = 0 ] && [ -n "$UB_ACT_OUTCOME" ]; then
-        ubt_record "$key" "$UB_ACT_OUTCOME" "$UB_ACT_DETAIL" 0 0
+        ubt_record "$key" "$UB_ACT_OUTCOME" "$UB_ACT_DETAIL" 0 0 "${UB_ACT_CARD:-null}"
       else
         ubt_record "$key" failed bad-input 0 0
       fi ;;
