@@ -1,0 +1,1 @@
+Exempt since BH-8324 (2026-11-01, merge-queue fix). bin/box-move.sh proof must write no file on the hub (tests/box-move-proof-window.bh-8324-test.sh E1), and arming an App token refreshes cache files under state/. Full reason: the gh-identity line at the top of bin/lib/box-move/proof.sh.

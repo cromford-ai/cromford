@@ -42,7 +42,11 @@
 #            cutover --step B5 runs a real tick.
 # proof      on the new box: load1 load5 load15 nproc load5_per_vcpu, the
 #            active crontab line count, flags/all-off; the newest tick summary
-#            on the hub; the projects the rows put on each box. Read-only.
+#            on the hub; the projects the rows put on each box. Then the
+#            window block (bin/lib/box-move/proof.sh): per project the lane
+#            counts in the window before B2 and the window after B5, a
+#            verdict per lane, lane-silent alerts after, the last rollback
+#            drill time and one `proof verdict=` line. Read-only; rc 0.
 # cutover    one step per run (bin/lib/box-move/cutover.sh): B1 preflight on
 #            the newest no-write tick, B2 stop the old box (save its crontab
 #            and rows on the hub, crontab -r, drain), B3 copy (forced backup,
@@ -75,7 +79,10 @@
 # oldest no-write tick B1 accepts), BOX_MOVE_B1_ALLOW (empty; a comma list of
 # lane ids whose failure B1 accepts, an id covers its ~N duplicates). B4 and
 # rollback read REGISTRY_SOURCE, REGISTRY_ADMIN_TOKEN and HARNESS_SECRET from
-# the environment.
+# the environment. Proof: BOX_MOVE_PROOF_WINDOW_S (86400, the ticket's 24 h
+# before and after), BOX_MOVE_PROOF_SLACK (1, the ticket's "after >= before -
+# 1"; 0 is allowed), BOX_MOVE_ROLLBACK_BUDGET_S (900, the ticket's "< 15 min"
+# rollback drill); it reads JOBS_URL and HARNESS_SECRET for the fix rounds.
 #
 # Exit: 0 done; 2 usage or a bad knob (nothing done); 3 preflight refused
 # (nothing done, one stderr line, one alert-line row box-move-preflight); 4 a
@@ -100,6 +107,8 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$SELF_DIR/lib/hub-move-reach.sh" || exit 2
 # shellcheck source=bin/lib/box-move/cutover.sh
 . "$SELF_DIR/lib/box-move/cutover.sh" || exit 2
+# shellcheck source=bin/lib/box-move/proof.sh
+. "$SELF_DIR/lib/box-move/proof.sh" || exit 2
 
 BIN="$SELF_DIR"
 BM_TH="${BOX_MOVE_TARGET_HARNESS:-/root/harness}"
@@ -140,9 +149,11 @@ sandbox_guard() {
 
 check_knobs() {
   local k
-  for k in BM_MEM_MB BM_VOLUME_GB BM_TS_POLL_S BM_SSH_CONNECT_TIMEOUT_S BM_DRAIN_TIMEOUT_S BM_TICK_MAX_AGE_S; do
+  for k in BM_MEM_MB BM_VOLUME_GB BM_TS_POLL_S BM_SSH_CONNECT_TIMEOUT_S BM_DRAIN_TIMEOUT_S BM_TICK_MAX_AGE_S \
+      BM_PROOF_WINDOW_S BM_ROLLBACK_BUDGET_S; do
     bm_is_posint "${!k}" || { echo "box-move: BOX_MOVE_${k#BM_}='${!k}' is not a positive integer" >&2; exit 2; }
   done
+  bm_is_uint "$BM_PROOF_SLACK" || { echo "box-move: BOX_MOVE_PROOF_SLACK='$BM_PROOF_SLACK' is not a whole number" >&2; exit 2; }
   bm_is_uint "$BM_TS_WAIT_S" || { echo "box-move: BOX_MOVE_TS_WAIT_S='$BM_TS_WAIT_S' is not a whole number" >&2; exit 2; }
   [ -z "$BM_NPROC" ] || bm_is_posint "$BM_NPROC" || { echo "box-move: BOX_MOVE_NPROC='$BM_NPROC' is not a positive integer" >&2; exit 2; }
   for k in BM_APP BM_REGION BM_VM_SIZE BM_TS_HOSTNAME; do
@@ -249,6 +260,7 @@ cmd_proof() {
     out=$("$BIN/fleet-conf.sh" --projects-on-box "$p" 2>/dev/null | paste -sd, -)
     echo "rows: $p projects=${out:--}"
   done
+  bm_proof_window "$old" "$ip"
 }
 
 # ==== main =====================================================================
@@ -303,6 +315,9 @@ BM_REACH="${HUB_MOVE_REACH_HOST:-}"
 BM_DRAIN_TIMEOUT_S="${BOX_MOVE_DRAIN_TIMEOUT_S:-1800}"
 BM_TICK_MAX_AGE_S="${BOX_MOVE_TICK_MAX_AGE_S:-86400}"
 BM_B1_ALLOW="${BOX_MOVE_B1_ALLOW:-}"
+BM_PROOF_WINDOW_S="${BOX_MOVE_PROOF_WINDOW_S:-86400}"
+BM_PROOF_SLACK="${BOX_MOVE_PROOF_SLACK:-1}"
+BM_ROLLBACK_BUDGET_S="${BOX_MOVE_ROLLBACK_BUDGET_S:-900}"
 check_knobs
 BM_SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=$BM_SSH_CONNECT_TIMEOUT_S" -o StrictHostKeyChecking=accept-new)
 BM_STATE="$HARNESS/state/box-move/$NEW"

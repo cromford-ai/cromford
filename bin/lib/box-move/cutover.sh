@@ -313,7 +313,7 @@ bm_cutover() {
 
 # bm_rollback <confirm> <force_drain> <oldbox> <newbox>
 bm_rollback() {
-  local confirm="$1" force="$2" old="$3" new="$4" rows=0 ip n rc want st
+  local confirm="$1" force="$2" old="$3" new="$4" rows=0 ip n rc want st t0 el
   BM_NEW_NAME="$new"
   # 1. preflight: nothing changes unless B2 saved what rollback puts back.
   [ -s "$BM_STATE/old-crontab" ] || bm_refuse "rollback: no $BM_STATE/old-crontab (B2 never ran)"
@@ -327,6 +327,9 @@ bm_rollback() {
     echo "nothing changed: add --confirm to run"
     return 0
   fi
+  # The drill time (MKF-9 AC3, < 15 min to the old state): bin/box-move.sh
+  # proof reads elapsed_s from the `rollback ok` row.
+  t0=$(bm_now)
   # 2. stop the new box: all-off FIRST, so no lane and no update-runners starts.
   if ip=$(bm_target_ip); then
     if ! bm_sh "$ip" 'true' 2>/dev/null; then
@@ -360,7 +363,8 @@ bm_rollback() {
   [ "$rc" -eq 0 ] && [ "$n" = "$want" ] || bm_fail "rollback: the crontab on $old reads ${n:-?} active lines after install, want $want (rc=$rc)"
   # 5. a later cutover starts at B1, so the B5 split-brain check runs again.
   for st in B1 B2 B3 B4 B5; do bm_step_record "$st" reset "rollback"; done
-  bm_step_record rollback ok "old crontab $want lines$([ "$rows" -eq 1 ] && echo ", rows back on $old")"
-  echo "Rollback done. $old runs its crontab ($want active lines)$([ "$rows" -eq 1 ] && echo " and the rows put ${BM_PROJECTS// /,} on it")."
+  el=$(( $(bm_now) - t0 ))
+  bm_step_record rollback ok "old crontab $want lines$([ "$rows" -eq 1 ] && echo ", rows back on $old") elapsed_s=$el"
+  echo "Rollback done. $old runs its crontab ($want active lines)$([ "$rows" -eq 1 ] && echo " and the rows put ${BM_PROJECTS// /,} on it"). elapsed_s=$el"
   echo "The new box $new keeps its state and stands by with flags/all-off; state written on $new after B3 is not copied back."
 }
