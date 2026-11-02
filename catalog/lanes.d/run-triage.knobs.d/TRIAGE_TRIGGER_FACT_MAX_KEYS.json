@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_TRIGGER_FACT_MAX_KEYS",
+  "read_in": "bin/lib/triage-trigger-facts.sh",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 50,
+  "unit": "issues",
+  "zero_means": "off",
+  "note": "BH-8933. Scoped board tickets per triage tick whose trigger actor is read for the prompt (one GitHub events read each). 0 turns the TRIGGER ACTOR section off. Code fallback 10 in rt_trigger_facts; a value that is not a non-negative integer is 10."
+}

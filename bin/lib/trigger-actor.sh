@@ -284,6 +284,85 @@ _ta_rearm_at() {
   return 0
 }
 
+# ta_gh_decide <p> <slug> <n> <tsv-out> — THE GitHub decision (BH-8933): the
+# newest `labeled ai-build` event (ta_gh_trigger), ta_decide on its actor, and
+# the re-arm (BH-6957). Read-only: no ledger, no comment. ta_gate and
+# ta_triage_fact both call it, so the build gate and triage give one answer.
+# Reads PROJECT_2_ROW / PROJECT_2_ALLOW (ta_allowlist). Sets PROJECT_2_DEC (`allow <why>` or
+# `ignore <why>`), PROJECT_2_EV_ID, PROJECT_2_EV_ACTOR, PROJECT_2_EV_AT (the label's created_at) and
+# PROJECT_2_REARM_READ_NOTE (a failed comments read; the ignore stands).
+#   rc 0 decided, 2 unverifiable (PROJECT_2_NOTE), 3 no GitHub here (PROJECT_2_NOTE),
+#   rc 4 no labeled ai-build event.
+ta_gh_decide() {
+  local p="$1" slug="$2" n="$3" f="$4" rc id actor typ app lat dec cid clogin ctyp capp
+  PROJECT_2_DEC=""; PROJECT_2_EV_ID=""; PROJECT_2_EV_ACTOR=""; PROJECT_2_EV_AT=""; PROJECT_2_REARM_READ_NOTE=""
+  rc=0; ta_gh_trigger "$slug" "$n" "$f" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) return 3 ;;
+    *) return 2 ;;
+  esac
+  [ -s "$f" ] || return 4
+  # A tab is an IFS whitespace character, so `read` would fold an empty
+  # app_slug and shift created_at into it: split on \037 instead.
+  IFS=$'\037' read -r id actor typ app lat < <(tr '\t' '\037' < "$f")
+  dec=$(ta_decide "$p" gh "$actor" "" "$typ" "$app" "")
+  PROJECT_2_EV_AT="$lat"
+  # An ignored label stands unless a newer explicit re-arm comment comes from
+  # someone ta_decide allows as a person (never `self`: the harness cannot
+  # re-arm itself). A comments read that fails keeps the ignore.
+  case "$dec" in
+    ignore*)
+      if _ta_rearm_at "$slug" "$n" "$lat" "$f.rearm"; then
+        while IFS=$'\037' read -r cid clogin ctyp capp; do
+          [ -n "$cid" ] || continue
+          case "$(ta_decide "$p" gh "$clogin" "" "$ctyp" "$capp" "")" in
+            "allow listed"|"allow human-default") id="comment-$cid"; actor="$clogin"; dec="allow rearm"; break ;;
+          esac
+        done < <(tr '\t' '\037' < "$f.rearm")
+      else
+        PROJECT_2_REARM_READ_NOTE="re-arm read: $PROJECT_2_REARM_NOTE"
+      fi
+      rm -f "$f.rearm" ;;
+  esac
+  PROJECT_2_DEC="$dec"; PROJECT_2_EV_ID="$id"; PROJECT_2_EV_ACTOR="$actor"
+  return 0
+}
+
+# ta_triage_fact <p> <slug> <n> <dir> — the build gate's answer for one issue,
+# for the triage prompt (BH-8933). The same steps as ta_gate's GitHub arm, in
+# the same order, but READ-ONLY: no ledger write, no comment, no _ta_allowed.
+# Prints one line, rc 0:
+#   `<n> :: allow|ignore <why> actor=<a> event=<id> labeled_at=<ts>`, or
+#   `<n> :: allow switched-off|no-trigger ...`, or `<n> :: unverifiable <why>`.
+# Writes only inside <dir>, and removes what it wrote.
+ta_triage_fact() {
+  local p="$1" slug="$2" n="$3" d="$4" f rc
+  PROJECT_2_NOTE=""; PROJECT_2_READ_NOTE=""
+  _ta_deps || { printf '%s :: unverifiable no harness root\n' "$n"; return 0; }
+  command -v lane_switch >/dev/null 2>&1 || { printf '%s :: unverifiable lane-switch lib missing\n' "$n"; return 0; }
+  if lane_switch trigger-actor-off; then printf '%s :: allow switched-off\n' "$n"; return 0; fi
+  ta_allowlist "$p"
+  if [ "$PROJECT_2_ROW" = unreadable ]; then
+    printf '%s :: unverifiable allowlist row trigger.actors.%s unreadable%s\n' "$n" "$p" "${PROJECT_2_NOTE:+: $PROJECT_2_NOTE}"; return 0
+  fi
+  [ -n "${HARNESS_SELF_JQ_DEF:-}" ] || { printf '%s :: unverifiable harness-self lib missing\n' "$n"; return 0; }
+  case "$(harness_self_apps_json 2>/dev/null)" in
+    ''|'[]') printf '%s :: unverifiable harness self-app list empty\n' "$n"; return 0 ;;
+  esac
+  f="$d/ta-$n.tsv"
+  rc=0; ta_gh_decide "$p" "$slug" "$n" "$f" || rc=$?
+  rm -f "$f"
+  case "$rc" in
+    0) printf '%s :: %s actor=%s event=%s labeled_at=%s%s\n' "$n" "$PROJECT_2_DEC" "$PROJECT_2_EV_ACTOR" "$PROJECT_2_EV_ID" "$PROJECT_2_EV_AT" \
+         "${PROJECT_2_REARM_READ_NOTE:+ ($PROJECT_2_REARM_READ_NOTE)}" ;;
+    3) printf '%s :: allow no-trigger (%s)\n' "$n" "$PROJECT_2_NOTE" ;;
+    4) printf '%s :: allow no-trigger (no labeled ai-build event)\n' "$n" ;;
+    *) printf '%s :: unverifiable %s\n' "$n" "${PROJECT_2_NOTE:-events read failed}" ;;
+  esac
+  return 0
+}
+
 # ta_board_trigger <raw-ticket-json> <out> — the newest status_change of an
 # in-app ticket as `id<TAB>userId<TAB>name`, or an empty <out>. Ordered by
 # createdAt (or created_at / at); entries without a time keep array order.
@@ -387,8 +466,8 @@ _ta_allowed() {
 #   rc 0 build (PROJECT_2_LINE = `allow <why> actor=<a> event=<id>`), rc 1 ignored
 #   (commented once, recorded), rc 2 unverifiable (PROJECT_2_LINE says why).
 ta_gate() {
-  local p="$1" k="$2" t="${3:-}" b="$4" r bp n slug f dec why id actor typ app lat uid name self prod tok rc src where
-  local cid clogin ctyp capp rearm_note=""
+  local p="$1" k="$2" t="${3:-}" b="$4" r bp n slug f dec why id actor uid name self prod tok rc src where
+  local rearm_note=""
   PROJECT_2_LINE=""; PROJECT_2_NOTE=""; PROJECT_2_READ_NOTE=""; PROJECT_2_COMMENTED=0
   _ta_deps || { PROJECT_2_LINE="no harness root"; return 2; }
   r=$(_ta_root)
@@ -410,35 +489,15 @@ ta_gate() {
     [ -n "$n" ] || case "$t" in ''|*[!0-9]*) ;; *) n="$t" ;; esac
     slug="${GH_ISSUES_REPO:-$("$r/bin/fleet-conf.sh" "$p" repo 2>/dev/null || true)}"
     if [ -z "$n" ] || [ -z "$slug" ]; then PROJECT_2_LINE="allow no-trigger (no issue number or repo for $k)"; return 0; fi
-    rc=0; ta_gh_trigger "$slug" "$n" "$f" || rc=$?
+    rc=0; ta_gh_decide "$p" "$slug" "$n" "$f" || rc=$?
     case "$rc" in
       0) ;;
       3) PROJECT_2_LINE="allow no-trigger (${PROJECT_2_NOTE})"; return 0 ;;
+      4) PROJECT_2_LINE="allow no-trigger (no labeled ai-build event on $slug#$n)"; return 0 ;;
       *) PROJECT_2_LINE="events read: ${PROJECT_2_NOTE:-failed}"; return 2 ;;
     esac
-    if [ ! -s "$f" ]; then PROJECT_2_LINE="allow no-trigger (no labeled ai-build event on $slug#$n)"; return 0; fi
-    # A tab is an IFS whitespace character, so `read` would fold an empty
-    # app_slug and shift created_at into it: split on \037 instead.
-    IFS=$'\037' read -r id actor typ app lat < <(tr '\t' '\037' < "$f")
-    dec=$(ta_decide "$p" gh "$actor" "" "$typ" "$app" "")
+    dec="$PROJECT_2_DEC"; id="$PROJECT_2_EV_ID"; actor="$PROJECT_2_EV_ACTOR"; rearm_note="$PROJECT_2_REARM_READ_NOTE"
     src=gh; where="$slug"; t="$n"
-    # An ignored label stands unless a newer explicit re-arm comment comes from
-    # someone ta_decide allows as a person (never `self`: the harness cannot
-    # re-arm itself). A comments read that fails keeps the ignore.
-    case "$dec" in
-      ignore*)
-        if _ta_rearm_at "$slug" "$n" "$lat" "$f.rearm"; then
-          while IFS=$'\037' read -r cid clogin ctyp capp; do
-            [ -n "$cid" ] || continue
-            case "$(ta_decide "$p" gh "$clogin" "" "$ctyp" "$capp" "")" in
-              "allow listed"|"allow human-default") id="comment-$cid"; actor="$clogin"; dec="allow rearm"; break ;;
-            esac
-          done < <(tr '\t' '\037' < "$f.rearm")
-        else
-          rearm_note="re-arm read: $PROJECT_2_REARM_NOTE"
-        fi
-        rm -f "$f.rearm" ;;
-    esac
   elif [ -n "$bp" ]; then
     if [ "$PROJECT_2_ROW" != armed ]; then PROJECT_2_LINE="allow unarmed (no trigger.actors.$p row, in-app board not read)"; return 0; fi
     prod=$("$r/bin/fleet-conf.sh" "$p" prod 2>/dev/null) || prod=""

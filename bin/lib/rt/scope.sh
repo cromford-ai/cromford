@@ -479,6 +479,13 @@ $UNBLOCKED"
       command -v triage_hot_load >/dev/null 2>&1 && triage_hot_load
       TICK_SCOPE=$(printf '%s' "$TICK_SCOPE" | { command -v triage_hot_mark >/dev/null 2>&1 && triage_hot_mark board || cat; })
     fi
+    # BH-8933: the trigger-actor gate's answer per scoped GitHub issue, as a
+    # fact (bin/lib/triage-trigger-facts.sh). No lib or nothing to say: empty,
+    # and the prompt is byte-for-byte what it was.
+    PROJECT_2_FACTS_SEC=""
+    # shellcheck source=bin/lib/triage-trigger-facts.sh
+    command -v rt_trigger_facts >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/triage-trigger-facts.sh" ] && . "$HARNESS/bin/lib/triage-trigger-facts.sh" 2>/dev/null; }
+    command -v rt_trigger_facts >/dev/null 2>&1 && rt_trigger_facts
     if [ -n "$TICK_SCOPE" ]; then
       SCOPE_N=$(printf '%s\n' "$TICK_SCOPE" | grep -c .)
       PROMPT_TEXT="TICK SCOPE (deterministic — $SCOPE_WHY):
@@ -487,6 +494,15 @@ $TICK_SCOPE
 Work ONLY the tickets listed above this tick: fetch each one's full comment thread and act on it per the SOP below. An UNBLOCKED line names a child that is launchable on the DEFAULT BRANCH now — either its Blocked-by ticket is CLOSED with no other blocker open, or the line says 'dep-verified soft', which means the harness checked those still-open blockers against this child's planned files and its own plan and found no code dependency (bin/dep-verify.sh), or it says 'dep-unverified, released', which means the check had no evidence yet and DEP_UNKNOWN_MODE=soft releases the child anyway (the merge conductor rebases it if a real overlap surfaces). Any of those ways, fetch it and launch it per the queue rules unless a PR or a build already covers it. A STACKABLE line is JUST AS LAUNCHABLE: its Blocked-by ticket is still open, but that parent's PR is open, so the child builds ON TOP of the parent's branch — launch it exactly like an UNBLOCKED one and pass the base branch through, \`STACK_BASE=<the line's base= value> setsid /root/harness/bin/run-build.sh ...\` (everything else about the launch is unchanged; GitHub retargets the child's PR to the default branch when the parent merges). SKIP the full board/ticket enumeration the SOP opens with — unchanged tickets have not moved since the last consumed run and owe nothing new. You MAY fetch any other specific ticket that a changed thread references or depends on. Queue and build-results handling in the SOP still applies as written. If the scope list looks inconsistent with what you actually fetch (a listed ticket is missing, ids look stale), discard the scope and run the full SOP instead.$(command -v hot_sop >/dev/null 2>&1 && HS=$(hot_sop "$TICK_SCOPE") && [ -n "$HS" ] && printf '\n\n%s' "$HS")
 
 $PROMPT_TEXT"
+      # A shard reads SHARD_SOP (bin/lib/rt/shards.sh), so it gets the section too.
+      if [ -n "$PROJECT_2_FACTS_SEC" ]; then
+        PROMPT_TEXT="$PROMPT_TEXT
+
+$PROJECT_2_FACTS_SEC"
+        SHARD_SOP="${SHARD_SOP:-}
+
+$PROJECT_2_FACTS_SEC"
+      fi
     fi
     # ONE LINE PER WAKE TICK, always, whatever it decided. The storm was invisible
     # in this log for an hour because a wake tick logged nothing until its shards
