@@ -28,6 +28,14 @@
 # own findings about it; so the flatten says which module and which function on
 # stderr, removes the half-written output, and returns non-zero.
 #
+# A gates.d fragment call site (BH-8930) inside a stage body — a line that is
+# exactly `. "$RB_GATES_D/<slug>.sh"`, slug [a-z0-9-]+ — is replaced by the
+# fragment's marked block, from its `# >>> ` line through the matching `# <<< `
+# line, so the text is the one the block had inline. A fragment that is missing
+# or never closes its block is the same kind of error as an unclosed stage:
+# stderr names the module, the call line and the fragment, and rb_all returns 1
+# with no output file.
+#
 # No trap, no clock, no mktemp: the caller passes the output path out of its own
 # scratch tree and owns its lifetime.
 # shellcheck shell=bash
@@ -42,16 +50,33 @@ rb_all() { # rb_all <repo-dir> <out-file>  -> prints <out-file>; the pipeline as
       for mod in $RB_MODULES; do
         [ -r "$repo/bin/lib/rb/$mod.sh" ] || continue
         grep -q "^${name}() {\$" "$repo/bin/lib/rb/$mod.sh" || continue
-        if ! awk -v n="$name" '
+        awk -v n="$name" -v gd="$repo/bin/lib/rb/gates.d" -v mod="bin/lib/rb/$mod.sh" '
               $0==n"() {"      { f=1; opened=1; next }
               $0=="} # end "n  { closed=1; exit }
+              f && /^\. "\$RB_GATES_D\/[a-z0-9-]+\.sh"$/ {
+                frag=$0; sub(/^\. "\$RB_GATES_D\//, "", frag); sub(/"$/, "", frag)
+                in_=0; done_=0; blk=""
+                while ((getline fl < (gd "/" frag)) > 0) {
+                  if (!in_ && fl ~ /^# >>> /) { in_=1; blk=substr(fl, 7) }
+                  if (in_) print fl
+                  if (in_ && fl == "# <<< " blk) { done_=1; break }
+                }
+                close(gd "/" frag)
+                if (!done_) {
+                  print "rb_all: " mod " " n " calls [" $0 "] but bin/lib/rb/gates.d/" frag " is missing or never closes its block" > "/dev/stderr"
+                  bad=1; exit 4
+                }
+                next
+              }
               f
-              END              { if (opened && !closed) exit 3 }' \
-              "$repo/bin/lib/rb/$mod.sh" >> "$out"; then
-          echo "rb_all: bin/lib/rb/$mod.sh opens $name but never closes it" >&2
-          rm -f "$out"
-          return 1
-        fi
+              END              { if (bad) exit 4; if (opened && !closed) exit 3 }' \
+              "$repo/bin/lib/rb/$mod.sh" >> "$out"
+        case $? in
+          0) ;;
+          4) rm -f "$out"; return 1 ;;
+          *) echo "rb_all: bin/lib/rb/$mod.sh opens $name but never closes it" >&2
+             rm -f "$out"; return 1 ;;
+        esac
         hit=1; break
       done
       [ -n "$hit" ] || printf '%s\n' "$line" >> "$out"

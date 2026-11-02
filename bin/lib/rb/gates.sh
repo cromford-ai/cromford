@@ -18,6 +18,18 @@
 # checkpoint-resume:`), so the two slices meet on that boundary with no line in
 # both and no line in neither. Every other slice in this file ends exactly on
 # its anchor, byte-verbatim.
+# GATES.D (BH-8930). A gate can live in its own file, bin/lib/rb/gates.d/<slug>.sh,
+# so two tickets that edit two gates edit two files. The fragment is a short
+# header, then the VERBATIM marked block (`# >>> name` to `# <<< name`), nothing
+# after it. Its call site is ONE column-0 line in place of the block, exactly
+# `. "$RB_GATES_D/<slug>.sh"` (slug [a-z0-9-]+). The `.` runs in the stage
+# function's own scope, so a fragment holds no `local`, `return` or `declare`.
+# rb_gates_d_check (below) reads the call sites off this file, so they are the
+# list; it runs first in rb_gate_prelude and defers the build (rc 3, one
+# critical lane-alert) when a named fragment is missing. tests/lib/rb-all.sh puts
+# each fragment's block back at its call site. To move a gate: cut the block
+# into its fragment and leave the call line. To add a gate: a new fragment and
+# one call line. An edit to a moved gate touches only its fragment.
 # Entry functions, pipeline order: rb_gate_prelude rb_gate_claim_and_workspace rb_gate_overlap
 # Reads: ACTIVE_KEY ALERTS ATTEMPT BASE BASE_BRANCH BASE_MAIN BKEY BRANCH BRANCH_SUFFIX BUILD
 #   BUILD_ATTEMPT BUILD_SLOTS BUILDER_DIRECT_META BUILDER_DIRECT_ON BUILDER_EXEC CI_LINE
@@ -41,7 +53,21 @@
 #   TEST_SELECT_EFFECTIVE WIP
 # shellcheck shell=bash
 
+rb_gates_d_check() { # -> rc 0 and RB_GATES_D set; rc 3 + BUILD_DEFERRED when a fragment is missing
+  RB_GATES_D="${BASH_SOURCE[0]%/*}/gates.d"
+  local _f
+  for _f in $(sed -n 's|^\. "\$RB_GATES_D/\([a-z0-9-][a-z0-9-]*\.sh\)"$|\1|p' "${BASH_SOURCE[0]}"); do
+    [ -r "$RB_GATES_D/$_f" ] && continue
+    "$HARNESS/bin/lane-alert.sh" --id "rb-gates-d-missing-$(hostname)" --severity critical run-build \
+      "build $PROJECT/$KEY deferred: bin/lib/rb/gates.d/$_f is missing on $(hostname) — the box's bin/ is half-synced" >/dev/null 2>&1 || true
+    RESULT "BUILD_DEFERRED gates.d/$_f missing on $(hostname) — the box's bin/ is half-synced; re-offered next tick"
+    return 3
+  done
+  return 0
+}
+
 rb_gate_prelude() {
+rb_gates_d_check || exit 3
 
 # >>> stage timing
 # --- How long each section of this pipeline actually took (the operator, 2026-09-14) --
@@ -538,46 +564,7 @@ elif [ -r "$HARNESS/bin/lib/ticket-identity.sh" ]; then
 fi
 # <<< ticket identity guard
 
-# >>> hotfix detect
-# --- Is this the emergency ticket? (#368, hotfix lane 1/3) ---------------------
-# BEFORE the queue hop, because the answer has to RIDE the job: a pool machine
-# is two hops from the issue that carries the label, and asking GitHub again
-# from there is a second chance to get a different answer than the watcher did.
-# HOTFIX=1 in the environment wins (fly/builder-runner.sh exports it from the
-# job file, and a hand-run can force it); otherwise the label is read once,
-# here, from the issue. Any failure — no lib, no gh, a board project, a
-# non-numeric key — is "not a hotfix", which is exactly today's behaviour.
-HOTFIX="${HOTFIX:-}"
-# shellcheck source=bin/lib/hotfix-lib.sh
-[ -r "$HARNESS/bin/lib/hotfix-lib.sh" ] && . "$HARNESS/bin/lib/hotfix-lib.sh" 2>/dev/null
-if command -v hotfix_lane_on >/dev/null 2>&1 && [ "$(hotfix_lane_on "$HARNESS")" = 0 ]; then
-  HOTFIX=""
-elif [ -z "$HOTFIX" ] && command -v hotfix_key_is >/dev/null 2>&1; then
-  # THREE answers, not two. rc 2 is the lib saying the GitHub read itself
-  # failed, which is NOT "ordinary ticket" — a dead token would answer "not
-  # urgent" for every ticket in the fleet and nothing would say a word. So rc 2
-  # buys exactly one retry with the token unset (gh falls back to its stored
-  # auth), in a SUBSHELL because a shell function cannot be run through
-  # `env -u` and the parent's token must survive. Still 2 -> say so and build
-  # as plain: the check that is supposed to make an emergency faster must never
-  # be the thing that stops it.
-  hotfix_key_is "$HARNESS" "$PROJECT" "$KEY"; HF_RC=$?
-  if [ "$HF_RC" = 2 ]; then
-    echo "$(STAMP) [$PROJECT/$KEY] HOTFIX check could not be made (gh failed) - retrying once without GH_TOKEN" >> "$BUILD/pipeline.log"
-    ( unset GH_TOKEN; hotfix_key_is "$HARNESS" "$PROJECT" "$KEY" ); HF_RC=$?
-    [ "$HF_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] hotfix check unavailable, building as plain" >> "$BUILD/pipeline.log"
-  fi
-  [ "$HF_RC" = 0 ] && HOTFIX=1
-fi
-if [ "$HOTFIX" = 1 ]; then
-  echo "$(STAMP) [$PROJECT/$KEY] HOTFIX: this ticket carries the $(hotfix_label "$HARNESS") label — cap-exempt, and its PR will carry the label too" >> "$BUILD/pipeline.log"
-  # Backstop for the triage-tick announcement (bin/hotfix-seen.sh): the marker
-  # dedupes, so whichever of the two sees it first is the one that speaks.
-  # QUEUED, not built: on a Fly lane this fires at the enqueue hop, minutes
-  # before a machine picks the job up, so the text states the rung it has.
-  hotfix_announce "$HARNESS" "$PROJECT" "$KEY" seen "$KEY queued for build" >/dev/null 2>&1 || true
-fi
-# <<< hotfix detect
+. "$RB_GATES_D/hotfix-detect.sh"
 
 # >>> closed issue skip
 # --- Is this ticket already shipped? (BH-637 §3a) ------------------------------
@@ -1225,34 +1212,7 @@ if hub_no_build_refuse build "$KEY"; then
 fi
 # <<< hub-no-build
 
-# >>> disk gate
-# A BUILD IS NOT STARTED ON A FULL DISK (BH-1123). At or over
-# DISK_BUILD_REFUSE_PCT (default 92, a knob on the disk-guard lane) the build
-# answers BUILD_DEFERRED with the reading and the line, and is re-offered next
-# tick, instead of buying a plan session and dying on ENOSPC halfway through.
-# Here, below hub-no-build, so a hub build under HUB_BUILD_OK=1 is gated too,
-# and above the overlap check and every claim, so nothing is left half-claimed.
-# Pool machines (BUILDER_EXEC=1) are not gated: the ticket asked for board boxes
-# and the hub. No reading, or no lib, fails OPEN: a broken probe must not stop
-# the fleet. The alert id is the one bin/disk-guard.sh raises, so the two
-# writers are one open condition.
-if [ "${BUILDER_EXEC:-}" != 1 ]; then
-  _dg=""
-  for _dgf in "$(dirname "$0")/lib/disk-guard.sh" "$HARNESS/bin/lib/disk-guard.sh"; do
-    # shellcheck source=bin/lib/disk-guard.sh
-    [ -r "$_dgf" ] && . "$_dgf" && { _dg=1; break; }
-  done
-  if [ -z "$_dg" ]; then
-    echo "$(STAMP) [$PROJECT/$KEY] disk gate: bin/lib/disk-guard.sh not readable, not gated" >> "$BUILD/pipeline.log"
-  elif DG_REASON=$(disk_build_refuse_reason); then
-    echo "$(STAMP) [$PROJECT/$KEY] disk gate: $DG_REASON" >> "$BUILD/pipeline.log"
-    "$HARNESS/bin/lane-alert.sh" --id "disk-refuse-$(hostname)" --severity critical disk-guard \
-      "build $PROJECT/$KEY refused: $DG_REASON" >/dev/null 2>&1 || true
-    RESULT "BUILD_DEFERRED $DG_REASON"
-    exit 3
-  fi
-fi
-# <<< disk gate
+. "$RB_GATES_D/disk-gate.sh"
 
 # >>> overlap not-before
 # THE OTHER HALF OF THE FLEET OVERLAP DEFERRAL (W2-D, 2026-09-14). The hook

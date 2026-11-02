@@ -133,6 +133,13 @@ if FL=$(rb_all "$DIR" "$T/rb.all"); then
       grep -qx "$e() {" "$DIR/bin/lib/rb/$m.sh" || continue
       n=$(awk -v n="$e" '$0==n"() {"{f=1;next} $0=="} # end "n{exit} f' "$DIR/bin/lib/rb/$m.sh" | wc -l)
       BODIES=$((BODIES+n))
+      # BH-8930: a gates.d call line stands for its fragment's marked block,
+      # so the body grows by that block's length less the call line itself.
+      for fr in $(awk -v n="$e" '$0==n"() {"{f=1;next} $0=="} # end "n{exit} f' "$DIR/bin/lib/rb/$m.sh" \
+                  | sed -n 's|^\. "\$RB_GATES_D/\([a-z0-9-][a-z0-9-]*\.sh\)"$|\1|p'); do
+        n=$(awk '/^# >>> /{f=1} f{c++} f&&/^# <<< /{exit} END{print c+0}' "$DIR/bin/lib/rb/gates.d/$fr")
+        BODIES=$((BODIES+n-1))
+      done
     done
   done
   WANT=$((DL - 11 + BODIES))

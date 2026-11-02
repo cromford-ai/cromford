@@ -46,6 +46,16 @@ On a live box the only visible artifact is that line:
 `grep 'stage module' /root/harness/logs/ALERTS.log`. An empty result is the
 normal state — it means no build has met a half-synced `bin/`.
 
+**Gate fragments (`bin/lib/rb/gates.d/`, BH-8930):** a gate of `gates.sh` can
+live in its own file, `bin/lib/rb/gates.d/<slug>.sh`, holding one verbatim marked
+block. Its call site is one column-0 line `. "$RB_GATES_D/<slug>.sh"` in place of
+the block. `rb_gates_d_check`, the first statement of `rb_gate_prelude`, reads
+the call sites off `gates.sh` and defers the build (`BUILD_DEFERRED gates.d/<slug>.sh
+missing on <host>`, rc 3, one critical lane-alert `rb-gates-d-missing-<host>`)
+when a named fragment is missing. `tests/lib/rb-all.sh` expands each call line
+back into its block. Moved so far: `hotfix detect` and `disk gate`. Verify:
+`HARNESS_TEST_SANDBOX=1 bash tests/rb-gates-fragments.bh-8930-test.sh`.
+
 **Manual-only / not automatable:** the real half-synced box. Nothing here may
 interrupt a live `bin/harness-sync.sh` mid-flight to produce one, so the
 condition is only ever driven in the scratch tree above.

@@ -33,6 +33,9 @@ cp "$DIR/bin/jobs-client.sh" "$T/h/bin/"
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
 mkdir -p "$T/h/bin/lib/rt" && cp "$DIR"/bin/lib/rt/*.sh "$T/h/bin/lib/rt/"
 mkdir -p "$T/h/bin/lib/rb" && cp "$DIR"/bin/lib/rb/*.sh "$T/h/bin/lib/rb/"
+# BH-8930: gates.sh sources its gates.d/ fragments and defers the build when
+# one is missing, so the fixture box carries the directory too.
+cp -r "$DIR/bin/lib/rb/gates.d" "$T/h/bin/lib/rb/"
 : > "$T/h/env/global.env"
 # BH-4490: the trigger actor gate fails closed when its allowlist row cannot be
 # read, which is every outage case below. This suite pins the QUEUE's outage

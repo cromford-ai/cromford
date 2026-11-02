@@ -39,6 +39,9 @@ cp "$DIR/bin/fleet-conf.sh" "$T/h/bin/"
 # one is missing (BH-478's half-synced-box guard), so the fixture box needs the
 # stage modules or nothing past line 136 ever runs.
 mkdir -p "$T/h/bin/lib/rb" && cp "$DIR"/bin/lib/rb/*.sh "$T/h/bin/lib/rb/"
+# BH-8930: gates.sh sources its gates.d/ fragments and defers the build when
+# one is missing, so the fixture box carries the directory too.
+cp -r "$DIR/bin/lib/rb/gates.d" "$T/h/bin/lib/rb/"
 # BH-1649: the created-at read goes through the REST library the driver sources
 # off $HARNESS, so the fixture box carries it (and its etag/ledger siblings).
 cp "$DIR"/bin/lib/gh-rest*.sh "$T/h/bin/lib/"
