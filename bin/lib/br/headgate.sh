@@ -90,7 +90,7 @@ br_head_reset() {
       --arg d "the last counted rung ran on ${from:0:12} and the PR is on ${to:0:12} now: the ladder starts again on the new head (was $was); nothing closed" '
     (if (.ladder_reset.url // "") == $u then (.ladder_reset.base.fixround // 0) else 0 end) as $b
     | .ladder_reset = {url:$u, from:$f, to:$h, at:$t, base:{fixround:($b + (.fixrounds // 0))}}
-    | .mechanicals = 0 | .regens = 0 | .fixrounds = 0
+    | .mechanicals = 0 | .regens = 0 | .fixrounds = 0 | .fixround_refunds = 0
     | .head_resets = ((.head_resets // 0) + 1)
     | .attempts += [{at:$t, action:"head-reset", reason:$r, detail:$d, url:$u, head:$h}]
     | .updated = $t' 2>/dev/null) || st=""

@@ -213,12 +213,43 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # instead of reused, on the same path as a cleanup that failed. An empty
       # answer, or `absent` from a machine whose tarball predates the script,
       # reuses as before: the runner's own preflight is the backstop there.
+      # A CLEAN BUILD ROOT FOR THE NEXT JOB (BH-8896): every build dir that is
+      # not the next key's moves to /data/harness/builds.prev/ (one generation,
+      # emptied first). FXR-1465 was reused on a machine that held TK-3496's
+      # dir, and its record took that dir as the newest one. The next key's own
+      # dir stays, so a same-key retry still resumes. The prefix is quoted into
+      # the machine's shell, so a key or project that is not [A-Za-z0-9._-]+
+      # is never handed the machine. `BUILDSASIDE failed` destroys it; no
+      # BUILDSASIDE line (a stub) reuses as before.
+      if ! grep -qE '^[A-Za-z0-9._-]+$' <<<"$P" || ! grep -qE '^[A-Za-z0-9._-]+$' <<<"$NKEY"; then
+        say "$NKEY: the key is not [A-Za-z0-9._-]+ — not handing it to $MID"
+        [ "${ROWS_ONLY:-0}" = 1 ] && command -v queue_release >/dev/null 2>&1 \
+          && { queue_release "$P" "$NKEY" "the key cannot be quoted for machine $MID" >/dev/null 2>&1 || true; }
+        [ -n "${NHANDOFFTS:-}" ] && command -v pool_spawn_cap_unrecord >/dev/null 2>&1 \
+          && pool_spawn_cap_unrecord "$NKEY" "$NHANDOFFTS"
+        break
+      fi
+      # shellcheck disable=SC2016  # expanded by the machine's shell, not here
+      BUILDSASIDE='b=/data/harness/builds; pv=/data/harness/builds.prev; n=0; f=0; rm -rf "$pv" && mkdir -p "$pv" || f=1; if [ "$f" = 0 ]; then for d in "$b"/*; do [ -e "$d" ] || continue; case "${d##*/}" in "$keep"*) continue ;; esac; if mv "$d" "$pv"/; then n=$((n+1)); else f=1; break; fi; done; fi; if [ "$f" = 0 ]; then echo "BUILDSASIDE ok moved=$n"; else echo "BUILDSASIDE failed"; fi; '
       SLOTANS=""
-      if ! SLOTANS=$(mexec "$MID" "rm -f /run/harness/RESULT; rm -rf /run/harness/preplan; rm -f /run/harness/test-reroute-*; pkill -f '[p]laywright' 2>/dev/null; pkill -f '[c]hromium' 2>/dev/null; if [ -x /data/harness/bin/pool-slot-clean.sh ]; then /data/harness/bin/pool-slot-clean.sh 2>/dev/null; else echo 'SLOTCLEAN absent'; fi; true"); then
+      if ! SLOTANS=$(mexec "$MID" "keep='$P-$NKEY-'; ${BUILDSASIDE}rm -f /run/harness/RESULT; rm -rf /run/harness/preplan; rm -f /run/harness/test-reroute-*; pkill -f '[p]laywright' 2>/dev/null; pkill -f '[c]hromium' 2>/dev/null; if [ -x /data/harness/bin/pool-slot-clean.sh ]; then /data/harness/bin/pool-slot-clean.sh 2>/dev/null; else echo 'SLOTCLEAN absent'; fi; true"); then
         [ "${ROWS_ONLY:-0}" = 1 ] && command -v queue_release >/dev/null 2>&1 \
           && { queue_release "$P" "$NKEY" "machine $MID could not be cleaned for the handoff" >/dev/null 2>&1 || true; }
         break
       fi
+      ASIDEANS=$(grep -m1 '^BUILDSASIDE ' <<<"$SLOTANS" | tr -d '\r')
+      case "$ASIDEANS" in
+        "BUILDSASIDE failed"*)
+          say "$MID: the previous job's build dirs could not be moved aside — destroying instead of reusing"
+          [ "${ROWS_ONLY:-0}" = 1 ] && command -v queue_release >/dev/null 2>&1 \
+            && { queue_release "$P" "$NKEY" "machine $MID could not move the previous build dirs aside" >/dev/null 2>&1 || true; }
+          [ -n "${NHANDOFFTS:-}" ] && command -v pool_spawn_cap_unrecord >/dev/null 2>&1 \
+            && pool_spawn_cap_unrecord "$NKEY" "$NHANDOFFTS"
+          break ;;
+        "BUILDSASIDE ok moved=0") ;;
+        "BUILDSASIDE ok moved="*)
+          say "$MID: moved ${ASIDEANS#BUILDSASIDE ok moved=} build dir(s) of earlier jobs to builds.prev before the handoff to $NKEY" ;;
+      esac
       SLOTANS=$(grep -m1 '^SLOTCLEAN ' <<<"$SLOTANS" | tr -d '\r')
       case "$SLOTANS" in
         "SLOTCLEAN held"*)

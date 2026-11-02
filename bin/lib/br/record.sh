@@ -411,14 +411,18 @@ br_shape() { # br_shape <json> -> small|large
 #   settings row (br_review_fix_cap), per project first, so the project has to
 #   reach this read. Absent, the fleet row answers.
 br_fix_cap() {
-  local st="${1:-}" reason="${2:-}" p="${3:-}" base
+  local st="${1:-}" reason="${2:-}" p="${3:-}" base r
+  # A round the hub reap closed wrong-tree is refunded (BH-8896, frt_refund):
+  # every branch adds fixround_refunds. Absent is 0, so the caps are unchanged.
+  r=$(br_num "$st" fixround_refunds)
   case "$reason" in
     review-changes-requested)
       # A suite that lifts br_fix_cap alone has no br_review_fix_cap: the
       # documented knob (default 2) answers, as before BH-7123.
-      if command -v br_review_fix_cap >/dev/null 2>&1; then br_review_fix_cap "$p"; else echo "${BR_REVIEW_FIX_ROUNDS:-2}"; fi
-      return 0 ;;
-    queue-dequeued) echo 1; return 0 ;;   # BH-3728: one round per (pr, head, class) claim; the dequeue-watch lane counts rounds across heads
+      if command -v br_review_fix_cap >/dev/null 2>&1; then base=$(br_review_fix_cap "$p"); else base="${BR_REVIEW_FIX_ROUNDS:-2}"; fi
+      case "$base" in ''|*[!0-9]*) echo "$base"; return 0 ;; esac
+      echo $(( base + r )); return 0 ;;
+    queue-dequeued) echo $(( 1 + r )); return 0 ;;   # BH-3728: one round per (pr, head, class) claim; the dequeue-watch lane counts rounds across heads
   esac
   # The BR_-prefixed spellings are the documented knobs; the bare ones are what
   # this script assigns them to at startup, and are read first so a caller that
@@ -428,7 +432,7 @@ br_fix_cap() {
   if [ "$(br_shape "$st")" = small ]; then base="${MAX_FIXROUNDS_SMALL:-${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}}"
   else base="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi
   case "$base" in ''|*[!0-9]*) base=1 ;; esac
-  echo $(( base + $(br_num "$st" fixround_bonus) ))
+  echo $(( base + $(br_num "$st" fixround_bonus) + r ))
 }
 # br_review_fix_cap [<project>] — the fix rounds a review verdict buys per
 #   TICKET (BH-7123 wave B). The settings row review.fix_rounds_max.<project>,

@@ -53,6 +53,7 @@ tests/execute-empty.bh-5911-test.sh:generic-api-key:279
 tests/fanin.bh-186-test.sh:generic-api-key:323
 tests/fc-board.bh-983-test.sh:generic-api-key:36
 tests/fc-siblings-parallel.bh-5520-test.sh:generic-api-key:377
+tests/fix-round-wrong-tree.bh-8896-test.sh:generic-api-key:175
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:97
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:117
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:137

@@ -513,14 +513,30 @@ for MF in "$POOL"/*.json; do
     # An FXR-<id>-<ck8> machine ran bin/fix-round-claim.sh --run-pool, which
     # posted its own finish to /api/fix-rounds/finish as the claiming box.
     # Nothing is applied here: FIX_ROUND_FINISHED and FIX_ROUND_SKIPPED close
-    # the row done, FIX_ROUND_SETUP_FAILED closes it failed. A fix-round word on
+    # the row done, FIX_ROUND_SETUP_FAILED and FIX_ROUND_WRONG_TREE close it
+    # failed, and so does a record with a reviewed-sha (BH-8896). A fix-round word on
     # another key, or another word on an FXR key (BUILD_DEFERRED excepted: its
     # arm below owns it), is a RESULT nobody can apply: the row is FAILED.
     FXK=0; case "$KEY" in FXR-*-*) FXK=1 ;; esac
     FXW=0; case "$RLINE" in FIX_ROUND_*) FXW=1 ;; esac
     if [ "$FXW" = 1 ] || { [ "$FXK" = 1 ] && [[ "$RLINE" != BUILD_DEFERRED* ]]; }; then
       : > "$LOCAL/COMMENTED"
-      if [ "$FXW" = 1 ] && [ "$FXK" = 1 ]; then
+      # A FIX ROUND WRITES NO reviewed-sha (BH-8896): it has no build dir. A
+      # sha in its record is another job's build (FXR-1465 carried #3512's
+      # 708294bb), so the row is wrong-tree and FAILED, never done, and the
+      # foreign files move to $LOCAL/wrong-tree/ where no reader takes them
+      # as this round's. The machine's own FIX_ROUND_WRONG_TREE is failed too.
+      if [ "$FXW" = 1 ] && [ "$FXK" = 1 ] && [ -s "$LOCAL/reviewed-sha" ]; then
+        FXSHA=$(head -c 40 "$LOCAL/reviewed-sha" | tr -cd '0-9a-f'); FXSHA="${FXSHA:0:8}"
+        mkdir -p "$LOCAL/wrong-tree"
+        for A in "${POOL_RECORD_FILES[@]:-reviewed-sha}"; do
+          [ -e "$LOCAL/$A" ] && mv -f "$LOCAL/$A" "$LOCAL/wrong-tree/" 2>/dev/null
+        done
+        QROW failed "$KEY" "wrong-tree: the record carried another job's build (reviewed-sha ${FXSHA:-?}); ${RLINE:0:120}"
+        HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: wrong-tree — the fix round's record carried reviewed-sha ${FXSHA:-?} from another job on $MID; row FAILED, files in $LOCAL/wrong-tree"
+        say "pool fix round reaped for $KEY from $MID: wrong-tree (reviewed-sha ${FXSHA:-?})"
+        "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "wrong-tree ${FXSHA:-?}" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_fixround",detail:$r}')" >/dev/null 2>&1 || true
+      elif [ "$FXW" = 1 ] && [ "$FXK" = 1 ]; then
         case "$RLINE" in
           FIX_ROUND_FINISHED*|FIX_ROUND_SKIPPED*) QROW done "$KEY" "${RLINE:0:200}" ;;
           *) QROW failed "$KEY" "${RLINE:0:200}" ;;

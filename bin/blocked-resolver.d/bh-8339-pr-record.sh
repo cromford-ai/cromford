@@ -78,7 +78,7 @@ bpr_scope() {
   fi
   t=$(STAMP)
   st=$(printf '%s' "$st" | jq -c --arg t "$t" --arg a "$aurl" --arg u "$url" --arg r "$reason" '
-    .outcome = "" | .mechanicals = 0 | .regens = 0 | .fixrounds = 0 | .fixround_bonus = 0 | .retired = false
+    .outcome = "" | .mechanicals = 0 | .regens = 0 | .fixrounds = 0 | .fixround_bonus = 0 | .fixround_refunds = 0 | .retired = false
     | .pr_resets = ((.pr_resets // 0) + 1) | .pr_reset = {from:$a, to:$u, at:$t}
     | .attempts += [{at:$t, action:"pr-reset", reason:$r, url:$u,
         detail:("the ABANDONED was about " + $a + "; " + $u + " is open and gets its own ladder (rebuild counters kept)")}]

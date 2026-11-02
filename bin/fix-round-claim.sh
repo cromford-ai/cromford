@@ -58,6 +58,9 @@
 #                                 adopted, another id, unreadable): nothing ran
 #     FIX_ROUND_SETUP_FAILED <why> the lib is missing, the round did not start,
 #                                 or --blocked: one setup-blocked finish
+#     FIX_ROUND_WRONG_TREE <why> finish=<ok|409|failed>  the round's worktree
+#                                 was not the PR's (bin/lib/fix-round-tree.sh,
+#                                 BH-8896): one setup-blocked finish, no agent call
 #
 # Knobs: lane.fix-round-claim FIX_ROUND_CLAIM, FIX_ROUND_CLAIM_MAX;
 #   lane.blocked-resolver BR_FIX_LANE_TIMEOUT, BR_FIX_HOP_MARGIN (read, not owned).
@@ -198,7 +201,7 @@ frc_finish() {
 # frc_run_pool <id> <box> <project> <cap_key> [--blocked <why>] — the pool
 # machine's verb (see the header). Prints the ONE word line; always rc 0.
 frc_run_pool() {
-  local id="${1:-}" box="${2:-}" p="${3:-}" ck="${4:-}" blocked="" row rc=0 have rowf tmpd
+  local id="${1:-}" box="${2:-}" p="${3:-}" ck="${4:-}" blocked="" row rc=0 have rowf tmpd why
   [ "${5:-}" = --blocked ] && blocked="${6:-no reason given}"
   FRC_FIN=""; FRC_RESULT=""; FRC_LAST=""
   case "$id" in ''|*[!0-9]*) echo "FIX_ROUND_SETUP_FAILED --run-pool needs a numeric id, got '$id'"; return 0 ;; esac
@@ -230,6 +233,15 @@ frc_run_pool() {
   printf '%s' "$row" > "$rowf"
   FRC_AS_BOX="$box" FRC_POOL_RUN=1 frc_run "$id" "$rowf"
   if [ -n "$FRC_FIN" ]; then
+    # The round found a worktree that is not the PR's (BH-8896): its own word,
+    # so the hub reap closes the row failed, never done.
+    case "$FRC_RESULT" in
+      "setup-blocked "*)
+        why=$(printf '%s' "${FRC_RESULT#setup-blocked }" | base64 -d 2>/dev/null | tr '\n\r' '  ')
+        case "$why" in FIX_ROUND_WRONG_TREE*)
+          echo "FIX_ROUND_WRONG_TREE ${why:0:200} finish=$FRC_FIN"; return 0 ;;
+        esac ;;
+    esac
     echo "FIX_ROUND_FINISHED ${FRC_RESULT%% *} finish=$FRC_FIN"
   else
     echo "FIX_ROUND_SETUP_FAILED the round did not start: ${FRC_LAST:-no reason logged}"

@@ -554,7 +554,8 @@ pool_result_row_write() {
 # without one `ssh console` per file, even after this machine autostops. Pool
 # machines only, never an RB- rebase, and only where the lane knob
 # POOL_RECORD_READ is 1 for this project. The build dir is the RESULT's
-# BUILD_DIR: line, else the newest one (the hub's own fallback). A failed post
+# BUILD_DIR: line, else the newest one (the hub's own fallback); an FXR- fix
+# round posts no build dir (BH-8896). A failed post
 # is one log line: the hub then pulls over ssh, as before.
 pool_record_write() {
   [ "${POOL_MODE:-}" = 1 ] || return 0
@@ -565,9 +566,16 @@ pool_record_write() {
   . "$HARNESS/bin/lib/pool-record.sh" 2>/dev/null || return 0
   command -v pool_record_put >/dev/null 2>&1 || return 0
   [ "$(HARNESS="$HARNESS" pool_record_enabled "$PROJECT")" = 1 ] || return 0
-  bd=$(sed -n 's/^BUILD_DIR: //p' "$RESULT_FILE" 2>/dev/null | head -1)
-  if [ -n "$bd" ]; then bd="$HARNESS/builds/${bd##*/}"
-  else bd=$(ls -dt "$HARNESS"/builds/* 2>/dev/null | head -1); fi
+  # A FIX ROUND HAS NO BUILD DIR (BH-8896): an FXR record posts none. The
+  # newest dir on a reused machine is the previous job's, and FXR-1465's
+  # record carried TK-3496's reviewed-sha and pipeline.log that way.
+  bd=""
+  case "$key" in
+    FXR-*) ;;
+    *) bd=$(sed -n 's/^BUILD_DIR: //p' "$RESULT_FILE" 2>/dev/null | head -1)
+       if [ -n "$bd" ]; then bd="$HARNESS/builds/${bd##*/}"
+       else bd=$(ls -dt "$HARNESS"/builds/* 2>/dev/null | head -1); fi ;;
+  esac
   ( export HARNESS="$HARNESS"
     pool_record_put "$PROJECT" "$key" "${FLY_MACHINE_ID:-}" "$RESULT_FILE" "$bd" "$HARNESS/logs/failovers.log" ) \
     || log "build record for $key not posted — the hub reap falls back to ssh"
@@ -720,6 +728,8 @@ run_leadreview_job() { # run_leadreview_job <job key>
 #   FIX_ROUND_FINISHED <result> finish=<ok|409|failed>   the round ran
 #   FIX_ROUND_SKIPPED <why>                              nothing ran
 #   FIX_ROUND_SETUP_FAILED <why>                         warm-up or the lane failed
+#   FIX_ROUND_WRONG_TREE <why> finish=<ok|409|failed>    the worktree was not the
+#                                                        PR's; no agent call (BH-8896)
 # Never BUILD_DEFERRED: nothing re-offers this row; the box's stale re-offer does.
 fixround_setup_result() { # fixround_setup_result <why>
   printf 'FIX_ROUND_SETUP_FAILED %s\n' "$1" > "$RESULT_FILE"
@@ -753,7 +763,7 @@ run_fixround_job() { # run_fixround_job <job key>
     bash "$lane" --run-pool "$id" "$box" "$proj" "$ck" 2>/dev/null); rc=$?
   line="${line%%$'\n'*}"
   case "$line" in
-    FIX_ROUND_FINISHED*|FIX_ROUND_SKIPPED*|FIX_ROUND_SETUP_FAILED*) printf '%s\n' "$line" > "$RESULT_FILE" ;;
+    FIX_ROUND_FINISHED*|FIX_ROUND_SKIPPED*|FIX_ROUND_SETUP_FAILED*|FIX_ROUND_WRONG_TREE*) printf '%s\n' "$line" > "$RESULT_FILE" ;;
     *) fixround_setup_result "bin/fix-round-claim.sh --run-pool answered rc $rc with no word" ;;
   esac
   log "fix round job done: $(head -1 "$RESULT_FILE" 2>/dev/null)"

@@ -5063,6 +5063,7 @@ br_fix_adopt() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" ck="$7" row="$8"
   local id box res ro rjson="" n0 n1="" what arc=0
   command -v bpr_adopt_other >/dev/null 2>&1 && bpr_adopt_other "$p" "$rkey" "$reason" "$url" "$row" && return 0
+  FRT_WRONG=0; command -v frt_adopt_gate >/dev/null 2>&1 && ! frt_adopt_gate "$p" "$rkey" "$reason" "$ck" "$row" && return 0   # BH-8896: the pool row first
   id=$(printf '%s' "$row" | jq -r '.id // empty' 2>/dev/null)
   box=$(printf '%s' "$row" | jq -r '.claimed_by // .box // "the owning box"' 2>/dev/null)
   res=$(printf '%s' "$row" | jq -r '.result // empty | strings' 2>/dev/null)
@@ -5084,6 +5085,7 @@ br_fix_adopt() {
     *) say "$p/$rkey [$reason]: fix-round row $id: the adopt was not recorded — retried next tick, no rung taken"
        return 0 ;;
   esac
+  [ "${FRT_WRONG:-0}" = 1 ] && command -v frt_refund >/dev/null 2>&1 && { frt_refund "$p" "$ck" "$rkey" "$reason" "$url" "$id" "$res"; return 0; }   # BH-8896: a wrong-tree round takes no rung
   command -v br_wt_streak >/dev/null 2>&1 && br_wt_streak "$p" "$box" "$res"   # BH-8458: N worktree-add failures in a row, one alert
   case "$res" in
     "box-paused "*)
@@ -5477,7 +5479,7 @@ br_fix_round() {
   local lead_blocked=0 unaddr="" noop_named noop_own noop_hit noop_n noop_f
   local gienv=() gibad="" girc=0 br_author_bad=0
   local hot=0 slots=0 reserve=0 running=0 directive="" drc=0
-  local frcl_w="" frcl_dir=""
+  local frcl_w="" frcl_dir="" frtwhy=""
   local mref=main pbase="" nctail=""
   local cok="" cfail="" clines cbytes cbase cdiff cplan cplan_show cpaths=()
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
@@ -5692,6 +5694,11 @@ br_fix_round() {
     mc_git_auth_clear 2>/dev/null; printf '%s\n' "$wterr" >>"$LOG"   # the git line rides the reason to the hub (BH-8458): this log is reaped on the pool
     br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "worktree add failed for origin/$br in $REPOS/$p: git: $(br_git_why "$wterr" 2>/dev/null)${brfetch_err:+; fetch of $br: $(br_git_why "$brfetch_err" 2>/dev/null)}"
     return 0
+  fi
+  # NOT THE PR'S TREE, NO AGENT CALL (BH-8896): setup-blocked, no rung counted.
+  if command -v frt_check >/dev/null 2>&1 && ! frtwhy=$(frt_check "$wt" "brfix/$ck" "$lease" "$reuse" 2>>"$LOG"); then
+    br_wt_drop "the tree is not the PR's"; mc_git_auth_clear 2>/dev/null
+    br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "$frtwhy"; return 0
   fi
   # THE ROUND COMMITS AS THE BOX'S CONFIGURED AUTHOR (BH-1134): the harness's own
   # merge below and the agent session both run under the GIT_AUTHOR_*/
