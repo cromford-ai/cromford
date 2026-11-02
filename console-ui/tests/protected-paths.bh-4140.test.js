@@ -366,7 +366,11 @@ test('H2: SET lane confirms through the modal, then PUTs the settings row and re
   const put = calls.filter((c) => c.method === 'PUT');
   assert.equal(put.length, 1);
   assert.equal(put[0].url, '/api/coord/settings');
-  assert.deepEqual(JSON.parse(put[0].body), { key: 'lead_authority_mode', value: 'lane', note: 'BH-4147 console' });
+  const putBody = JSON.parse(put[0].body);
+  assert.deepEqual(Object.keys(putBody).sort(), ['key', 'note', 'value']);
+  assert.equal(putBody.key, 'lead_authority_mode');
+  assert.equal(putBody.value, 'lane');
+  assert.equal(putBody.note, 'BH-4147 console');
   assert.ok(byText(root, 'b', 'lane').length, 'the re-read shows lane');
   assert.equal(byText(root, 'button', 'SET lane').length, 0, 'lane offers no button');
 });
