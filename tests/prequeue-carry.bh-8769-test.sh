@@ -8,7 +8,9 @@
 # hook in bin/lib/mc-prequeue.d/ (dispatch.sh, impact-reuse.sh, status.sh), the
 # real lane_knob over a settings cache, and the real bin/test-impact.sh select
 # on a pinned map. GitHub (gh / gh_rest / vs_publish) is a stub: no network.
-# The clock is pinned (a `date +%s` seam and touch -d on the store files).
+# The clock is pinned once, from the real clock at start (a `date +%s` seam and
+# touch -d on the store files): pq_prune's `find -mtime +7` reads the real
+# clock, so a fixed date would let it delete the seeded entries (BH-8938).
 #
 #   C1  an entry on main B with a `.reuse` sidecar main=A: the status is
 #       `green on main <A12>, carried to main <B12>`
@@ -34,7 +36,10 @@ command -v git >/dev/null || { echo "git missing — skipping"; exit 0; }
 command -v flock >/dev/null || { echo "flock missing — skipping"; exit 0; }
 [ -f "$DIR/bin/lib/mc-prequeue.d/impact-reuse.sh" ] && [ -f "$DIR/bin/lib/mc-prequeue.d/status.sh" ] || exit 1   # impact: bin/lib/mc-prequeue.d/impact-reuse.sh bin/lib/mc-prequeue.d/status.sh
 
-NOW=1792900800   # 2026-10-25T00:00:00Z, the settings cache's fetched_at and the gate's clock
+# The settings cache's fetched_at and the gate's clock. It is read once from the
+# real clock: pq_prune's `find -mtime +7` reads the real clock, and a fixed date
+# older than 7 days lets it delete the seeded store entries (BH-8938).
+NOW=$(date +%s)
 CKEY=lane.merge-conductor.mc_prequeue_carry
 SLUG=example-org/demo-os
 MA=$(printf 'a%.0s' $(seq 40))
