@@ -1,0 +1,13 @@
+{
+  "env": "SELECTION_GATE_BASELINE_KEEP_DAYS",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 30,
+  "unit": "days",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8901. The base-run cache state/selection-gate/baseline/<base sha>/ (one red or green per suite) older than this many days is deleted on the next base run. A lost entry costs one re-run.",
+  "read_in": "bin/lib/selection-gate.sh",
+  "project_scoped": false
+}

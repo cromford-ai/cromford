@@ -25,8 +25,11 @@
 # else the fallback named on each read): SELECTION_GATE, SELECTION_GATE_TIMEOUT_S,
 # SELECTION_GATE_P, SELECTION_GATE_FIX_TIMEOUT_S (the bound on that fix turn), SELECTION_GATE_FIX_ROUNDS (0 = a red ends the build; 1 = one
 # fix turn through CC, then the gate runs again), SELECTION_GATE_CNR_ALERT and
-# SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4), SELECTION_GATE_WHY_MAX
-# and SELECTION_GATE_RUN_TAIL_LINES (_sg_run).
+# SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4), SELECTION_GATE_WHY_MAX,
+# SELECTION_GATE_RUN_TAIL_LINES and, BH-8901, SELECTION_GATE_BASELINE_RUN,
+# SELECTION_GATE_BASELINE_TIMEOUT_S and SELECTION_GATE_BASELINE_KEEP_DAYS (_sg_run).
+# A suite red on the merge base too is gate.txt's baseline-red:, not red: the
+# log line gets baseline-red=<n> and SG_MARKER one sentence after the marker.
 #
 # The caller provides STAMP, RESULT, PROJECT, KEY, BUILD, BASE and, for the
 # notice, TICKET, BUILDER_DIRECT_ON and HARNESS. The root is ${HARNESS:-${H:-}}
@@ -143,7 +146,12 @@ sg_off_gate() {
 _sg_run() {
   local rc=0 n t
   rm -rf "$BUILD/selection-gate"
+  # lane.fly-pool.selection_gate_baseline_run, lane.fly-pool.selection_gate_baseline_timeout_s,
+  # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901)
   SELECTION_GATE_WHY_MAX=$(_sg_knob SELECTION_GATE_WHY_MAX 160) \
+    SELECTION_GATE_BASELINE_RUN=$(_sg_knob SELECTION_GATE_BASELINE_RUN 1) \
+    SELECTION_GATE_BASELINE_TIMEOUT_S=$(_sg_knob SELECTION_GATE_BASELINE_TIMEOUT_S 900) \
+    SELECTION_GATE_BASELINE_KEEP_DAYS=$(_sg_knob SELECTION_GATE_BASELINE_KEEP_DAYS 2) \
     bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
     > "$BUILD/selection-gate.txt" 2>&1 || rc=$?   # lane.fly-pool.selection_gate_why_max
   if [ -s "$BUILD/selection-gate/gate.txt" ]; then cp -f "$BUILD/selection-gate/gate.txt" "$BUILD/gate.txt"
@@ -200,7 +208,7 @@ sg_notice() {
 
 # sg_block — see the header. rc 0 go on, 6 red (RESULT written).
 sg_block() {
-  local to par fr rc red n why hn line note=""
+  local to par fr rc red n why hn br bn line note=""
   SG_MARKER=""
   if [ ! -x bin/selection-gate.sh ]; then
     _sg_log "SELECTION-GATE skipped (repo carries no bin/selection-gate.sh)"; return 0
@@ -228,7 +236,9 @@ sg_block() {
   red=$(_sg_field "$BUILD/gate.txt" red); n=$(_sg_field "$BUILD/gate.txt" suites)
   why=$(_sg_field "$BUILD/gate.txt" why); case "$why" in ''|-) why="" ;; *) why=" why=$why" ;; esac
   hn=$(_sg_field "$BUILD/gate.txt" host-noted); case "$hn" in ''|-) hn="" ;; *) hn=" host-noted=$(tr ',' '\n' <<<"$hn" | grep -c .)" ;; esac
-  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn"
+  br=$(_sg_field "$BUILD/gate.txt" baseline-red); bn=0
+  case "$br" in ''|-) br="" ;; *) bn=$(tr ',' '\n' <<<"$br" | grep -c .) ;; esac
+  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn${br:+ baseline-red=$bn}"
   if [ "$rc" = 1 ] && [ -n "$red" ] && [ "$red" != - ]; then
     if sg_notice; then
       command -v bd_note >/dev/null 2>&1 || . "${HARNESS:-${H:-}}/bin/lib/builder-direct.sh" 2>/dev/null
@@ -240,5 +250,10 @@ sg_block() {
   fi
   sg_cnr_alert "$BUILD/gate.txt"
   SG_MARKER=$(sg_marker "$BUILD/gate.txt") || SG_MARKER=""
+  # BH-8901: the suites that failed on the base too, on their own line after
+  # the marker (LR_GR_RE reads the marker line alone).
+  if [ -n "$SG_MARKER" ] && [ -n "$br" ]; then
+    SG_MARKER+=$'\n'"Selection gate: $bn suite(s) also failed on the base $(_sg_field "$BUILD/gate.txt" base | cut -c1-12) and did not count (baseline-red): $(tr ',' '\n' <<<"$br" | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g')."
+  fi
   return 0
 }

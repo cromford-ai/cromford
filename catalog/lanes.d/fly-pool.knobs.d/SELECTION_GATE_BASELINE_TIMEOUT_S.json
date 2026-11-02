@@ -1,0 +1,13 @@
+{
+  "env": "SELECTION_GATE_BASELINE_TIMEOUT_S",
+  "type": "int",
+  "default": 900,
+  "min": 60,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8901. The bound on the selection gate's base run (the reds re-run on the merge base). Past it the base run is could-not-run and every red stays red.",
+  "read_in": "bin/lib/selection-gate.sh",
+  "project_scoped": false
+}

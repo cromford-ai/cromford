@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_BASELINE_RUN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-8901. 1: bin/selection-gate.sh runs each suite still red after the quarantine once on the merge base, on the same host, and a suite red there too goes to gate.txt's baseline-red: and does not fail the gate. bin/lib/selection-gate.sh and the resolver fragment read it and pass it in the env; the script alone falls back to 0.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

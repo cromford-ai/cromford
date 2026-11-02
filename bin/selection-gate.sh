@@ -39,19 +39,33 @@
 #      section matches the row's ERE; gate.txt's host-noted: names it and its
 #      class. A 125 with a `remote-gate: compose-<name> failed` line is
 #      could-not-run why=`compose-<name>: <that line>`.
+#   6  BH-8901, with SELECTION_GATE_BASELINE_RUN=1: each suite still red, and not
+#      a file this diff changes, runs once on <mb> (the same runner, a detached
+#      worktree of <mb>, under `timeout SELECTION_GATE_BASELINE_TIMEOUT_S`;
+#      output in <out>/baseline-run.txt). A `FAIL <s> (rc N)` there, N not 127,
+#      moves <s> from red: to baseline-red:. Any other answer (PASS, rc 127,
+#      BLIND, no line) keeps it red, and a base run that could not run (rc 124
+#      or more, the timeout, a RUNNER-FAILURE line, no worktree) keeps every
+#      red and is named in baseline:. None left: rc 0. A clean red or green is
+#      cached in $H/state/selection-gate/baseline/<mb>/<suite, / as _>; dirs
+#      older than SELECTION_GATE_BASELINE_KEEP_DAYS days are deleted first.
 #
 # OUTPUT. <out>/gate.txt, written once (tmp + mv):
 #   head: <40-hex>  base: <mb|->  suites: <n>  rc: <0|1|could-not-run|no-selection>
 #   red: <comma list|->  noted: <comma list|->  mode: <ci-plan mode|->
 #   why: <token|token: reason|->  quarantine: <read|unreadable|env>
 #   host-noted: <suite>=<class>,…|->
+#   and, only with SELECTION_GATE_BASELINE_RUN=1 (else the file is these 10 lines):
+#   baseline-red: <comma list|->
+#   baseline: <-|skipped: head-is-base|ran <n> on <mb12> (<c> cached)|could-not-run: <why>>
 # plus <out>/selection.txt (the list) and <out>/run.txt (the runner's output).
 #
 # EXIT. 0 green, 1 red, 3 could-not-run, 4 no-selection, 2 bad arguments.
 #
 # KNOBS. --timeout and -P are the fly-pool lane knobs SELECTION_GATE_TIMEOUT_S
 # and SELECTION_GATE_P; bin/lib/selection-gate.sh reads them and passes them in,
-# and SELECTION_GATE_WHY_MAX (the reason's length cap) in the env.
+# and SELECTION_GATE_WHY_MAX (the reason's length cap) and the three
+# SELECTION_GATE_BASELINE* rows (step 6) in the env.
 # The fallbacks below name their rows. Test seams: SELECTION_GATE_PLAN (the
 # planner, default <tree>/bin/ci-plan.sh) and SELECTION_GATE_RUNNER (default
 # <tree>/bin/remote-gate.sh).
@@ -70,7 +84,7 @@ while [ $# -gt 0 ]; do
     --out)     [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
     --timeout) [ $# -ge 2 ] || usage; TO="$2"; shift ;;
     -P)        [ $# -ge 2 ] || usage; PAR="$2"; shift ;;
-    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,71p' "$0"; exit 0 ;;
     *) echo "selection-gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -84,16 +98,26 @@ PLAN="${SELECTION_GATE_PLAN:-$TREE/bin/ci-plan.sh}"
 RUNNER="${SELECTION_GATE_RUNNER:-$TREE/bin/remote-gate.sh}"
 H="${HARNESS:-${H:-/root/harness}}"
 
+# lane.fly-pool.selection_gate_baseline_run (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_BASELINE_RUN.json).
+# Unset is 0: the script alone stays the BH-8062 gate; bin/lib/selection-gate.sh passes the row.
+BL="${SELECTION_GATE_BASELINE_RUN:-0}"; [ "$BL" = 1 ] || BL=0
+# lane.fly-pool.selection_gate_baseline_timeout_s (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_BASELINE_TIMEOUT_S.json)
+BTO="${SELECTION_GATE_BASELINE_TIMEOUT_S:-900}"; [[ "$BTO" =~ ^[1-9][0-9]*$ ]] || BTO=900
+# lane.fly-pool.selection_gate_baseline_keep_days (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_BASELINE_KEEP_DAYS.json)
+BKEEP="${SELECTION_GATE_BASELINE_KEEP_DAYS:-2}"; [[ "$BKEEP" =~ ^[1-9][0-9]*$ ]] || BKEEP=2
+
 HEAD_SHA=$(git -C "$TREE" rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
-MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"
+MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"; BRED="-"; BSTAT="-"
 
 # write_gate — gate.txt in one rename, then the exit code for RC.
 write_gate() {
   local t="$OUT/gate.txt.tmp.$$"
   printf 'head: %s\nbase: %s\nsuites: %s\nrc: %s\nred: %s\nnoted: %s\nmode: %s\nwhy: %s\nquarantine: %s\nhost-noted: %s\n' \
     "${HEAD_SHA:--}" "$MB" "$N" "$RC" "$RED" "$NOTED" "$MODE" "$WHY" "$QSRC" "$HNOTED" > "$t" \
+    && { [ "$BL" = 0 ] || printf 'baseline-red: %s\nbaseline: %s\n' "$BRED" "$BSTAT" >> "$t"; } \
     && mv -f "$t" "$OUT/gate.txt" || { rm -f "$t"; echo "selection-gate: cannot write $OUT/gate.txt" >&2; exit 3; }
-  echo "selection-gate: rc=$RC suites=$N red=$RED noted=$NOTED mode=$MODE why=$WHY"
+  local b=""; [ "$BL" = 0 ] || b=" baseline-red=$BRED"
+  echo "selection-gate: rc=$RC suites=$N red=$RED noted=$NOTED mode=$MODE why=$WHY$b"
   case "$RC" in 0) exit 0 ;; 1) exit 1 ;; no-selection) exit 4 ;; *) exit 3 ;; esac
 }
 cnr() { RC=could-not-run; WHY="$1"; write_gate; }
@@ -194,6 +218,86 @@ host_note() {
   return 1
 }
 
+# ── the base run (BH-8901) ───────────────────────────────────────────────────
+# A suite that is red on the merge base too is not this diff's red. With
+# SELECTION_GATE_BASELINE_RUN=1, baseline_pass runs the reds left after step 5 once
+# on MB, with the same runner, in a detached worktree of MB, and moves each
+# suite that is red there from keep to BRED. Fail closed: anything but a clean
+# red on the base keeps the suite red.
+BL_TMP=""
+# bl_cleanup — the base worktree and its temp dir go, on every exit.
+bl_cleanup() {
+  [ -n "$BL_TMP" ] || return 0
+  git -C "$TREE" worktree remove --force "$BL_TMP/base" >/dev/null 2>&1
+  git -C "$TREE" worktree prune >/dev/null 2>&1
+  rm -rf "$BL_TMP"; BL_TMP=""
+}
+# bl_class <run file> <suite> — red, green or unknown. red: a `FAIL <suite>
+# (rc N)` line with N not 127 (127 is a suite the base does not have) and no
+# other line for it. green: a `PASS <suite>` line and no other. Anything else
+# (BLIND, no line, a near-miss name, both) is unknown.
+bl_class() {
+  awk -v s="$2" '
+    $0 == "PASS " s { p = 1; next }
+    index($0, "FAIL " s " (rc ") == 1 {
+      r = substr($0, length("FAIL " s " (rc ") + 1)
+      if (r ~ /^[0-9]+\)$/ && r != "127)") f = 1; else o = 1
+      next }
+    index($0, " " s) && $0 ~ /^(BLIND|RUNNER-FAILURE) / { o = 1 }
+    END { if (f && !p && !o) print "red"; else if (p && !f && !o) print "green"; else print "unknown" }' "$1" 2>/dev/null
+}
+# baseline_pass — reads and rewrites keep; sets BRED and BSTAT. The result per
+# (base sha, suite) is cached in $H/state/selection-gate/baseline/<MB>/<suite,
+# / as _> (red or green only), and a dir older than SELECTION_GATE_BASELINE_KEEP_DAYS
+# days is deleted first. A base run that could not run caches nothing.
+baseline_pass() {
+  local cdir="$H/state/selection-gate/baseline" s v k r tok changed brc=0 t0 bel hit=0
+  local -a cand=() send=() bred=() still=()
+  local -A got=()
+  if [ "$HEAD_SHA" = "$MB" ]; then BSTAT="skipped: head-is-base"; return 0; fi
+  # A suite this diff edits is never sent: its red can be this diff's.
+  changed=$(git -C "$TREE" diff --name-only "$MB" HEAD 2>/dev/null) || { BSTAT="could-not-run: no-diff"; return 0; }
+  for s in "${keep[@]}"; do grep -qxF -- "$s" <<<"$changed" || cand+=("$s"); done
+  find "$cdir" -mindepth 1 -maxdepth 1 -type d -mtime "+$BKEEP" -exec rm -rf {} + 2>/dev/null
+  for s in "${cand[@]}"; do
+    v=$(cat "$cdir/$MB/${s//\//_}" 2>/dev/null)
+    case "$v" in red|green) got[$s]=$v; hit=$((hit + 1)) ;; *) send+=("$s") ;; esac
+  done
+  if [ "${#send[@]}" -gt 0 ]; then
+    BL_TMP=$(mktemp -d "${TMPDIR:-/tmp}/selection-gate-baseline.XXXXXX") || { BL_TMP=""; BSTAT="could-not-run: no-tmp"; return 0; }
+    trap bl_cleanup EXIT
+    if ! git -C "$TREE" worktree add -q --detach "$BL_TMP/base" "$MB" >/dev/null 2>&1; then
+      bl_cleanup; BSTAT="could-not-run: no-worktree"; return 0
+    fi
+    t0=$SECONDS
+    REMOTE_GATE_P="$PAR" timeout -k 30 "$BTO" "$RUNNER" "$BL_TMP/base" "${send[@]}" > "$OUT/baseline-run.txt" 2>&1 || brc=$?
+    bel=$((SECONDS - t0))
+    bl_cleanup
+    tok=""
+    if [ "$bel" -ge "$BTO" ]; then tok=timeout
+    elif [ "$brc" -gt 123 ]; then
+      r=$(_sg_reason "$OUT/baseline-run.txt" "$WHY_MAX"); tok="runner-rc-$brc${r:+: $r}"
+    elif grep -q '^RUNNER-FAILURE ' "$OUT/baseline-run.txt" 2>/dev/null; then tok=runner-failure
+    fi
+    if [ -n "$tok" ]; then BSTAT="could-not-run: $tok"; return 0; fi
+    mkdir -p "$cdir/$MB" 2>/dev/null
+    for s in "${send[@]}"; do
+      v=$(bl_class "$OUT/baseline-run.txt" "$s"); got[$s]=$v
+      case "$v" in red|green)
+        k="$cdir/$MB/${s//\//_}"
+        printf '%s\n' "$v" > "$k.tmp.$$" 2>/dev/null && mv -f "$k.tmp.$$" "$k" 2>/dev/null || rm -f "$k.tmp.$$" ;;
+      esac
+    done
+  fi
+  [ -d "$cdir/$MB" ] && touch "$cdir/$MB" 2>/dev/null
+  for s in "${keep[@]}"; do
+    if [ "${got[$s]:-}" = red ]; then bred+=("$s"); else still+=("$s"); fi
+  done
+  [ "${#bred[@]}" -gt 0 ] && BRED=$(IFS=,; echo "${bred[*]}")
+  BSTAT="ran ${#cand[@]} on ${MB:0:12} ($hit cached)"
+  keep=("${still[@]}")
+}
+
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { HEAD_SHA=""; cnr no-head; }
 MB=$(git -C "$TREE" merge-base HEAD "$BASE" 2>/dev/null) || MB=""
 [[ "$MB" =~ ^[0-9a-f]{40}$ ]] || { MB="-"; cnr no-merge-base; }
@@ -266,6 +370,8 @@ if [ "$RC" = 1 ]; then
   done
   [ "${#note[@]}" -gt 0 ] && NOTED=$(IFS=,; echo "${note[*]}")
   [ "${#hn[@]}" -gt 0 ] && HNOTED=$(IFS=,; echo "${hn[*]}")
+  # ── 6. the base run (BH-8901) ────────────────────────────────────────────
+  [ "$BL" = 1 ] && [ "${#keep[@]}" -gt 0 ] && baseline_pass
   if [ "${#keep[@]}" -gt 0 ]; then RED=$(IFS=,; echo "${keep[*]}"); else RC=0; fi
 fi
 write_gate

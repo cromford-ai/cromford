@@ -43,7 +43,12 @@ br_sg_verify() {
   to=$(PROJECT="$proj" _sg_knob SELECTION_GATE_TIMEOUT_S 2400)   # lane.fly-pool.selection_gate_timeout_s
   par=$(PROJECT="$proj" _sg_knob SELECTION_GATE_P 12)            # lane.fly-pool.selection_gate_p
   rm -rf "$od"; mkdir -p "$od" 2>/dev/null
-  "$wt/bin/selection-gate.sh" --tree "$wt" --base "$mref" --out "$od" --timeout "$to" -P "$par" > "$od/run.out" 2>&1 || rc=$?
+  # lane.fly-pool.selection_gate_baseline_run, lane.fly-pool.selection_gate_baseline_timeout_s,
+  # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901: a baseline red does not refuse the push)
+  SELECTION_GATE_BASELINE_RUN=$(PROJECT="$proj" _sg_knob SELECTION_GATE_BASELINE_RUN 1) \
+    SELECTION_GATE_BASELINE_TIMEOUT_S=$(PROJECT="$proj" _sg_knob SELECTION_GATE_BASELINE_TIMEOUT_S 900) \
+    SELECTION_GATE_BASELINE_KEEP_DAYS=$(PROJECT="$proj" _sg_knob SELECTION_GATE_BASELINE_KEEP_DAYS 2) \
+    "$wt/bin/selection-gate.sh" --tree "$wt" --base "$mref" --out "$od" --timeout "$to" -P "$par" > "$od/run.out" 2>&1 || rc=$?
   why=$(sed -n 's/^why: //p' "$od/gate.txt" 2>/dev/null | head -n 1)
   case "$rc" in
     0) echo "SELECTION_GATE_EXIT: 0" ;;
