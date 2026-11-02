@@ -29,8 +29,8 @@
 #   ([files] is psc_check's base...head name list). One
 #   `NOTE <id>: the body is missing <item> (required by <source>)` per item,
 #   10 at most and then one `... missing <n> more items ...` line: the shape
-#   self_check_hold (bin/lead-review-enqueue.sh) and lgsc_notes
-#   (bin/lib/lead-gates-selfcheck.sh) forward into the lead review notes.
+#   lgsc_notes (bin/lib/lead-gates-selfcheck.sh) forwards into the lead review
+#   notes.
 #   rc 0 on every path.
 # pbr_plan_rule
 #   The planner sentence (UI_PLAN_NOTE in bin/lib/rb/plan.sh, PP_PREAMBLE in

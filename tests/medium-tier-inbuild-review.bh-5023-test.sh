@@ -315,11 +315,11 @@ reset; : > "$T/cmp500"; inbuild "$SHA"; neg "C4 compare unreadable"
 reset; : > "$T/pr500"; inbuild "$SHA"; neg "C4 head unreadable"
 reset; inbuild "not-a-sha"; neg "C4 a sha that is not 40 hex"
 # already running under the lead lane: adopted, never reviewed twice
-reset; seedrow lr-9 "$SHA" running lead-review-enqueue:box-hub "auto: builder APPROVE on ${SHA:0:12}"; inbuild "$SHA"
+reset; seedrow lr-9 "$SHA" running lead-review-worklist "auto: builder APPROVE on ${SHA:0:12}"; inbuild "$SHA"
 [ "$(claims)" = 0 ] && [ "$(agents)" = 0 ] && ok || bad "C4 already-running reviewed again: claims $(claims) agents $(agents)"
 [ "$(txt result)" = "already running" ] && ok || bad "C4 already-running result: $(txt result)"
 # a requested row the hub filed with other notes (409 + row): adopted and reviewed once
-reset; seedrow lr-9 "$SHA" requested lead-review-enqueue:box-hub "auto: builder APPROVE on ${SHA:0:12}"; inbuild "$SHA"
+reset; seedrow lr-9 "$SHA" requested lead-review-worklist "auto: builder APPROVE on ${SHA:0:12}"; inbuild "$SHA"
 [ "$(claims)" = 1 ] && [ "$(agents)" = 1 ] && [ "$(txt request)" = lr-9 ] && ok || bad "C4 adopt-409: claims $(claims) agents $(agents) request $(txt request)"
 # an answer with no VERDICT line: no done result, nothing to promote
 reset; printf 'Looks fine to me.\n' > "$T/answer"; inbuild "$SHA"
@@ -336,9 +336,9 @@ land; [ "$(grep -c 'lead-inbuild-noapprove-lr-5' "$T/log/alerts" 2>/dev/null)" =
 # ...a reapproved@<head> rebind is an approval on that head
 reset; seedrow lr-5 "$SHA" done inbuild:box-demo:BH-77 "inbuild: x" MERGE; approve 41 "$OTHER" "reapproved@$SHA"; land
 [ "$(lvn)" = 1 ] && ok || bad "L-rebound not promoted: $(cat "$T/log/lv" 2>/dev/null)"
-# ...and a row the enqueue filed is promoted as before, whatever job_verdict says
-reset; seedrow lr-5 "$SHA" done lead-review-enqueue:box-hub "auto: x" MERGE; approve 41 "$OTHER"; land
-[ "$(lvn)" = 1 ] && ! grep -q 'inbuild:' "$T/log/lv" && ok || bad "L-enqueue row: $(cat "$T/log/lv" 2>/dev/null)"
+# ...and a row the worklist filed is promoted as before, whatever job_verdict says
+reset; seedrow lr-5 "$SHA" done lead-review-worklist "auto: x" MERGE; approve 41 "$OTHER"; land
+[ "$(lvn)" = 1 ] && ! grep -q 'inbuild:' "$T/log/lv" && ok || bad "L-worklist row: $(cat "$T/log/lv" 2>/dev/null)"
 
 # ── the hook: the marked block of the pipeline (tests/lib/rb-all.sh's flatten) ──
 . "$DIR/tests/lib/rb-all.sh" || exit 1

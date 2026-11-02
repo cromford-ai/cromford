@@ -204,7 +204,7 @@ reset_fx
 POS="rv9 wt3 r42 scratch.Q1 bh12-x pb7-y lanes-build.ab"
 for n in $POS; do mkold "$n"; done
 printf 'x\n' > "$FX/review-prs-list.cd"; touch -d "@$OLD" "$FX/review-prs-list.cd"
-NEG="mysql.sock.d systemd-private-abc123-chrony.service-Xy tmux-0 .X11-unix ssh-AbCdEf hsperfdata_root node-compile-cache v8-compile-cache-0 npm-1234 claude-0 lead-review-enqueue.ab12cd r bh-x"
+NEG="mysql.sock.d systemd-private-abc123-chrony.service-Xy tmux-0 .X11-unix ssh-AbCdEf hsperfdata_root node-compile-cache v8-compile-cache-0 npm-1234 claude-0 lead-review-land.ab12cd r bh-x"
 for n in $NEG; do mkold "$n"; done
 mkdir -p "$T/fx/target"; echo t > "$T/fx/target/f"; age "$T/fx/target" "$OLD"
 ln -s "$T/fx/target" "$FX/rv"; touch -h -d "@$OLD" "$FX/rv"

@@ -9,7 +9,7 @@
 # #changes-requested-reviews-by=0, so a fixed PR with a green lead-verdict
 # waited on "queue conditions" for ever (#4952, #4070, #4679). The land lane's
 # own step 2d dismissed it only when THAT lane recorded the MERGE; a MERGE
-# recorded any other way (a lead replay from bin/lead-review-enqueue.sh, a
+# recorded any other way (a lead replay from bin/lib/lead-gates.d/50-replay-delta.sh, a
 # human post, a stamp-only retry after the head moved) left it standing.
 #
 # WHAT IS "THE LANE'S OWN" REVIEW. All three, never fewer:

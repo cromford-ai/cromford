@@ -13,7 +13,7 @@
 #       report_ref lead-replay:<prev12>:<how>, and replayed=1. A head whose own
 #       files changed (a `delta` class) is reviewed: 1 agent call. An earlier
 #       lead BLOCK is never replayed (P4e): 1 agent call. A person's request
-#       row is never replayed (P4f); the enqueue's own row is (P4g).
+#       row is never replayed (P4f); the worklist's own row is (P4g).
 #   P5  the per-key lock held by another worker: no claim, no call. Two ticks
 #       at once on one key: exactly 1 agent call.
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/lead-review-paid-once.bh-4956-test.sh
@@ -102,9 +102,8 @@ lwf_tick
 [ "$(lwf_agents)" = 1 ] && ok || bad "P4d replayed from a truncated list: agent calls=$(lwf_agents)"
 
 # P4e (lead BLOCK at c4cd25de8): an earlier lead BLOCK is never replayed by the
-# lane. A BLOCK leaves its own head only through the enqueue's BH-3930 rebound
-# replay (bin/lead-review-enqueue.sh, BH-5294); a main-merge after a BLOCK, or a
-# person's request, is reviewed by the model.
+# lane. A main-merge after a BLOCK, or a person's request, is reviewed by the
+# model.
 lwf_reset
 lwf_needs_at example-org/demo-os "$H1" 201; echo "$H1" > "$FX/head.201"
 jq -nc --arg g "$SHA" '{rows:[{id:7, source:"lead", repo:"example-org/demo-os", pr:201, head_sha:$g, verdict:"BLOCK", note:"report:state/lead-reviews/x.md"}], truncated:false}' > "$FX/verdicts.json"
@@ -116,8 +115,8 @@ grep -q "lr-201-${H1:0:12}: no replay (.*BLOCK" "$L" && ok || bad "P4e no no-rep
 # P4f (lead BLOCK at 3c76810ce): a person's request is never replayed. A
 # request row on H1 (a main-merge of G, which the lead approved) filed by a
 # person (requested_by is the box: lead-verdict.sh request, harness-ctl review)
-# is reviewed by the model. The enqueue's own row on the same head (P4g) is
-# still replayed (requested_by lead-review-enqueue:*, the rule at
+# is reviewed by the model. The worklist's own row on the same head (P4g) is
+# still replayed (requested_by lead-review-worklist, the rule at
 # bin/lead-review.sh's replay).
 p4row() { # p4row <requested_by>: one `requested` row for pr 201 at H1
   jq -nc --arg s "$H1" --arg by "$1" '[{id:"r-201", repo:"example-org/demo-os", pr:201, head_sha:$s, status:"requested",
@@ -129,12 +128,12 @@ jq -nc --arg g "$SHA" '{rows:[{id:7, source:"lead", repo:"example-org/demo-os", 
 lwf_tick
 [ "$(lwf_agents)" = 1 ] && ok || bad "P4f a person's request was replayed: agent calls=$(lwf_agents): $(cat "$L")"
 grep -q 'lead-replay' "$T/log/worker" && bad "P4f posted a lead-replay result for a person's request" || ok
-grep -q "lr-201-${H1:0:12}: no replay (requested by box-mac, not the enqueue" "$L" && ok || bad "P4f no no-replay line: $(grep 'no replay' "$L")"
+grep -q "lr-201-${H1:0:12}: no replay (requested by box-mac, not the worklist" "$L" && ok || bad "P4f no no-replay line: $(grep 'no replay' "$L")"
 lwf_reset
-echo "$H1" > "$FX/head.201"; p4row lead-review-enqueue:hub
+echo "$H1" > "$FX/head.201"; p4row lead-review-worklist
 jq -nc --arg g "$SHA" '{rows:[{id:7, source:"lead", repo:"example-org/demo-os", pr:201, head_sha:$g, verdict:"MERGE", note:""}], truncated:false}' > "$FX/verdicts.json"
 lwf_tick
-[ "$(lwf_agents)" = 0 ] && ok || bad "P4g the enqueue's row was not replayed: agent calls=$(lwf_agents)"
+[ "$(lwf_agents)" = 0 ] && ok || bad "P4g the worklist's row was not replayed: agent calls=$(lwf_agents)"
 grep -q "^POST /api/lead-reviews/r-201/result .*\"reviewer_model\":\"lead-replay\"" "$T/log/worker" && ok || bad "P4g no replay result: $(grep result "$T/log/worker")"
 
 # ── P5: one worker per key ──

@@ -10,13 +10,14 @@
 #       (tests/lib/registry-cache.bh-5651.sh) that still holds the D1 row
 #       lane_boxes {lead-review-enqueue, hub}: rc 0, no enqueue line.
 #   bin/wake-loop.sh on tests/lib/wake-claim-stub.sh, every lane script an
-#   argv recorder, bin/lib/lead-reenqueue.sh installed beside it:
+#   argv recorder (bin/lib/lead-reenqueue.sh is deleted, BH-8589):
 #   W1  the hub, one pr row pull_request.synchronize: no lead-enqueue launch,
 #       no lead-review-enqueue.sh argv, no `lead-enqueue:` log line.
 #   W2  the box that owns the repo (not the hub), one lead-review doorbell
 #       row: one bin/lead-review.sh tick launch (unchanged).
-#   M1  (D1) the BH-5581 source line and its two calls put back in the loop:
-#       W1 goes red.
+#   M1  (D1) the BH-5581 source line and its two calls put back in the loop,
+#       over a stub lib that queues the pr row and launches the enqueue (the
+#       real lib is gone, so M1 writes its own): W1 goes red.
 # The 713 stub and the lane JSON are deleted together (BH-8363): the db-mode
 # overlay maps the D1 rows over file lanes only, so the row has no lane to
 # land on. The old stub and .boxes pins live on as R1-R4 and M1 of
@@ -83,6 +84,23 @@ hit=$(grep -v '^[[:space:]]*#' "$T/db.hub" | grep 'lead-review-enqueue\.sh') && 
 # ═══════════════════ bin/wake-loop.sh ═══════════════════
 WH="$T/wh"
 LOOP_SRC="$DIR/bin/wake-loop.sh"
+# m1_stub: a bin/lib/lead-reenqueue.sh for M1 only. lre_wake_row queues a pr
+# synchronize row; lre_wake_launch launches the enqueue through the loop's
+# launch(), as the deleted lib did.
+m1_stub() {
+  cat > "$WH/bin/lib/lead-reenqueue.sh" <<'SH'
+LRE_Q=()
+lre_wake_row() {
+  [ "$1:$2" = pr:pull_request.synchronize ] && LRE_Q+=("$3#$4=$2")
+  return 0
+}
+lre_wake_launch() {
+  [ "${#LRE_Q[@]}" -gt 0 ] && ( exec 9>&-; launch "lead-enqueue" "$SELF/lead-review-enqueue.sh" pr "${LRE_Q[@]}" )
+  LRE_Q=()
+  return 0
+}
+SH
+}
 LANES="merge-conductor deploy-train postmerge-qa run-triage review-prs rebase-train lead-review lead-review-land"
 fresh() {
   scratch_rm "$WH"
@@ -90,9 +108,7 @@ fresh() {
   printf 'HARNESS_SECRET=s\nJOBS_URL=https://jobs.test\n' > "$WH/env/global.env"
   scratch_install_closure bin/wake-loop.sh "$WH" >/dev/null || { echo "FAIL: scratch_install_closure bin/wake-loop.sh"; exit 1; }
   scratch_install_closure bin/jobs-client.sh "$WH" >/dev/null || { echo "FAIL: scratch_install_closure bin/jobs-client.sh"; exit 1; }
-  # The enqueue's closure carries bin/lib/lead-reenqueue.sh: the lib is on the
-  # box, so W1 proves the loop no longer reads it, not that it is absent.
-  scratch_install_closure bin/lead-review-enqueue.sh "$WH" >/dev/null || { echo "FAIL: scratch_install_closure bin/lead-review-enqueue.sh"; exit 1; }
+  [ -z "${M1_STUB:-}" ] || m1_stub
   cp "$LOOP_SRC" "$WH/bin/wake-loop.sh"
   wcs_install "$WH/bin"
   HARNESS="$WH" wcs_identity "$WH/bin" || { echo "wcs_identity failed"; exit 1; }
@@ -141,7 +157,6 @@ BH=example-org/cromford
 
 case_W1() {
   fresh; wakes "$(W 1 $BH pr 42 pull_request.synchronize)"
-  [ -r "$WH/bin/lib/lead-reenqueue.sh" ] || { echo "W1 setup: bin/lib/lead-reenqueue.sh not installed"; return 1; }
   run_as box-hub
   [ "$(calls lead-review-enqueue)" = 0 ] || { echo "W1 launched the enqueue: $(cat "$WH/calls/lead-review-enqueue")"; return 1; }
   ! grep -q 'lead-enqueue' <<<"$(WLOG)" || { echo "W1 log: $(grep 'lead-enqueue' <<<"$(WLOG)")"; return 1; }
@@ -167,8 +182,11 @@ perl -0pe '
 if [ "$(grep -c 'lead-reenqueue.sh\|lre_wake_row "\$kind"\|&& lre_wake_launch$' "$T/wl-mutant.sh")" != 3 ]; then
   bad "M1: the mutant does not carry the three BH-5581 lines (the anchors moved): $(grep -n 'lre_\|lead-reenqueue' "$T/wl-mutant.sh")"
 else
-  LOOP_SRC="$T/wl-mutant.sh"
+  LOOP_SRC="$T/wl-mutant.sh"; M1_STUB=1
   if case_W1 >/dev/null 2>&1; then bad "M1: case_W1 stayed GREEN with the enqueue launch put back"; else ok; fi
+  # the stub is what makes M1 red: the same mutant with no lib stays green
+  M1_STUB=""
+  if case_W1 >/dev/null 2>&1; then ok; else bad "M1: case_W1 went red on the mutant with no lib"; fi
   LOOP_SRC="$DIR/bin/wake-loop.sh"
 fi
 

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # bin/lib/lead-prev.sh — what a lead re-review needs to know about the review
-# before it (BH-6391). Sourced by bin/lead-review-enqueue.sh, bin/lead-review.sh
-# and bin/lead-review-land.sh, never run.
+# before it (BH-6391). Sourced by bin/lib/lead-gates.d/50-replay-delta.sh,
+# bin/lead-review.sh and bin/lead-review-land.sh, never run.
 #
 # WHY. In 7 days (2026-10-06 to 2026-10-13) the lead gave 908 verdicts on 415
 # PRs. 158 re-reviews followed only a main merge, with no new own commit, and

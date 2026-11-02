@@ -981,9 +981,9 @@ while IFS= read -r ROW; do
         fi
         ARGS=(--source lead --reviewer "box:$BOX")
         [ "$MODEL" = - ] || ARGS+=(--model "$MODEL")
-        # BH-6967: the tier and mode tokens bin/lead-review-enqueue.sh put in the
+        # BH-6967: the tier and mode tokens gate 60 (lead-gates.d/60-risk.sh) put in the
         # request's scope_notes ride onto the row. They count only as the LAST
-        # group of the notes (the enqueue rewrites the same words anywhere else),
+        # group of the notes (bin/lib/lead-gates.sh rewrites the same words anywhere else),
         # so earlier note text never sets them. None = no flag (today's row).
         RVSN=$(jq -r '.scope_notes // ""' <<<"$ROW" 2>/dev/null)
         RVRE='(^|; )review-tier:(low|medium|high) review-mode:(full|intent)$'

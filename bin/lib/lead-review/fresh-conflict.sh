@@ -13,14 +13,13 @@
 # default 1, 0 = off) and the host's post_result, job_update and log; sets
 # LR_FC_WHY and R.
 
-# _lr_fresh_lane_request <request-json> — rc 0 for the lane's own request: the
-# enqueue (requested_by lead-review-enqueue:*) or a worklist item
-# (requested_by lead-review-worklist, or src worklist). Any other row is a
-# review a person asked for, so it is reviewed: the patch-same replay rule.
+# _lr_fresh_lane_request <request-json> — rc 0 for the lane's own request: a
+# worklist item (requested_by lead-review-worklist, or src worklist). Any other
+# row is a review a person asked for, so it is reviewed: the patch-same replay rule.
 _lr_fresh_lane_request() {
   local rby rsrc
   rby=$(jq -r '.requested_by // ""' <<<"$1" 2>/dev/null); rsrc=$(jq -r '.src // ""' <<<"$1" 2>/dev/null)
-  [[ "$rby" == lead-review-enqueue:* ]] || [ "$rby" = lead-review-worklist ] || [ "$rsrc" = worklist ]
+  [ "$rby" = lead-review-worklist ] || [ "$rsrc" = worklist ]
 }
 
 # lr_fresh_applies <request-json> — rc 0 when the hold is on and the request is

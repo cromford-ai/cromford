@@ -130,7 +130,7 @@
 # `authority:human-required`, NO status is published, and the exit is 5. A
 # `--source human` verdict then publishes it. A mode row that reads `human`, the
 # value BH-5035 removed, is refused the same way. A BLOCK always publishes failure.
-# THE RISK TIER (BH-5022). bin/lead-review-enqueue.sh signs off a head that
+# THE RISK TIER (BH-5022). Gate 60 (bin/lib/lead-gates.d/60-risk.sh) signs off a head that
 # bin/lib/risk-tier.sh classified low with --source risk-tier: a MERGE only (the
 # worker refuses any other word), posted with the lead token, put through the
 # same la_decide check as a lead MERGE, and published with the --note text as
@@ -447,7 +447,7 @@ lv_post() {
     fi
   fi
   # BH-5022: a withheld risk-tier sign-off writes NO row. risk-tier is a standing
-  # source, so an advice row would stand on the head and make the enqueue skip it
+  # source, so an advice row would stand on the head and make the lead gates skip it
   # and lead-review.sh supersede the lead review this exit 5 falls back to.
   if [ "$source" = risk-tier ] && [ -n "$withhold" ]; then
     echo "lead-verdict: risk-tier sign-off withheld on ${sha:0:12}: $withhold; no row written, a lead review decides this head" >&2
@@ -570,7 +570,7 @@ lv_request() {
   while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || usage
     case "$1" in
-      # BH-6967: only bin/lead-review-enqueue.sh writes the review tier and mode
+      # BH-6967: only gate 60 (bin/lib/lead-gates.d/60-risk.sh) writes the review tier and mode
       # tokens; a hand request's text never sets them.
       --notes) notes="${2//review-tier:/review-tier=}"; notes="${notes//review-mode:/review-mode=}" ;;
       --prior) prior="$2" ;;

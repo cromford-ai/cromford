@@ -1,7 +1,7 @@
 #!/bin/bash
 # bin/lib/rules-render-head.sh — BH-5325: does `bin/render-rules.sh --check`
 # pass on a PR head? The proof the risk tier's rules-text lane needs (rule 2b,
-# bin/lib/risk-tier.sh). Sourced (by bin/lead-review-enqueue.sh), never executed.
+# bin/lib/risk-tier.sh). Sourced (by bin/lib/lead-gates.d/60-risk.sh), never executed.
 #
 # rrh_check <git-dir> <head-sha> <renderer>
 #   Fetches <head> into the checkout <git-dir> (`git fetch --no-write-fetch-head

@@ -156,7 +156,7 @@ setup2() {
   printf '# Lead review lr-41-%s (example-org/demo-os#41 at %s)\n\n- verdict: MERGE\n- reviewer model: stub-model\n\nFindings\n- [NOTE] f.txt:21: the earlier finding\n\nVERDICT: MERGE\n' \
     "$G12" "$G" > "$GREPORT"
   jq -nc --arg s "$HD" --arg n "$1" '{requests:[{id:"lr-1",repo:"example-org/demo-os",pr:41,head_sha:$s,scope_notes:$n,
-    prior_verdict_ref:"v",status:"requested",requested_by:"lead-review-enqueue:box-hub"}],truncated:false}' > "$T/requests.json"
+    prior_verdict_ref:"v",status:"requested",requested_by:"lead-review-worklist"}],truncated:false}' > "$T/requests.json"
 }
 tick2() {
   ( cd "$T" && PATH="$T/fakebin:$PATH" HARNESS="$B2" HARNESS_SECRET=test-secret JOBS_URL=https://jobs.test \

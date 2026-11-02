@@ -29,9 +29,8 @@
 #   `could not run: <why>` line, never silence that reads as clean.
 # psc_cnp_check <repo> <base> <head> <id>
 #   The self-check rule callers-not-ported (bin/lib/pr-self-check.sh): every
-#   cnp_scan line as `NOTE <id>: <line>`, the shape self_check_hold
-#   (bin/lead-review-enqueue.sh) and lgsc_notes (bin/lib/lead-gates-selfcheck.sh)
-#   forward into the lead review notes. rc 0 on every path.
+#   cnp_scan line as `NOTE <id>: <line>`, the shape lgsc_notes
+#   (bin/lib/lead-gates-selfcheck.sh) forwards into the lead review notes. rc 0 on every path.
 # The CLI is bin/callers-not-ported-lint.sh.
 
 cnp_scan() {

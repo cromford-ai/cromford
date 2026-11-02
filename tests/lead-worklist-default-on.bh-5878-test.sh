@@ -1,15 +1,15 @@
 #!/bin/bash
 # tests/lead-worklist-default-on.bh-5878-test.sh — BH-5878 (slice C0): the
 # needs-review worklist of bin/lead-review.sh is on by default. The gates of
-# bin/lead-review-enqueue.sh have a home in bin/lib/lead-gates.d/, so an unset
+# the retired enqueue live in bin/lib/lead-gates.d/, so an unset
 # LEAD_REVIEW_WORKLIST reads the worklist, and a settings row
-# lane.lead-review.lead_review_worklist=0 turns it off. The enqueue still runs
-# next to it: a head it already requested is reviewed once. D1-D3, D5 and M1
+# lane.lead-review.lead_review_worklist=0 turns it off. A head that already has
+# a request row is reviewed once. D1-D3, D5 and M1
 # drive bin/lead-review.sh tick WHOLE over tests/lib/lead-worklist-fixture.bh-4956.sh.
 #   D1  LEAD_REVIEW_WORKLIST unset, one ready head: one needs-review read, one
 #       /start, one lead_review job, one agent call.
 #   D2  LEAD_REVIEW_WORKLIST=0: no needs-review read, no /start, no job.
-#   D3  the head already has a `requested` row by lead-review-enqueue:hub: the
+#   D3  the head already has a `requested` row by lead-review-worklist: the
 #       row is claimed by id and reviewed once; no /start, one job.
 #   D4  the lead-review lane's registry default (catalog/lanes.d/lead-review.json)
 #       is 1: lane_knob lead-review LEAD_REVIEW_WORKLIST reads 1 with no row (the
@@ -52,11 +52,11 @@ LEAD_REVIEW_WORKLIST=0 LEAD_REVIEW_AUTO_REPOS="example-org/demo-os" lwf_tick
 [ "$(starts)" = 0 ] && ok || bad "D2 /start calls=$(starts) with LEAD_REVIEW_WORKLIST=0"
 [ "$(lwf_agents)" = 0 ] && ok || bad "D2 agent calls=$(lwf_agents) (want 0)"
 
-# ── D3: the enqueue's request row for the same head: reviewed once ──
+# ── D3: a request row for the same head: reviewed once ──
 lwf_reset
 lwf_needs example-org/demo-os 101
 jq -nc --arg s "$SHA" '[{id:"r-101", repo:"example-org/demo-os", pr:101, head_sha:$s, status:"requested",
-  created_at:"2026-10-10 03:00:00", scope_notes:"auto: builder APPROVE", requested_by:"lead-review-enqueue:hub"}]' > "$FX/rows.json"
+  created_at:"2026-10-10 03:00:00", scope_notes:"auto: builder APPROVE", requested_by:"lead-review-worklist"}]' > "$FX/rows.json"
 tick_unset
 [ "$(lwf_cnt '^POST /api/lead-reviews/r-101/claim' "$T/log/worker")" = 1 ] && ok || bad "D3 r-101 claims=$(lwf_cnt '^POST /api/lead-reviews/r-101/claim' "$T/log/worker") (want 1): $(cat "$L")"
 [ "$(starts)" = 0 ] && ok || bad "D3 /start calls=$(starts) (want 0: the row is the claim)"

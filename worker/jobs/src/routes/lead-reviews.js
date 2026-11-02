@@ -27,7 +27,7 @@
 // absent). The note is appended to scope_notes after a newline in the SAME
 // compare-and-set as the reset, pinned to the scope_notes read here, so the
 // lead prompt's ## Scope notes carries it. review-tier: and review-mode: in it
-// become = (BH-6967: only the enqueue writes those tokens). A note already in
+// become = (BH-6967: only gate 60 writes those tokens). A note already in
 // scope_notes is not appended again (a retry); one that would pass 4000 chars
 // is not stored and the old notes are never cut. The answer then names
 // notes: stored | present | no-room. A requested row takes the note in its
@@ -46,7 +46,7 @@
 //   `why`, and binds participant=<name>, box=participant:<name>. Without the
 //   header it is the bearer box claim, which still needs a body `box`.
 // - Separation of duties compares the claimer to head_authors only (recorded
-//   at create; bin/lead-review-enqueue.sh puts the build and fix-round
+//   at create; gate 25, bin/lib/lead-gates.d/25-authors.sh, puts the build and fix-round
 //   identities there). Named = 409 `self-review refused`. A participant on a
 //   row with no readable head_authors is 409 `authorship unknown`. A box claim
 //   is checked only when settings lead_review_sod_boxes is 1.

@@ -2,7 +2,7 @@
 // tier, one row per classified PR head (schema.sql's risk_tiers block, and the
 // self-create copy in CREATED_TABLES).
 //
-// The writer is bin/lead-review-enqueue.sh: for every head it would ask the
+// The writer is gate 60 (bin/lib/lead-gates.d/60-risk.sh): for every head it would ask the
 // lead to review it classifies the diff (bin/lib/risk-tier.sh) and records the
 // tier here in every mode except off. The readers are Mission Control's PR
 // screen and the Merge Queue's RISK TIERS section, through the coord proxy.

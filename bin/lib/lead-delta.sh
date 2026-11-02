@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # bin/lib/lead-delta.sh — how much of a lead review does a moved PR head need?
-# (BH-5294). Sourced by bin/lead-review-enqueue.sh and bin/lead-review.sh, never run.
+# (BH-5294). Sourced by bin/lib/lead-gates.d/50-replay-delta.sh and bin/lead-review.sh, never run.
 #
 # WHY. On 2026-10-07 about 55 PRs waited for a lead review, and most were heads
 # where an agent or the resolver had only merged origin/main in to clear a

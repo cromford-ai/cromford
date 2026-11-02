@@ -76,8 +76,8 @@
 #                           verdict rows, takes the newest source=lead MERGE,
 #                           MERGE-WITH-NOTES or BLOCK on another head that is not
 #                           itself a replay. A BLOCK is never replayed (rc 1: it
-#                           leaves its head only through the enqueue's BH-3930
-#                           rebound replay). For a MERGE it fetches both heads
+#                           leaves its head only through gate 50's BH-3930
+#                           rebound replay, bin/lib/lead-gates.d/50-replay-delta.sh). For a MERGE it fetches both heads
 #                           and asks ld_classify. Run in the caller's shell (it sets
 #                           globals and prints nothing): rc 0 only on
 #                           `replay <how>`, with LW_REPLAY_WORD, LW_REPLAY_PREV
@@ -355,7 +355,7 @@ lw_replay() {
     | max_by(.id) // empty | "\(.head_sha | ascii_downcase)\t\(.verdict)"' 2>/dev/null)
   [[ "${ph:-}" =~ ^[0-9a-f]{40}$ ]] || { LW_REPLAY_WHY="no earlier lead verdict"; return 1; }
   # A BLOCK is never replayed from the lane: it leaves its own head only through
-  # the enqueue's BH-3930 rebound replay (bin/lead-review-enqueue.sh, BH-5294).
+  # gate 50's BH-3930 rebound replay (bin/lib/lead-gates.d/50-replay-delta.sh, BH-5294).
   # A main-merge after a BLOCK, or a person's request, is a fresh review.
   [ "$pw" != BLOCK ] || { LW_REPLAY_WHY="the newest lead verdict (${ph:0:12}) is a BLOCK; only a MERGE is replayed"; return 1; }
   patch_same_fetch "$clone" "$ph" "$sha" "$pr" || { LW_REPLAY_WHY="fetch of ${ph:0:12}/${sha:0:12} failed ($PS_FETCH_ERR)"; return 1; }

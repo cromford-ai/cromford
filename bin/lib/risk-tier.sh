@@ -1,6 +1,6 @@
 #!/bin/bash
 # bin/lib/risk-tier.sh — BH-5022 (BH-4973.1): a rule-based risk tier for ONE PR
-# head. Sourced (by bin/lead-review-enqueue.sh), never executed. Pure rules: it
+# head. Sourced (by bin/lib/lead-gates.d/60-risk.sh and others), never executed. Pure rules: it
 # never calls a model, and it reads nothing from GitHub itself. The caller hands
 # it the head's compare answer (GET compare/<base>...<head>, which carries
 # files[] with status, additions and deletions).

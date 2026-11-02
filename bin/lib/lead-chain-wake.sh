@@ -2,8 +2,8 @@
 # bin/lib/lead-chain-wake.sh — the lead-chain doorbell (BH-4057, contract
 # slice BH-4092). Sourced, never run.
 #
-# WHY IT EXISTS. The lead chain crosses boxes: the hub's
-# bin/lead-review-enqueue.sh asks for a review, bin/lead-review.sh runs it on
+# WHY IT EXISTS. The lead chain crosses boxes: the worklist gates
+# (bin/lib/lead-gates.d/) ask for a review, bin/lead-review.sh runs it on
 # the box that owns the repo, and the hub's bin/lead-review-land.sh lands its
 # answer. Each stage advanced only on its own cron tick, so a review waited out
 # up to three clocks it had nothing to do with. A local launch cannot cross a

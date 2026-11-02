@@ -6,13 +6,13 @@
 #
 #   U1  lr_fresh_conflict on real git repos: P1-P5 conflict (rc 0, LR_FC_WHY
 #       names the paths); N1-N7 do not (rc 1, LR_FC_WHY empty)
-#   U2  lr_fresh_applies: A1-A3 the lane's own requests; B1-B4 not; B5 a malformed
-#       knob reads as 1 and is logged
+#   U2  lr_fresh_applies: A2-A3 the lane's own requests; A1 (the retired enqueue's
+#       tag, BH-8589) and B1-B4 not; B5 a malformed knob reads as 1 and is logged
 #   U3  lr_fresh_supersede: one superseded post with the detail and no verdict, the
 #       job done, R=superseded; a failed post leaves the job open
 #   U4  the knob fragment and MODULES
 #   LR1-LR4 the real bin/lead-review.sh block as the body of review(): a
-#       conflicting enqueue head is superseded before the sentinel; a clean head
+#       conflicting worklist head is superseded before the sentinel; a clean head
 #       and a person's request reach it; a failed post claims nothing; after
 #       LR1 the clone's merge-tree (what lg_gate_rebase_hold runs) still holds
 #       the head; the block sits after the fetch and before the console qa gate
@@ -135,14 +135,14 @@ u2() {
     lr_fresh_applies "$3"; a=$?; lr_fresh_applies "$3"; [ "$?" = "$a" ] || exit 8; exit "$a" ) || rc=$?
   [ "$rc" = "$2" ] && ok || bad "U2-$1: rc $rc, want $2 (log [$(cat "$T/u2-$1.log" 2>/dev/null)])"
 }
-u2 A1 0 '{"requested_by":"lead-review-enqueue:hub-fixture"}'
+u2 A1 1 '{"requested_by":"lead-review-enqueue:hub-fixture"}'
 u2 A2 0 '{"requested_by":"lead-review-worklist"}'
 u2 A3 0 '{"requested_by":"","src":"worklist"}'
 u2 B1 1 '{"requested_by":"person-fixture"}'
 u2 B2 1 '{"requested_by":""}'
 u2 B3 1 '{"requested_by":"lead-review-enqueuer"}'
-u2 B4 1 '{"requested_by":"lead-review-enqueue:hub-fixture"}' 0
-u2 B5 0 '{"requested_by":"lead-review-enqueue:hub-fixture"}' yes
+u2 B4 1 '{"requested_by":"lead-review-worklist"}' 0
+u2 B5 0 '{"requested_by":"lead-review-worklist"}' yes
 [ "$(grep -c "LEAD_REVIEW_FRESH_CONFLICT_HOLD='yes'" "$T/u2-B5.log" 2>/dev/null)" = 1 ] && ok \
   || bad "U2-B5: want one log line naming the bad value, got [$(cat "$T/u2-B5.log" 2>/dev/null)]"
 [ ! -s "$T/u2-A1.log" ] && ok || bad "U2-A1: a good knob logged [$(cat "$T/u2-A1.log")]"
@@ -202,7 +202,7 @@ lr() {
     . "$1" || exit 9
     review; printf "%s\n" "$R" > "$C/R"' "$T/c/bin/lib/lead-review/load.sh" "${6:-$T/lr-fn.sh}" > "$C/out" 2>&1
 }
-ENQ='{"requested_by":"lead-review-enqueue:hub-fixture"}'
+ENQ='{"requested_by":"lead-review-worklist"}'
 lr1_ok() {
   local C="$T/lr-$1"
   ! grep -q SENTINEL_REACHED "$C/out" && [ "$(grep -c . "$C/post" 2>/dev/null)" = 1 ] \

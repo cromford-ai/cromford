@@ -2,7 +2,7 @@
 # bin/lib/pr-self-check.sh — BH-5798: the pre-review self-check. Does the PR
 # body match the head it is about? Decided from git and the body text alone,
 # before a lead review is bought. Sourced, never executed: no `exit`, no output
-# at source time. Callers: bin/pr-self-check.sh (CLI), bin/lead-review-enqueue.sh.
+# at source time. Callers: bin/pr-self-check.sh (CLI), bin/lib/lead-gates-selfcheck.sh.
 #
 # psc_check <repo> <base-ref> <head-sha> <body-file> [ticket-file]
 #   One line per finding on stdout: `REFUSE <rule>: <why>` or `NOTE <rule>: <why>`.
@@ -64,7 +64,7 @@
 #                   ticket. When its key root is not the PR's own key root, a
 #                   body line `TEST-CHANGE: <path or basename> — <premise>` must
 #                   name it, with 3 or more words of premise. The PR's key is
-#                   $PSC_PR_KEY (--key; the enqueue sets it from the PR title),
+#                   $PSC_PR_KEY (--key; lgsc_run sets it from the PR title),
 #                   the `Harness-Ticket:` trailer, the first line
 #                   `Ticket <KEY> —`, or the one .harness/specs/<KEY>/plan.md
 #                   the PR changes. `.N` slices of one ticket share a root. No
@@ -232,7 +232,7 @@ _psc_body_fires() {
       spec-ref)
         # BH-6485: the ticket body has `Reference:` lines and the diff touches
         # UI. The shots exist only after preview QA, so the open phase
-        # ($PSC_PHASE=open) is a note; the edit phase and the enqueue refuse.
+        # ($PSC_PHASE=open) is a note; the edit phase and the lead gates refuse.
         if [ "${PSC_PHASE:-}" = open ]; then unk=1; why="${why:-reference shots are taken after preview QA}"
         elif [ -z "$tk" ] || [ ! -s "$tk" ]; then unk=1; why="${why:-no ticket text}"
         elif ! declare -F st_ui_ref_applies >/dev/null; then unk=1; why="${why:-the spec-trace lib is missing}"

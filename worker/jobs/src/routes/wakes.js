@@ -452,7 +452,7 @@ export const routes = [
   ],
 
   // POST /api/wakes/lane {repo, kind, key, dedupe} — the lead-chain doorbell
-  // (BH-4057). bin/lead-review-enqueue.sh rings kind=lead-review for the box
+  // (BH-4057). Gate 97 (bin/lib/lead-gates.d/97-doorbell.sh) rings kind=lead-review for the box
   // that owns the repo; a later stage rings kind=lead-land, which only the
   // hub claims. bin/wake-loop.sh launches the lane on the claimed row, and the
   // lane's own cron stays the backstop when a ring is lost.

@@ -29,7 +29,6 @@ bin/hotspot-split-ticket.sh
 bin/hub-probe.sh
 bin/issue-state-ledger.sh
 bin/launch-fastpath.sh
-bin/lead-review-enqueue.sh
 bin/lead-review-land.sh
 bin/lead-review.sh
 bin/lead-verdict.sh

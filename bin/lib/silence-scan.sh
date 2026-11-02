@@ -19,7 +19,7 @@
 # below `KNOWN_FAKE_SECRETS = {` has an earlier definition in its @@ header
 # (lead review lr-5811).
 #   ss_rows_compare <compare.json>   from a GitHub compare answer (the one
-#       bin/lead-review-enqueue.sh's rt_compare already read: no extra read).
+#       lgc_compare, bin/lib/lead-gates-compare.sh, already read: no extra read).
 #       A file shown with no patch is one row whose line is \001.
 #       rc 0, 1 no files list (nothing shown), 2 not JSON.
 #   ss_rows_git <tree> <base>        from `git diff -U0 <base>...HEAD`.

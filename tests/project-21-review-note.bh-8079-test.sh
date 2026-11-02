@@ -2,13 +2,13 @@
 # tests/project-21-review-note.bh-8079-test.sh — the pre-review self-check rule
 # `project-21-upgrade` (bin/lib/project-21.example project-21_psc_check, row
 # catalog/pr-self-check.d/bh-8079-project-21-upgrade.tsv), through the CLI
-# bin/pr-self-check.sh, and its two forwarders into the lead review notes.
+# bin/pr-self-check.sh, and its forwarder into the lead review notes.
 #   R1 an affected row with a fixed_in: a NOTE that names the upgrade line, rc 0
 #   R2 lib.project-21.project-21_review_block=1 (env PROJECT_21_REVIEW_BLOCK): the same line as a REFUSE, rc 1
 #   R3 fixed in `none`: no line       R4 clean, failed, partial-only: no line
 #   R5 the heading quoted in a code fence: not read
 #   R6 two project-21 headings: only the first is read    R7 no section: no line
-#   R8 self_check_hold's PSCNOTES carry the line      R9 lgsc_notes prints it
+#   R9 lgsc_notes prints it (R8, the deleted enqueue's forwarder, is gone: BH-8589)
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/project-21-review-note.bh-8079-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -86,13 +86,6 @@ psc "$T/b-two.md"
 body "$T/b-other.md" "$(printf '## Other\n\n| dependency | version | severity | fixed in | upgrade | advisory |\n|---|---|---|---|---|---|\n| x (npm) | 1 | high | 2 | Upgrade x. | A https://example.invalid |\n')"
 psc "$T/b-other.md"
 { [ "$rc" = 0 ] && [ -z "$out" ]; } && ok || bad "R7 no section: rc=$rc out=$out"
-
-# R8 self_check_hold's PSCNOTES lines, read from the function body
-EXTRACT=$(awk '/^self_check_hold\(\) \{/{b=1} b && /^[[:space:]]*PSCNOTES=\$\(printf/{print} b && /^}/{exit}' "$SRC/bin/lead-review-enqueue.sh")
-out=$(printf '%s\nREFUSE plan-files: nope\n' "$R1_OUT")
-PSCNOTES=""
-eval "$EXTRACT"
-grep -qxF -- "${WANT#NOTE }" <<<"$PSCNOTES" && ok || bad "R8 self_check_hold PSCNOTES: got: $PSCNOTES"
 
 # R9 lgsc_notes forwards it
 printf '%s\n' "$R1_OUT" > "$T/lgsc.out"

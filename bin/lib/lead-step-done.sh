@@ -1,5 +1,5 @@
 # bin/lib/lead-step-done.sh — BH-6696: is the builder's refusal of a PR head
-# answered by a person's HUMAN-STEP-DONE? Sourced by bin/lead-review-enqueue.sh,
+# answered by a person's HUMAN-STEP-DONE? Sourced by bin/lib/lead-gates.d/10-builder.sh,
 # never executed. A builder REQUEST_CHANGES that raised a NEEDS-HUMAN step stays
 # on the head, the pool skips the ticket (an open PR exists), and no fix round
 # pushes. Once a person answers the step, the enqueue asks for the lead review

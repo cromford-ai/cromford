@@ -1,7 +1,7 @@
 #!/bin/bash
 # bin/lead-review.sh tick | one <request-id> — BH-1950 (BH-1525.2): the lead review job lane on the
 # build boxes. Every 15 minutes (cron/lanes/710-lead-review.cron, a backstop;
-# rung by lead-review-enqueue and a nudge through the wakes doorbell,
+# rung by gate 97 (bin/lib/lead-gates.d/97-doorbell.sh) and a nudge through the wakes doorbell,
 # bin/lib/lead-chain-wake.sh) it reads two inputs, keeps what is for
 # repos this box owns (fleet.conf + bin/box-for.sh), and reviews every eligible
 # item as soon as a slot is free, until LEAD_REVIEW_DEADLINE_S closes STARTS.
@@ -39,8 +39,8 @@
 # counted (lw_release, lw_released). /start answering terminal done
 # is `paid` (no model call); a head carrying the patch of an earlier lead
 # MERGE is `replayed` (lw_replay: no model call, reviewer_model lead-replay).
-# An earlier BLOCK is never replayed here: it leaves its head only through the
-# enqueue's BH-3930 rebound replay.
+# An earlier BLOCK is never replayed here: it leaves its head only through
+# gate 50's BH-3930 rebound replay (bin/lib/lead-gates.d/50-replay-delta.sh).
 #
 # THE GATES (BH-5873). A worklist item with no request row passes the gate
 # loader bin/lib/lead-gates.sh (gates in bin/lib/lead-gates.d/, filename order)
@@ -197,8 +197,8 @@
 #                           whose ~noverdict key is paid gets ONE more call on
 #                           ~unread (no retry); unreadable again = one alert
 #                           (bin/lib/lead-unread.sh, lu_alert).
-#   delta mode (BH-5294)    scope_notes carrying `lead-delta:<G>` (set by
-#                           bin/lead-review-enqueue.sh) puts G's report on this
+#   delta mode (BH-5294)    scope_notes carrying `lead-delta:<G>` (set by gate
+#                           50, bin/lib/lead-gates.d/50-replay-delta.sh) puts G's report on this
 #                           box, the inter-diff and the conflict resolutions
 #                           (bin/lib/lead-delta.sh ld_build) where the diff goes,
 #                           with the SAME model_for lead.review route, and adds
@@ -236,7 +236,7 @@
 #                           lead-mode=build-on|full|delta|intent.
 #   intent review (BH-6967) not in delta mode (no `lead-delta:`), scope_notes
 #                           ENDING with `; review-tier:medium review-mode:intent`
-#                           (set by bin/lead-review-enqueue.sh while the row
+#                           (set by gate 60, bin/lib/lead-gates.d/60-risk.sh, while the row
 #                           risk_tier.medium_mode reads intent), and that row
 #                           still reading intent at review time: the prompt is
 #                           prompts/lead-review.md + prompts/lead-review.d/
@@ -413,8 +413,8 @@ lr_verify_cmd() {
   printf '%s' "$c"
 }
 
-# >>> lead ci green (BH-5630: bin/lead-review-enqueue.sh sources this block, so
-# both lanes read "CI green on a head" through the one definition below)
+# >>> lead ci green (BH-5630: gate 10, bin/lib/lead-gates.d/10-builder.sh, reads
+# "CI green on a head" through the one definition below)
 # lr_ci_required <mergify-file> — the check names the repo's merge queue asks of
 #   a PR: every `check-success = "<name>"` under a `queue_conditions:` block, one
 #   per line, sorted. `lead-verdict` is left out: it is the status this very
@@ -1028,14 +1028,13 @@ review_one() {
   # <<< migration index lint
   # The patch-same replay (BH-4956, header): the lead's MERGE on an earlier head
   # that carries this same patch is posted on this one, with no model call. A
-  # BLOCK is never replayed (lw_replay rc 1), so the head is reviewed. Only the
-  # enqueue's own requests (requested_by lead-review-enqueue:*) and worklist
-  # items (a row lr_start created: requested_by lead-review-worklist) are replayed:
-  # any other row is a review someone asked for (REQUEST LEAD REVIEW,
-  # lead-verdict.sh request, harness-ctl review), so it runs.
+  # BLOCK is never replayed (lw_replay rc 1), so the head is reviewed. Only
+  # worklist items (a row lr_start created: requested_by lead-review-worklist,
+  # or src worklist) are replayed: any other row is a review someone asked for
+  # (REQUEST LEAD REVIEW, lead-verdict.sh request, harness-ctl review), so it runs.
   rby=$(jq -r '.requested_by // ""' <<<"$r"); rsrc=$(jq -r '.src // ""' <<<"$r")
-  if [[ "$rby" != lead-review-enqueue:* ]] && [ "$rby" != lead-review-worklist ] && [ "$rsrc" != worklist ]; then
-    LW_REPLAY_WHY="requested by ${rby:-unknown}, not the enqueue: a person's request is reviewed"; false
+  if [ "$rby" != lead-review-worklist ] && [ "$rsrc" != worklist ]; then
+    LW_REPLAY_WHY="requested by ${rby:-unknown}, not the worklist: a person's request is reviewed"; false
   elif lw_replay "$repo" "$pr" "$sha" "$REPO_DIR"; then
     rw="$LW_REPLAY_WORD"; rprev="$LW_REPLAY_PREV"; rhow="$LW_REPLAY_HOW"
     if ! post_result "$id" "$(jq -nc --arg j "$job" --arg s "$sha" --arg v "$rw" --arg f "lead-replay:${rprev:0:12}:$rhow" \
@@ -1263,7 +1262,7 @@ review_one() {
   else
     suite_line="host suite: no host suite declared"; : > "$WT.suite"
   fi
-  # >>> delta mode (BH-5294). bin/lead-review-enqueue.sh asks for it with
+  # >>> delta mode (BH-5294). Gate 50 (lead-gates.d/50-replay-delta.sh) asks for it with
   # `lead-delta:<G>` in scope_notes, when the lead approved head G and the PR's
   # own files changed by a few lines since. The reviewer then reads G's report
   # (this box's state/lead-reviews/lr-<pr>-<G12>.md, header checked), the
@@ -1310,8 +1309,8 @@ review_one() {
   # <<< delta mode
   # >>> intent review (BH-6967, header). A misconfiguration (no route, no prompt
   # file) is the full review: it never lowers the depth of a review. The tokens
-  # count only as the LAST group of the notes, where bin/lead-review-enqueue.sh
-  # puts them (it rewrites the same words anywhere else), and only while the
+  # count only as the LAST group of the notes, where gate 60 (lead-gates.d/60-risk.sh)
+  # puts them (bin/lib/lead-gates.sh rewrites the same words anywhere else), and only while the
   # protected row risk_tier.medium_mode reads intent HERE too: a forged note
   # cannot go around the row. The setting and route reads are network reads,
   # so fd 7 and 8 are closed for them.
@@ -1345,7 +1344,7 @@ review_one() {
   [ -z "$rlcap" ] || log "$key: notes-only re-review (the fix-round cap is spent, $rlcap): every finding without an ALWAYS-BLOCK class is a NOTE"
   # <<< cap-reached re-review
   # >>> re-review (BH-6391): a `lead-prev:<G>` group in scope_notes (set by
-  # bin/lead-review-enqueue.sh) adds a `## Re-review` prompt section: G, its
+  # gate 50 through lpv_note, bin/lib/lead-prev.sh) adds a `## Re-review` prompt section: G, its
   # word, the own commits and files and the main files since G, and G's report
   # (delta mode already shows it). After a BLOCK on an approved G, lpv_downgrade
   # keeps each finding on a line unchanged since G as a NOTE.
@@ -1727,8 +1726,8 @@ declare -A PROJ BOX OWNED_REPO
 # out of this one. Unset or empty = no worklist: the request rows alone.
 # LEAD_REVIEW_WORKLIST (default 1, BH-5878) must be 1 too. The enqueue's holds
 # run as the gates of bin/lib/lead-gates.d/ before each worklist start (#5870).
-# bin/lead-review-enqueue.sh still writes request rows; a head it requested is
-# reviewed once (lr_start rc 3, gate 20). A row =0 turns the worklist off.
+# A head that already has a request row is reviewed once (lr_start rc 3,
+# gate 20). A row =0 turns the worklist off.
 AUTO_REPOS=""
 case "${LEAD_REVIEW_WORKLIST:-1}" in
   1) AUTO_REPOS=$(command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply lead-review-land >/dev/null 2>&1

@@ -270,7 +270,7 @@ setup2() {
   echo "$1" > "$T/lrhead"
   printf '%b' "$3" > "$T/answer"
   jq -nc --arg s "$1" --arg n "$2" '{requests:[{id:"lr-1",repo:"example-org/demo-os",pr:41,head_sha:$s,scope_notes:$n,
-    prior_verdict_ref:"v",status:"requested",requested_by:"lead-review-enqueue:box-hub"}],truncated:false}' > "$T/requests.json"
+    prior_verdict_ref:"v",status:"requested",requested_by:"lead-review-worklist"}],truncated:false}' > "$T/requests.json"
   RKEY="lr-41-${1:0:12}"; RREP="$B2/state/lead-reviews/$RKEY.md"
 }
 tick2() {
@@ -433,7 +433,7 @@ lreset() {
   scratch_rm "$L/state/lead-review-land"; echo box-hub > "$L/state/box-name"
   jq -nc --arg v "$1" --arg n "$2" --arg h "$SHA" '{requests:[{id:"lr-1", repo:"example-org/demo-os", pr:41, head_sha:$h, status:"done",
     verdict:$v, reviewer_model:"stub-model", report_ref:"state/lead-reviews/lr-41-aaaaaaaaaaaa.md", scope_notes:$n,
-    requested_by:"lead-review-enqueue:box-hub", promoted_verdict_at:null, detail:null,
+    requested_by:"lead-review-worklist", promoted_verdict_at:null, detail:null,
     created_at:"2026-10-13T00:00:00Z", updated_at:"2026-10-13T00:00:00Z"}], truncated:false}' > "$T/lrequests.json"
 }
 ltick() {
