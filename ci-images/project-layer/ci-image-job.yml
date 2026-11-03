@@ -1,0 +1,96 @@
+# The CI image jobs for this repo's workflow (BH-7256 project-layer kit, from
+# example-org/cromford ci-images/project-layer/ci-image-job.yml).
+#
+# Copy the `ci-image` job into the workflow that runs the tests. Then give
+# EVERY test job the four parts the `test` job below has:
+#   1. needs: [ci-image]
+#   2. container: image: ${{ needs.ci-image.outputs.ref }} (an empty ref, the
+#      host mode, runs the job on the runner exactly as before)
+#   3. permissions: packages: read (the pull)
+#   4. `if: needs.ci-image.outputs.ref == ''` on each setup-node, `npm ci` and
+#      `playwright install` step, and the link step with
+#      `if: needs.ci-image.outputs.ref != ''` before the first test command
+# In image mode no install runs, and a missing image is red on the ci-image job
+# by name (ci/ci-image.sh ensure), never a host run.
+#
+# MonkCI caveat: on MonkCI a job container cannot reach the artifact service.
+# A test job with upload-artifact or download-artifact does not use
+# `container:` there. It follows example-org/project-6
+# .github/actions/ci-image/action.yml: the `run:` steps execute in the image
+# through an in-image default shell, the `uses:` steps stay on the host
+# (project-6 PR #3238).
+#
+# runs-on reads the repo variable CI_RUNNER. Set it to "monkci-ubuntu-24.04-4"
+# (with the quotes: it is JSON) where it is unset or "ubuntu-latest".
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci-image:
+    # Off by default: CI_IMAGE unset and no `ci-image` label is host mode, and
+    # `ref` is empty. CI_IMAGE=on, or the label on a PR, is image mode: the tag
+    # is the hash of ci/Dockerfile, ci/ci-image.conf and the input= files; a
+    # missing tag is built and pushed here, and a failure is red by name.
+    name: CI image (host or prebuilt)
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.ensure.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: the image this run uses (ci/ci-image.sh ensure)
+        id: ensure
+        env:
+          CI_IMAGE_VAR: ${{ vars.CI_IMAGE }}
+          CI_IMAGE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-image') }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ci/ci-image.sh ensure
+
+  test:
+    runs-on: ${{ fromJSON(vars.CI_RUNNER || '"ubuntu-latest"') }}
+    needs: [ci-image]
+    container:
+      image: ${{ needs.ci-image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Host mode only: the image has node, the node_modules and Chromium.
+      - uses: actions/setup-node@v4
+        if: needs.ci-image.outputs.ref == ''
+        with:
+          node-version: '22'
+          cache: npm
+      - name: install dependencies
+        if: needs.ci-image.outputs.ref == ''
+        run: npm ci
+      - name: install Playwright browsers
+        if: needs.ci-image.outputs.ref == ''
+        run: npx playwright install --with-deps chromium
+      # Image mode only. A missing baked tree or a lockfile the image was not
+      # built from is red by name; it never runs npm ci behind the image.
+      - name: link the image's node_modules
+        if: needs.ci-image.outputs.ref != ''
+        run: |
+          want=$(cat /opt/ci/node/app/.lock-sha256 2>/dev/null) || { echo "::error::ci-image: no /opt/ci/node/app/.lock-sha256 in the image"; exit 1; }
+          got=$(sha256sum package-lock.json | cut -d' ' -f1)
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::ci-image: the image's node_modules are from lockfile $want, the checkout's is $got"; exit 1; }
+          [ ! -e node_modules ] || [ -L node_modules ] || { echo "::error::ci-image: node_modules already exists and is not a link"; exit 1; }
+          ln -sfn /opt/ci/node/app/node_modules node_modules
+      - run: npm test

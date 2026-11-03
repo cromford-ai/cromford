@@ -1,0 +1,34 @@
+{
+  "libs": [
+    {
+      "id": "ci-image-rollout",
+      "file": "bin/ci-image-rollout.sh",
+      "note": "BH-7256. The operator filer of the CI image rollout children (docs/CI-IMAGES.md \"Rollout (slice 4)\"). It calls lib_env_apply ci-image-rollout once at start, so a lib.ci-image-rollout.<env lowercased> settings row sets the knob; no row leaves the env value, then the code fallback.",
+      "knobs": [
+        {
+          "env": "CI_ROLLOUT_CURL_MAX_TIME",
+          "type": "int",
+          "default": 25,
+          "min": 5,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "curl --max-time for each app-board call (boards list, tickets list, ticket create). Read as ${CI_ROLLOUT_CURL_MAX_TIME:-25}; a non-integer falls back to 25 and the value is clamped to 5..120. Was a literal 25, the value bin/file-health-ticket.sh uses for the same app-board API."
+        },
+        {
+          "env": "CI_ROLLOUT_SEARCH_PER_PAGE",
+          "type": "int",
+          "default": 100,
+          "min": 1,
+          "max": 100,
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "per_page of the GitHub search/issues dedup read before each create. Read as ${CI_ROLLOUT_SEARCH_PER_PAGE:-100}; a non-integer falls back to 100 and the value is clamped to 1..100 (GitHub's search cap). Was a literal 100."
+        }
+      ]
+    }
+  ]
+}
