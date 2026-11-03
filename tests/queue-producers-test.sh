@@ -99,7 +99,12 @@ chmod +x "$T/fakebin/flock"
 build() {
   local mode="$1" key="$2"
   : > "$T/req.txt"
-  ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" REPOS_ROOT="$T/repos" \
+  # BH-8951: a pool builder exports BUILDER_EXEC=1, POOL_MODE=1, BUILDER_NO_MERGE=1
+  # and HOTFIX. bin/lib/rb/gates.sh skips the Fly enqueue when BUILDER_EXEC is set,
+  # so on a builder the suite gave 24 pass, 27 fail while CI was green.
+  # The driven build sees the environment CI gives it.
+  ( unset BUILDER_EXEC POOL_MODE BUILDER_NO_MERGE HOTFIX
+    export PATH="$T/fakebin:$PATH" HARNESS="$T/h" REPOS_ROOT="$T/repos" \
            HARNESS_SECRET=test-secret JOBS_URL=https://jobs.invalid \
            JOBS_BOX=test-box JOBS_RETRIES=0 JOBS_BEAT_SECS=3600 \
            CURL_MODE="$mode" REQ_SINK="$T/req.txt"
