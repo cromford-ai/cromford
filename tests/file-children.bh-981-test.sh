@@ -736,14 +736,21 @@ fi
 # files the remaining slices of a merged board SLICE plan through
 # fc_file_board (kind slice) directly, never file_children, so the kind still
 # never reaches the dispatcher.
+# BH-7256 sources the file from bin/ci-image-rollout.sh for fc_board_base ONLY
+# (the board URL resolver), the same as BH-1955. It files its children through
+# its own gh and app-board calls, never the filer, and the CIR pin below holds
+# it to that (BH-8964).
 CALLERS=$(cd "$DIR" && grep -rn 'file-children\.sh\|file_children\|fc_[a-z_]*(' bin/ fly/ cron/ --include='*.sh' 2>/dev/null \
-          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:|^bin/lib/slice-closeout\.sh:|^bin/lib/slice-board\.sh:' \
+          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:|^bin/lib/slice-closeout\.sh:|^bin/lib/slice-board\.sh:|^bin/ci-image-rollout\.sh:' \
           | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')
 [ -z "$CALLERS" ] && ok || bad "only bin/run-decompose.sh (+ its lane module) and bin/run-rollout.sh may call the filer (found):
 $CALLERS"
 FHT=$(cd "$DIR" && grep -nE 'file_children|fc_[a-z_]+' bin/file-health-ticket.sh 2>/dev/null \
       | grep -vE '^[0-9]+:[[:space:]]*#' | grep -oE 'file_children|fc_[a-z_]+' | grep -vx 'fc_board_base')
 [ -z "$FHT" ] && ok || bad "bin/file-health-ticket.sh may use fc_board_base from this file and nothing else (found): $FHT"
+CIR=$(cd "$DIR" && grep -nE 'file_children|fc_[a-z_]+' bin/ci-image-rollout.sh 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*#' | grep -oE 'file_children|fc_[a-z_]+' | grep -vx 'fc_board_base')
+[ -z "$CIR" ] && ok || bad "bin/ci-image-rollout.sh may use fc_board_base from this file and nothing else (found): $CIR"
 # ...and THIS SLICE opens none of the five files the ticket names.
 BASE=$(cd "$DIR" && git merge-base origin/main HEAD 2>/dev/null || git merge-base main HEAD 2>/dev/null)
 # This arm judges BH-981's OWN slice; on any other branch (one that edits
