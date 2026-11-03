@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── MIGRATION LANE (BH-8704) ────────────────────────────────────────────────
+# Every 10 min the dispatcher (lane migration-lane) starts one run of lane
+# `migration` per fleet project (bin/lib/project-lanes.sh). A project whose
+# mc_migration_hold.apply_lane.<project> row is `migration` lands up to
+# lane.migration.<project>.batch_max ready migration PRs as ONE batch (one CI,
+# apply through the project's ledger CLI, one merge per PR); every other
+# project exits at once. Gated on the hub lease (BH-1000). Off:
+# flags/lane-off-migration-lane (dispatcher), flags/lane-off-migration (the
+# runs), flags/automerge-disabled[-<project>].
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/migration-lane.sh >> /root/harness/logs/migration-lane-cron.log 2>&1

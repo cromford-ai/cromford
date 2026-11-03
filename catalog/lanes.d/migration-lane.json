@@ -1,0 +1,33 @@
+{
+  "id": "migration-lane",
+  "name": "Migration lane dispatcher (starts one migration run per project)",
+  "scope": "hub",
+  "factory_stop": "merge",
+  "script": "bin/migration-lane.sh",
+  "cadence": "*/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-migration-lane",
+    "aliases": [
+      {
+        "name": "automerge-disabled",
+        "off_when": "present"
+      },
+      {
+        "name": "automerge-disabled-",
+        "off_when": "present"
+      }
+    ]
+  },
+  "wired": true,
+  "knobs": [],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/migration-lane-cron.log"
+  }
+}

@@ -219,7 +219,11 @@ GOT=$(jq -r 'select(.per_project_hold==true)|.id' "$DIR"/catalog/lanes.d/*.json 
 # TEST-CHANGE (BH-6972): component-watch declares per_project_hold. It is a hub
 # lane, and its "project" is a component of catalog/components.tsv, so the
 # ticket's flag lane-off-component-watch-<component> holds one component.
-WANT="blocked-resolver component-watch main-red-pr-pair merge-conductor review-autopilot split-watchdog "
+# TEST-CHANGE (BH-8704): migration declares per_project_hold. It is a hub lane
+# that applies and merges one project's migration PRs, and pl_dispatch
+# (bin/lib/project-lanes.sh) skips a project lane_project_held names, so
+# lane-off-migration-<project> holds one project. It is not a build lane.
+WANT="blocked-resolver component-watch main-red-pr-pair merge-conductor migration review-autopilot split-watchdog "
 [ "$GOT" = "$WANT" ] && ok || bad "8a per_project_hold lanes are '$GOT' (want '$WANT')"
 
 for L in run-triage fly-pool fly-pool-tick; do

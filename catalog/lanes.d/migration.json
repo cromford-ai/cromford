@@ -1,0 +1,125 @@
+{
+  "id": "migration",
+  "name": "Migration lane (batch apply + merge of migration PRs, per project)",
+  "scope": "hub",
+  "factory_stop": "merge",
+  "script": "bin/migration-lane.sh",
+  "cadence": "*/10 * * * * (via bin/migration-lane.sh, the migration-lane dispatcher: one run per project through bin/lib/project-lanes.sh)",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-migration",
+    "aliases": [
+      {
+        "name": "automerge-disabled",
+        "off_when": "present"
+      },
+      {
+        "name": "automerge-disabled-",
+        "off_when": "present"
+      }
+    ]
+  },
+  "per_project_hold": true,
+  "wired": true,
+  "knobs": [
+    {
+      "env": "BATCH_MAX",
+      "type": "int",
+      "default": 6,
+      "min": 1,
+      "max": 20,
+      "unit": "PRs",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "Ready migration PRs one batch may carry (row lane.migration[.<project>].batch_max). The rest ride the next tick."
+    },
+    {
+      "env": "CI_TIMEOUT_S",
+      "type": "int",
+      "default": 3600,
+      "min": 300,
+      "max": 10800,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "How long the lane waits for the batch PR's CI before it closes the batch, alerts and applies nothing. Counted as CI_POLL_S per poll."
+    },
+    {
+      "env": "CI_POLL_S",
+      "type": "int",
+      "default": 60,
+      "min": 15,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "Seconds between two CI reads of the batch head. The lease is renewed before each read."
+    },
+    {
+      "env": "LEASE_TTL_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 900,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "The project lease TTL the lane asks for (PJL_TTL_S; 900 is the route's max). Renewed on every CI poll and while the setup and apply commands run."
+    },
+    {
+      "env": "SETUP_TIMEOUT_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "Wall time of MIGRATION_LANE_SETUP_CMD (for example npm ci) in the apply tree. It runs only when package-lock.json changed since the last setup."
+    },
+    {
+      "env": "APPLY_TIMEOUT_S",
+      "type": "int",
+      "default": 1800,
+      "min": 60,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/lib/migration-lane.sh",
+      "note": "Wall time of MIGRATION_LANE_APPLY_CMD, the project's own migration ledger CLI. Its exit code alone never counts: each file must show in migrations/status with the staged checksum."
+    },
+    {
+      "env": "MIGRATION_LANE_APPLY_CMD",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "The project's migration ledger CLI, run in a main tree with only the batch's SQL files copied in (project-6: node scripts/db/apply-sql.mjs). Read by bin/migration-lane.sh from env/<project>.env. NOT settable from the control plane: it is a command a root lane runs with the production database credential.",
+      "settable": false
+    },
+    {
+      "env": "MIGRATION_LANE_SETUP_CMD",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Optional install step for the apply tree (for example npm ci --ignore-scripts). Read by bin/migration-lane.sh from env/<project>.env. NOT settable from the control plane: it is a command a root lane runs.",
+      "settable": false
+    },
+    {
+      "env": "MIGRATION_LANE_DATABASE_URL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "The production DATABASE_URL the apply command gets in its environment only (never argv, never a log). Read by bin/migration-lane.sh from env/<project>.env. NOT settable from the control plane: it is a credential.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/migration-lane.log"
+  }
+}
