@@ -24,12 +24,20 @@
 #   sha any more or the one left is withheld for a human verdict. Mergify needs
 #   success, so pending holds the head as failure does, without a verdict.
 #   rc 0  GitHub answered 2xx (201): the status is on that sha.
-#   rc 1  anything else; ONE stderr line names GH_REST_STATUS / GH_REST_REASON.
+#   rc 1  anything else; ONE stderr line names GH_REST_STATUS / GH_REST_REASON,
+#         the token kind (token=app|pat|gh-auth|other, never the value) and
+#         GitHub's message (GH_REST_MESSAGE) when it sent one (BH-8848).
 #   rc 2  a bad argument (slug, 40-hex sha, state); nothing is sent.
 # The description is cut to 140 characters (GitHub's limit), never refused. A
 # target url that is not https:// is dropped. The identity is the App token
 # when this box mints one (gh_auth_for), else the caller's own gh auth (the
 # lead's Mac); the token lives only for this call and is never printed.
+# BH-8848: on a box that mints (gh_auth_armed), the POST goes ONLY on an App
+# installation token (ghs_*). gh-token.sh prints the PAT when a mint fails, so
+# a token that is not ghs_* is a failed mint: one re-mint, then ONE line
+# `vs_publish: no App token for <slug>; ...`, rc 1 and no POST.
+# A 403/429 that gh_rest classed rate-limit, with a Retry-After of 1..N seconds
+# (N = VS_RETRY_AFTER_MAX_S, 0 = never), is sent once more after that wait.
 #
 # The context defaults to `lead-verdict` and LEAD_VERDICT_CONTEXT overrides it;
 # vs_context prints the one in force, for the readers that must skip it
@@ -63,11 +71,38 @@ vs_lead_desc() {
   return 0
 }
 
+# _vs_token_kind — the kind of the GH_TOKEN in force, from its prefix only.
+_vs_token_kind() {
+  case "${GH_TOKEN:-}" in
+    '') echo gh-auth ;; ghs_*) echo app ;; ghp_*|github_pat_*) echo pat ;; *) echo other ;;
+  esac
+}
+
+# _vs_sleep <seconds> — the retry wait; the seam a test overrides.
+_vs_sleep() { sleep "$1"; }
+
+# _vs_retry_max — VS_RETRY_AFTER_MAX_S, the longest Retry-After vs_publish
+#   waits once. Resolved through lib_env_apply verdict-status (the settings row
+#   lib.verdict-status.vs_retry_after_max_s, catalog/lanes.d/_lib.verdict-status.json)
+#   in a subshell, so the caller's env is untouched. 30 is the code fallback
+#   for that row; a value that is not a whole number is 30.
+_vs_retry_max() {
+  local v lib="${BASH_SOURCE[0]%/*}"
+  v=$(
+    command -v lib_env_apply >/dev/null 2>&1 || { [ -r "$lib/lane-gate.sh" ] && . "$lib/lane-gate.sh" >/dev/null 2>&1; }
+    command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply verdict-status >/dev/null 2>&1 || true; }
+    printf '%s' "${VS_RETRY_AFTER_MAX_S:-}"
+  )
+  case "$v" in ''|*[!0-9]*) v=30 ;; esac
+  echo $((10#$v))
+}
+
 vs_publish() {
   local slug="${1:-}" sha="${2:-}" state="${3:-}" desc="${4:-}" url="${5:-}" rc=0
   # Local: gh_auth_for exports into THIS scope, and the caller's identity is
   # back the moment this returns (the gh_rest C2 rule).
   local GH_TOKEN="${GH_TOKEN:-}"
+  local inh="${GH_TOKEN:-}" ra="" first="" msg=""
   local -a a
   [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "vs_publish: repo must be owner/name, got '$slug'" >&2; return 2; }
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "vs_publish: sha must be 40 lowercase hex, got '$sha'" >&2; return 2; }
@@ -75,12 +110,39 @@ vs_publish() {
   command -v gh_rest >/dev/null 2>&1 || { echo "vs_publish: bin/lib/gh-rest.sh is not loaded; $(vs_context) not published on ${sha:0:12}" >&2; return 1; }
   a=(-f "state=$state" -f "context=$(vs_context)" -f "description=${desc:0:140}")
   case "$url" in https://*) a+=(-f "target_url=$url") ;; esac
-  command -v gh_auth_for >/dev/null 2>&1 && { gh_auth_for "$slug" || true; }
+  if declare -F gh_auth_armed >/dev/null 2>&1 && gh_auth_armed; then
+    # BH-8848: an armed box posts as the App or not at all; one re-mint.
+    if ! gh_auth_for "$slug" || [[ "${GH_TOKEN:-}" != ghs_* ]]; then
+      GH_TOKEN="$inh"
+      if ! gh_auth_for "$slug" || [[ "${GH_TOKEN:-}" != ghs_* ]]; then
+        echo "vs_publish: no App token for $slug; $(vs_context)=$state NOT published on $slug@${sha:0:12}" >&2
+        return 1
+      fi
+    fi
+  else
+    command -v gh_auth_for >/dev/null 2>&1 && { gh_auth_for "$slug" || true; }
+  fi
   # ${a[@]+…}: bash < 4.4 (macOS /bin/bash 3.2) calls an empty array unbound under set -u (BH-3565).
   gh_rest POST "repos/$slug/statuses/$sha" ${a[@]+"${a[@]}"} >/dev/null || rc=$?
   case "$rc:${GH_REST_STATUS:-000}" in
     0:2*) return 0 ;;
   esac
-  echo "vs_publish: $(vs_context)=$state NOT published on $slug@${sha:0:12} (HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+, $GH_REST_REASON})" >&2
+  # One retry on a secondary rate limit, only with GitHub's own Retry-After.
+  case "${GH_REST_STATUS:-000}:${GH_REST_REASON:-}:${GH_REST_QUOTA_RETRY_AFTER:-}" in
+    403:rate-limit:[0-9]*|429:rate-limit:[0-9]*)
+      ra=$((10#$GH_REST_QUOTA_RETRY_AFTER))
+      if [ "$ra" -ge 1 ] && [ "$ra" -le "$(_vs_retry_max)" ]; then
+        first="HTTP $GH_REST_STATUS, $GH_REST_REASON; token=$(_vs_token_kind)${GH_REST_MESSAGE:+; GitHub: $GH_REST_MESSAGE}"
+        _vs_sleep "$ra"
+        rc=0
+        gh_rest POST "repos/$slug/statuses/$sha" ${a[@]+"${a[@]}"} >/dev/null || rc=$?
+        case "$rc:${GH_REST_STATUS:-000}" in
+          0:2*) echo "vs_publish: $(vs_context)=$state published on $slug@${sha:0:12} after one retry ($first; Retry-After ${ra}s)" >&2
+                return 0 ;;
+        esac
+        msg="; retried once after ${ra}s"
+      fi ;;
+  esac
+  echo "vs_publish: $(vs_context)=$state NOT published on $slug@${sha:0:12} (HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+, $GH_REST_REASON}; token=$(_vs_token_kind)${GH_REST_MESSAGE:+; GitHub: $GH_REST_MESSAGE}$msg)" >&2
   return 1
 }

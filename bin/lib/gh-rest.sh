@@ -35,7 +35,9 @@
 # CALLS a helper. `timeout` is a call that passed GH_REST_TIMEOUT_S with no
 # status line (BH-6810; only a caller that sets that variable gets a bound). `auth` is a 401. `auth-skipped` is a call refused with no
 # request, status 401, because an earlier call of the same conductor worker got
-# a 401 (BH-6346, bin/lib/gh-rest-auth.sh); outside a worker it never occurs. The
+# a 401 (BH-6346, bin/lib/gh-rest-auth.sh); outside a worker it never occurs.
+# GH_REST_MESSAGE (BH-8848) is GitHub's JSON `.message` on a non-2xx answer other
+# than 304/404, folded to one line and cut to 200 characters; empty otherwise. The
 # SAME SCOPE RULE governs GH_REST_QUOTA_REMAINING / GH_REST_QUOTA_LIMIT /
 # GH_REST_QUOTA_RESET / GH_REST_QUOTA_RETRY_AFTER (BH-1484: the `X-RateLimit-*`
 # and `Retry-After` headers of the response just read, EMPTY when the response
@@ -68,6 +70,7 @@ if [ -n "${GH_REST_LIB:-}" ]; then return 0 2>/dev/null; fi
 GH_REST_LIB=1
 GH_REST_STATUS=000
 GH_REST_REASON=
+GH_REST_MESSAGE=
 
 # BH-1295: the ETag/If-None-Match cache. Its mechanics (key hashing, the
 # on-disk format, the TTL/size sweep) live in a second file for the reason
@@ -113,7 +116,7 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   local m="${1:-}" p="${2:-}" tmp st body etagkey= etagval= extra=() use_etag=0 GH_TOKEN="${GH_TOKEN:-}" ct0="" trc=0 bound=()
   if [ -z "$m" ] || [ -z "$p" ]; then _gh_rest_bad_args; return 75; fi
   shift 2
-  GH_REST_STATUS=000; GH_REST_REASON=; GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
+  GH_REST_STATUS=000; GH_REST_REASON=; GH_REST_MESSAGE=; GH_REST_QUOTA_REMAINING=; GH_REST_QUOTA_LIMIT=; GH_REST_QUOTA_RESET=; GH_REST_QUOTA_RETRY_AFTER=
   # BH-6346. A worker that already got a 401 sends nothing more: refused here,
   # before the quota gate, so the refusal costs no ledger line.
   if command -v _gh_auth_gate >/dev/null 2>&1 && ! _gh_auth_gate; then GH_REST_STATUS=401; GH_REST_REASON=auth-skipped; return 75; fi
@@ -168,6 +171,7 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   fi
   body=$(awk 'f{print} /^\r?$/{f=1}' "$tmp")
   case "$st" in 403|429) _gh_rest_sniff "$body" ;; esac
+  case "$st" in 2*|304|404) ;; *) GH_REST_MESSAGE=$(jq -r '(.message? // empty) | tostring | gsub("[\r\n]+";" ") | .[0:200]' <<<"$body" 2>/dev/null) || GH_REST_MESSAGE= ;; esac
   case "$st" in
     2*)
       if [ -z "$body" ] && [ "$m" = GET ]; then rm -f "$tmp"; GH_REST_REASON=empty; return 75; fi

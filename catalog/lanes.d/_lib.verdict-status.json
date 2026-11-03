@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "verdict-status",
+      "file": "bin/lib/verdict-status.sh",
+      "note": "BH-8848. vs_publish, the one writer of the lead-verdict, prequeue-verdict and landing-path commit statuses. Read through lib_env_apply verdict-status in _vs_retry_max, only when a status POST got a rate-limit 403/429 with a Retry-After header.",
+      "knobs": [
+        {
+          "env": "VS_RETRY_AFTER_MAX_S",
+          "type": "int",
+          "default": 30,
+          "min": 0,
+          "max": 120,
+          "zero_means": "never retry",
+          "required": false,
+          "note": "The longest Retry-After, in seconds, that vs_publish waits before it sends a rate-limited status POST once more. A longer Retry-After is not retried. 0 = never retry. A value that is not a whole number uses 30."
+        }
+      ]
+    }
+  ]
+}
