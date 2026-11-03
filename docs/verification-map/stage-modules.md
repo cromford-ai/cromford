@@ -53,8 +53,10 @@ the block. `rb_gates_d_check`, the first statement of `rb_gate_prelude`, reads
 the call sites off `gates.sh` and defers the build (`BUILD_DEFERRED gates.d/<slug>.sh
 missing on <host>`, rc 3, one critical lane-alert `rb-gates-d-missing-<host>`)
 when a named fragment is missing. `tests/lib/rb-all.sh` expands each call line
-back into its block. Moved so far: `hotfix detect` and `disk gate`. Verify:
-`HARNESS_TEST_SANDBOX=1 bash tests/rb-gates-fragments.bh-8930-test.sh`.
+back into its block. Moved so far: `hotfix detect`, `disk gate`, `closed issue skip`,
+`issue created-at stamp` and `project daily ceiling` (BH-8957). Verify:
+`HARNESS_TEST_SANDBOX=1 bash tests/rb-gates-fragments.bh-8930-test.sh` and
+`HARNESS_TEST_SANDBOX=1 bash tests/rb-gates-fragments.bh-8957-test.sh`.
 
 **Manual-only / not automatable:** the real half-synced box. Nothing here may
 interrupt a live `bin/harness-sync.sh` mid-flight to produce one, so the

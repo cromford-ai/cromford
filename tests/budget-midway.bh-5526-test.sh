@@ -160,7 +160,8 @@ awk '/^# >>> budget launch gate/{f=1} f{print} /^# <<< budget launch gate/{f=0}'
 launch() {
   local b="$T/s5/$1"; shift
   mkdir -p "$b"
-  ( export "${ENVS[@]}" BUILD="$b" "$@"
+  ( export "${ENVS[@]}" BUILD="$b" \
+           RB_GATES_D="$DIR/bin/lib/rb/gates.d" "$@"
     bash -c '
       set -uo pipefail
       PROJECT=testproj; KEY=K-5

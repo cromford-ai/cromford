@@ -566,55 +566,7 @@ fi
 
 . "$RB_GATES_D/hotfix-detect.sh"
 
-# >>> closed issue skip
-# --- Is this ticket already shipped? (BH-637 §3a) ------------------------------
-# `ai-build` is the handoff label and nothing took it off when a merge closed the
-# issue, so the label outlived the work and kept offering it — each re-offer a
-# full pool build spent rebuilding shipped work. The label is also not enough to
-# fix on its own: humans close issues by hand, and that close strips nothing. So
-# the state is read LIVE, here.
-#
-# HERE, because this script is the only mechanical enqueue point in the fleet —
-# the triage session, bin/up10-lane.sh, bin/unblocked-children.sh, the
-# READY-QUEUE tick, the blocked-resolver rebuild and fly/builder-runner.sh all
-# funnel through it — and ABOVE the enqueue gate below, so a refused build never
-# writes a queue row, never takes a build slot and never takes the per-key lock.
-#
-# BUILD_REFUSED, not BUILD_DEFERRED: a deferral is re-offered by the pool up to
-# DEFER_MAX times and reads as `parked` in the ledger. A closed issue is not
-# "not now", it is "never", and BUILD_REFUSED is the terminal the sweep SOP
-# already owns — one ALERTS line naming the ticket and the reason, which is
-# exactly the "the label is lying on #n" signal an operator wants.
-#
-# FAIL-OPEN: no lib, a board project, a non-numeric key or a gh that failed all
-# fall through and build exactly as today. A dead token must not refuse every
-# build in the fleet.
-# shellcheck source=bin/lib/issue-state-lib.sh
-if [ -r "$(dirname "$0")/lib/issue-state-lib.sh" ]; then . "$(dirname "$0")/lib/issue-state-lib.sh" 2>/dev/null
-elif [ -r "$HARNESS/bin/lib/issue-state-lib.sh" ]; then . "$HARNESS/bin/lib/issue-state-lib.sh" 2>/dev/null
-fi
-if command -v issue_is_closed >/dev/null 2>&1 \
-   && [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ]; then
-  CI_N=$(printf '%s' "$KEY" | sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p')
-  CI_REPO="${GH_ISSUES_REPO:-$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)}"
-  if [ -n "$CI_N" ] && [ -n "$CI_REPO" ]; then
-    # BH-1735: the read keeps the issue JSON in the build dir, and the created-at
-    # stamp below is served from it — one GET of this issue per enqueue, not two.
-    CI_MEMO=""; command -v issue_memo_file >/dev/null 2>&1 && CI_MEMO=$(issue_memo_file "$BUILD" "$CI_REPO" "$CI_N")
-    issue_is_closed "$CI_REPO" "$CI_N" "$HARNESS" "$CI_MEMO"; CI_RC=$?
-    if [ "$CI_RC" = 0 ]; then
-      CI_LINE="SKIP_CLOSED #$CI_N — issue is CLOSED on $CI_REPO; the ai-build label is stale, nothing enqueued"
-      echo "$(STAMP) [$PROJECT/$KEY] $CI_LINE" >> "$BUILD/pipeline.log"
-      mkdir -p "$HARNESS/logs" 2>/dev/null
-      echo "$(STAMP) [$PROJECT/$KEY] $CI_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
-      RESULT "BUILD_REFUSED SKIP_CLOSED #$CI_N — issue is CLOSED on $CI_REPO; nothing enqueued, nothing built"
-      exit 3
-    elif [ "$CI_RC" = 2 ]; then
-      echo "$(STAMP) [$PROJECT/$KEY] closed-issue check unavailable (gh failed) — building as today" >> "$BUILD/pipeline.log"
-    fi
-  fi
-fi
-# <<< closed issue skip
+. "$RB_GATES_D/closed-issue-skip.sh"
 
 # >>> held issue skip
 # --- A HELD TICKET IS NEVER QUEUED, AND A BUILD IT CATCHES STANDS DOWN (BH-1526)
@@ -925,28 +877,7 @@ else
       "[spend-boundary] $PROJECT/$KEY refused at ticket start: the cost autohalt holds $PROJECT (flags/spend-hold-$PROJECT: $SH_WHY). Builds, reviews and merges already running finish."
     exit 3
   fi
-  # The project's daily ceiling (BH-7876, bin/lib/project-ceiling.sh): at 100%
-  # of conf.cost-caps.<p>.daily_usd no new build starts until 00:00Z; a hotfix
-  # still starts. ` budget-project-day ` makes pool_lane_failure requeue it
-  # uncounted. An unreadable spend defers, as the BH-4489 check above does.
-  command -v pc_launch_check >/dev/null 2>&1 || . "$HARNESS/bin/lib/project-ceiling.sh" 2>/dev/null || true
-  if command -v pc_launch_check >/dev/null 2>&1; then
-    PC_HF=0; [ "${HOTFIX:-}" = 1 ] && PC_HF=1
-    BL_RC=0; pc_launch_check "$PROJECT" "$PC_HF" || BL_RC=$?
-    if [ "$BL_RC" = 1 ]; then
-      BL_LINE="BUILD_DEFERRED budget-project-day $PC_LINE — no new build for $PROJECT until 00:00Z; running builds finish; re-offered next tick"
-      echo "$(STAMP) [$PROJECT/$KEY] budget launch gate: $BL_LINE" >> "$BUILD/pipeline.log"
-      RESULT "$BL_LINE"
-      exit 3
-    elif [ "$BL_RC" = 2 ]; then
-      BL_LINE="BUILD_DEFERRED budget-cap-unreadable launch $PC_REASON — the project's daily ceiling spend could not be read; re-offered next tick"
-      echo "$(STAMP) [$PROJECT/$KEY] budget launch gate: $BL_LINE" >> "$BUILD/pipeline.log"
-      RESULT "$BL_LINE"
-      exit 3
-    elif [ -n "${PC_NOTE:-}" ]; then
-      echo "$(STAMP) [$PROJECT/$KEY] budget launch gate: HOTFIX admitted over the daily ceiling: $PC_NOTE" >> "$BUILD/pipeline.log"
-    fi
-  fi
+. "$RB_GATES_D/project-ceiling.sh"
   echo "$(STAMP) $KEY" > "$BUILD/ADMITTED" 2>/dev/null || true
 fi
 # <<< budget launch gate
@@ -1651,45 +1582,7 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
   fi
   return 0
 }
-# >>> issue created-at stamp
-# The acceptance clock (docs/DORA.md launch_lead_time) starts when the issue was
-# FILED, not when this fleet got round to claiming it — lead_time already
-# measures the second half. GitHub-Issues projects only; an in-app board has no
-# issue to ask about, so it is not asked. FAIL-OPEN everywhere: a read that
-# fails, is refused, or answers something that is not a whole-second Z stamp
-# leaves a null column and one `unknown` log line, never a stopped build.
-ISSUE_CREATED_AT=""
-if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ] \
-   && [[ "$TICKET" =~ ^[0-9]+$ ]] && [ -n "${GH_AUTH_SLUG:-}" ]; then
-  # ONE READ PER ENQUEUE (BH-1735). The closed-issue skip above already read
-  # this issue and kept the JSON (issue_memo_file); created_at never changes, so
-  # the stamp is served from that read. The memo only ever holds THIS enqueue's
-  # successful read of THIS (repo, issue), so when the skip was switched off,
-  # failed, or read another repo there is no file and the read below is made.
-  ICA_M=""; command -v issue_memo_file >/dev/null 2>&1 && ICA_M=$(issue_memo_file "$BUILD" "$GH_AUTH_SLUG" "$TICKET")
-  if [ -n "$ICA_M" ] && [ -s "$ICA_M" ] && jq -e 'type == "object"' "$ICA_M" >/dev/null 2>&1; then
-    ISSUE_CREATED_AT=$(jq -r '.created_at // empty' "$ICA_M" 2>/dev/null)
-    echo "$(STAMP) [$PROJECT/$KEY] issue created-at served from the closed-issue read (no second GET)" >> "$BUILD/pipeline.log"
-  else
-    # Every other gh spend in this file re-mints the minute-0 App token first. This
-    # read fails open, so an expired token would not raise anything — it would just
-    # record `unknown` for every build on every pool box, which is the one way a
-    # fail-open metric read can lie without anybody noticing.
-    GH_LIVE
-    # REST (bin/lib/gh-rest.sh), through a temp file so the status stays in this shell.
-    ICA_RC=0; ICA_T=$(mktemp "${TMPDIR:-/tmp}/issue-created.XXXXXX") || ICA_RC=75
-    [ "$ICA_RC" = 0 ] && { gh_rest GET "repos/$GH_AUTH_SLUG/issues/$TICKET" > "$ICA_T" || ICA_RC=$?; }
-    [ "$ICA_RC" = 0 ] && ISSUE_CREATED_AT=$(jq -r '.created_at // empty' "$ICA_T" 2>/dev/null)
-    rm -f "${ICA_T:-}"
-  fi
-  [ -z "$ICA_M" ] || rm -f "$ICA_M"
-  [[ "$ISSUE_CREATED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || ISSUE_CREATED_AT=""
-fi
-# Written BEFORE the claim goes out, and from the same variable the claim sends,
-# so a build that dies inside job_open still leaves the evidence and the log can
-# never name a stamp the ledger was not offered.
-echo "$(STAMP) [$PROJECT/$KEY] ISSUE-CREATED-AT ${ISSUE_CREATED_AT:-unknown}" >> "$BUILD/pipeline.log"
-# <<< issue created-at stamp
+. "$RB_GATES_D/issue-created-at.sh"
 if command -v job_open >/dev/null 2>&1; then
   JOB_CLAIM=$(job_open "$PROJECT" "$KEY" build plan "plan/$PROJECT/${RUNNER_PLAN:-claude}" \
     "$(jq -nc --arg b "$(basename "$BUILD")" --arg t "$TICKET" '{build:$b,ticket_id:$t}' 2>/dev/null)" \

@@ -210,7 +210,8 @@ launch() {
   # The box's own HOTFIX / RESUME_BUILD never reach a case: each sets its own.
   ( unset HOTFIX RESUME_BUILD ADMIT_FIRST
     export HARNESS="$H" LANE_GATE_NOW="$NOW" JOBS_BOX=testbox PROJECT_CEILING_DAY="$DAY" \
-           HARNESS_SECRET=fixture-secret JOBS_URL=https://jobs.invalid ALERT_LOG="$T/alerts.log" P="$p" "$@"
+           HARNESS_SECRET=fixture-secret JOBS_URL=https://jobs.invalid ALERT_LOG="$T/alerts.log" P="$p" \
+           RB_GATES_D="$DIR/bin/lib/rb/gates.d" "$@"
     bash -c '
       set -uo pipefail
       eval "$FAKE_JOBS"

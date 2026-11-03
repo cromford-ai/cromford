@@ -162,10 +162,11 @@ eq "no temp file outlives a read" "$LEAK" "0"
 
 # ══ 3. THE DEFINE-ONLY SLICES CARRY THE SAME TRANSPORT ══════════════════════
 GATES="$DIR/bin/lib/rb/gates.sh"; PLAN="$DIR/bin/lib/rb/plan.sh"; EXEC="$DIR/bin/lib/rb/execute.sh"
-sed -n '/>>> issue created-at/,/<<< issue created-at/p' "$GATES" > "$T/g-ica.txt"
+# The region moved out of gates.sh into its gates.d fragment (BH-8957).
+sed -n '/>>> issue created-at/,/<<< issue created-at/p' "$DIR/bin/lib/rb/gates.d/issue-created-at.sh" > "$T/g-ica.txt"
 sed -n '/>>> issue created-at/,/<<< issue created-at/p' "$RBALL" > "$T/d-ica.txt"
 [ -s "$T/g-ica.txt" ] && cmp -s "$T/g-ica.txt" "$T/d-ica.txt" && ok \
-  || bad "3: gates.sh's created-at region differs from the driver's: $(diff "$T/d-ica.txt" "$T/g-ica.txt" | head -5)"
+  || bad "3: gates.d/issue-created-at.sh's created-at region differs from the driver's: $(diff "$T/d-ica.txt" "$T/g-ica.txt" | head -5)"
 sed -n '/^  local body$/,/^  rm -f "\$body"$/p' "$EXEC" > "$T/e-body.txt"
 sed -n '/^  local body$/,/^  rm -f "\$body"$/p' "$RBALL" > "$T/d-body.txt"
 [ -s "$T/e-body.txt" ] && ok || bad "3: execute.sh carries no 'local body' .. 'rm -f \"\$body\"' blocked-notice range"
@@ -176,7 +177,7 @@ eq "3: plan.sh reads the issue over REST" \
 # Code lines only: execute.sh now carries the driver's BH-781 paragraph verbatim,
 # and that comment NAMES the merge-base `gh issue comment` it replaced.
 eq "3: no gh issue CLI verb left in the three slices' code" \
-   "$(cat "$GATES" "$PLAN" "$EXEC" | grep -v '^[[:space:]]*#' | grep -cE 'gh issue (view|list|comment|close|edit)')" "0"
+   "$(cat "$GATES" "$DIR"/bin/lib/rb/gates.d/*.sh "$PLAN" "$EXEC" | grep -v '^[[:space:]]*#' | grep -cE 'gh issue (view|list|comment|close|edit)')" "0"
 
 echo "run-build-issue-rest.bh-1641-test: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

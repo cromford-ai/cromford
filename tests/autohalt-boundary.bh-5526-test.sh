@@ -257,7 +257,8 @@ echo '{"version":1,"lanes":[]}' > "$T/lanes.json"
 launch() {
   local b="$T/s5/$1" p="$2"; shift 2
   mkdir -p "$b"
-  ( export "${ENVS[@]}" HARNESS="$HB" HOME="$T" BUILD="$b" LANE_REGISTRY="$T/lanes.json" PROJECT="$p" "$@"
+  ( export "${ENVS[@]}" HARNESS="$HB" HOME="$T" BUILD="$b" LANE_REGISTRY="$T/lanes.json" PROJECT="$p" \
+           RB_GATES_D="$DIR/bin/lib/rb/gates.d" "$@"
     bash -c '
       set -uo pipefail
       KEY=K-5

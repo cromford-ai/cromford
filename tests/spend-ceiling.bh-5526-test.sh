@@ -210,7 +210,8 @@ awk '/^# >>> budget launch gate/{f=1} f{print} /^# <<< budget launch gate/{f=0}'
 launch() { # launch <build-subdir> [VAR=VAL ...] -> rc
   local b="$T/s5/$1"; shift
   mkdir -p "$b"
-  ( unset LLM_USD_CAP_DAY; export "${ENVS[@]}" BUILD="$b" "$@"
+  ( unset LLM_USD_CAP_DAY; export "${ENVS[@]}" BUILD="$b" \
+           RB_GATES_D="$DIR/bin/lib/rb/gates.d" "$@"
     bash -c '
       set -uo pipefail
       PROJECT=testproj; KEY=K-5

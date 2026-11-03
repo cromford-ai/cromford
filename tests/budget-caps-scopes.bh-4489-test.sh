@@ -268,7 +268,8 @@ grep -q '^# <<< tripwire paused skip # >>> budget launch gate (BH-4489) # --- Fl
 launch() { # launch [VAR=VAL ...] -> rc; RESULT to $T/s9/result, REACHED to $T/s9/reached
   rm -rf "$T/s9"; mkdir -p "$T/s9/build"
   ( export REQ_LOG="$T/req.log" SPEND_DIR="$T/spend" PATH="$T/fakebin:$PATH" HARNESS="$T" HOME="$T" \
-           HARNESS_SECRET=testsecret JOBS_URL=https://jobs.invalid JOBS_RETRIES=0 "$@"
+           HARNESS_SECRET=testsecret JOBS_URL=https://jobs.invalid JOBS_RETRIES=0 \
+           RB_GATES_D="$DIR/bin/lib/rb/gates.d" "$@"
     bash -c '
       set -uo pipefail
       PROJECT=testproj; KEY=TP-1; BUILD="$HARNESS/s9/build"
