@@ -49,19 +49,28 @@ _lrh_kill() {
   return 0
 }
 
+# _lrh_now_us — set _LRH_NOW_US to the time in microseconds (EPOCHREALTIME;
+# `date +%s` when it is empty, bash < 5). Sets a variable: no $( ) fork.
+_lrh_now_us() {
+  local n="${EPOCHREALTIME:-}"; n="${n//[!0-9]/}"
+  [ -n "$n" ] || n="$(date +%s)000000"
+  _LRH_NOW_US=$((10#$n))
+}
+
 # _lrh_loop <id> <pgid> <seconds> <machine> [max_s] — runs in the background
-# subshell.
+# subshell. The max_s cap is measured in microseconds (BH-9005: whole seconds
+# read up to 1 s late and stopped a 1 s beat before its first POST).
 _lrh_loop() {
   local id="$1" pgid="$2" hb="$3" body sp="" rc reason max="${5:-}" t0
   body=$(jq -nc --arg m "$4" '{machine:$m}')
   trap '[ -z "$sp" ] || kill "$sp" 2>/dev/null; exit 0' TERM
-  t0=$(date +%s)
+  _lrh_now_us; t0=$_LRH_NOW_US
   while :; do
     sleep "$hb" & sp=$!
     wait "$sp"; sp=""
     # The worker that owns the run is gone: stop, so the lease can run out.
     kill -0 "$$" 2>/dev/null || exit 0
-    if [ -n "$max" ] && [ $(( $(date +%s) - t0 )) -ge "$max" ]; then
+    if [ -n "$max" ] && _lrh_now_us && [ $(( _LRH_NOW_US - t0 )) -ge $(( max * 1000000 )) ]; then
       _lrh_log "run $id: pre-run heartbeat stopped after ${max}s"
       exit 0
     fi
