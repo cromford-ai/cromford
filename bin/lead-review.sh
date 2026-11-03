@@ -1441,6 +1441,8 @@ review_one() {
   else
     echo '(no live-probe evidence: bin/lib/live-probes.sh is not loaded)' > "$WT.probes"
   fi
+  # Main's latest E2E run against this head's (BH-7941, checklist item 17); fd 7 closed.
+  emb_prompt_file "$repo" "$sha" "$project" "$WT.e2e" 7>&- 8>&- || echo 'COULD NOT READ: bin/lib/e2e-main-baseline.sh is not loaded (tool failure, not "no failures").' > "$WT.e2e"
   # The builder review of this exact head (BH-5355, header). A network read,
   # so fd 7 is closed; every miss is a full review, logged.
   if [ "$dmode" = delta ] || [ "$imode" = intent ]; then :
@@ -1480,6 +1482,8 @@ review_one() {
     lr_gate_record_section
     printf '\n## Live probes\n'
     cat "$WT.probes"
+    printf '\n## Main E2E\n'
+    cat "$WT.e2e"
     printf '\n## Conflict hotspots\n'
     cat "$WT.hotspots"
     if [ "$bmode" = build-on ]; then
@@ -1596,9 +1600,9 @@ review_one() {
     rlgo=stand; command -v rl_golive_opt >/dev/null 2>&1 && rlgo=$(rl_golive_opt "$project" 2>/dev/null 7>&- 8>&-)
     if cp -f "$out" "$out.rlkeep" 2>/dev/null; then
       if [ -n "$rlcap" ]; then
-        rlk=$(REVIEW_LEVEL_MODE=cowboy rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" 2>"$WT.rlnote") || rlrc=$?
+        rlk=$(REVIEW_LEVEL_MODE=cowboy rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" --e2e "$WT.e2e" 2>"$WT.rlnote") || rlrc=$?
       else
-        rlk=$(rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" 2>"$WT.rlnote") || rlrc=$?
+        rlk=$(rl_cap "$out" "$project" --approve MERGE-WITH-NOTES --block BLOCK --lens lead --golive "$rlgo" --e2e "$WT.e2e" 2>"$WT.rlnote") || rlrc=$?
       fi
       rlgl=$(printf '%s' "$rlk" | sed -nE 's/.* golive=([0-9]+).*/\1/p'); case "$rlgl" in ''|*[!0-9]*) rlgl=0 ;; esac
     else rlrc=5

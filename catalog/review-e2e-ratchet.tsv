@@ -1,0 +1,49 @@
+# catalog/review-e2e-ratchet.tsv — the lead review's E2E ratchet (BH-7941).
+# Read by rl_line_e2e_ratchet in bin/lib/review-level.sh, lens lead only.
+# Tab-separated: kind, ere, note. grep -iE. Lines that start with # are comments.
+# Edit this file, not the regexes in code.
+#   e2e-context        the finding is about a browser E2E test
+#   e2e-preexisting    the finding says the failure is red on main too. Each
+#                      phrase is anchored: `main` ends at a word end (not
+#                      main-merge), a main-run phrase names its result in
+#                      the 60 characters after `run`, in the same sentence,
+#                      and every phrase names main or the nightly: a bare
+#                      `already failing` or `pre-existing failure` is not
+#                      proof the failure is red on main, so it stands.
+#   e2e-evidence-form  the finding asks for "N full runs" or a per-spec table
+#                      A phrase alone never demotes: rl_cap also needs every
+#                      spec file the line names in the measured pre-existing
+#                      list of `## Main E2E` (bin/lib/review-level.sh
+#                      _rl_e2e_all_preexisting), and no weakened test.
+#   e2e-keep           the finding stands whatever the two above say (a
+#                      regression, a negation, a deleted/skipped test, a
+#                      weakened test: fixme, retries, continue-on-error,
+#                      comment out). Read on the text AFTER the severity tag,
+#                      on both branches. `|| true` is in the weakened-test row
+#                      of review-always-block.tsv, which both branches also
+#                      read (third lead review of #8142).
+#   e2e-head-red       the finding says the head itself fails (a red run, a
+#                      failing spec, a dead flow). Read on the evidence
+#                      branch only: an ask for "N full runs" or a per-spec
+#                      table on top of a real failure is not a demotable
+#                      evidence nit, so the line stands (lead review of
+#                      #8142). Not read on the pre-existing branch, where
+#                      "fails on the head; also fails on main" is the point.
+#   e2e-names-run      the finding names a run id of 3+ digits ("run 5001");
+#                      "run 3 full runs" is an ask, not a run id.
+#                      Read on the evidence branch only, with a spec file
+#                      path (_rl_e2e_specs): an evidence ask that names a
+#                      spec file or a run is about one concrete result, so it
+#                      stands whatever words it uses. Only an ask that names
+#                      neither ("no per-spec table", "one run, not 3") is a
+#                      demotable evidence nit (second lead review of #8142:
+#                      the e2e-head-red words alone were a denylist).
+#   e2e-soft-class     the ALWAYS-BLOCK classes this rule may demote; a tag or
+#                      text of any other class keeps the line standing
+e2e-context	e2e|playwright|end-to-end|browser (test|suite|spec)	a browser E2E test
+e2e-preexisting	(also |already )?(fails|failing|fail|red) on (origin/)?main([^-a-z0-9_/]|$)|already (red|failing|fails) on (origin/)?main([^-a-z0-9_/]|$)|pre-?existing on (origin/)?main([^-a-z0-9_/]|$)|red on main too|same failure on (origin/)?main([^-a-z0-9_/]|$)|(main|nightly)('s)? (latest |last )?(full )?(e2e )?run[^.]{0,60}(red|fail)	red on main too: not this PR's regression
+e2e-evidence-form	(three|[2-9]|multiple|repeated) (full |consecutive |green |separate )*(e2e )?runs|per-spec (table|breakdown|evidence|results|list)	one full E2E run is enough evidence
+e2e-keep	pass(es|ed)? on (the )?(origin/)?main|green on (the )?(origin/)?main|succeed(s|ed)? on (the )?(origin/)?main|main[- ]green|regress|(not|never|n't) (fail|red)[a-z]* on main|not red on main|not (a |an )?pre-?existing|passed|was green|is green|no failures|does not appear|new failure|breaks|broken by|now fails|delet|remov|skip|\.only|weaken|soften|fixme|test\.fail\(|retries|continue-on-error|allow(s|ed)?[-_ ]?fail|quarantin|comment(s|ed|ing)? out|disabl|xfail|expect\.soft	a regression, a negation or a removed test stands
+e2e-head-red	fail(s|ed|ing|ure|ures)?([^a-z]|$)|(^|[^a-z])red([^a-z]|$)|broken|does not (pass|load|render)|(did|does|do|will|would|could) ?n[o']t (pass|load|render|finish|complete|run)|not pass(ing|es)?|timed? ?out|time-?outs?|(^|[^a-z])errors?([^a-z]|$)|errored|crash(es|ed|ing)?|hang(s|ing)?|hung|abort(s|ed)?|flak(e|es|y|iness)	the head is red: an evidence ask on top of it stands
+e2e-names-run	(^|[^a-z])run (id )?#?[0-9]{3,}|/actions/runs/[0-9]+	the finding names a run: an evidence ask about it stands
+e2e-soft-class	red-build|core-flow-broken|weakened-test	classes the ratchet may demote

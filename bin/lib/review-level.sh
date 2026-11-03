@@ -133,14 +133,56 @@ _rl_catalog_classes() {
 }
 # The catalogs are read once per process (rl_catalogs_load) and again only
 # when the root changes; the rl_line_* readers below use the loaded values.
+# _rl_catalog_kind_re <file> <kind> — the ERE of the rows whose column 1 is
+# <kind>, joined with |; with <kind> prefixed `!`, the rows whose column 1 is
+# NOT in the |-list after it.
+_rl_catalog_kind_re() {
+  local f="$1" want="$2" line c ere re="" neg=0
+  [ -r "$f" ] || return 1
+  case "$want" in '!'*) neg=1; want="${want#!}" ;; esac
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    c=$(printf '%s' "$line" | awk -F'\t' '{print $1}')
+    ere=$(printf '%s' "$line" | awk -F'\t' '{print $2}')
+    [ -n "$c" ] && [ -n "$ere" ] || continue
+    if [ "$neg" = 1 ]; then
+      case "|$want|" in *"|$c|"*) continue ;; esac
+    else
+      [ "$c" = "$want" ] || continue
+    fi
+    re="${re:+$re|}$ere"
+  done < "$f"
+  [ -n "$re" ] || return 1
+  printf '%s' "$re"
+}
 _RL_LOADED_ROOT=""; _RL_ALWAYS_RE=""; _RL_CLASSES=""; _RL_NIT_RE=""; _RL_GOLIVE_RE=""
+_RL_E2E_CTX_RE=""; _RL_E2E_PRE_RE=""; _RL_E2E_EVI_RE=""; _RL_E2E_KEEP_RE=""; _RL_E2E_HEADRED_RE=""; _RL_E2E_RUN_RE=""; _RL_E2E_HARD_RE=""; _RL_E2E_HARD_TAG_RE=""; _RL_E2E_WEAK_RE=""
 rl_catalogs_load() {
-  local root; root=$(_rl_root) || return 1
+  local root soft hard; root=$(_rl_root) || return 1
   [ "$_RL_LOADED_ROOT" = "$root" ] && [ -n "$_RL_ALWAYS_RE" ] && return 0
   _RL_ALWAYS_RE=$(_rl_catalog_re "$root/catalog/review-always-block.tsv") || _RL_ALWAYS_RE=""
   _RL_CLASSES=$(_rl_catalog_classes "$root/catalog/review-always-block.tsv") || _RL_CLASSES=""
   _RL_NIT_RE=$(_rl_catalog_re "$root/catalog/review-nits.tsv") || _RL_NIT_RE=""
   _RL_GOLIVE_RE=$(_rl_catalog_re "$root/catalog/review-golive.tsv") || _RL_GOLIVE_RE=""
+  # BH-7941: the lead lens's E2E ratchet. Every list empty = the rule is off.
+  _RL_E2E_CTX_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-context) || _RL_E2E_CTX_RE=""
+  _RL_E2E_PRE_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-preexisting) || _RL_E2E_PRE_RE=""
+  _RL_E2E_EVI_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-evidence-form) || _RL_E2E_EVI_RE=""
+  _RL_E2E_KEEP_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-keep) || _RL_E2E_KEEP_RE=""
+  _RL_E2E_HEADRED_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-head-red) || _RL_E2E_HEADRED_RE=""
+  _RL_E2E_RUN_RE=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-names-run) || _RL_E2E_RUN_RE=""
+  soft=$(_rl_catalog_kind_re "$root/catalog/review-e2e-ratchet.tsv" e2e-soft-class) || soft=""
+  # A weakened test is never excused by "red on main too" (refute review).
+  _RL_E2E_WEAK_RE=$(_rl_catalog_kind_re "$root/catalog/review-always-block.tsv" weakened-test) || _RL_E2E_WEAK_RE=""
+  _RL_E2E_HARD_RE=""; _RL_E2E_HARD_TAG_RE=""
+  # No soft-class row = no guard for the other classes: the rule is off, never
+  # a demoter that could reach a tenant leak.
+  [ -n "$soft" ] || _RL_E2E_CTX_RE=""
+  if [ -n "$soft" ]; then
+    _RL_E2E_HARD_RE=$(_rl_catalog_kind_re "$root/catalog/review-always-block.tsv" "!$soft") || _RL_E2E_HARD_RE=""
+    hard=$(printf '%s' "$_RL_CLASSES" | tr '|' '\n' | grep -vxE "$soft" | paste -sd'|' -)
+    [ -n "$hard" ] && _RL_E2E_HARD_TAG_RE=$(printf '\\[(BLOCK|BLOCKING|BLOCKER)[[:space:]:—-]+(%s)\\]' "$hard")
+  fi
   _RL_LOADED_ROOT="$root"
   return 0
 }
@@ -168,6 +210,111 @@ rl_line_blocks() {
   if tagre=$(_rl_class_tag_re); then grep -qiE "$tagre" <<<"$line" && return 0; fi
   always="$_RL_ALWAYS_RE"
   grep -qiE "$always" <<<"$line"
+}
+# rl_e2e_ratchet_on [project] — rc 0 when the lead lens's E2E ratchet is on
+# (BH-7941). The row review.e2e_ratchet[.<project>], default 1; env
+# REVIEW_LEVEL_E2E_RATCHET wins. 0 turns off the demotion here and the
+# `## Main E2E` read in bin/lib/e2e-main-baseline.sh.
+rl_e2e_ratchet_on() { [ "$(rl_knob review.e2e_ratchet "${1:-}" 1 '^[01]$')" = 1 ]; }
+
+# _rl_e2e_list <e2e-file> <heading-prefix> — the spec paths (the id up to the
+# first ` › `) under one list of the `## Main E2E` body that
+# bin/lib/e2e-main-baseline.sh emb_section writes, one per line.
+_rl_e2e_list() {
+  [ -n "$1" ] && [ -r "$1" ] || return 0
+  awk -v h="$2" 'index($0, h) == 1 {f=1; next} f && /^  - / {sub(/^  - /, ""); sub(/ › .*$/, ""); print; next} {f=0}' "$1"
+}
+# _rl_e2e_path_in <token> <paths> — rc 0 when the spec path a finding names
+# is one of <paths> (equal, or one ends with `/` + the other: a model writes
+# e2e/a.spec.ts where Playwright prints a.spec.ts under its testDir).
+_rl_e2e_path_in() {
+  local t="$1" q
+  while IFS= read -r q; do
+    [ -n "$q" ] || continue
+    if [ "$t" = "$q" ] || [[ "$t" == */"$q" ]] || [[ "$q" == */"$t" ]]; then return 0; fi
+  done <<<"$2"
+  return 1
+}
+# _rl_e2e_specs <text> — the spec file paths a finding names, one per line.
+_rl_e2e_specs() { grep -oE '[A-Za-z0-9_.@/-]*[A-Za-z0-9_-]\.(spec|test|e2e)\.[cm]?[jt]sx?' <<<"$1" | LC_ALL=C sort -u; }
+# _rl_e2e_all_preexisting <text> <e2e-file> — rc 0 only when the finding names
+# at least one spec file, and every spec file it names is in the measured
+# `pre-existing` list and in no `regression` list. The model's sentence is not
+# the proof; main's run is. No file, no lists or no spec name = rc 1.
+_rl_e2e_all_preexisting() {
+  local specs pre reg t
+  specs=$(_rl_e2e_specs "$1"); [ -n "$specs" ] || return 1
+  pre=$(_rl_e2e_list "$2" 'pre-existing (red on main and head):'); [ -n "$pre" ] || return 1
+  reg=$(_rl_e2e_list "$2" 'regression (red on head, not on main):')
+  while IFS= read -r t; do
+    _rl_e2e_path_in "$t" "$pre" || return 1
+    if [ -n "$reg" ] && _rl_e2e_path_in "$t" "$reg"; then return 1; fi
+  done <<<"$specs"
+  return 0
+}
+# _rl_e2e_names_regression <text> <e2e-file> — rc 0 when the finding names a
+# spec file in the measured `regression` list.
+_rl_e2e_names_regression() {
+  local specs reg t
+  specs=$(_rl_e2e_specs "$1"); [ -n "$specs" ] || return 1
+  reg=$(_rl_e2e_list "$2" 'regression (red on head, not on main):'); [ -n "$reg" ] || return 1
+  while IFS= read -r t; do _rl_e2e_path_in "$t" "$reg" && return 0; done <<<"$specs"
+  return 1
+}
+# rl_line_e2e_ratchet <line> [e2e-file] — BH-7941, the lead lens's E2E
+# ratchet. Prints `preexisting` (an E2E failure that is red on main too) or
+# `evidence` (an ask for "N full runs" or a per-spec table), rc 0; rc 1 = not
+# this rule, the line goes on to the ALWAYS-BLOCK floor. The keep list is read
+# on the text after the severity tag (so `[BLOCK weakened-test]` itself is not
+# a "weaken"); a tag or text of a class outside e2e-soft-class keeps the line.
+# `preexisting` needs more than the line's words: every spec file the line
+# names must be in the `pre-existing` list of <e2e-file> (the `## Main E2E`
+# body, measured from main's run), none in `regression`, and the line must not
+# be a weakened test. `evidence` stands when the line names a regression spec,
+# when its text says the head is red (e2e-head-red: the ask for more runs is on
+# top of a real failure), when it names a spec file or a run id (e2e-names-run),
+# when it carries a `core-flow-broken` tag, or when its text without the ask
+# is a weakened test (the weakened-test row of review-always-block.tsv).
+rl_line_e2e_ratchet() {
+  local line="$1" ef="${2:-}" text stripped
+  rl_catalogs_load || return 1
+  [ -n "$_RL_E2E_CTX_RE" ] || return 1
+  grep -qiE "$_RL_E2E_CTX_RE" <<<"$line" || return 1
+  if [ -n "$_RL_E2E_HARD_TAG_RE" ] && grep -qiE "$_RL_E2E_HARD_TAG_RE" <<<"$line"; then return 1; fi
+  text=$(sed -E 's/^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?\[[^]]*\](\*\*)?//' <<<"$line")
+  if [ -n "$_RL_E2E_HARD_RE" ] && grep -qiE "$_RL_E2E_HARD_RE" <<<"$text"; then return 1; fi
+  if [ -n "$_RL_E2E_KEEP_RE" ] && grep -qiE "$_RL_E2E_KEEP_RE" <<<"$text"; then return 1; fi
+  if [ -n "$_RL_E2E_PRE_RE" ] && grep -qiE "$_RL_E2E_PRE_RE" <<<"$text"; then
+    grep -qiE '\[(BLOCK|BLOCKING|BLOCKER)[[:space:]:—-]+weakened-test\]' <<<"$line" && return 1
+    if [ -n "$_RL_E2E_WEAK_RE" ] && grep -qiE "$_RL_E2E_WEAK_RE" <<<"$text"; then return 1; fi
+    _rl_e2e_all_preexisting "$text" "$ef" || return 1
+    printf 'preexisting'; return 0
+  fi
+  if [ -n "$_RL_E2E_EVI_RE" ] && grep -qiE "$_RL_E2E_EVI_RE" <<<"$text"; then
+    grep -qiE '\[(BLOCK|BLOCKING|BLOCKER)[[:space:]:—-]+core-flow-broken\]' <<<"$line" && return 1
+    # A weakened test under the ask stands (third lead review of #8142). The
+    # ask is cut out first, so a bare ask with a weakened-test tag still demotes.
+    stripped=$(sed -E "s/($_RL_E2E_EVI_RE)//Ig" <<<"$text")
+    if [ -n "$_RL_E2E_WEAK_RE" ] && grep -qiE "$_RL_E2E_WEAK_RE" <<<"$stripped"; then return 1; fi
+    if [ -n "$_RL_E2E_HEADRED_RE" ] && grep -qiE "$_RL_E2E_HEADRED_RE" <<<"$text"; then return 1; fi
+    # An ask that names a spec file or a run is about one concrete result:
+    # it stands, whatever words report that result (timed out, errored, ...).
+    # Only a bare ask ("no per-spec table") is a demotable evidence nit.
+    [ -n "$(_rl_e2e_specs "$text")" ] && return 1
+    if [ -n "$_RL_E2E_RUN_RE" ] && grep -qiE "$_RL_E2E_RUN_RE" <<<"$text"; then return 1; fi
+    _rl_e2e_names_regression "$text" "$ef" && return 1
+    printf 'evidence'; return 0
+  fi
+  return 1
+}
+# _rl_e2e_rewrite <line> <why> — the first severity tag becomes
+# `[NOTE demoted from <tag>, e2e ratchet (BH-7941): <why>]`; an unbracketed
+# `BLOCK (x)` becomes `NOTE demoted from BLOCK, e2e ratchet (BH-7941): <why>; (x)`.
+_rl_e2e_rewrite() {
+  local line="$1" why="$2" out
+  out=$(sed -E "s/^([[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?)\[(BLOCKING|BLOCKER|BLOCK|HIGH|MEDIUM|MAJOR|CRITICAL)([^]]*)\]/\1[NOTE demoted from \4\5, e2e ratchet (BH-7941): $why]/I" <<<"$line")
+  [ "$out" = "$line" ] && out=$(sed -E "s/^([[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?)(BLOCKING|BLOCKER|BLOCK|HIGH|MEDIUM|MAJOR|CRITICAL)/\1NOTE demoted from \4, e2e ratchet (BH-7941): $why;/I" <<<"$line")
+  printf '%s\n' "$out"
 }
 # rl_line_golive <line> — rc 0 when a human ask is a go-live step.
 rl_line_golive() { rl_catalogs_load || return 1; [ -n "$_RL_GOLIVE_RE" ] || return 1; grep -qiE "$_RL_GOLIVE_RE" <<<"$1"; }
@@ -233,9 +380,11 @@ _rl_final_start() {
   printf '%s' "${n:-0}"
 }
 
-# rl_cap <file> <project> --approve WORD --block WORD [--lens inbuild|prs|lead] [--golive note|stand]
+# rl_cap <file> <project> --approve WORD --block WORD [--lens inbuild|prs|lead] [--golive note|stand] [--e2e FILE]
+# --e2e: the `## Main E2E` body of this review (lens lead, BH-7941); without it
+# no pre-existing E2E finding is demoted.
 rl_cap() {
-  local f="${1:-}" p="${2:-}" aw="" bw="" lens="inbuild" golive="stand" mode start n k=0 s=0 u=0 g=0 line newl vln vword marker tmp tagre grammar=0 final gsum
+  local f="${1:-}" p="${2:-}" aw="" bw="" lens="inbuild" golive="stand" mode start n k=0 s=0 u=0 g=0 line newl vln vword marker tmp tagre grammar=0 final gsum ekind eon="" e2ef=""
   shift 2 2>/dev/null || true
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -243,6 +392,7 @@ rl_cap() {
       --block) bw="${2:-}"; shift 2 ;;
       --lens) lens="${2:-inbuild}"; shift 2 ;;
       --golive) case "${2:-}" in note) golive=note ;; *) golive=stand ;; esac; shift 2 ;;
+      --e2e) e2ef="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -293,6 +443,21 @@ rl_cap() {
           else s=$((s+1)); printf '%s\n' "$line" >> "$tmp"; fi
         else k=$((k+1)); sed -E 's/\[BLOCK needs-human\]/[NOTE not verified here, demoted from BLOCK needs-human]/' <<<"$line" >> "$tmp"
         fi
+        continue
+      fi
+      # BH-7941, lens lead: E2E is a ratchet. A failure that main's measured
+      # run (--e2e) shows red on main too, or an ask for "N full runs" / a per-spec table, is a NOTE
+      # before the floor below; a regression or another class is not (the
+      # keep list in catalog/review-e2e-ratchet.tsv). The knob is read once
+      # per call, on the first E2E line (eon).
+      if [ "$lens" = lead ] && grep -qiE "^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?$RL_BLOCKWORD_RE" <<<"$line" \
+         && ekind=$(rl_line_e2e_ratchet "$line" "$e2ef") \
+         && { [ -n "$eon" ] || { rl_e2e_ratchet_on "$p" && eon=1 || eon=0; }; [ "$eon" = 1 ]; }; then
+        k=$((k+1))
+        case "$ekind" in
+          preexisting) _rl_e2e_rewrite "$line" 'pre-existing on main; follow-up' >> "$tmp" ;;
+          *) _rl_e2e_rewrite "$line" 'one full E2E run is enough evidence' >> "$tmp" ;;
+        esac
         continue
       fi
       # A finding on the ALWAYS-BLOCK floor stands whatever its tag: a tenant

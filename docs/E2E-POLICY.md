@@ -93,6 +93,60 @@ follow when they get browser suites):
   project-4 "E2E Tests", red 9 days, 53 consecutive red runs since 2026-09-03.
   Pinned by `tests/pipeline-health-permared-test.sh`.
 
+### Lead review ratchet (BH-7941)
+
+In the lead review, E2E is a ratchet. A failing E2E test is a BLOCK only when
+it is a regression: it passes on main's latest full E2E run (or the nightly)
+and fails on the head. A test that also fails on main is a NOTE with a
+follow-up for its area. One full E2E run on the head is enough evidence; the
+lead never blocks for "3 full runs" or a per-spec table.
+
+- **`bin/lib/e2e-main-baseline.sh`** `emb_prompt_file` writes the lead
+  prompt's `## Main E2E` section, between `## Live probes` and
+  `## Conflict hotspots`. It loads through
+  `bin/lib/lead-review/libs.d/202610230549-bh-7941-e2e-main-baseline.sh`. It
+  reads main's newest completed E2E-class run (event push or schedule) and the
+  head's, through `gh_rest`. It lists the failing Playwright spec ids red on
+  both (pre-existing) and red on the head only (regression). A failed read is
+  `COULD NOT READ (<why>)`, never "no failures". Pinned by
+  `tests/e2e-main-baseline.bh-7941-test.sh`.
+- **`prompts/lead-review-checklist.md` item 17** (v11) is the rule for the
+  model.
+- **`bin/lib/review-level.sh` `rl_cap`, lens lead only**, is the mechanical
+  floor. Before the ALWAYS-BLOCK floor it rewrites an E2E finding that says
+  the test is red on main (or on the nightly) too, or that asks for N full
+  runs or a per-spec table, to
+  `[NOTE demoted from <tag>, e2e ratchet (BH-7941): ...]`. A regression, a
+  negation, a deleted or skipped test, a failure that names no main or
+  nightly, or another ALWAYS-BLOCK class (a tenant leak found through a red
+  spec) still stands. The phrases are in `catalog/review-e2e-ratchet.tsv`.
+  The phrase alone never demotes a failure. `bin/lead-review.sh` passes the
+  `## Main E2E` body to `rl_cap --e2e`, and a "red on main too" line demotes
+  only when every spec file it names is in the measured pre-existing list and
+  none is in the regression list. A line that names no spec file, or a review
+  where main could not be read, stands. A `weakened-test` tag or text on a
+  "red on main too" line stands. An evidence ask that names a regression spec
+  stands. An evidence ask that also says the head is red (a failing run or
+  spec, "both red"; the `e2e-head-red` row) stands, and so does one tagged
+  `core-flow-broken`: the ask for more runs is on top of a real failure.
+  Pinned by `tests/review-level-e2e-ratchet.bh-7941-test.sh` and, through a
+  real tick, `tests/lead-review-e2e-ratchet.bh-7941-test.sh`.
+- Settings rows (seeded by
+  `worker/jobs/schema.d/202611031509-bh-7941-e2e-ratchet-knobs.sql`; per
+  project `<key>.<project>`; env `REVIEW_LEVEL_<KEY>` wins):
+
+  | Row | Default | What it sets |
+  |---|---|---|
+  | `review.e2e_ratchet` | 1 | 0 turns off the section read and the demotion |
+  | `review.e2e_baseline_runs` | 50 | completed runs per list read (1-100) |
+  | `review.e2e_baseline_jobs` | 2 | failed-job logs read per review |
+  | `review.e2e_baseline_ids` | 30 | failing spec ids kept per run |
+  | `review.e2e_baseline_timeout_s` | 15 | seconds per REST call |
+  | `review.e2e_baseline_calls` | 6 | REST calls per review |
+
+- CI, the merge conductor and the merge queue do not change. The in-build
+  review and `bin/review-prs.sh` keep their E2E behaviour.
+
 ## Per-repo status (2026-09-12)
 
 The app-repo halves are being opened in parallel by sibling lanes on branch
