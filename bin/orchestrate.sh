@@ -678,8 +678,13 @@ run_turn() { # run_turn <model>; sets OUT/RC
     # alone while other turns run. A used id is refused, so every model and
     # account rung gets a new one.
     ORC_TURN_SID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null) || ORC_TURN_SID=""
-    OUT=$(compose_v2_prompt | timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions ${ORC_TURN_SID:+--session-id "$ORC_TURN_SID"} \
-      --max-budget-usd "$ORC_BUDGET" --model "$m" "${IRON_LAW_ARM[@]}" 2>&1)
+    # COMPOSE FIRST, THEN START CLAUDE (BH-9019). The CLI gives up on stdin
+    # after 3 s with no byte, and the compose can take 30 s+, so a pipe from
+    # compose_v2_prompt made every rung exit 1. The here-string is written in
+    # full before claude runs. Stdin, not argv: one argv string caps at 128 KiB.
+    local prompt; prompt=$(compose_v2_prompt)
+    OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions ${ORC_TURN_SID:+--session-id "$ORC_TURN_SID"} \
+      --max-budget-usd "$ORC_BUDGET" --model "$m" "${IRON_LAW_ARM[@]}" <<<"$prompt" 2>&1)
     RC=$?
     # THE DEFAULT PATH MUST BE CHECKED TOO. This `return` skipped budget_check
     # entirely, and since #73 made fresh-by-default the standard, that is the
