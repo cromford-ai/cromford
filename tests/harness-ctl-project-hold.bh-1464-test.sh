@@ -113,7 +113,10 @@ HOLD_IDS=$(jq -r '.lanes[]|select(.per_project_hold==true)|.id' "$T/h/catalog/la
 # declared the field in is gone. split-watchdog (BH-1793) declares it.
 # TEST-CHANGE (BH-6972): component-watch declares it; its project is a
 # component, so `off component-watch --project <component>` holds one component.
-[ "$HOLD_IDS" = "blocked-resolver component-watch main-red-pr-pair merge-conductor review-autopilot split-watchdog " ] \
+# TEST-CHANGE (BH-8704): migration declares per_project_hold. It is a hub
+# lane that applies and merges one project's migration PRs, and
+# lane-off-migration-<project> holds one project.
+[ "$HOLD_IDS" = "blocked-resolver component-watch main-red-pr-pair merge-conductor migration review-autopilot split-watchdog " ] \
   && ok || bad "3a the registry's per_project_hold set changed: '$HOLD_IDS'"
 for id in $HOLD_IDS; do
   reset; ctl off "$id" --project projb "x"; RC=$?
