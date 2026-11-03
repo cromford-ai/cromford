@@ -597,7 +597,7 @@ machines_row_close() {
 # and its stand-down arms call mc_pool_rereview_fail.
 # Type-guarded like every other lib here: a half-synced box defines nothing and
 # the arm's own `command -v` miss is what reports it — one ALERTS line and a
-# queue row left claimed — because a missing function must never read as
+# queue row that is never closed done — because a missing function must never read as
 # "apply succeeded". No name in the lib or its guarded sub-sources
 # (mc_*/_mc_*, plus the bg_*/pdg_*/rp_* and issue_close_shipped fallbacks)
 # collides with one this file or its libs define (checked 2026-10-19).
@@ -4029,8 +4029,9 @@ for MF in "$POOL"/*.json; do
           say "pool rereview RESULT reaped for $KEY from $MID: $(head -1 "$LOCAL/RESULT" | head -c 80) — job file written"
           "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -1 "$LOCAL/RESULT" | head -c 120)" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_rereview",detail:$r}')" >/dev/null 2>&1 || true
         else
-          # Left CLAIMED, as a refused rebase apply is: nothing re-materialises a
-          # claimed row, so the read is not bought twice while someone looks.
+          # Left CLAIMED: nothing re-materialises a claimed row (the orphan-row
+          # release keeps RR- rows), so the read is not bought twice while
+          # someone looks.
           HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rereview RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rereview_apply answered rc=$RRRC — the queue row stays CLAIMED, no hub re-review job file was written, and nothing retries this on its own. The RESULT is at $LOCAL/RESULT"
           say "rereview $KEY: apply refused rc=$RRRC — row left claimed, RESULT at $LOCAL/RESULT"
         fi
@@ -4147,13 +4148,39 @@ for MF in "$POOL"/*.json; do
     # first words are bin/lib/rebase-job.sh's vocabulary and nothing else on
     # this branch; everything below it is the build path, untouched.
     #
+    # THE KEY DECIDES, NOT ONLY THE WORD (BH-8886). Only an RB- key ran a
+    # rebase. Since BH-8062 a normal build writes `GATE_RED <n> red: ...` from
+    # its selection gate (and BH-7365 writes `GATE_RED migration-number: ...`),
+    # so a build key's GATE_RED is a build result: it falls through to the
+    # build path, which closes the row `done` with the RESULT and relays the
+    # record to the owning box, where the resolver reads it. Any other rebase
+    # word on a key that is not RB- is a RESULT nobody can apply: the row is
+    # FAILED, never applied and never relayed.
+    #
     # The apply is the hub's half — it writes the rebase job file and the ledger
     # row and attempts the approval rebind. It either did that (rc 0) or it did
     # not, and "did not" includes the function not being here at all: rc 127 is
     # seeded before the call so a half-synced box takes the refusal path rather
     # than falling through to the build one.
+    RBARM=""
     case "$RLINE" in
       REBASED*|CONFLICT*|GATE_RED*|REBASE_*)
+        case "$KEY" in
+          RB-*) RBARM=apply ;;
+          RR-*|LR-*|CP-*|FXR-*) RBARM=mismatch ;;
+          *) case "$RLINE" in GATE_RED*) RBARM="" ;; *) RBARM=mismatch ;; esac ;;
+        esac ;;
+    esac
+    if [ "$RBARM" = mismatch ]; then
+      : > "$LOCAL/COMMENTED"
+      QROW failed "$KEY" "rebase word on a non-rebase key ($(head -1 "$LOCAL/RESULT" | head -c 60)); row FAILED, not requeued"
+      HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: the RESULT ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) is a rebase word and the row key is not RB- — only a rebase job answers it. The queue row is FAILED and NOT requeued, nothing is applied, and the RESULT is never read as a build. The RESULT is at $LOCAL/RESULT"
+      say "rebase word on $KEY: RESULT/key mismatch — row failed, RESULT at $LOCAL/RESULT"
+      next_job_or_destroy
+      continue
+    fi
+    case "$RBARM" in
+      apply)
         RBRC=127
         fp_mc_lib_load || true
         command -v mc_pool_rebase_apply >/dev/null 2>&1 \
@@ -4176,14 +4203,19 @@ for MF in "$POOL"/*.json; do
           say "reaped rebase $KEY from $MID: $(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')${RBTIM:+ timings: $RBTIM}"
           "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_rebase",detail:$r}')" >/dev/null 2>&1 || true
         else
-          # The row is left CLAIMED on purpose: nothing re-materialises a claimed
-          # row, so the rebase does not silently run twice while someone reads
-          # this line. Nothing requeues it either — bin/jobs-watchdog.sh sweeps
-          # only the triage/preplan/pr-* classes — so this is manual cleanup, and
-          # the line says where the evidence is. No beat either: a rebase that
-          # did not apply is not a finished anything.
-          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rebase RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rebase_apply answered rc=$RBRC — the queue row stays CLAIMED, no hub-side rebase job file was written, and nothing retries this on its own. The RESULT is at $LOCAL/RESULT"
-          say "rebase $KEY: apply refused rc=$RBRC — row left claimed, RESULT at $LOCAL/RESULT"
+          # The row is closed FAILED (BH-8886). A row left CLAIMED is not safe:
+          # BH-7382's orphan-row release frees it and fly-dispatch spawns the
+          # same key again. The hub job file is marked failed when the lib is
+          # loaded, so the merge conductor's failed arm reaches the PR on its
+          # next tick. No beat: a rebase that did not apply is not a finished
+          # anything.
+          QROW failed "$KEY" "APPLY_FAILED rc=$RBRC: $(head -c 120 "$LOCAL/RESULT" | tr '\n' ' ')"
+          RBREC="no hub rebase job file was marked"
+          command -v mc_pool_rebase_fail >/dev/null 2>&1 \
+            && mc_pool_rebase_fail "$P" "$KEY" "the apply answered rc=$RBRC" \
+            && RBREC="the hub rebase job file is marked failed"
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rebase RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rebase_apply answered rc=$RBRC — the queue row is closed FAILED (APPLY_FAILED), not requeued; $RBREC. The RESULT is at $LOCAL/RESULT"
+          say "rebase $KEY: apply refused rc=$RBRC — row closed FAILED (APPLY_FAILED), RESULT at $LOCAL/RESULT"
         fi
         next_job_or_destroy
         continue ;;

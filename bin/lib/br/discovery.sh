@@ -321,6 +321,10 @@ br_rebuild_outcome() {
     "DECOMPOSE_FAILED"*)  echo rebuild-decompose-failed ;;
     "PLAN_BLOCKED"*)      echo rebuild-plan-blocked ;;
     "REVIEW_BLOCKED"*)    echo rebuild-review-blocked ;;
+    # The selection gate (or the migration renumber) refused the rebuild's head
+    # and pushed nothing (BH-8886). A GATE_RED is not relaunched: a ticket-level
+    # stop, like PLAN_BLOCKED.
+    "GATE_RED"*)          echo rebuild-gate-red ;;
     # A rebuild that itself ends PR_CREATE_FAILED (or RESULT_MALFORMED) is "not
     # mine" here on purpose (BH-614): it re-enters through br_from_builds after
     # the 90-minute floor, on the same per-ticket `rebuilds` counter, so one

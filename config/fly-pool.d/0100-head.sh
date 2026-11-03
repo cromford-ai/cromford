@@ -597,7 +597,7 @@ machines_row_close() {
 # and its stand-down arms call mc_pool_rereview_fail.
 # Type-guarded like every other lib here: a half-synced box defines nothing and
 # the arm's own `command -v` miss is what reports it — one ALERTS line and a
-# queue row left claimed — because a missing function must never read as
+# queue row that is never closed done — because a missing function must never read as
 # "apply succeeded". No name in the lib or its guarded sub-sources
 # (mc_*/_mc_*, plus the bg_*/pdg_*/rp_* and issue_close_shipped fallbacks)
 # collides with one this file or its libs define (checked 2026-10-19).

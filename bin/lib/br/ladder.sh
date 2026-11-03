@@ -180,7 +180,7 @@ br_action() { # br_action <reason> -> ladder|rebuild-fresh|adjudicate|re-review|
     # stopped on an open question and a review that refused the diff are all
     # TICKET-level stops, and a second rebuild ends exactly the same way.
     rebuild-build-dead)                     echo rebuild-fresh ;;
-    rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked) echo abandon-rebuild ;;
+    rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked|rebuild-gate-red) echo abandon-rebuild ;;
     # THE ENQUEUE ITSELF DID NOT LAND (BH-488). Not a ticket-level stop and not
     # a new rung: the PR is already closed and the record already marked, so the
     # only thing owed is the enqueue, tried again.
@@ -249,6 +249,7 @@ br_reason_of() {
     rebuild-decompose-failed*)   echo rebuild-decompose-failed ;;
     rebuild-plan-blocked*)       echo rebuild-plan-blocked ;;
     rebuild-review-blocked*)     echo rebuild-review-blocked ;;
+    rebuild-gate-red*)           echo rebuild-gate-red ;;
     rebuild-enqueue-failed*)     echo rebuild-enqueue-failed ;;
     # BH-3630: a `provenance` park the conductor saw verdict=APPROVE + ci=red
     # on. The conductor's row only ever says `provenance`; br_from_conductor

@@ -257,7 +257,7 @@ br_event() {
 br_row_closed() {
   local p="$1" tkey="${2:--}" rec="${3:--}" url="${4:--}" stage="$5" detail="$6" reason="${7:-}" bkey=""
   case "$reason" in
-    rebuild-build-dead|rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked) return 0 ;;
+    rebuild-build-dead|rebuild-decompose-failed|rebuild-plan-blocked|rebuild-review-blocked|rebuild-gate-red) return 0 ;;
   esac
   [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && [ -n "$tkey" ] && [ "$tkey" != "-" ] \
     && bkey="build:$p:$tkey:$(basename "$rec")"
