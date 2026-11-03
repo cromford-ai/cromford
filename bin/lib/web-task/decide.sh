@@ -18,7 +18,8 @@
 # Env: WEB_TASK_PROJECT, WEB_TASK_MODEL (the model_routes `web-task` answer,
 # resolved by bin/web-task.sh), WEB_TASK_DECIDE_TIMEOUT (seconds, from the
 # agent's wall-time budget), WEB_TASK_DOMAINS (the allow-list, shown to the
-# model as a fact; the browser enforces it).
+# model as a fact; the browser enforces it), WEB_TASK_MODE (`write` gives the
+# write-mode rules; the browser's write gate enforces them).
 #
 # rc: agent-call's own rc. 0 = an action file was written. 74..79 = nothing
 # was called and nothing was billed (the first line of the call's output is
@@ -29,7 +30,21 @@
 
 _wt_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 
+# _wt_rules — the rules text. WEB_TASK_MODE=write (BH-8299, set by
+# bin/web-task.sh from the ticket's `Mode: write` line) swaps the read-only
+# lines for the write-mode ones; any other value prints the read-only text.
 _wt_rules() {
+  if [ "${WEB_TASK_MODE:-}" = write ]; then
+    _wt_rules_read | sed \
+      -e '1s/^You control a READ-ONLY web browser to do one task/You control a web browser in WRITE mode to do one task/' \
+      -e 's/^- The browser is read-only\. .*$/- Each click on a submit, pay, delete, send, save or confirm control waits for a person to approve it. Make only the change the task asks for. Never retry a change that was cancelled or failed; use done and say what happened./' \
+      -e 's/If the task cannot be done read-only, use done and say why\./If the task cannot be done, use done and say why./'
+    return 0
+  fi
+  _wt_rules_read
+}
+
+_wt_rules_read() {
   cat <<'TXT'
 You control a READ-ONLY web browser to do one task for a user. Answer with ONE JSON object and nothing else, chosen from these actions:
 {"action":"goto","url":"<absolute http or https URL>"}

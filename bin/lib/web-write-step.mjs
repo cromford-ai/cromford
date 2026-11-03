@@ -1,8 +1,9 @@
 // bin/lib/web-write-step.mjs — the write gate of the web-task lane (BH-7599).
 // Pure ES module: node built-ins only, no top-level side effect.
-// No production caller yet: slice C1 of #7599 wraps every action of the agent
-// loop's act() in gate(), reads parseTaskMode on the ticket body and puts
-// writesSection in the result comment. Contract:
+// Callers (BH-8299): bin/web-task-agent.mjs runs every click and type of
+// act() through gate(); bin/web-task.sh reads parseTaskMode on the ticket body
+// and puts writesSection in the result comment; bin/lib/web-task/guards.mjs
+// isSubmitLike is isWriteAction. Contract:
 // docs/notes/2026-10-25-BH-7599-web-write.md.
 //
 //   parseTaskMode(body) -> 'write' | 'read'.

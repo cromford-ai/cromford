@@ -514,6 +514,7 @@ HL="$T/hl"; mkdir -p "$HL/logs"
 scratch_install_closure bin/web-task.sh "$HL" >/dev/null || bad "L: cannot install the lane closure"
 scratch_install_closure bin/web-task-agent.mjs "$HL" >/dev/null || bad "L: cannot install the agent"
 scratch_install_closure bin/lib/web-task/guards.mjs "$HL" >/dev/null || bad "L: cannot install the guards"
+scratch_install_closure bin/lib/web-write-step.mjs "$HL" >/dev/null || bad "L: cannot install the write gate"
 scratch_install_closure bin/lane-alert.sh "$HL" >/dev/null || bad "L: cannot install lane-alert"
 cat > "$HL/bin/fleet-conf.sh" <<'SH'
 #!/bin/bash

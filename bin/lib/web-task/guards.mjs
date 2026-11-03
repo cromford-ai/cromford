@@ -8,12 +8,17 @@
 //   hostAllowed(url, list)   true only for an http/https URL whose host is a
 //                            listed entry or a subdomain of one. An IPv4 entry
 //                            matches itself only. An empty list allows nothing.
-//   isSubmitLike(desc)       true for a control a read-only run must not click:
-//                            a submit input, a button that submits its form, or
-//                            a control whose name or role reads as submit, pay,
-//                            delete, send, save or confirm (and their kin)
+//   isSubmitLike(desc)       true for a control a read-only run must not click.
+//                            It is isWriteAction of bin/lib/web-write-step.mjs
+//                            (one classifier for the read-only refusal and the
+//                            write gate): a submit input, a button that submits
+//                            its form, or a control whose name or role reads as
+//                            submit, pay, delete, send, save, confirm, update or
+//                            apply (and their kin)
 //   sanitizeTyped(text)      typed text without CR or LF, so a `type` action can
 //                            never press Enter into a form
+
+import { isWriteAction } from "../web-write-step.mjs";
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 const ENTRY = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
@@ -42,18 +47,8 @@ export function hostAllowed(url, list) {
   return false;
 }
 
-// The words a read-only run never clicks. Matched on the control's accessible
-// name and its role, case-insensitive, as whole words.
-const RISKY = /\b(submit|pay|purchase|buy|checkout|order|delete|remove|send|save|confirm|subscribe|sign ?up|place order)\b/i;
-
 export function isSubmitLike(desc) {
-  const d = desc || {};
-  const tag = String(d.tag || "").toLowerCase();
-  const type = String(d.type || "").toLowerCase();
-  if (tag === "input" && (type === "submit" || type === "image")) return true;
-  if (tag === "button" && (type === "submit" || (type === "" && d.inForm))) return true;
-  if (RISKY.test(String(d.name || "")) || RISKY.test(String(d.role || ""))) return true;
-  return false;
+  return isWriteAction(desc);
 }
 
 export function sanitizeTyped(text) {

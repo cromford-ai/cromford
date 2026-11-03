@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // bin/web-task-agent.mjs — the browser loop of the web-task lane (BH-7594,
 // slice S1: read-only tasks; BH-8250: a sign-in and a TOTP code through the
-// vault, on one allow-listed site per run).
+// vault, on one allow-listed site per run; BH-8299: write mode through the
+// BH-7599 write gate).
 //
 // usage: node bin/web-task-agent.mjs --task <task.md> --out <dir>
 //          --domains <comma list> --max-steps <n> --max-s <seconds>
-//          --decide <command> [--text-chunk <chars>] [--max-elements <n>]
+//          --decide <command> [--mode read|write] [--text-chunk <chars>] [--max-elements <n>]
 //          [--decide-max-s <s>] [--decide-grace-s <s>] [--keep-shots <n>]
 //          [--max-hops <n>] [--nav-timeout-s <s>] [--action-timeout-s <s>]
 //          [--shot-timeout-s <s>] [--backstop-pad-s <s>]
@@ -52,6 +53,24 @@
 //     screenshot masks the password input, the inputs a secret was typed into
 //     (screenshotOptions) and the OTP inputs (OTP_SELECTORS).
 //
+// --mode (BH-8299): `read` (the default) or `write`; any other value is an
+// error before the browser starts. Every click and type goes through ONE write
+// gate per run (createWriteGate of bin/lib/web-write-step.mjs, built at the
+// first click or type; its site is the page host then):
+//   - a payment page whose host is not in ALLOW_PAYMENT_SITES is refused in
+//     every mode (refusal kind `payment`), and the run stops;
+//   - read mode: a click that isWriteAction classes as a write is refused with
+//     S1's text and refusal kind `control`; the run goes on;
+//   - write mode: such a click waits for one Approve (S5's wh_request_human,
+//     kind approve, with the before-shot). Only Approve clicks it, once.
+//     Cancel, no answer in WEB_TASK_WRITE_WAIT_S or an approval error stops the
+//     run with nothing written. The click runs in the approved-write window
+//     (st.approved): a non-GET request to an allow-listed host passes. If a
+//     request is refused in that window or the click throws, the write is
+//     recorded `unknown`, never retried, and the run stops. A write click on
+//     another host than the gate's site is refused (`this run writes on <site>
+//     only`). A type is never a write.
+//
 // THE GUARDS ARE IN THIS TOOL LAYER, NOT IN THE PROMPT:
 //   - every main-frame navigation (a goto, a click, a script) is checked
 //     against --domains; an unlisted host is aborted. A redirect response is
@@ -67,7 +86,9 @@
 //     the redirects of such a POST navigation itself (at most MAX_HOPS). Every
 //     hop must pass the allow-list. A 307/308 hop repeats the POST only on the
 //     vault site, and a 301/302/303 hop becomes a GET with no body. The window
-//     closes when the step returns;
+//     closes when the step returns. The approved-write window of write mode
+//     is the second exception (see --mode); its 307/308 hops repeat the
+//     request only on an allow-listed host;
 //   - a click on a submit-like control (bin/lib/web-task/guards.mjs) is refused
 //     before the click, and an init script cancels every submit event. The one
 //     exception is the next submit after a click or Enter of the step itself:
@@ -80,7 +101,9 @@
 // Writes <out>/obs-NN.json and <out>/shot-NN.jpg per step, then
 // <out>/result.json {status, answer, steps, calls, actions, refusals,
 // final_url, screenshots (the last 5), reason, vault_site (the vault site, or
-// "" when no sign_in or type_otp ran)}, and prints ONE line:
+// "" when no sign_in or type_otp ran), mode, writes (the gate's writes():
+// [{n, action, before, after, status}], [] when no write ran)}, and prints
+// ONE line:
 //   WEB_TASK_RESULT status=<s> steps=<n> calls=<c> refusals=<r> reason="<...>"
 // status: done | step-cap | time-cap | refused-spend | error
 // exit:   0 done, 3 a cap stopped it, 4 the spend gate refused, 1 error.
@@ -96,7 +119,8 @@ import { createRequire } from "module";
 import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from "fs";
 import { spawn, execFileSync } from "child_process";
 import { join } from "path";
-import { hostAllowed, isSubmitLike, sanitizeTyped, normDomains } from "./lib/web-task/guards.mjs";
+import { hostAllowed, sanitizeTyped, normDomains } from "./lib/web-task/guards.mjs";
+import { createWriteGate, isWriteAction } from "./lib/web-write-step.mjs";
 
 const argv = process.argv.slice(2);
 const opt = {};
@@ -130,6 +154,9 @@ const DECIDE = opt.decide || "";
 const DOMAINS = normDomains(opt.domains || "");
 const MAX_STEPS = Number(opt["max-steps"]);
 const MAX_S = Number(opt["max-s"]);
+const MODE = opt.mode === undefined ? "read" : ["read", "write"].includes(opt.mode) ? opt.mode : null;
+// The text of a read-only refusal of a write control (S1, unchanged).
+const READ_ONLY_REFUSAL = "refused: write action in read-only mode";
 
 const st = {
   steps: 0, calls: 0, actions: [], refusals: [], shots: [], textOffset: 0, lastUrl: "", lastGood: "", hop: null,
@@ -138,6 +165,9 @@ const st = {
   // POST in that window, why the guard aborted that POST (writeAbort), and
   // the outcome that stopped the run.
   vaultSite: null, secrets: null, signin: null, otpStep: null, codes: new Set(), write: null, landed: null, writeAbort: null, stop: "",
+  // BH-8299: the write gate of this run and its site, and the approved-write
+  // window (true only around one approved write click).
+  gate: null, writeSite: "", approved: false,
 };
 let browser = null;
 let ctx = null;
@@ -176,6 +206,7 @@ async function finish(status, extra = {}) {
     actions: st.actions, refusals: st.refusals, final_url: finalUrl,
     screenshots: st.shots.slice(-KEEP_SHOTS), reason: extra.reason ?? "",
     vault_site: st.vaultSite || "",
+    mode: MODE || "", writes: st.gate ? st.gate.writes() : [],
   });
   if (OUT) { try { writeFileSync(join(OUT, "result.json"), JSON.stringify(res, null, 2) + "\n"); } catch { /* reported below */ } }
   console.log(`WEB_TASK_RESULT status=${status} steps=${st.steps} calls=${st.calls} refusals=${st.refusals.length} reason="${oneLine(res.reason)}"`);
@@ -217,14 +248,22 @@ async function guard(route) {
   let nav = false;
   try { nav = req.isNavigationRequest() && !req.frame().parentFrame(); } catch { nav = false; }
   if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    // The write window: a POST to the exact vault site while a step runs.
+    // The write windows: a POST to the exact vault site while a vault step
+    // runs, or any write request to an allow-listed host while one approved
+    // write click runs. canRepost is the rule for a 307/308 hop of it.
     const w = st.write;
-    if (!(w && lib && method === "POST" && lib.gate(url, w.site, lib.allowList(DOMAINS)).ok)) {
+    let canRepost = null;
+    if (w && lib && method === "POST" && lib.gate(url, w.site, lib.allowList(DOMAINS)).ok) {
+      canRepost = (to) => lib.gate(to, w.site, lib.allowList(DOMAINS)).ok;
+    } else if (st.approved && hostAllowed(url, DOMAINS)) {
+      canRepost = (to) => hostAllowed(to, DOMAINS);
+    }
+    if (!canRepost) {
       refuse({ kind: "method", method, url });
       return route.abort("blockedbyclient");
     }
     if (!nav) return route.continue();
-    return writeNav(route, url, w.site);
+    return writeNav(route, url, canRepost);
   }
   if (!nav) return route.continue();
   if (!hostAllowed(url, DOMAINS)) {
@@ -252,14 +291,15 @@ async function guard(route) {
 
 // writeNav — a POST navigation inside the write window. The guard follows its
 // redirect chain itself, so the browser never follows a hop unchecked: every
-// hop must pass the allow-list, a 307/308 repeats the POST only on the vault
-// site, and a 301/302/303 becomes a GET with no body. The last response is
+// hop must pass the allow-list, a 307/308 repeats the POST only where
+// canRepost(to) says so (the vault site, or an allow-listed host in the
+// approved-write window), and a 301/302/303 becomes a GET with no body. The last response is
 // handed to the browser; st.landed is the last hop, so the tool layer can
 // navigate there and the next observation shows the real URL.
 // Each abort also sets st.writeAbort, so vaultStep reports the step as an
 // error: the aborted navigation can leave a page with no form on it, which
-// the step alone would read as a pass.
-async function writeNav(route, url, site) {
+// the step alone would read as a pass. A write click reads it the same way.
+async function writeNav(route, url, canRepost) {
   let resp, from = url, post = true, hops = 0;
   const abort = (why, how) => { st.writeAbort = why; return route.abort(how); };
   try { resp = await route.fetch({ maxRedirects: 0 }); } catch { return abort("the POST did not complete", "failed"); }
@@ -274,7 +314,7 @@ async function writeNav(route, url, site) {
       return abort("a redirect was refused", "blockedbyclient");
     }
     const repost = post && (code === 307 || code === 308);
-    if (repost && !lib.gate(to, site, lib.allowList(DOMAINS)).ok) {
+    if (repost && !canRepost(to)) {
       refuse({ kind: "redirect", from, to });
       return abort("a redirect was refused", "blockedbyclient");
     }
@@ -486,6 +526,95 @@ async function vaultStep(kind, remainingMs) {
   return r.terminal ? stop(r.outcome) : scrubText(r.outcome);
 }
 
+// writeGate() — the write gate of this run, built at the first click or type
+// with the page host as its site. A gate that cannot be built (a bad
+// WEB_TASK_WRITE_WAIT_S) stops the run: { error }.
+function writeGate() {
+  if (st.gate) return { gate: st.gate };
+  let host = "";
+  try { host = new URL(page.url()).hostname.toLowerCase().replace(/\.+$/, ""); } catch { host = ""; }
+  try {
+    st.gate = createWriteGate({
+      mode: MODE, project: process.env.WEB_TASK_PROJECT || "", site: host, issue: process.env.WEB_TASK_ISSUE || "",
+      redact: scrubText,
+      // The before and after shots mask what every step shot masks.
+      shoot: async (pg, name) => {
+        const path = join(OUT, `${name}.png`);
+        await pg.screenshot(maskOpts({ path, timeout: SHOT_MS }));
+        return path;
+      },
+    });
+  } catch (e) { return { error: `error: the write gate did not start (${oneLine(e && e.message, 120)})` }; }
+  st.writeSite = host;
+  return { gate: st.gate };
+}
+
+// gated(desc, run) — run() through the write gate; the outcome text. A
+// terminal gate outcome is put in st.stop (without its own `stopped: `), and
+// main() ends the run on it.
+async function gated(desc, run) {
+  const g = writeGate();
+  if (g.error) { st.stop = g.error; return g.error; }
+  const r = await g.gate.gate(page, desc, run);
+  if (r.outcome === READ_ONLY_REFUSAL) {
+    refuse({ kind: "control", label: desc.label });
+    return `refused: '${desc.label}' reads as a submit or write control (read-only run)`;
+  }
+  if (r.terminal) {
+    if (r.outcome.startsWith("refused: payment page")) refuse({ kind: "payment", url: page.url() });
+    st.stop = r.outcome.replace(/^stopped: /, "");
+  }
+  return r.outcome;
+}
+
+// click(el) — a click that is not a write: the outcome text.
+async function click(el, label, remainingMs) {
+  const before = st.refusals.length;
+  try { await el.loc.click({ timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) }); } catch (e) { return `error: ${oneLine(e.message, 120)}`; }
+  await settle(remainingMs);
+  const hopNote = st.hop ? await followHops(remainingMs) : "";
+  const refused = st.refusals.length > before;
+  if (hopNote && !refused) return hopNote;
+  return refused ? "refused: a request was blocked" : `ok: clicked '${label}'`;
+}
+
+// writeClick(el) — one approved write click, inside the approved-write
+// window. It throws when the click fails or any request is refused or aborted
+// while the window is open, so the gate records the write `unknown` and never
+// retries it. After a write navigation it goes to the landing URL, so the next
+// observation shows the real page.
+async function writeClick(el, remainingMs) {
+  const before = st.refusals.length;
+  st.approved = true;
+  st.landed = null;
+  st.writeAbort = null;
+  let err = "";
+  try {
+    await page.evaluate(() => { window.__wtSubmitOpen = true; });
+    await el.loc.click({ timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) });
+    await settle(remainingMs);
+  } catch (e) {
+    err = oneLine(e && e.message, 120);
+  } finally {
+    st.approved = false;
+    await page.evaluate(() => { window.__wtSubmitOpen = false; }).catch(() => {});
+  }
+  const landed = st.landed;
+  const abort = st.writeAbort;
+  st.landed = null;
+  st.writeAbort = null;
+  if (err) throw new Error(err);
+  if (abort) throw new Error(abort);
+  if (st.refusals.length > before) throw new Error("a request was refused during the write");
+  if (landed && landed !== page.url()) {
+    try {
+      await page.goto(landed, { waitUntil: "domcontentloaded", timeout: Math.max(1000, Math.min(NAV_MS, remainingMs)) });
+    } catch { /* the write stands; the next observation shows where the page is */ }
+  }
+  if (st.hop) await followHops(remainingMs);
+  return "";
+}
+
 // act <action> -> the outcome text ("ok…", "refused…", "error…", "invalid…")
 async function act(a, remainingMs, textTotal) {
   const before = st.refusals.length;
@@ -510,21 +639,28 @@ async function act(a, remainingMs, textTotal) {
     if (!el) return `invalid: no element with ref ${oneLine(a.ref, 10)}`;
     a.label = el.desc.name || el.desc.tag;
     if (kind === "click") {
-      if (isSubmitLike(el.desc)) { refuse({ kind: "control", label: a.label }); return `refused: '${a.label}' reads as a submit or write control (read-only run)`; }
-      if (/^https?:/i.test(el.desc.href) && !hostAllowed(el.desc.href, DOMAINS)) {
+      const write = isWriteAction(el.desc);
+      // An off-list link is refused before the gate, except a write control
+      // in read mode: S1 refuses that one as a control first.
+      if (/^https?:/i.test(el.desc.href) && !hostAllowed(el.desc.href, DOMAINS) && !(write && MODE === "read")) {
         refuse({ kind: "host", url: el.desc.href });
         return `refused: the link goes to ${el.desc.href}, which is not on the allowed list`;
       }
-      try { await el.loc.click({ timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) }); } catch (e) { return `error: ${oneLine(e.message, 120)}`; }
-      await settle(remainingMs);
-      const hopNote = st.hop ? await followHops(remainingMs) : "";
-      if (hopNote && !refusedNow()) return hopNote;
-      return refusedNow() ? "refused: a request was blocked" : `ok: clicked '${a.label}'`;
+      if (write && MODE === "write" && st.gate) {
+        let host = "";
+        try { host = new URL(page.url()).hostname.toLowerCase().replace(/\.+$/, ""); } catch { host = ""; }
+        if (host !== st.writeSite) return `refused: this run writes on ${st.writeSite} only`;
+      }
+      return gated({ ...el.desc, label: a.label, action: `click '${a.label}'` }, () => (write ? writeClick(el, remainingMs) : click(el, a.label, remainingMs)));
     }
     if (!el.desc.editable) return `invalid: '${a.label}' is not a text field`;
     const text = sanitizeTyped(a.text);
-    try { await el.loc.fill(text, { timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) }); } catch (e) { return `error: ${oneLine(e.message, 120)}`; }
-    return `ok: typed ${text.length} characters into '${a.label}'`;
+    // A type names no tag, type, name or role, so the gate never reads it as
+    // a write: only the payment-page check applies.
+    return gated({ label: a.label, action: `type into '${a.label}'` }, async () => {
+      try { await el.loc.fill(text, { timeout: Math.max(1000, Math.min(ACT_MS, remainingMs)) }); } catch (e) { return `error: ${oneLine(e.message, 120)}`; }
+      return `ok: typed ${text.length} characters into '${a.label}'`;
+    });
   }
   if (kind === "scroll") {
     const up = String(a.dir ?? "down").toLowerCase() === "up";
@@ -546,6 +682,7 @@ async function main() {
   if (!Number.isInteger(MAX_STEPS) || MAX_STEPS < 1 || MAX_STEPS > 200) return finish("error", { reason: `--max-steps must be an integer 1..200, got '${opt["max-steps"]}'` });
   if (!Number.isInteger(MAX_S) || MAX_S < 1 || MAX_S > 3600) return finish("error", { reason: `--max-s must be an integer 1..3600, got '${opt["max-s"]}'` });
   if (DOMAINS.length === 0) return finish("error", { reason: "no allowed domain: the lane refuses (empty = refuse, never all)" });
+  if (!MODE) return finish("error", { reason: `--mode must be read or write, got '${oneLine(opt.mode, 40)}'` });
   const deadline = Date.now() + MAX_S * 1000;
   // The backstop: a browser call that hangs past the wall cap still ends the run.
   setTimeout(() => finish("time-cap", { reason: `stopped by the wall-time cap of ${MAX_S}s (WEB_TASK_MAX_S) while a step was still running` }),

@@ -35,14 +35,25 @@
 #      LLM_LANE_ENABLED, LLM_RUNNER_ALLOWED, LLM_USD_CAP_DAY; one priced cost
 #      row per call), under WEB_TASK_MAX_STEPS and WEB_TASK_MAX_S. Before it,
 #      lib_env_apply web-signin, web-otp and web-otp-step export the knob rows
-#      of the agent's sign_in and type_otp steps (BH-8250)
-#   9. the screenshots (the last 5) go to the branch harness-shots/<key>-web-task
-#      (bin/lib/web-task/shots.sh); each URL and the result are job_artifacts
+#      of the agent's sign_in and type_otp steps (BH-8250), and lib_env_apply
+#      web-write the approval wait of the write gate. The mode (BH-8299) is
+#      parseTaskMode of bin/lib/web-write-step.mjs on the issue BODY only:
+#      `Mode: write` on its own line is --mode write; anything else, or a parse
+#      that fails, is read. ALLOW_PAYMENT_SITES is the settings row
+#      lane.web-task.<project>.allow_payment_sites (no row or a failed read is
+#      empty: every payment page is refused)
+#   9. the screenshots go to the branch harness-shots/<key>-web-task
+#      (bin/lib/web-task/shots.sh) in ONE publish, at most WEB_TASK_MAX_SHOTS:
+#      the before and after shots of each write first, in write order, then
+#      the last step shots; each URL and the result are job_artifacts
 #      rows of <job-id> (GET /api/artifacts lists them)
 #  10. ONE comment: what was done, the answer or why it stopped, the refusals,
 #      the screenshots, the spend. When result.json names a vault_site (a
 #      host) and a sign_in action ended ok, one line says the run signed in
-#      there. Its last line is the result marker for a
+#      there. In write mode the comment opens with the write-mode sentence and
+#      carries a `### Writes (n)` table (writesSection of web-write-step.mjs;
+#      a shot past the cap is `none`) before `### What I did`. A payment-page
+#      refusal has its own line in every mode. Its last line is the result marker for a
 #      `done` run, and for any other status (step-cap, time-cap, refused-spend,
 #      error) an attempt marker <!-- web-task-attempt:<KEY>:<stamp> --> that
 #      never blocks a later run. A post
@@ -336,12 +347,36 @@ fi
 # The knob rows of the sign-in and OTP steps the agent runs (BH-8250): each
 # lib exports its settings rows, so the values reach the agent as env.
 { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply web-signin && lib_env_apply web-otp && lib_env_apply web-otp-step; } >/dev/null 2>&1 || true
+# The approval wait of the write gate (WEB_TASK_WRITE_WAIT_S, BH-7599).
+{ command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply web-write; } >/dev/null 2>&1 || true
 jq -r '"# " + (.title // "") + "\n\n" + (.body // "")' "$RUN/issue.json" > "$RUN/task.md"
-export WEB_TASK_PROJECT="$P" WEB_TASK_MODEL WEB_TASK_DOMAINS="$DOMAINS"
-log "start: domains=$DOMAINS steps<=$WEB_TASK_MAX_STEPS wall<=${WEB_TASK_MAX_S}s run=$RUN"
+# The mode: the issue BODY only, never the title or a comment. Fail closed.
+MODE=read
+MODE_OUT=$(jq -r '.body // ""' "$RUN/issue.json" 2>/dev/null | node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { parseTaskMode } = await import(pathToFileURL(process.argv[1]).href);
+let body = "";
+for await (const c of process.stdin) body += c;
+process.stdout.write(parseTaskMode(body));
+' "$H/bin/lib/web-write-step.mjs" 2>/dev/null) || MODE_OUT=""
+case "$MODE_OUT" in
+  read|write) MODE="$MODE_OUT" ;;
+  *) log "mode: the Mode line could not be read (answer '${MODE_OUT:0:40}'): read-only run" ;;
+esac
+# The payment allow-list. No row, an empty row or a read failure is empty.
+PRC=0; PAY=""
+if command -v setting_get >/dev/null 2>&1; then PAY=$(setting_get "lane.web-task.$P.allow_payment_sites") || PRC=$?; else PRC=1; fi
+case "$PRC" in
+  0) ;;
+  2) PAY="" ;;
+  *) PAY=""; log "allow_payment_sites unreadable (rc $PRC): every payment page is refused" ;;
+esac
+export WEB_TASK_PROJECT="$P" WEB_TASK_MODEL WEB_TASK_DOMAINS="$DOMAINS" WEB_TASK_MODE="$MODE" WEB_TASK_ISSUE="$SLUG#$TICKET" \
+  ALLOW_PAYMENT_SITES="$PAY"
+log "start: mode=$MODE domains=$DOMAINS steps<=$WEB_TASK_MAX_STEPS wall<=${WEB_TASK_MAX_S}s run=$RUN"
 ARC=0
 timeout -k "$WT_AGENT_KILL_S" $((WEB_TASK_MAX_S + WT_AGENT_PAD_S)) node "$H/bin/web-task-agent.mjs" --task "$RUN/task.md" --out "$RUN" \
-  --domains "$DOMAINS" --max-steps "$WEB_TASK_MAX_STEPS" --max-s "$WEB_TASK_MAX_S" --decide "$DECIDE_CMD" \
+  --domains "$DOMAINS" --max-steps "$WEB_TASK_MAX_STEPS" --max-s "$WEB_TASK_MAX_S" --decide "$DECIDE_CMD" --mode "$MODE" \
   --text-chunk "$WT_TEXT_CHUNK" --max-elements "$WT_MAX_ELEMENTS" --decide-max-s "$WT_DECIDE_MAX_S" \
   --decide-grace-s "$WT_DECIDE_GRACE_S" --keep-shots "$WEB_TASK_MAX_SHOTS" --max-hops "$WT_MAX_HOPS" \
   --nav-timeout-s "$WT_NAV_TIMEOUT_S" --action-timeout-s "$WT_ACTION_TIMEOUT_S" --shot-timeout-s "$WT_SHOT_TIMEOUT_S" \
@@ -367,11 +402,15 @@ log "agent: status=$S steps=$STEPS calls=$CALLS rc=$ARC"
 # The spend is done: no re-offer may start another run, whatever the post does.
 unlabel "the run is spent (status $S)"
 
-# 9. Screenshots and artifacts.
-SHOTS=(); URLS=(); SHOT_NOTE=""
+# 9. Screenshots and artifacts. The write shots (before, after, in write
+# order) go first, then the step shots, in ONE publish: a second publish moves
+# the ref and can orphan the first commit.
+SHOTS=(); WSHOTS=(); URLS=(); SHOT_NOTE=""
+while IFS= read -r f; do [ -s "$f" ] && WSHOTS+=("$f"); done < <(jq -r '.writes[]? | .before, .after | select(type == "string")' "$R" 2>/dev/null)
 while IFS= read -r f; do [ -s "$f" ] && SHOTS+=("$f"); done < <(jq -r '.screenshots[]? // empty' "$R" 2>/dev/null)
-if [ "${#SHOTS[@]}" -gt 0 ]; then
-  if SOUT=$(wt_shots_publish "$SLUG" "$KEY" "${SHOTS[@]}" 2>/dev/null); then
+ALL_SHOTS=("${WSHOTS[@]}" "${SHOTS[@]}")
+if [ "${#ALL_SHOTS[@]}" -gt 0 ]; then
+  if SOUT=$(wt_shots_publish "$SLUG" "$KEY" "${ALL_SHOTS[@]}" 2>/dev/null); then
     while IFS= read -r u; do [ -n "$u" ] && URLS+=("$u"); done <<<"$SOUT"
   else
     SHOT_NOTE="${SOUT:-could not publish: unknown error}"
@@ -389,14 +428,48 @@ if [ -n "$JOB" ] && command -v job_artifact_put >/dev/null 2>&1; then
     || log "artifact web-task-result not recorded"
 fi
 
+# writes_section — the `### Writes (n)` block of a write-mode comment:
+# writesSection of bin/lib/web-write-step.mjs on result.json's writes, each
+# shot linked to its published URL (none when it was past the cap or the
+# publish failed). The action text is page data: clean() runs on it.
+writes_section() {
+  local map="$RUN/shot-urls.json" i out
+  echo '{}' > "$map"
+  for ((i = 0; i < ${#URLS[@]} && i < ${#ALL_SHOTS[@]}; i++)); do
+    jq --arg p "${ALL_SHOTS[$i]}" --arg u "${URLS[$i]}" '. + {($p): $u}' "$map" > "$map.tmp" && mv "$map.tmp" "$map"
+  done
+  if out=$(node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [mod, res, map] = process.argv.slice(1);
+const { writesSection } = await import(pathToFileURL(mod).href);
+const r = JSON.parse(readFileSync(res, "utf8"));
+const urls = JSON.parse(readFileSync(map, "utf8"));
+process.stdout.write(await writesSection(Array.isArray(r.writes) ? r.writes : [], (p) => urls[p] || ""));
+' "$H/bin/lib/web-write-step.mjs" "$R" "$map" 2>/dev/null); then
+    printf '%s\n' "$out" | clean
+  else
+    echo "### Writes ($(jq '.writes | length' "$R" 2>/dev/null || echo '?'))"
+    echo
+    jq -r '.writes[]? | "- write \(.n): \(.action) — \(.status)"' "$R" 2>/dev/null | clean
+  fi
+}
+
 # 10. The one comment. Page text and model text are data: no HTML comment can
 # forge a marker, and backticks cannot break the code spans.
 clean() { sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g' -e 's/`/'"'"'/g'; }
 {
-  case "$S" in
-    done) echo "I ran this web task in a read-only browser. Here is what I found." ;;
-    *)    echo "I ran this web task in a read-only browser, but it did not finish." ;;
-  esac
+  if [ "$MODE" = write ]; then
+    case "$S" in
+      done) echo "I ran this web task in a browser in write mode. Each change waited for an approval." ;;
+      *)    echo "I ran this web task in a browser in write mode, but it did not finish. Each change waited for an approval." ;;
+    esac
+  else
+    case "$S" in
+      done) echo "I ran this web task in a read-only browser. Here is what I found." ;;
+      *)    echo "I ran this web task in a read-only browser, but it did not finish." ;;
+    esac
+  fi
   echo
   case "$S" in
     done)          echo "**Status:** done." ;;
@@ -408,6 +481,10 @@ clean() { sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g' -e 's/`/'"'"'/g'; }
   if [ -n "$VAULT_SITE" ]; then
     echo
     echo "I signed in on \`$VAULT_SITE\` with the stored credential. The only forms the browser sent were the sign-in and code forms."
+  fi
+  if [ "$MODE" = write ]; then
+    echo
+    writes_section
   fi
   echo
   echo "### What I did"
@@ -430,24 +507,27 @@ clean() { sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g' -e 's/`/'"'"'/g'; }
   NR=$(jq '.refusals | length' "$R" 2>/dev/null || echo 0)
   if [ "${NR:-0}" -gt 0 ]; then
     echo
-    echo "### What the read-only guard refused"
-    jq -r --arg q "'" --argjson n "$WT_C_REFUSALS" '.refusals[:$n][] | "- step \(.step): " + (
+    if [ "$MODE" = write ]; then echo "### What the guard refused"; WHY="outside an approved write"; else echo "### What the read-only guard refused"; WHY="read-only run"; fi
+    jq -r --arg q "'" --arg why "$WHY" --argjson n "$WT_C_REFUSALS" '.refusals[:$n][] | "- step \(.step): " + (
       if .kind == "host" then "a page on a host that is not on the allow-list: `\(.url)`"
       elif .kind == "redirect" then "a redirect off the allow-list: `\(.from)` to `\(.to)`"
       elif .kind == "control" then "a click on \($q)\(.label)\($q), which reads as a submit or write control"
-      elif .kind == "method" then "a \(.method) request (read-only run): `\(.url)`"
+      elif .kind == "method" then "a \(.method) request (\($why)): `\(.url)`"
+      elif .kind == "payment" then "a payment page, refused in every mode: `\(.url)`"
       else .kind end)' "$R" 2>/dev/null | clean
   fi
   echo
   echo "### Screenshots"
-  if [ "${#URLS[@]}" -gt 0 ]; then
-    i=0; NS=${#SHOTS[@]}
-    for u in "${URLS[@]}"; do
-      i=$((i + 1))
-      n=$(basename "${SHOTS[$((i - 1))]}" | sed -E 's/^shot-0*([0-9]+)\..*/\1/')
-      echo "![step $n]($u)"
+  # The step shots are the URLs after the write shots.
+  NW=${#WSHOTS[@]}; NS=${#SHOTS[@]}; NSU=$(( ${#URLS[@]} > NW ? ${#URLS[@]} - NW : 0 ))
+  if [ "$NSU" -gt 0 ]; then
+    for ((i = 0; i < NSU; i++)); do
+      n=$(basename "${SHOTS[$i]}" | sed -E 's/^shot-0*([0-9]+)\..*/\1/')
+      echo "![step $n](${URLS[$((NW + i))]})"
     done
-    [ "$NS" -gt "${#URLS[@]}" ] && echo "(the last ${#URLS[@]} of $NS)"
+    [ "$NS" -gt "$NSU" ] && echo "(the last $NSU of $NS)"
+  elif [ "${#URLS[@]}" -gt 0 ]; then
+    echo "The step screenshots are past the cap of $WEB_TASK_MAX_SHOTS (WEB_TASK_MAX_SHOTS). The write screenshots are in the Writes table."
   else
     echo "$SHOT_NOTE" | clean
   fi
