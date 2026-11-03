@@ -793,6 +793,7 @@ export const api = {
   onboardReady: (project) => get(coordPath(`/api/onboarding/ready/${encodeURIComponent(project)}`)),
   onboardRepoCreate: (body, key) => postKeyed(coordPath('/api/onboarding/repo-create'), body, key),
   onboardRepoCreateState: (id) => get(coordPath(`/api/onboarding/repo-create/${encodeURIComponent(id)}`)),
+  onboardRepoTemplates: () => get(coordPath('/api/onboarding/repo-create/templates')),
   // BH-7243: the roadmap calls, one factory per child ticket
   // (src/lib/roadmap-api/), so no child edits this object.
   ...ideasApi({ get, post, coordPath }),

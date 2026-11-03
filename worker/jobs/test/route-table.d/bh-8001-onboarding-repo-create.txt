@@ -1,0 +1,7 @@
+# BH-8001 (BH-7935.4): New repo from a template, key-named (BH-5788). Written
+# by the console's New repo panel through the coord proxy (POST, keyed by
+# Idempotency-Key); the hub makes the repo when it claims the repo-create
+# hub-probe row. Bearer-gated.
+POST /api/onboarding/repo-create
+GET /api/onboarding/repo-create/templates
+GET re:/^\/api\/onboarding\/repo-create\/([0-9a-f]{16})$/

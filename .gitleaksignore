@@ -190,6 +190,7 @@ worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
 worker/jobs/test/onboarding-actions.bh-7934.test.js:generic-api-key:28
+worker/jobs/test/onboarding-repo-create.bh-8001.test.js:generic-api-key:24
 worker/jobs/test/onboarding-runner.bh-7934.test.js:generic-api-key:33
 worker/jobs/test/onboarding-tracker-envelope.bh-7968.test.js:generic-api-key:20
 worker/jobs/test/onboarding-tracker-envelope.bh-7968.test.js:generic-api-key:99

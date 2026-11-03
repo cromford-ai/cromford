@@ -5,8 +5,8 @@
 #          fixtures and counts calls, bad paths read nothing, an unarmed box
 #          runs no process, the armed path mints, reads once and releases
 #   V1-V6  bin/lib/hub-probes/common.sh: the three screen probes' validators,
-#          the dispatch (repo-create not-implemented, ready-facts implemented
-#          since BH-8744), and the board allowlist
+#          the dispatch (repo-create implemented since BH-8001, ready-facts
+#          implemented since BH-8744), and the board allowlist
 #          (request.sh) that stays closed to them
 #   R1-R6  bin/lib/hub-probes/repo-detect.sh through the REAL hp_run, and one
 #          REAL bin/hub-probe.sh tick that claims a repo-detect row
@@ -171,7 +171,7 @@ SCR=$(bash -c '. "$1/common.sh" && printf "%s|%s|%s" "$HP_SCREEN_PROBES" "$HP_TE
 check "V4 HP_SCREEN_PROBES, HP_TEMPLATE_KEYS, HP_PROBES" \
   '[ "$SCR" = "tracker-test repo-detect ready-facts repo-create|nextjs worker empty|app-status-write app-permissions app-installation-repos d1-count" ]'
 
-# ── V5: the repo-create placeholder answers not-implemented ─────────────────
+# ── V5: the screen probes are implemented ───────────────────────────────────
 # ready-facts is implemented since BH-8744 (tests/onboard-ready-facts.bh-8744-test.sh
 # holds its cases): it answers one JSON object of three booleans, rc 0.
 hr() { env HARNESS="$T/h" HARNESS_ENV_DIR="$T/env" ONBOARD_GITHUB_FAKE="${FAKE:-}" HPD="$HPD" \
@@ -179,8 +179,12 @@ hr() { env HARNESS="$T/h" HARNESS_ENV_DIR="$T/env" ONBOARD_GITHUB_FAKE="${FAKE:-
 hr ready-facts project-11
 check "V5 ready-facts prints one object of three booleans, rc 0" \
   '[ "$(rc)" = 0 ] && [ "$(grep -c . "$T/out")" = 1 ] && jq -e "(keys == [\"migration_token\",\"qa_account\",\"vercel\"]) and ([.[] | type] | unique == [\"boolean\"])" "$T/out" >/dev/null'
-hr repo-create example-org x nextjs
-check "V5 repo-create prints not-implemented, rc 1" '[ "$(rc)" = 1 ] && [ "$(out)" = not-implemented ]'
+# repo-create is implemented since BH-8001 (tests/onboard-repo-create.bh-8001-test.sh
+# holds its cases): with no jobs client configured it cannot read its template
+# row, so it prints settings-unreadable and calls nothing.
+FAKE=$(fx visible) JOBS_URL="" HARNESS_SECRET="" hr repo-create example-org x nextjs
+check "V5 repo-create is implemented: settings-unreadable, rc 1, not not-implemented" \
+  '[ "$(rc)" = 1 ] && [ "$(out)" = settings-unreadable ] && [ ! -e "$T/fx/.calls" ]'
 hr repo-create example-org x rails
 check "V5 a bad template is rc 2 before dispatch" '[ "$(rc)" = 2 ] && [ ! -s "$T/out" ]'
 

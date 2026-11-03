@@ -19,7 +19,8 @@
 //   M3  a 404 create shows the wave-1 sentence and Start setup is enabled again
 //   P1  the coord proxy forwards the key and the stamped actor
 //   P2  the proxy refuses a missing or bad key with 400 and 0 upstream fetches
-//   P3  one POST onboarding/runs row, this fragment's; steer forwards no key
+//   P3  one POST onboarding/runs row, this fragment's; the keyed rows are exactly
+//       POST onboarding/repo-create and POST onboarding/runs; steer forwards no key
 //   F1  Fleet PROJECTS has a NEW link to /projects/new; a click routes to OnboardScreen
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -537,13 +538,15 @@ test('P2 a missing or bad key is a 400 idempotency_key_required with 0 upstream 
   } finally { f.restore(); }
 });
 
-test('P3 one POST onboarding/runs row, from this fragment; a row without the field forwards no key', async () => {
+test('P3 one POST onboarding/runs row, from this fragment; the keyed rows are exactly repo-create and runs; a row without the field forwards no key', async () => {
   const frag = (await import('../functions/_lib/coord-writes.d/7935-onboarding-runs.js')).default;
   const rows = COORD_ROUTES.filter((r) => r.method === 'POST' && r.path === 'onboarding/runs');
   assert.equal(rows.length, 1);
   assert.equal(rows[0], frag[0]);
   assert.equal(rows[0].idempotencyKey, true);
-  assert.equal(COORD_ROUTES.filter((r) => r.idempotencyKey).length, 1, 'no other row opts in');
+  // BH-8001 added the second keyed row, POST onboarding/repo-create.
+  assert.deepEqual(COORD_ROUTES.filter((r) => r.idempotencyKey).map((r) => `${r.method} ${r.path}`).sort(),
+    ['POST onboarding/repo-create', 'POST onboarding/runs'], 'no other row opts in');
   const f = proxyFetch();
   try {
     await proxy('steer', { project: 'demo', text: 'hello' }, crypto.randomUUID());

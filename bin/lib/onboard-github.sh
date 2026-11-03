@@ -16,6 +16,20 @@
 #   REAL: gh_auth_armed, then gh_app_only_for <owner/repo>. A refused mint is
 #   rc 44 and never falls back to the PAT. Then gh_rest GET and
 #   gh_app_only_release, so GH_TOKEN is back as it was on every path.
+# og_post <path> <json-body-file>
+#   One REST POST, for the repo-create probe only (BH-8001). <path> must be
+#   repos/<owner>/<name>/generate in og_get's charset (no . or .. segment) and
+#   the body file must exist, else rc 2 and nothing is sent or recorded. The
+#   body goes to stdout on a 2xx; OG_HTTP_STATUS is set on every path. rc 0 =
+#   2xx, 22 = 422, 44 = 403/404 or a refused mint, 75 = any other status,
+#   4 = this box does not mint App tokens (no process is run). No retry.
+#   FAKE (tests): appends `POST <path>` to <dir>/.calls and copies the body to
+#   <dir>/.post-body. The status is <dir>/post__<path with / as __>.status.txt
+#   (default 201) and the sibling .json is printed if present. Neither file:
+#   rc 3. gh and curl never run.
+#   REAL: gh_auth_armed, then gh_app_only_for <owner/repo of the path> (the
+#   template: the target does not exist yet), gh_rest POST --input <file>, and
+#   gh_app_only_release on every path.
 # og_clone <owner/repo> <dest>
 #   One depth-1 clone into <dest>, which must be an existing EMPTY directory.
 #   The slug must be owner/name in og_get's charset (no . or .. name), else
@@ -64,6 +78,43 @@ og_get() {
   gh_app_only_release
   OG_HTTP_STATUS=${GH_REST_STATUS:-000}
   case "$rc" in 0|44|75) return "$rc" ;; *) return 75 ;; esac
+}
+
+og_post() {
+  local path="${1:-}" file="${2:-}" f owner repo st rc=0
+  local re='^repos/[A-Za-z0-9-]{1,39}/[A-Za-z0-9_.-]{1,100}/generate$'
+  OG_HTTP_STATUS=""
+  [ $# -eq 2 ] && [[ "$path" =~ $re ]] && [ -f "$file" ] || return 2
+  case "/$path/" in */./*|*/../*) return 2 ;; esac
+  if [ -n "${ONBOARD_GITHUB_FAKE:-}" ]; then
+    printf 'POST %s\n' "$path" >> "$ONBOARD_GITHUB_FAKE/.calls"
+    cp "$file" "$ONBOARD_GITHUB_FAKE/.post-body" 2>/dev/null
+    f="$ONBOARD_GITHUB_FAKE/post__${path//\//__}"
+    st=$(cat "$f.status.txt" 2>/dev/null)
+    if [ -z "$st" ]; then [ -f "$f.json" ] || return 3; st=201; fi
+    OG_HTTP_STATUS=$st
+    case "$st" in
+      2??) [ ! -f "$f.json" ] || cat "$f.json"; return 0 ;;
+      422) return 22 ;;
+      403|404) return 44 ;;
+      *) return 75 ;;
+    esac
+  fi
+  declare -F gh_auth_armed gh_app_only_for gh_app_only_release >/dev/null 2>&1 \
+    || . "${BASH_SOURCE[0]%/*}/gh-app-auth.sh" || return 4
+  gh_auth_armed || return 4
+  IFS=/ read -r _ owner repo _ <<< "$path"
+  if ! gh_app_only_for "$owner/$repo"; then OG_HTTP_STATUS=000; return 44; fi
+  declare -F gh_rest >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/gh-rest.sh" || { gh_app_only_release; return 75; }
+  gh_rest POST "$path" --input "$file" || rc=$?
+  gh_app_only_release
+  OG_HTTP_STATUS=${GH_REST_STATUS:-000}
+  case "$OG_HTTP_STATUS" in
+    2??) [ "$rc" = 0 ] && return 0; return 75 ;;
+    422) return 22 ;;
+    403|404) return 44 ;;
+    *) return 75 ;;
+  esac
 }
 
 og_clone_timeout() {
