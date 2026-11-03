@@ -288,10 +288,18 @@ psr_hold_file_rm() {
   [ ! -e "$f" ]
 }
 
+# psr_claim_machine <p> <key> <mid> [sha]: the 4th arg is the harness sha the
+# machine runs (the hub passes it, "" = none). With 3 args (fly/entrypoint.sh on
+# the pull path) it is $HARNESS/HARNESS_COMMIT, the fetched tree's stamp. Only
+# a 7-40 hex sha is sent as harness_commit.
 psr_claim_machine() {
-  local p="${1:-}" key="${2:-}" mid="${3:-}" body
+  local p="${1:-}" key="${2:-}" mid="${3:-}" body sha=""
   _psr_client || return 0
-  body=$(jq -nc --arg p "$p" --arg k "$key" --arg m "$mid" --arg b "${JOBS_BOX:-}" \
-    '{project:$p, key:$k, machine:$m, box:$b}' 2>/dev/null) || return 3
+  if [ "$#" -ge 4 ]; then sha="$4"
+  elif [ -n "${HARNESS:-}" ]; then sha=$(head -n 1 "$HARNESS/HARNESS_COMMIT" 2>/dev/null | tr -d '[:space:]')
+  fi
+  [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || sha=""
+  body=$(jq -nc --arg p "$p" --arg k "$key" --arg m "$mid" --arg b "${JOBS_BOX:-}" --arg s "$sha" \
+    '{project:$p, key:$k, machine:$m, box:$b} + (if $s == "" then {} else {harness_commit:$s} end)' 2>/dev/null) || return 3
   JOBS_ALERT=0 _jobs_req PUT /api/pool-state/claim-machine "$body" >/dev/null 2>&1 || return 3
 }

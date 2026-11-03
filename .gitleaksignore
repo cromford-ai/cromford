@@ -61,6 +61,7 @@ tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:157
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:197
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:217
 tests/fly-pool-machine-pull.bh-7430-test.sh:generic-api-key:440
+tests/fly-sha-flags.bh-7191-test.sh:curl-auth-header:382
 tests/gate-trk-selfwrite.bh-8449-test.sh:generic-api-key:40
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:120
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122

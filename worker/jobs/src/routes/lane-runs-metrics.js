@@ -24,7 +24,7 @@
 // "lane_runs schema not applied", never an empty list.
 
 import { d1Guarded, json } from "../lib/http.js";
-import { laneName, leaseWon, percentile } from "../lib/core.js";
+import { ensureColumns, laneName, leaseWon, percentile } from "../lib/core.js";
 
 const NAME_ERR = "must match [A-Za-z0-9._-]{1,64}";
 const STATUSES = ["queued", "claimed", "done", "died"];
@@ -136,6 +136,7 @@ function runOut(r, t) {
     attempts: Number(r.attempts),
     wait_s: waitOf(r, t),
     run_s: r.finished_at && r.claimed_at ? secs(r.claimed_at, r.finished_at) : null,
+    harness_commit: r.harness_commit || null,
   };
 }
 
@@ -156,8 +157,9 @@ export const routes = [
       }
       const limit = intParam(url, "limit", LIST_LIMIT_DEFAULT, 1, LIST_LIMIT_MAX);
       if (limit.err) return json(400, { error: limit.err });
+      await ensureColumns(env, "lane_runs");
       const rows = (await env.DB.prepare(
-        `SELECT id, lane, project, status, enqueued_at, claimed_at, claimed_by, finished_at, rc, attempts
+        `SELECT id, lane, project, status, enqueued_at, claimed_at, claimed_by, finished_at, rc, attempts, harness_commit
            FROM lane_runs
           WHERE (?1 IS NULL OR lane=?1) AND (?2 IS NULL OR claimed_by=?2) AND (?3 IS NULL OR status=?3)
           ORDER BY id DESC LIMIT ?4`

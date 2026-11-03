@@ -12,6 +12,7 @@
 
 import { json } from "../lib/http.js";
 import { strictInt, str, ensureTable, ensureColumns, laneName } from "../lib/core.js";
+import { harnessShaOf } from "../lib/harness-sha.js";
 
 const TABLES = ["pool_spawns", "pool_terminals", "pool_holds"];
 const LIMITS = { spawns: 2000, terminals: 500, holds: 500, markers: 2000 };
@@ -262,9 +263,9 @@ export const routes = [
       if (!machine) return bad("machine is not a machine id");
       await ensureColumns(env, "build_queue");
       const r = await env.DB.prepare(
-        "UPDATE build_queue SET machine = ?3, updated_at = ?4 WHERE project = ?1 AND ticket_key = ?2 "
+        "UPDATE build_queue SET machine = ?3, updated_at = ?4, harness_commit = ?5 WHERE project = ?1 AND ticket_key = ?2 "
         + "AND status = 'claimed' AND (machine IS NULL OR machine = ?3)"
-      ).bind(project, key, machine, t).run();
+      ).bind(project, key, machine, t, harnessShaOf(body.harness_commit)).run();
       if (Number((r.meta && r.meta.changes) || 0) > 0) return json(200, { stamped: true, machine });
       const row = await env.DB.prepare(
         "SELECT status, machine FROM build_queue WHERE project = ?1 AND ticket_key = ?2"

@@ -386,6 +386,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     fi
   else
   TB=$(mktemp /tmp/poolsync-XXXX.tgz)
+  HARNESS_TARBALL_SHA=""
   # shellcheck source=bin/lib/harness-tarball.sh
   . "$HARNESS/bin/lib/harness-tarball.sh" \
     || say "bin/lib/harness-tarball.sh missing under $HARNESS — $KEY ships no harness tree"
@@ -424,8 +425,15 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # 0, no row or no lib = no flag, the Fly default rootfs.
   local PRFS_GB=0 PRFS_WHY=""; local -a PRFS_ARGS=()
   command -v pool_rootfs_resolve >/dev/null 2>&1 && { pool_rootfs_resolve || say "$KEY: rootfs row not used ($PRFS_WHY) — launching on the Fly default rootfs"; }
+  # The harness sha the machine boots with, as Fly metadata: the pinned pull
+  # sha, or the push tarball's HARNESS_COMMIT stamp. No sha -> no flag. The
+  # push path never gets -e HARNESS_SHA: fly/entrypoint.sh reads it as "fetch
+  # this sha", and a push machine has no harness token to fetch with.
+  local BOOT_SHA="" ; local -a SHA_ARGS=()
+  if [ "$PULL" = 1 ]; then BOOT_SHA="${POOL_PULL_SHA:-}"; else BOOT_SHA="${HARNESS_TARBALL_SHA:-}"; fi
+  [[ "$BOOT_SHA" =~ ^[0-9a-f]{40}$ ]] && SHA_ARGS=(--metadata "harness_sha=$BOOT_SHA") || BOOT_SHA=""
   MID=$(timeout 180 "$FLY" machine run "$IMAGE" -a "$APP" --detach --vm-size "$PVM_SIZE" --vm-memory "$PVM_MEM" ${PRFS_ARGS[@]+"${PRFS_ARGS[@]}"} \
-        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} 2>"$FLYERR" | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
+        -e PROJECT="$P" -e POOL_MODE=1 -e HARNESS_CHECKOUT=/data/harness -e WARMUP_WAIT_S="$WW" ${PULL_ARGS[@]+"${PULL_ARGS[@]}"} ${SHA_ARGS[@]+"${SHA_ARGS[@]}"} 2>"$FLYERR" | grep -i 'machine id' | grep -oE "[0-9a-f]{14}" | head -1)
   # EVERY EXIT FROM HERE DOWN HANDS THE ROW BACK (see pool_unclaim): the claim is
   # already won, and under the flag a claim nobody releases is a key stranded in
   # flight for the stale-claim sweep's six hours.
@@ -440,7 +448,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # Fail-open: the build goes ahead, and the reap and parity lanes own the rest.
   # On the pull path the machine stamps its own row (POOL_CLAIM_MACHINE).
   if [ "$PULL" != 1 ] && [ "${ROWS_ONLY:-0}" = 1 ] && command -v psr_claim_machine >/dev/null 2>&1; then
-    psr_claim_machine "$P" "$KEY" "$MID" || say "$KEY: the claimed row could not be stamped with machine $MID (http=${JOBS_HTTP:-none}) — the build goes ahead"
+    psr_claim_machine "$P" "$KEY" "$MID" "$BOOT_SHA" || say "$KEY: the claimed row could not be stamped with machine $MID (http=${JOBS_HTTP:-none}) — the build goes ahead"
   fi
   if [ -n "$MACCT" ] && command -v pool_account_rebind >/dev/null 2>&1; then
     pool_account_rebind "$LEASE_ID" "$MID" "$MACCT" "$P" "$KEY" \

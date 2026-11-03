@@ -5,9 +5,12 @@
 # /data/harness with no .git, so the stamp is the only way they can say which
 # harness they run. rc 0 = stamped; rc 2 = rev-parse failed, tree shipped with
 # NO stamp (never a guessed one); rc 1 = tar failed.
+# Also sets the global HARNESS_TARBALL_SHA to the stamped sha ("" with no
+# stamp), so spawn_one's `--metadata harness_sha` names the same commit.
 harness_tarball() {
   local out="$1" checkout="$2"; shift 2
   local sha stampdir rc=0
+  HARNESS_TARBALL_SHA=""
   # BH-7505: POOL_HARNESS_SRC, when set, is the checkout to tar. A lane-run
   # machine that runs the pool tick has no /root/harness-checkout; the hub sets
   # nothing, so its call names the same checkout as before.
@@ -15,6 +18,7 @@ harness_tarball() {
   stampdir=$(mktemp -d /tmp/hstamp-XXXX)
   if sha=$(git -C "$checkout" rev-parse HEAD 2>/dev/null) && [ ${#sha} = 40 ]; then
     printf '%s\n' "$sha" > "$stampdir/HARNESS_COMMIT"
+    HARNESS_TARBALL_SHA="$sha"
     tar czf "$out" -C "$checkout" "$@" -C "$stampdir" HARNESS_COMMIT 2>/dev/null || rc=1
   else
     tar czf "$out" -C "$checkout" "$@" 2>/dev/null || rc=1

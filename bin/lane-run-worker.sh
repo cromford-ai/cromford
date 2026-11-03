@@ -529,9 +529,14 @@ while :; do
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   LW_NOGROUP_N=0
+  # The sha the claimed run executes: the code sync above ran first, and a
+  # changed HARNESS_COMMIT re-execs this loop before it gets here.
+  LW_SHA=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null | tr -d '[:space:]')
+  [[ "$LW_SHA" =~ ^[0-9a-f]{7,40}$ ]] || LW_SHA=""
   _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" --argjson s "$LW_SKIP" \
-    --argjson o "$LW_ONLY" --arg b "$LW_BOX" \
+    --argjson o "$LW_ONLY" --arg b "$LW_BOX" --arg hc "$LW_SHA" \
     '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)
+     + (if $hc == "" then {} else {harness_commit:$hc} end)
      + (if $s == [] then {} else {skip_prefixes:$s} end)
      + (if $o == [] then {} else {only_prefixes:$o} end)
      + (if $b == "" then {} else {box:$b} end)')" > "$RESP"; crc=$?

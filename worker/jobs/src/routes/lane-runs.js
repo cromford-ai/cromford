@@ -88,7 +88,8 @@
 // bin/lane-fleet.sh keeps the group's warm floor only while `placed` is true.
 
 import { d1Guarded, json } from "../lib/http.js";
-import { isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
+import { ensureColumns, isoPlusSeconds, laneName, leaseWon, percentile, str } from "../lib/core.js";
+import { harnessShaOf } from "../lib/harness-sha.js";
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
 import { prefixesOf, readGroups } from "../lib/lane-fleet-groups.js";
@@ -415,6 +416,15 @@ export const routes = [
       const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip,
         fb.only, fb.gskip, fb.cutoff, boxOnly, boxSkip, ex, fbk, fb.fcut).first();
       if (!row) return new Response(null, { status: 204 });
+      // BH-7305: the harness sha this attempt runs, or NULL. A separate PK write
+      // so CLAIM_SQL stays as it is; fail-open, the sha is a record, not a gate.
+      try {
+        await ensureColumns(env, "lane_runs");
+        await env.DB.prepare("UPDATE lane_runs SET harness_commit=?2 WHERE id=?1 AND claimed_by=?3")
+          .bind(row.id, harnessShaOf(body.harness_commit), machine).run();
+      } catch (e) {
+        console.warn(`lane-runs claim ${row.id}: harness_commit not written: ${String(e && e.message || e)}`);
+      }
       // A box claim's answer names the box: a box worker releases any row
       // whose answer does not (an older worker that ignored `box`).
       const out = {

@@ -425,13 +425,15 @@ command -v lfi_log_images >/dev/null 2>&1 && lfi_log_images "$LIST" "$W_DIR/imag
 _jobs_req GET "/api/lane-fleet/machines$LF_MQ" > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
 jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"
 
-# lf_record <mid> <state> [started_at|stopped_at] [cpu_kind cpus memory_mb] [failed]
+# lf_record <mid> <state> [started_at|stopped_at] [cpu_kind cpus memory_mb] [failed] [harness sha]
 #   the third field is started_at for starting|started, stopped_at otherwise.
+#   An empty sha sends no harness_commit.
 lf_record() {
   local b
   b=$(jq -nc --arg m "$1" --arg s "$2" --arg at "${3:-}" --arg k "${4:-}" --arg c "${5:-}" --arg mb "${6:-}" --arg f "${7:-}" \
-        --arg app "$LF_RAPP" '
+        --arg app "$LF_RAPP" --arg hc "${8:-}" '
     {machine_id:$m, state:$s, box:"lane-fleet"}
+    + (if $hc == "" then {} else {harness_commit:$hc} end)
     + (if $app == "" then {} else {app:$app} end)
     + (if $at == "" then {} elif ($s == "starting" or $s == "started") then {started_at:$at} else {stopped_at:$at} end)
     + (if $f == "failed" then {failed:true} else {} end)
@@ -616,7 +618,10 @@ if [ "$DEC" = start ]; then
       REUSE=${REUSES[$RI]}; RI=$((RI + 1))
       if out=$(timeout 120 "$FLY" machine start "$REUSE" -a "$LF_APP" 2>&1); then
         read -r rkind rcpus rmem <<<"$(lf_guest "$REUSE")"
-        lf_record "$REUSE" starting "$DECIDED_AT" "$rkind" "$rcpus" "$rmem" || {
+        # `machine start` takes no flags: the machine keeps its first run's
+        # metadata, and its record names its own image label.
+        rsha=""; command -v lfi_machine_commit >/dev/null 2>&1 && rsha=$(lfi_machine_commit "$LIST" "$REUSE")
+        lf_record "$REUSE" starting "$DECIDED_AT" "$rkind" "$rcpus" "$rmem" "" "$rsha" || {
           lf_log "record of start $REUSE failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
           lf_alert record "machine $REUSE started but its row was not written (http ${JOBS_HTTP:-none})"; }
         lf_log "start $REUSE: machine start image=$(command -v lfi_ref >/dev/null 2>&1 && lfi_ref "$LIST" "$REUSE")"
@@ -636,8 +641,13 @@ if [ "$DEC" = start ]; then
         lf_volume_ready || { FAILWHY="volume-failed"; break; }
         LF_VOL_OK=1
       fi
+      # The harness sha of $IMAGE, from the label of a listed machine of that
+      # image. No label (or `unknown`) -> no flag and no harness_commit.
+      LSHA=""; command -v lfi_image_commit >/dev/null 2>&1 && LSHA=$(lfi_image_commit "$LIST" "$IMAGE")
+      LF_SHA_ARGS=(); [ -z "$LSHA" ] || LF_SHA_ARGS=(--metadata "harness_sha=$LSHA" -e "HARNESS_SHA=$LSHA")
       out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no \
-              --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 ${LF_GENV[@]+"${LF_GENV[@]}"} 2>&1)
+              --vm-size "$SIZE" --vm-memory "$MEM" -e LANE_RUN=1 ${LF_GENV[@]+"${LF_GENV[@]}"} \
+              ${LF_SHA_ARGS[@]+"${LF_SHA_ARGS[@]}"} 2>&1)
       # The id comes off the "Machine ID:" line ONLY (fly-pool.sh: the first bare
       # hex run can be the image digest).
       mid=$(printf '%s\n' "$out" | sed -n 's/.*[Mm]achine ID:[[:space:]]*\([0-9a-z]\{8,32\}\).*/\1/p' | head -1)
@@ -646,7 +656,7 @@ if [ "$DEC" = start ]; then
         lf_alert start "flyctl machine run in $LF_APP gave no machine id; nothing recorded, the next tick retries"
         FAILWHY="start-failed"; break
       fi
-      lf_record "$mid" starting "$DECIDED_AT" "$kind" "$cpus" "$MEM" || {
+      lf_record "$mid" starting "$DECIDED_AT" "$kind" "$cpus" "$MEM" "" "$LSHA" || {
         lf_log "record of start $mid failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
         lf_alert record "machine $mid started but its row was not written (http ${JOBS_HTTP:-none})"; }
       lf_log "start $mid: machine run image=$IMAGE"

@@ -38,6 +38,7 @@
 
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, leaseWon, str } from "../lib/core.js";
+import { harnessShaOf } from "../lib/harness-sha.js";
 import { readGroups } from "../lib/lane-fleet-groups.js";
 
 // The Fly machine id shape (routes/box-commands.js MACHINE_RE).
@@ -85,7 +86,7 @@ function kindField(body) {
 }
 
 // Busy = a live claim; claimed = a claim since this start; last = the latest activity.
-const MACHINES_SQL = `SELECT m.machine_id, m.app, m.state, m.started_at, m.cpu_kind, m.cpus, m.memory_mb, m.costed_until,
+const MACHINES_SQL = `SELECT m.machine_id, m.app, m.state, m.started_at, m.cpu_kind, m.cpus, m.memory_mb, m.costed_until, m.harness_commit,
     EXISTS (SELECT 1 FROM lane_runs r WHERE r.claimed_by=m.machine_id AND r.status='claimed' AND r.lease_until >= ?1) AS busy,
     EXISTS (SELECT 1 FROM lane_runs r WHERE r.claimed_by=m.machine_id AND r.claimed_at >= m.started_at) AS claimed,
     (SELECT MAX(COALESCE(r.finished_at, r.heartbeat_at, r.claimed_at)) FROM lane_runs r WHERE r.claimed_by=m.machine_id) AS last_at
@@ -125,6 +126,7 @@ export const routes = [
       const app = url.searchParams.get("app");
       if (app !== null && !APP_RE.test(app)) return json(400, { error: "app must match [a-z0-9][a-z0-9-]{0,62}" });
       const grace = await graceSeconds(env);
+      await ensureColumns(env, "lane_machines");
       await env.DB.prepare(PROMOTE_SQL).bind(t).run();
       const rows = (await env.DB.prepare(MACHINES_SQL).bind(t, app).all()).results || [];
       const now = Date.parse(t);
@@ -139,6 +141,7 @@ export const routes = [
           started_at: r.started_at,
           cpu_kind: r.cpu_kind, cpus: r.cpus, memory_mb: r.memory_mb,
           costed_until: r.costed_until,
+          harness_commit: r.harness_commit || null,
           in_flight: r.state === "starting" && Number(r.claimed) === 0 && now - started < grace * 1000,
           busy,
           idle_s: busy ? 0 : Math.max(0, Math.floor((now - last) / 1000)),
@@ -190,16 +193,19 @@ export const routes = [
       }
       const app = body.app || "lane-run";
       const actor = str(body.box, 64) || "lane-fleet";
+      // BH-7305: the harness sha a live record names; a stop never changes it.
+      const sha = live ? harnessShaOf(body.harness_commit) : null;
+      await ensureColumns(env, "lane_machines");
       const ins = await env.DB.prepare(
-        `INSERT OR IGNORE INTO lane_machines (machine_id, state, cpu_kind, cpus, memory_mb, started_at, stopped_at, updated_at, actor, failed_at, app)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`
-      ).bind(mid, state, kind.v, cpus.v, mem.v, startedAt, live ? null : stoppedAt, t, actor, failedAt, app).run();
+        `INSERT OR IGNORE INTO lane_machines (machine_id, state, cpu_kind, cpus, memory_mb, started_at, stopped_at, updated_at, actor, failed_at, app, harness_commit)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)`
+      ).bind(mid, state, kind.v, cpus.v, mem.v, startedAt, live ? null : stoppedAt, t, actor, failedAt, app, sha).run();
       if (leaseWon(ins)) return json(201, { machine_id: mid, state, started_at: startedAt, as_of: t });
       if (live) {
         await env.DB.prepare(
           `UPDATE lane_machines SET state=?2, started_at=?3, stopped_at=NULL, cpu_kind=COALESCE(?4,cpu_kind),
-             cpus=COALESCE(?5,cpus), memory_mb=COALESCE(?6,memory_mb), updated_at=?7, actor=?8 WHERE machine_id=?1`
-        ).bind(mid, state, startedAt, kind.v, cpus.v, mem.v, t, actor).run();
+             cpus=COALESCE(?5,cpus), memory_mb=COALESCE(?6,memory_mb), updated_at=?7, actor=?8, harness_commit=?9 WHERE machine_id=?1`
+        ).bind(mid, state, startedAt, kind.v, cpus.v, mem.v, t, actor, sha).run();
       } else {
         await env.DB.prepare(
           `UPDATE lane_machines SET state=?2, stopped_at=?3, cpu_kind=COALESCE(?4,cpu_kind),

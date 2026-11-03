@@ -14,6 +14,14 @@
 #       started machines only, so it is bounded by the listing. A machine that
 #       stops and starts again is logged again. rc 1 when the listing is not
 #       readable; the state file is then unchanged.
+#   lfi_machine_commit <machine-list-json-file> <machine id>
+#       prints that machine's `harness.commit` label, only when it is 7-40
+#       hex; else nothing (rc 0).
+#   lfi_image_commit <machine-list-json-file> <image>
+#       prints the `harness.commit` label of the newest listed machine (by
+#       created_at) whose image is <image>: for `<repo>@sha256:<d>` the
+#       repository and digest match, else `<registry>/<repository>:<tag>`
+#       matches. Only a 7-40 hex label; else nothing (rc 0).
 #
 # Values come only from the listing of the same tick: a missing field is `-`
 # or `unknown`, never a guess.
@@ -43,4 +51,22 @@ lfi_log_images() {
   jq -r '.[] | select(.state == "started") | "\(.id)\t\((.image_ref // {}).digest // "-")"' "$list" > "$tsv.tmp" 2>/dev/null \
     && mv "$tsv.tmp" "$tsv"
   return 0
+}
+
+_lfi_sha() { [[ "${1:-}" =~ ^[0-9a-f]{7,40}$ ]] && printf '%s\n' "$1"; return 0; }
+
+lfi_machine_commit() {
+  _lfi_sha "$(jq -r --arg m "${2:-}" 'first(.[] | select(.id == $m))
+    | ((.image_ref // {}).labels // {})["harness.commit"] // empty' "${1:-}" 2>/dev/null)"
+}
+
+lfi_image_commit() {
+  _lfi_sha "$(jq -r --arg img "${2:-}" '
+    (($img | capture("^(?<repo>[^@]+)@(?<dig>sha256:[0-9a-f]+)$")) // null) as $d
+    | [ .[] | select(.image_ref != null) | . as $m | $m.image_ref as $r
+        | ((if ($r.registry // "") == "" then "" else "\($r.registry)/" end) + ($r.repository // "")) as $name
+        | select(if $d != null then ($name == $d.repo and ($r.digest // "") == $d.dig)
+                 else ("\($name):\($r.tag // "")" == $img) end)
+        | {c: ($m.created_at // ""), h: (($r.labels // {})["harness.commit"] // "")} ]
+    | sort_by(.c) | last | .h // empty' "${1:-}" 2>/dev/null)"
 }
