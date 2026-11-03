@@ -65,6 +65,11 @@ for _gr in "$(dirname "$0")/lib/gh-rest-list.sh" "$HARNESS/bin/lib/gh-rest-list.
   # shellcheck source=bin/lib/gh-rest-list.sh
   [ -r "$_gr" ] && { . "$_gr"; break; }
 done
+# BH-8962: the ticket is filed over REST, never `gh issue create` (GraphQL).
+for _gr in "$(dirname "$0")/lib/tracker/gh-issue-create.sh" "$HARNESS/bin/lib/tracker/gh-issue-create.sh"; do
+  # shellcheck source=bin/lib/tracker/gh-issue-create.sh
+  [ -r "$_gr" ] && { . "$_gr"; break; }
+done
 command -v local_box_name >/dev/null 2>&1 || local_box_name() {
   cat "$HARNESS/state/box-name" 2>/dev/null || printf %s "${BOX_NAME:-}"
 }
@@ -86,7 +91,7 @@ LOCAL=$(local_box_name)
 
 # up10_here — the target side: the ordinary pipeline, on this box.
 up10_here() {
-  local repo n= url rb lt lrc=0
+  local repo n= rb lt lrc=0 ue
   repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)
   [ -n "$repo" ] || die "fleet.conf has no repo for $PROJECT — cannot file the ai-build issue for up10: $SLUG"
   # DEDUPE BEFORE CREATE (never a second issue for the same slug). The title is
@@ -104,10 +109,16 @@ up10_here() {
   rm -f "$lt"
   [ "$lrc" -eq 0 ] || die "gh issue list failed (rc $lrc) for up10: $SLUG — refusing to file a duplicate on a read that did not answer"
   if [ -z "$n" ]; then
-    url=$(gh issue create -R "$repo" --label ai-build --title "up10: $SLUG" --body-file "$BRIEF" 2>&1) \
-      || die "gh issue create failed for up10: $SLUG — $(printf '%s' "$url" | tail -1)"
-    n=$(printf '%s' "$url" | grep -oE '/issues/[0-9]+' | head -1 | tr -dc '0-9')
-    [ -n "$n" ] || die "gh issue create printed no issue number for up10: $SLUG — $(printf '%s' "$url" | tail -1)"
+    command -v gh_issue_create >/dev/null 2>&1 \
+      || die "gh issue create failed for up10: $SLUG — bin/lib/tracker/gh-issue-create.sh not loaded"
+    ue=$(mktemp) || die "no temp file for the up10: $SLUG create"
+    if ! gh_issue_create "$repo" "up10: $SLUG" "$BRIEF" ai-build > /dev/null 2> "$ue"; then
+      lt=$(tail -1 "$ue"); rm -f "$ue"
+      die "gh issue create failed for up10: $SLUG — $lt"
+    fi
+    n=$GH_ISSUE_NUMBER
+    [ -n "$n" ] || die "gh issue create printed no issue number for up10: $SLUG — $(tail -1 "$ue")"
+    rm -f "$ue"
   fi
   rb="$HARNESS/bin/run-build.sh"
   [ -x "$rb" ] || die "no $rb on $LOCAL — the box that owns $PROJECT has no harness to build with"

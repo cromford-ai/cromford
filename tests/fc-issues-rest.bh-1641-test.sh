@@ -44,6 +44,8 @@ export TITLE2='TK-552.2: weekly digest email'
 cat > "$T/fakebin/gh" <<'SH'
 #!/bin/bash
 echo "$*" >> "$GH_CALLS"
+. "$DIR/tests/lib/gh-cli-rest-adapter.sh" || exit 1  # BH-8962: the child create is a REST POST
+gh_cli_rest_create "$0" "$@" && exit 0
 _env() { printf 'HTTP/2.0 %s\r\n\r\n%s\n' "$1" "$2"; }
 case "$*" in
   *"-i -X GET repos/example-org/scoutish/issues/552"*)

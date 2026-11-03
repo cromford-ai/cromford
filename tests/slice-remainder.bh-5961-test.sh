@@ -18,6 +18,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
 # shellcheck source=tests/lib/gh-rest-fx.sh
 . "$DIR/tests/lib/gh-rest-fx.sh" || exit 1
 PASS=0; FAIL=0
@@ -44,6 +45,8 @@ unset FILE_CHILDREN_DRY_RUN DECOMPOSE_DRY_RUN SLICE_REMAINDER_FILE SLICE_REMAIND
 # The stub: comment bodies to posted.txt; `gh issue create` answers issue
 # 4600+n, records its argv and body, and fails on call number create-fail-at.
 ghfx_extra <<'SH'
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1  # BH-8962: the REST create, from the issue create arm below
+gh_cli_rest_create "$0" "$@" && exit 0
 case "$A" in
   *"-X POST"*"/comments"*)
     for a in "$@"; do case "$a" in body=@*) { cat "${a#body=@}"; printf '\n----\n'; } >> "$GHFX/posted.txt" ;; esac; done ;;
@@ -398,6 +401,8 @@ chmod +x "$H/bin/"*.sh
 printf 'project-1 o/p https://tproj.example - 2 box-t 192.0.2.9\n' > "$H/fleet.conf"
 : > "$H/env/global.env"; : > "$H/env/project-1.env"
 ghfx_extra <<'SH'
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1  # BH-8962: the REST create, from the issue create arm below
+gh_cli_rest_create "$0" "$@" && exit 0
 case "$A" in
   "issue create"*) echo "HTTP 502: fixture create failure"; exit 1 ;;
   *"-X POST"*"/comments"*) ;;

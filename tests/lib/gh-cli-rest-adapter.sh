@@ -12,6 +12,10 @@
 #   POST .../issues/N/comments     -> "$self" issue comment N -R S --body-file F
 #                                     (these three only with `post` as the second
 #                                     argument; without it only the list is served)
+#   POST repos/S/issues (no -i)    -> "$self" issue create -R S --title T --label L
+#                                     ... --body-file F (BH-8962: the REST create of
+#                                     bin/lib/tracker/gh-issue-create.sh; with `post`,
+#                                     or on its own through gh_cli_rest_create)
 #
 # BH-949 moved decompose-parent-close.sh's two remaining GraphQL reads (the PR
 # list and the parent by number) to REST as well. Those two routes are served
@@ -33,6 +37,7 @@ gh_cli_rest() {
   local self="$1" post=0 a m="" p="" prev="" page=1 lbl="" st="" n out rc
   shift
   [ "${1:-}" = post ] && { post=1; shift; }
+  [ "$post" = 1 ] && gh_cli_rest_create "$self" "$@" && return 0
   if [ "${GH_CLI_REST_READS:-}" = 1 ] && [ "$#" = 2 ] && [ "$1" = api ]; then
     case "$2" in
       repos/*/issues/[0-9]*)
@@ -95,4 +100,49 @@ gh_cli_rest() {
       return 0 ;;
   esac
   return 1
+}
+
+# gh_cli_rest_create <self> <args...> — BH-8962. Serves ONLY
+# `api -X POST repos/S/issues` (no -i, no /issues/N suffix) from the stub's own
+# `issue create` arm, whose output and rc it reads:
+#   rc 0 + a /issues/<n> URL  -> {"number":n,"html_url":"<url>"} on stdout, rc 0
+#   rc 0 + no URL             -> {} on stdout, rc 0 (the helper reads: no number)
+#   rc != 0                   -> {"message":"<last line>"} on stdout,
+#                                "gh: <last line> (HTTP 422)" on stderr, exit 1
+#                                (the stub is a script: this IS gh's rc)
+# Any other argv: rc 1, nothing printed, so the stub carries on as before.
+gh_cli_rest_create() {
+  # POSIX sh on purpose: a stub with no shebang line runs under /bin/sh when
+  # timeout or env execs it, and an array here would stop dash from parsing
+  # this whole file.
+  local self="$1" slug title="" body="" prev="" a n out rc=0 url
+  shift
+  [ "${1:-}" = api ] && [ "${2:-}" = -X ] && [ "${3:-}" = POST ] || return 1
+  case "${4:-}" in repos/*/*/issues) ;; *) return 1 ;; esac
+  slug="${4#repos/}"; slug="${slug%/issues}"
+  case "$slug" in */*/*) return 1 ;; esac
+  shift 4
+  n=$#
+  for a in "$@"; do
+    case "$prev" in
+      -f) case "$a" in title=*) title="${a#title=}" ;; "labels[]="*) set -- "$@" --label "${a#labels\[\]=}" ;; esac ;;
+      -F) case "$a" in body=@*) body="${a#body=@}" ;; esac ;;
+    esac
+    prev="$a"
+  done
+  shift "$n"
+  out=$("$self" issue create -R "$slug" --title "$title" "$@" --body-file "$body" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    a=$(printf '%s\n' "$out" | tail -1)
+    jq -nc --arg m "$a" '{message:$m}'
+    echo "gh: $a (HTTP 422)" >&2
+    exit 1
+  fi
+  url=$(printf '%s\n' "$out" | grep -oE 'https://[^ ]*/issues/[0-9]+' | tail -1)
+  if [ -n "$url" ]; then
+    jq -nc --arg u "$url" '{number:($u|capture("/issues/(?<n>[0-9]+)$").n|tonumber), html_url:$u}'
+  else
+    echo '{}'
+  fi
+  return 0
 }

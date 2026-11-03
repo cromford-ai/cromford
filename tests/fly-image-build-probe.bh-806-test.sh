@@ -221,6 +221,9 @@ cat > "$T/fakebin/gh-issue" <<'STUB'
 # `issue create` is recorded and never performed.
 # TEST-CHANGE BH-1651: the list is gh_rest_issue_list now — one REST page per
 # call, the same titles file, and GH_LIST_RC!=0 answers 403.
+# BH-8962: the create is a REST POST, answered from the issue create arm below.
+. "$GH_CLI_REST_ADAPTER" || exit 1
+gh_cli_rest_create "$0" "$@" && exit 0
 if [ "${1:-}" = api ] && [ "${2:-}" = -i ]; then
   [ "${GH_LIST_RC:-0}" = 0 ] || { printf 'HTTP/2 403\r\n\r\n{}'; exit 0; }
   pg=1; for a in "$@"; do case "$a" in page=*) pg="${a#page=}" ;; esac; done
@@ -257,11 +260,13 @@ run_dedup() { # run_dedup <marker> <titles-file> [gh-list-rc]
   : > "$T/gh.calls"
   ( set -euo pipefail
     export PATH="$T/fakebin:$PATH" GH_TITLES="$2" GH_LIST_RC="${3:-0}" GH_CALLS="$T/gh.calls"
+    export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
     # gh-rest-list.sh's ETag cache lives under $HARNESS/state/gh-etag and an
     # unset HARNESS is /root/harness: keep it in this run's scratch tree.
     export HARNESS="$T/h"
     gh() { "$T/fakebin/gh-issue" "$@"; }       # the production block calls `gh`
     . "$DIR/bin/lib/gh-rest-list.sh"           # TEST-CHANGE BH-1651: load-project sources it at the top
+    . "$DIR/bin/lib/tracker/gh-issue-create.sh"  # BH-8962: load-project sources it at the top too
     cd "$T/lp"
     PROJECT=probe SLUG=Acme/probe VTITLE="$VTITLE" ATITLE="$ATITLE"
     eval "$block" ) > "$T/lp.out" 2>&1

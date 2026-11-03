@@ -1,0 +1,1 @@
+Exempt by BH-8962 (2026-11-03), proposed by the BH-8962 build and decided in its PR review. A shared helper with no identity of its own: fc-issues.sh and up10-lane.sh arm through gh-token.sh, load-project.sh through gh-app-auth.sh, post-merge-verify.sh through gh_auth_for, before they call it. Full reason: the gh-identity line at the top of bin/lib/tracker/gh-issue-create.sh.

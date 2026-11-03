@@ -19,6 +19,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
 # shellcheck source=tests/lib/gh-rest-fx.sh
 . "$DIR/tests/lib/gh-rest-fx.sh" || exit 1
 PASS=0; FAIL=0
@@ -40,6 +41,8 @@ unset FILE_CHILDREN_DRY_RUN DECOMPOSE_DRY_RUN SLICE_REMAINDER_FILE SLICE_CLOSEOU
 # posted.txt; a PATCH of the parent marks it closed; `gh issue create` answers
 # issue 4600+n with its title and body kept under created/.
 ghfx_extra <<'SH'
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1  # BH-8962: the REST create, from the issue create arm below
+gh_cli_rest_create "$0" "$@" && exit 0
 printf '%s\n' "${GH_TOKEN:-}" >> "$GHFX/tokens.log"
 case "$A" in
   *"-X POST"*"/comments"*)
@@ -261,7 +264,7 @@ done
 cat "$T/gh-argv.log" >> "$T/all-argv.log"
 [ "$(command -v gh)" = "$T/fakebin/gh" ] && ok || bad "B1: gh resolves to the fixture stub ($(command -v gh))"
 [ -s "$T/all-argv.log" ] && ok || bad "B1: the stub logged the suite's calls"
-R=$(grep -vE '^(api -i -X (GET|POST|PATCH|DELETE|PUT) repos/example-org/proj/|api repos/example-org/proj( |/)|issue create |auth token|api rate_limit)' "$T/all-argv.log" | head -3)
+R=$(grep -vE '^(api -i -X (GET|POST|PATCH|DELETE|PUT) repos/example-org/proj/|api repos/example-org/proj( |/)|api -X POST repos/example-org/proj/issues |issue create |auth token|api rate_limit)' "$T/all-argv.log" | head -3)
 [ -z "$R" ] && ok || bad "B1: every gh call is a fixture call on example-org/proj ($R)"
 R=$(grep -vxE "$TOK|faketoken" "$T/tokens.log" | sort -u | head -3)
 [ -s "$T/tokens.log" ] && [ -z "$R" ] && ok || bad "B1: every call carried the fixture token or the stub's own (got: $R)"

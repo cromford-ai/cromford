@@ -19,6 +19,11 @@
 #               the dedup fallback when the ledger is unreachable.
 # The root is HARNESS, then H (BH-2613). No root is no answer: pmv_act returns 1.
 
+# BH-8962: the ticket is filed over REST, never `gh issue create` (GraphQL).
+# Without the helper no ticket is filed and the next run retries.
+# shellcheck source=bin/lib/tracker/gh-issue-create.sh
+[ -r "$(dirname "${BASH_SOURCE[0]}")/tracker/gh-issue-create.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/tracker/gh-issue-create.sh"
+
 pmv_norm() { printf '%s' "${1:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'; }
 
 pmv_judge() {
@@ -111,7 +116,7 @@ pmv_act() {
   fi
 
   # 3. Ticket: find one, or file one. Only a parsed issue number is `ticketed`.
-  local slug num body url
+  local slug num body
   slug=$("$h/bin/fleet-conf.sh" cromford repo 2>/dev/null)
   if [ -z "$slug" ]; then
     _pmv_log "MISMATCH: $key ticket not filed: fleet.conf has no cromford repo; status stays paged"
@@ -136,9 +141,11 @@ Post-merge verify (BH-3690) found prod not serving a merged commit.
 
 The alert already went out once through alert-line.sh. This ticket carries no ai-build label on purpose: a person or the precision lane decides the fix.
 EOF
-    url=$(timeout 60 gh issue create -R "$slug" --label infra --title "post-merge verify: $key not served" --body-file "$body" 2>/dev/null)
+    if command -v gh_issue_create >/dev/null 2>&1 \
+      && GH_ISSUE_CREATE_TIMEOUT_S=60 gh_issue_create "$slug" "post-merge verify: $key not served" "$body" infra > /dev/null 2>&1; then
+      num="$GH_ISSUE_NUMBER"
+    fi
     rm -f "$body"
-    [[ "$url" =~ /issues/([0-9]+)[[:space:]]*$ ]] && num="${BASH_REMATCH[1]}"
   fi
   if [ -z "$num" ]; then
     _pmv_log "MISMATCH: $key ticket not filed on $slug (gh issue create gave no issue number); status stays paged, the next run retries"

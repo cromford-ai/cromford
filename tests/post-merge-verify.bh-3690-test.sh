@@ -30,6 +30,8 @@ cp "$DIR/bin/deploy-verify.sh" "$DIR/bin/prod-url.sh" "$DIR/bin/fleet-conf.sh" "
 cp "$DIR/bin/lib/deploy-kind.sh" "$H/bin/lib/"
 [ -f "$DIR/bin/post-merge-verify.sh" ] && cp "$DIR/bin/post-merge-verify.sh" "$H/bin/"
 [ -f "$DIR/bin/lib/post-merge-verify.sh" ] && cp "$DIR/bin/lib/post-merge-verify.sh" "$H/bin/lib/"
+# BH-8962: the lib files its ticket through bin/lib/tracker/gh-issue-create.sh.
+scratch_install_closure bin/lib/post-merge-verify.sh "$H" >/dev/null || exit 1
 printf '#!/bin/bash\nexit 0\n' > "$H/bin/deploy-kind-resolve.sh"
 chmod +x "$H/bin/"*.sh
 printf 'tproj o/tproj https://tproj.example - 2 box-t 100.0.0.9\ncromford o/harness - - 3 box-t 100.0.0.9\n' > "$T/fleet.conf"
@@ -64,9 +66,13 @@ EOF
 #   $T/served   the deployment's .sha          $T/cmp     the compare .status
 #   $T/search   the search hit's number ("" = no hit)
 #   $T/create   ok (prints an issue URL) | fail (rc 1)
+# The REST create (BH-8962) is answered from the `issue create` arm, through
+# the adapter, so that arm still logs one `issue create` line per create.
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$T/gh.txt"
+. "$DIR/tests/lib/gh-cli-rest-adapter.sh" || exit 1
+gh_cli_rest_create "\$0" "\$@" && exit 0
 case "\$*" in
   *deployments/*statuses*) echo success ;;
   *deployments/77*) cat "$T/served" 2>/dev/null ;;

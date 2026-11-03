@@ -90,9 +90,14 @@ esac
 exit 0
 SH
 # ---- gh: the issues lane -----------------------------------------------------
+export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
 cat > "$T/stub/gh" <<'SH'
 #!/bin/bash
 S="$STUB_STATE"
+# BH-8962: the child create is a REST POST, answered from the issue create arm
+# below; that arm logs the create, so the goldens do not move.
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1
+gh_cli_rest_create "$0" "$@" && exit 0
 send() { printf 'HTTP/2.0 %s\r\n\r\n%s\n' "$1" "$2"; exit 0; }
 if [ "$1 $2" = "api -i" ]; then
   printf 'api %s %s\n' "$4" "$5" >> "$S/gh.log"

@@ -67,6 +67,9 @@ cd "$ROOT"
 # BH-1651: the dedupe title lists are REST. gh-rest-list.sh sources gh-rest.sh.
 # shellcheck source=bin/lib/gh-rest-list.sh
 [ -r "$ROOT/bin/lib/gh-rest-list.sh" ] && . "$ROOT/bin/lib/gh-rest-list.sh" || true
+# BH-8962: tickets are filed over REST, never `gh issue create` (GraphQL).
+# shellcheck source=bin/lib/tracker/gh-issue-create.sh
+[ -r "$ROOT/bin/lib/tracker/gh-issue-create.sh" ] && . "$ROOT/bin/lib/tracker/gh-issue-create.sh" || true
 
 SLUG="${1:?usage: load-project.sh <owner/repo> [--project name] [--prod url] [--box host] [--prefix KEY] [--base branch] [--context file] [--no-bootstrap] [--require-readiness <n> --repo-dir <checkout>] [--tracker linear|jira --prefix KEY]}"
 shift
@@ -315,9 +318,11 @@ if [ "$VMAP_TICKET" = 1 ]; then
     awk 'seen{print} /^---$/ && !seen{seen=1}' docs/VMAP-BACKFILL-TICKET.md \
       | sed -e "s|<PROJECT>|$PROJECT|g" -e "s|<REPO_SLUG>|$SLUG|g" > "$VBODY"
     if [ -s "$VBODY" ]; then
-      gh issue create -R "$SLUG" --title "$VTITLE" --label ai-build --body-file "$VBODY" \
-        && echo "verification-map ticket filed" \
-        || echo "WARN: could not file the verification-map ticket — file it by hand from docs/VMAP-BACKFILL-TICKET.md"
+      if command -v gh_issue_create >/dev/null 2>&1 && gh_issue_create "$SLUG" "$VTITLE" "$VBODY" ai-build; then
+        echo "verification-map ticket filed"
+      else
+        echo "WARN: could not file the verification-map ticket — file it by hand from docs/VMAP-BACKFILL-TICKET.md"
+      fi
     else
       echo "WARN: docs/VMAP-BACKFILL-TICKET.md yielded an empty body — nothing filed"
     fi
@@ -369,9 +374,11 @@ if [ "${ARCH_TICKET:-0}" = 1 ]; then
     awk 'seen{print} /^---$/ && !seen{seen=1}' docs/ARCH-AUDIT-TICKET.md \
       | sed -e "s|<PROJECT>|$PROJECT|g" -e "s|<REPO_SLUG>|$SLUG|g" > "$ABODY"
     if [ -s "$ABODY" ]; then
-      gh issue create -R "$SLUG" --title "$ATITLE" --label ai-build --body-file "$ABODY" \
-        && echo "agent-architecture ticket filed" \
-        || echo "WARN: could not file the agent-architecture ticket — file it by hand from docs/ARCH-AUDIT-TICKET.md"
+      if command -v gh_issue_create >/dev/null 2>&1 && gh_issue_create "$SLUG" "$ATITLE" "$ABODY" ai-build; then
+        echo "agent-architecture ticket filed"
+      else
+        echo "WARN: could not file the agent-architecture ticket — file it by hand from docs/ARCH-AUDIT-TICKET.md"
+      fi
     else
       echo "WARN: docs/ARCH-AUDIT-TICKET.md yielded an empty body — nothing filed"
     fi

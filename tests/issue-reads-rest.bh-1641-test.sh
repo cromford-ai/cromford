@@ -32,6 +32,10 @@ SINK="$T/gh/sink"
 cat > "$T/fb/gh" <<SH
 #!/bin/bash
 printf '%s\n' "\$*" >> "$SINK"
+# BH-8962: a create is a REST POST now; the adapter routes it through the
+# issue create arm below, so the "must not create" checks still see it.
+. "$DIR/tests/lib/gh-cli-rest-adapter.sh" || exit 1
+gh_cli_rest_create "\$0" "\$@" && exit 0
 G="$T/gh"
 case "\$*" in
   "api -i -X GET repos/"*"/issues/"[0-9]*)
@@ -120,7 +124,7 @@ ATITLE="agent architecture: audit the repo and draft AGENT_ARCHITECTURE.md"
 for M in "vmap-ticket dedup|$VTITLE" "arch-ticket dedup|$ATITLE"; do
   MK="${M%%|*}"; TI="${M#*|}"; B=$(blk "$MK")
   [ -n "$B" ] && ok || { bad "load-project: block '$MK' not found"; continue; }
-  lp() { ( set -euo pipefail; unset GH_REST_LIB GH_REST_VAR_LIB GH_REST_LIST_LIB; . "$DIR/bin/lib/gh-rest-list.sh"; cd "$LPD"
+  lp() { ( set -euo pipefail; unset GH_REST_LIB GH_REST_VAR_LIB GH_REST_LIST_LIB; . "$DIR/bin/lib/gh-rest-list.sh"; . "$DIR/bin/lib/tracker/gh-issue-create.sh"; cd "$LPD"
            PROJECT=probe SLUG=o/r VTITLE="$VTITLE" ATITLE="$ATITLE"; eval "$B" ) 2>&1; }
   reset; jq -nc --arg t "$TI" '[{title:"other"},{title:$t}]' > "$T/gh/list.json"
   OUT=$(lp)
@@ -139,7 +143,7 @@ UH=$(fn_of "$DIR/bin/up10-lane.sh" up10_here)
 [ -n "$UH" ] && ok || bad "up10: up10_here() not found"
 U="$T/up"; mkdir -p "$U/bin" "$U/logs"
 printf '#!/bin/bash\necho o/r\n' > "$U/bin/fleet-conf.sh"; printf '#!/bin/bash\nexit 0\n' > "$U/bin/run-build.sh"; chmod +x "$U/bin/"*.sh
-up() { ( unset GH_REST_LIB GH_REST_VAR_LIB GH_REST_LIST_LIB; . "$DIR/bin/lib/gh-rest-list.sh"
+up() { ( unset GH_REST_LIB GH_REST_VAR_LIB GH_REST_LIST_LIB; . "$DIR/bin/lib/gh-rest-list.sh"; . "$DIR/bin/lib/tracker/gh-issue-create.sh"
          HARNESS="$U" PROJECT=cromford SLUG=demo BRIEF="$T/brief" LOG="$U/logs/up10.log" LOCAL=box
          die() { echo "DIE: $*"; exit 2; }; STAMP() { date -u +%FT%TZ; }; setsid() { :; }
          eval "$UH"; up10_here ) 2>&1; }

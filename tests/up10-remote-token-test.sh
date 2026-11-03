@@ -86,6 +86,7 @@ cp "$UP10" "$REM/bin/up10-lane.sh"; chmod +x "$REM/bin/up10-lane.sh"
 mkdir -p "$REM/bin/lib" && cp "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$DIR/bin/lib/gh-rest-list.sh" "$REM/bin/lib/"   # TEST-CHANGE BH-1651
 # scratch-closure-allow: BH-4080 the lane under test runs under env -i or in its own harness root, so HARNESS_DEPLOYMENT_FILE does not reach it and bin/lib/deployment.sh must sit beside its copied libs
 cp "$DIR/bin/lib/deployment.sh" "$REM/bin/lib/"  # BH-4080: up10-lane.sh sources it (the far side runs under env -i)
+scratch_install_closure bin/lib/tracker/gh-issue-create.sh "$REM" >/dev/null || exit 1  # BH-8962: up10 files its ticket over REST
 mkfifo "$T/rb.fifo"
 cat > "$REM/bin/run-build.sh" <<EOF
 #!/bin/bash
@@ -102,6 +103,8 @@ cat > "$T/fakebin/gh" <<EOF
 printf 'GH_TOKEN=%s :: %s\n' "\${GH_TOKEN:-<unset>}" "\$*" >> "$T/gh-argv.txt"
 printf '%s\n' "\${PATH:-<unset>}" >> "$T/gh-path.txt"
 [ -n "\${GH_TOKEN:-}" ] || { echo "gh: authentication required" >&2; exit 1; }
+. "$DIR/tests/lib/gh-cli-rest-adapter.sh" || exit 1  # BH-8962: the REST create, from the arm below
+gh_cli_rest_create "\$0" "\$@" && exit 0
 case "\${1:-} \${2:-}" in
   "api -i")       printf 'HTTP/2 200\r\n\r\n[]' ;;   # TEST-CHANGE BH-1651: the dedupe list is REST
   "issue create") echo "https://github.com/example-org/cromford/issues/42" ;;

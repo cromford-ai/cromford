@@ -21,6 +21,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
+export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
 # shellcheck source=tests/lib/gh-rest-fx.sh
 . "$DIR/tests/lib/gh-rest-fx.sh" || exit 1
 PASS=0; FAIL=0
@@ -49,6 +50,8 @@ unset FILE_CHILDREN_DRY_RUN DECOMPOSE_DRY_RUN SLICE_REMAINDER_FILE SLICE_CLOSEOU
 # to fail marks it closed (the guarded route below then reads it closed, which
 # is what gh_rest_close re-reads); `gh issue create` answers issue 4600+n.
 ghfx_extra <<'SH'
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1  # BH-8962: the REST create, from the issue create arm below
+gh_cli_rest_create "$0" "$@" && exit 0
 case "$A" in
   *"-X POST"*"/comments"*)
     for a in "$@"; do case "$a" in body=@*) { cat "${a#body=@}"; printf '\n----\n'; } >> "$GHFX/posted.txt" ;; esac; done ;;

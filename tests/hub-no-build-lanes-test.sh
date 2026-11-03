@@ -106,6 +106,8 @@ printf '0\n'  > "$T/stub-gh-list-rc"
 cat > "$T/fakebin/gh" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$T/gh-argv.txt"
+. "$DIR/tests/lib/gh-cli-rest-adapter.sh" || exit 1  # BH-8962: the REST create, from the issue create arm
+gh_cli_rest_create "\$0" "\$@" && exit 0
 case "\$*" in
   "api -i -X GET repos/"*"/issues "*)
     if [ "\$(cat "$T/stub-gh-list-rc")" = 0 ]; then

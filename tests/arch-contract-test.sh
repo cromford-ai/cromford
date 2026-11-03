@@ -260,6 +260,8 @@ mkdir -p "$T/bin"
 cat > "$T/bin/gh" <<'STUB'
 #!/bin/bash
 echo "gh $*" >> "$GH_LOG"
+. "$GH_CLI_REST_ADAPTER" || exit 1   # BH-8962: the REST create, from the issue create arm below
+gh_cli_rest_create "$0" "$@" && exit 0
 if [ "$1 $2" = "api -i" ]; then   # TEST-CHANGE BH-1651: gh_rest_issue_list
   printf 'HTTP/2 200\r\n\r\n'
   if [ -n "${GH_TITLES:-}" ]; then printf '%s\n' "$GH_TITLES" | jq -R '{title:.}' | jq -cs .; else echo '[]'; fi
@@ -278,9 +280,11 @@ run_arch() {  # run_arch <log> <titles gh should report as already on the board>
   # HARNESS in scratch: gh-rest-list.sh's ETag cache writes and prunes under
   # $HARNESS/state/gh-etag, and an unset HARNESS defaults to /root/harness.
   ( cd "$DIR" && PATH="$T/bin:$PATH" GH_LOG="$1" GH_TITLES="$2" HARNESS="$T/h" \
+    GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh" \
     bash -c 'set -euo pipefail
       SLUG=owner/repo; PROJECT=demo-os; ARCH_TICKET=1
       . bin/lib/gh-rest-list.sh
+      . bin/lib/tracker/gh-issue-create.sh
       . "'"$T"'/arch-block.sh"' ) 2>&1
 }
 

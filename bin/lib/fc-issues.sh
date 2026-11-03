@@ -44,8 +44,8 @@
 # children.txt, decompose-gh.log, the dry-run print and the parking of the
 # master are identical to decompose.
 
-# BH-1650: every read and write below except `gh issue create` goes through the
-# REST contract. Guarded, because run-decompose.sh and run-rollout.sh source
+# BH-1650: every read and write below goes through the REST contract; the child
+# create too, through gh_issue_create (BH-8962). Guarded, because run-decompose.sh and run-rollout.sh source
 # this file without having sourced gh-rest.sh themselves.
 if ! command -v gh_rest >/dev/null 2>&1 && [ -r "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh" ]; then
   . "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh"
@@ -64,6 +64,15 @@ if ! command -v trk_gh_comment >/dev/null 2>&1; then
     # shellcheck source=bin/lib/tracker/github-issues.sh
     . "$_fci_d/tracker/github-issues.sh"
   fi
+  unset _fci_d
+fi
+# BH-8962: the child create is the REST helper, never `gh issue create`
+# (GraphQL). Same lookup as above; without it a create fails closed.
+if ! command -v gh_issue_create >/dev/null 2>&1; then
+  _fci_d="$(dirname "${BASH_SOURCE[0]}")"
+  if [ ! -r "$_fci_d/tracker/gh-issue-create.sh" ] && [ -n "${HARNESS:-${H:-}}" ]; then _fci_d="${HARNESS:-${H:-}}/bin/lib"; fi
+  # shellcheck source=bin/lib/tracker/gh-issue-create.sh
+  [ -r "$_fci_d/tracker/gh-issue-create.sh" ] && . "$_fci_d/tracker/gh-issue-create.sh"
   unset _fci_d
 fi
 
@@ -92,7 +101,7 @@ fc_file_issues() {
   local HARNESS="${HARNESS:-/root/harness}"
   local ISSUE GH_REPO N CONTRACT fcs OWNS
   local VOCAB PARENT_LABELS LBL_SRC INHERITED ONE MATCH V LBL_SET LBL_NOTE LBL_FLAGS
-  local CHILDREN_DIR GHLOG PREFIX LINKS i n TITLE BODY BLOCK DEPENDS AFTERS A P p SYM F CT NUM URL
+  local CHILDREN_DIR GHLOG PREFIX LINKS i n TITLE BODY BLOCK DEPENDS AFTERS A P p SYM F CT NUM
   local SG_DECL SG_OVER SG_BUDGET COMMENT DRYNOTE _FRESH
   local PATHS_DIR PF CONTRACT_PATHS CP_RC CONTESTED_ALL CONTESTED CHILD_PATHS CHP_RC SHARED sp CONTESTED_NOTE
   local EXTRACT_FAILED EXTRACT_NOTE INDEP INDEP_WHY CONTRACT_TOKENS INDEP_SHARED
@@ -598,8 +607,20 @@ DEPENDS: #${NUMS[$((p - 1))]} soft — a separate slice of the same parent, no s
         # A global of the calling script, not of this library: a caller without it
         # must not be killed under `set -u`.
         command -v gh_fresh >/dev/null 2>&1 && gh_fresh
-        URL=$(gh issue create -R "$GH_REPO" --title "$CT" "${LBL_ARGS[@]}" --body-file "$F" 2>&1)
-        NUM=$(printf '%s' "$URL" | sed -nE 's#.*/issues/([0-9]+).*#\1#p' | tail -1)
+        # The labels bare, for the REST labels[] array: every value that
+        # follows a --label in LBL_ARGS.
+        local LBLS=() _li _cerr _crc=0 _creason=""
+        for ((_li = 0; _li < ${#LBL_ARGS[@]}; _li++)); do
+          [ "${LBL_ARGS[$_li]}" = --label ] && LBLS+=("${LBL_ARGS[$((_li + 1))]:-}")
+        done
+        if command -v gh_issue_create >/dev/null 2>&1 && _cerr=$(mktemp 2>/dev/null); then
+          gh_issue_create "$GH_REPO" "$CT" "$F" "${LBLS[@]}" > /dev/null 2> "$_cerr" || _crc=$?
+          [ "$_crc" -eq 0 ] && NUM="$GH_ISSUE_NUMBER"
+          _creason=$(head -1 "$_cerr")
+          rm -f "$_cerr"
+        else
+          _creason="bin/lib/tracker/gh-issue-create.sh not loaded (or no temp file)"
+        fi
         if [ -z "$NUM" ]; then
           # RETURN, never exit: the children filed before this one are already in
           # children.txt and they are real, the parent has not been commented on
@@ -615,7 +636,7 @@ DEPENDS: #${NUMS[$((p - 1))]} soft — a separate slice of the same parent, no s
             MISSING="${MISSING:+$MISSING, }child $_m"
             _m=$((_m + 1))
           done
-          FC_ERROR="gh issue create failed on child $n of $N: $(printf '%s' "$URL" | tail -1)${MISSING:+; missing children: $MISSING}"
+          FC_ERROR="gh issue create failed on child $n of $N: ${_creason}${MISSING:+; missing children: $MISSING}"
           fc_log "$FC_BUILD" "$FC_ERROR"
           return 1
         fi

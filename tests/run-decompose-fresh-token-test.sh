@@ -28,9 +28,14 @@ printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/agent-call.sh"; chmod +x "$T/h/bin/ag
 # the minter every box has: answers with a token that is alive now
 printf '#!/bin/bash\necho ghs_fresh_%s\n' '$1' > "$T/h/bin/gh-token.sh"; chmod +x "$T/h/bin/gh-token.sh"
 # gh stub: records the token each call ran with, answers `issue create` with a URL
+# BH-8962: the create is a REST POST, answered from the issue create arm, which
+# runs in the POST's own environment and so logs the token the POST ran with.
+export GH_CLI_REST_ADAPTER="$DIR/tests/lib/gh-cli-rest-adapter.sh"
 cat > "$T/fakebin/gh" <<'SH'
 #!/bin/bash
 echo "$1 $2 token=${GH_TOKEN:-<unset>}" >> "$GH_CALLS"
+. "${GH_CLI_REST_ADAPTER:?}" || exit 1
+gh_cli_rest_create "$0" "$@" && exit 0
 case "$1 $2" in
   "issue create") n=$(( $(grep -c '^issue create' "$GH_CALLS") )); echo "https://github.com/example-org/scoutish/issues/$((900+n))" ;;
   "issue comment"|"issue edit"|"issue view") echo '{}' ;;
