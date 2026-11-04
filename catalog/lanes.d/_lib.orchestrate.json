@@ -1,0 +1,35 @@
+{
+  "libs": [
+    {
+      "id": "orchestrate",
+      "file": "bin/lib/archie-repo-activity.sh",
+      "note": "BH-9025. The time bound of archie_repo_activity_block, the `## Repo activity` block of the orchestrator's fresh-turn prompt (bin/orchestrate.sh compose_v2_prompt) and of Archie's check tick (bin/archie.sh). One reader per repo, in parallel. Applied by the block through lib_env_apply orchestrate in a subshell; the code literals are the documented fallback.",
+      "knobs": [
+        {
+          "env": "REPO_ACTIVITY_TIMEOUT_S",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 60,
+          "unit": "s",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "Per-call timeout of every GitHub read a repo reader makes (passed down as GH_REST_TIMEOUT_S). A read past it prints `UNREADABLE <endpoint> HTTP 000 (timeout)` and the block says `<repo> UNREADABLE timed out after <n>s`. Code fallback 5 in bin/lib/archie-repo-activity.sh; outside 1..60 is the default."
+        },
+        {
+          "env": "REPO_ACTIVITY_BUDGET_S",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 120,
+          "unit": "s",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "Wall-time budget of the whole block. Past it the block prints what it has, `<repo> UNREADABLE not finished in <n>s` per repo still reading, and `(not finished in <n>s: <repos>)`. Code fallback 10 in bin/lib/archie-repo-activity.sh; outside 1..120 is the default."
+        }
+      ]
+    }
+  ]
+}

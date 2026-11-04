@@ -37,7 +37,12 @@
 # FAILURE IS NEVER AN EMPTY LIST (D9, D11). A read that is not 2xx (or a 304
 # the cache answered) prints `UNREADABLE <endpoint> HTTP <code>` and NO event
 # line, writes no heads state, and exits 75. A 2xx body that is not the shape
-# asked for is `UNREADABLE <endpoint> HTTP <code> (unparseable)`, same exit.
+# asked for is `UNREADABLE <endpoint> HTTP <code> (unparseable)`, same exit,
+# plus ONE stderr line `repo-activity: <slug> <endpoint> HTTP <code>
+# unparseable; first 200 bytes: <text>` (every byte outside printable ASCII
+# made a space), so the body that did not parse is on record. A read that ran
+# past GH_REST_TIMEOUT_S (the caller's per-call bound) is
+# `UNREADABLE <endpoint> HTTP 000 (timeout)`.
 # A page cap prints `INCOMPLETE <endpoint> pages=<n>` before the events (D12):
 # the events older than the last page read are not listed.
 #
@@ -102,6 +107,13 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/repo-activity.XXXXXX") || { echo "UNREADABLE repo
 trap 'rm -rf "$W"' EXIT
 NOTES="$W/notes"; : > "$NOTES"
 
+# unparseable <endpoint> <status> <file> — the stderr record of a body that
+# did not parse: its first 200 bytes, one line.
+unparseable() {
+  printf 'repo-activity: %s %s HTTP %s unparseable; first 200 bytes: %s\n' "$SLUG" "$1" "$2" \
+    "$(head -c 200 "$3" 2>/dev/null | LC_ALL=C tr -c '\040-\176' ' ')" >&2
+}
+
 # read_pages <endpoint> <kind pulls|runs> <out jsonl> [-f/-F args...]
 # Appends every row of every page to <out jsonl>. rc 0 read, 75 failed (the
 # UNREADABLE line is printed here and the caller prints nothing else).
@@ -117,7 +129,8 @@ read_pages() {
     rc=0
     gh_rest GET "$ep" "$@" -F per_page=100 -F "page=$page" > "$W/page" || rc=$?
     if [ "$rc" != 0 ]; then
-      printf 'UNREADABLE %s HTTP %s\n' "$ep" "${GH_REST_STATUS:-000}"
+      if [ "${GH_REST_REASON:-}" = timeout ]; then printf 'UNREADABLE %s HTTP 000 (timeout)\n' "$ep"
+      else printf 'UNREADABLE %s HTTP %s\n' "$ep" "${GH_REST_STATUS:-000}"; fi
       return 75
     fi
     if [ "$kind" = runs ]; then
@@ -127,6 +140,7 @@ read_pages() {
     fi
     if [ "$rc" != 0 ]; then
       printf 'UNREADABLE %s HTTP %s (unparseable)\n' "$ep" "${GH_REST_STATUS:-000}"
+      unparseable "$ep" "${GH_REST_STATUS:-000}" "$W/page"
       return 75
     fi
     cat "$W/rows" >> "$out"
@@ -147,7 +161,8 @@ read_pages "repos/$SLUG/actions/runs" runs "$W/runs" -f "created=>=$SINCE_ISO" -
 jq -r --arg s "$SINCE_ISO" 'select((.updated_at // "") >= $s)
   | [ (.number|tostring), .state, (.head.sha // "-"), .updated_at, (.created_at // ""), (.closed_at // ""),
       (.merged_at // ""), (.merge_commit_sha // "-"), ((.title // "") | gsub("[\t\r\n]"; " ") | .[0:80]) ] | @tsv' \
-  "$W/pulls" > "$W/prs.tsv" 2>/dev/null || { echo "UNREADABLE repos/$SLUG/pulls HTTP 200 (unparseable)"; exit 75; }
+  "$W/pulls" > "$W/prs.tsv" 2>/dev/null || {
+  echo "UNREADABLE repos/$SLUG/pulls HTTP 200 (unparseable)"; unparseable "repos/$SLUG/pulls" 200 "$W/pulls"; exit 75; }
 
 EV="$W/events"; : > "$EV"
 awk -F'\t' -v s="$SINCE_ISO" '
@@ -187,7 +202,8 @@ jq -r --arg s "$SINCE_ISO" 'select((.created_at // "") >= $s)
       (if ((.pull_requests // []) | length) > 0 then "#" + (.pull_requests[0].number|tostring) else "#-" end),
       ((.head_sha // "-")[0:8]),
       (((.name // "?") | gsub("[\t\r\n]"; " ")) + " " + (.conclusion // "none")) ] | @tsv' \
-  "$W/runs" >> "$EV" 2>/dev/null || { echo "UNREADABLE repos/$SLUG/actions/runs HTTP 200 (unparseable)"; exit 75; }
+  "$W/runs" >> "$EV" 2>/dev/null || {
+  echo "UNREADABLE repos/$SLUG/actions/runs HTTP 200 (unparseable)"; unparseable "repos/$SLUG/actions/runs" 200 "$W/runs"; exit 75; }
 
 # Every read is in: now the heads state may move (a failed run never moves it).
 if ! { cp "$W/heads.sorted" "$HEADS.tmp.$$" && mv -f "$HEADS.tmp.$$" "$HEADS"; } 2>/dev/null; then
