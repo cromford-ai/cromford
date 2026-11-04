@@ -12,6 +12,7 @@ bin/board-conformance.sh
 bin/board-invariants.sh
 bin/bootstrap-machine.sh
 bin/box-chat.sh
+bin/ci-image-rollout.sh
 bin/ci-nightly-full.sh
 bin/cmd-dispatch-issue.sh
 bin/cost-local-brake.sh
@@ -92,6 +93,8 @@ bin/lib/queue-flake-fix.sh
 bin/lib/queue-risk.sh
 bin/lib/rb-full-ci-label.sh
 bin/lib/rb-pr-labels.sh
+bin/lib/rb/gates.d/closed-issue-skip.sh
+bin/lib/rb/gates.d/issue-created-at.sh
 bin/lib/rb/gates.sh
 bin/lib/rb/plan.sh
 bin/lib/rb/pr.sh
@@ -123,6 +126,7 @@ bin/lib/triage-shards-lib.sh
 bin/lib/triage-state.sh
 bin/lib/triage-throttle.sh
 bin/lib/trigger-actor.sh
+bin/lib/unblock/act.sh
 bin/lib/unblock/override.sh
 bin/lib/untriaged-board-read.sh
 bin/lib/untrusted-input.sh
@@ -130,7 +134,6 @@ bin/lib/utilization/section-tickets.sh
 bin/lib/wake-class-split-chain.sh
 # pre-existing on main (gh api issue comments); landed after BH-7919 was cut
 bin/lib/web-human/board.sh
-bin/load-project.sh
 bin/merge-conductor.sh
 bin/merge-sweep.sh
 bin/merged-ticket-advance.sh
