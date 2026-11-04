@@ -1,0 +1,11 @@
+{
+  "env": "BR_FINISHED_RECORD_RETIRE_DAYS",
+  "type": "int",
+  "default": 14,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9029-discovery-index.sh",
+  "note": "BH-9029: a RESOLVED_MERGED record whose candidate row has no PR url (the D11 case br_finished never retires) is retired by the pre-pass once its .updated is this many days old. One resolver_retired line per record; the record then carries retired_aged=true. A rebuild-* reason is never retired this way."
+}

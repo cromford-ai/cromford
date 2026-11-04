@@ -1610,6 +1610,8 @@ br_from_conductor() {
     case "$st" in BLOCKED_HUMAN|RED_TWICE) ;; *) continue ;; esac
     [ -n "$key" ] || continue
     br_key_in_only "$key" || continue
+    # BH-9029: a PR the pre-pass already retired is not discovered again.
+    command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
     reason=$(br_reason_of "$why")
     # A REASON NO RUNG MAPS IS SAID OUT LOUD (BH-3630). Before this a
     # `provenance` park (example-org/project-7#530) was dropped here without a
@@ -1667,6 +1669,7 @@ br_from_conductor() {
   while IFS=$'\t' read -r key reason url ehead esince; do
     [ -n "$key" ] && [ -n "$url" ] || continue
     br_key_in_only "$key" || continue
+    command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
     rowst=$(mc_row_field "$key" 2)
     case "$rowst" in MERGED|CLOSED|ABANDONED|BLOCKED_HUMAN|RED_TWICE) continue ;; esac
     # ONE REST read for both fields. A 75 leaves both empty, so this hand-off is
@@ -2057,6 +2060,8 @@ br_from_reviews() {
       [ -n "${row:-}" ] || continue
       IFS=$'\t' read -r num head brn url draft upd <<<"$row"
       [ -n "${num:-}" ] && [ -n "${head:-}" ] || continue
+      # BH-9029: a PR the pre-pass already retired is not read again.
+      command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "${url:-https://github.com/$slug/pull/$num}" && continue
       [ "${draft:-false}" = true ] && continue
       [ -n "${upd:-}" ] || continue
       upd_ep=$(date -u -d "${upd:-}" +%s 2>/dev/null) || continue
@@ -2313,8 +2318,10 @@ br_cost_rank() {
 }
 
 # br_record_index — ONE jq pass over every record this lane holds, as
-#   `<project>\t<cap-key>\t<outcome>\t<outcome_url>\t<retired>\t<mechanicals>\t<fixrounds>\t<fixround_bonus>\t<conflict_lines>`,
-#   one row per record file. The glob is the one br_from_rebuilds already walks.
+#   `<project>\t<cap-key>\t<outcome>\t<outcome_url>\t<retired>\t<mechanicals>\t<fixrounds>\t<fixround_bonus>\t<conflict_lines>\t<age_days>\t<retired_aged>`,
+#   one row per record file. `age_days` is whole days since `.updated` (`-`
+#   when it does not read as a STAMP); `retired_aged` is 1 when the BH-9029
+#   aged arm retired the record (the bh-9029-discovery-index fragment). The glob is the one br_from_rebuilds already walks.
 #
 #   `outcome_url` is `.abandoned_url` for ABANDONED (BH-8339), else `.resolved_url`
 #   when the record has one and otherwise the url the `resolved-merged` attempt recorded in its detail — the legacy
@@ -2372,7 +2379,7 @@ br_record_index() {
           def d(x): (x // "") | tostring | if . == "" or . == "null" then "-" else . end;
           def n(x): (x // 0) | if type == "number" then . else 0 end;
           $seg[-2] + "\t" + ($seg[-1] | sub("\\.json$"; "")) + "\t"
-          + ( if $r == null then "!PARSE\t-\t0\t0\t0\t0\t-"
+          + ( if $r == null then "!PARSE\t-\t0\t0\t0\t0\t-\t-\t0"
               else
                 d($r.outcome) + "\t"
                 + d( if ($r.outcome // "") == "ABANDONED" then $r.abandoned_url else $r.resolved_url //
@@ -2383,7 +2390,10 @@ br_record_index() {
                 + (n($r.mechanicals)|tostring) + "\t"
                 + (n($r.fixrounds)|tostring) + "\t"
                 + (n($r.fixround_bonus)|tostring) + "\t"
-                + d($r.conflict_lines)
+                + d($r.conflict_lines) + "\t"
+                + ( (try (((now - ($r.updated | strptime("%Y-%m-%d %H:%M:%SZ") | mktime)) / 86400) | floor | tostring) catch "-")
+                    | if test("^[0-9]+$") then . else "-" end ) + "\t"
+                + ( if ($r.retired_aged // false) == true then "1" else "0" end )
               end )
         end
       ' 2>/dev/null
@@ -2407,9 +2417,10 @@ br_record_index() {
 #   the per-candidate loop forks NOTHING.
 br_prepass() {
   local cf="${1:-/dev/null}" line src p rkey reason url rec tkey parked
-  local ck n=0 bad=0 rp rck roc rurl rret rmech rfix rbonus rconf key cap cost
+  local ck n=0 bad=0 rp rck roc rurl rret rmech rfix rbonus rconf rage raged key cap cost
+  local badpaths=() newbad="" rtext
   declare -A _BRIDX=()
-  while IFS=$'\t' read -r rp rck roc rurl rret rmech rfix rbonus rconf; do
+  while IFS=$'\t' read -r rp rck roc rurl rret rmech rfix rbonus rconf rage raged; do
     [ -n "${rp:-}" ] && [ -n "${rck:-}" ] || continue
     # A RECORD THAT WOULD NOT PARSE IS COUNTED AND KEPT (review r2/I1). It is
     # indexed under its own key with an outcome br_finished never matches, so
@@ -2417,10 +2428,12 @@ br_prepass() {
     # direction — and the count rides out on line 2 of the count file so the
     # tick line can carry `+index-short`. Silence here would be a permanent,
     # invisible regression of the number this ticket is about.
-    if [ "$roc" = "!PARSE" ]; then bad=$((bad+1)); fi
-    _BRIDX["$rp/$rck"]="$roc	$rurl	$rret	$rmech	$rfix	$rbonus	$rconf"
+    if [ "$roc" = "!PARSE" ]; then bad=$((bad+1)); badpaths+=("$ST/$rp/$rck.json"); fi
+    _BRIDX["$rp/$rck"]="$roc	$rurl	$rret	$rmech	$rfix	$rbonus	$rconf	${rage:--}	${raged:-0}"
   done < <(br_record_index)
   [ "$bad" = 0 ] || say "$bad state record(s) could not be parsed and were not indexed — their parks are neither retired nor costed this tick"
+  # BH-9029: the bad paths are named once per episode and quarantined (fragment).
+  command -v bdi_bad_records >/dev/null 2>&1 && newbad=$(bdi_bad_records "${badpaths[@]}" </dev/null)
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     IFS=$'\t' read -r src p rkey reason url rec tkey parked <<<"$line"
@@ -2438,12 +2451,21 @@ br_prepass() {
     # the very block whose comment says "ONE LINE PER ROW, EVER".
     key="${p:--}"
     ck=$(br_cap_key "$key" "$rkey" "${tkey:--}")
-    roc="-"; rurl="-"; rret=0; rmech=0; rfix=0; rbonus=0; rconf="-"
+    roc="-"; rurl="-"; rret=0; rmech=0; rfix=0; rbonus=0; rconf="-"; rage="-"; raged=0
     if [ -n "${_BRIDX["$key/$ck"]:-}" ]; then
-      IFS=$'\t' read -r roc rurl rret rmech rfix rbonus rconf <<<"${_BRIDX["$key/$ck"]}"
+      IFS=$'\t' read -r roc rurl rret rmech rfix rbonus rconf rage raged <<<"${_BRIDX["$key/$ck"]}"
     fi
-    if br_finished "$roc" "$rurl" "${url:--}" "$reason"; then
+    rtext=""
+    if ! br_finished "$roc" "$rurl" "${url:--}" "$reason" \
+       && command -v bdi_aged_finished >/dev/null 2>&1 \
+       && bdi_aged_finished "$roc" "${url:--}" "$reason" "$rage" "$raged"; then
+      rtext="finished with no PR url, untouched for ${rage} days (BR_FINISHED_RECORD_RETIRE_DAYS=$_BDI_DAYS)"
+      [ "$raged" = 1 ] && rtext="finished with no PR url, retired by age before"
+    fi
+    if [ -n "$rtext" ] || br_finished "$roc" "$rurl" "${url:--}" "$reason"; then
       n=$((n+1))
+      # BH-9029: a finished build row has no PR url, so its dir carries the retire.
+      command -v bdi_mark_build >/dev/null 2>&1 && bdi_mark_build "$src" "$rec" "$roc" </dev/null
       # ONE LINE PER ROW, EVER. 177 retirements a tick, every ten minutes, is
       # the noise the lane's own "one line per episode" rule forbids; the tick
       # line's `retired=` is the standing number. Observe mode writes no flag,
@@ -2456,11 +2478,14 @@ br_prepass() {
           # stdin-consuming loop, at up to 177 invocations a tick, and a child
           # that read one byte of stdin would make candidate rows vanish.
           br_event resolver_retired "$key" "$ck" "$reason" \
-            "finished: the record is $roc — dropped from the candidate list, no rung" </dev/null
+            "${rtext:-finished: the record is $roc — dropped from the candidate list, no rung}" </dev/null
           # THE FLAG IS WHAT MAKES THE LINE ABOVE FIRE ONCE. A write that failed
           # and said nothing would repeat it every tick for ever (D16).
           br_set_flag "$key" "$ck" retired \
             || say "$key/$rkey: the retire flag was not written — this line will repeat next tick"
+          # The aged arm remembers itself: the flag write above moved .updated.
+          [ -n "$rtext" ] && { br_set_flag "$key" "$ck" retired_aged \
+            || say "$key/$rkey: the retired_aged flag was not written — this row comes back once its age resets"; }
         fi
       fi
       continue
@@ -2488,7 +2513,7 @@ br_prepass() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$src" "${p:-}" "$rkey" "${reason:-}" "${url:--}" "${rec:--}" "${tkey:--}" "${parked:--}" "$cost"
   done
-  printf '%s\n%s\n' "$n" "$bad" > "$cf" 2>/dev/null
+  printf '%s\n%s\n%s\n' "$n" "$bad" "$newbad" > "$cf" 2>/dev/null
   return 0
 }
 
@@ -4278,7 +4303,10 @@ br_supersede_guard() {
       rc=1
     fi
     case "$rc" in
-      0) br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "a $(cut -f2 <<<"$line")/human $(cut -f1 <<<"$line") verdict (row $(cut -f3 <<<"$line")) stands on ${cur:0:12} — reviewed work is the lead's to throw away"
+      0) why="a $(cut -f2 <<<"$line")/human $(cut -f1 <<<"$line") verdict (row $(cut -f3 <<<"$line")) stands on ${cur:0:12} — reviewed work is the lead's to throw away"
+         br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "$why"
+         # BH-9029: the next tick skips this row while the verdict stands.
+         command -v bdm_set >/dev/null 2>&1 && bdm_set "$p" "$ck" "$reason" "$url" "$cur" "$cur" verdict "$why"
          return 1 ;;
       1) ;;
       *) br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict-unreadable "the verdicts table could not be read for ${cur:0:12} (logs/verdicts.log says why), so whether a lead verdict stands there is unknown"
@@ -4298,7 +4326,9 @@ br_supersede_guard() {
       seen="$seen$h "
       command -v vd_clear_word >/dev/null 2>&1 || break
       if v=$(vd_clear_word "$slug" "$num" "$h"); then
-        br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "a lead/human $v stands on ${h:0:12}, the head this lane's fix round pushed or pushed over — reviewed work is the lead's to throw away"
+        why="a lead/human $v stands on ${h:0:12}, the head this lane's fix round pushed or pushed over — reviewed work is the lead's to throw away"
+        br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "$why"
+        command -v bdm_set >/dev/null 2>&1 && bdm_set "$p" "$ck" "$reason" "$url" "$cur" "$h" verdict "$why"
         return 1
       fi
     done
@@ -7232,6 +7262,10 @@ br_one() {
          br_reset_token; return 3 ;;
     esac
   fi
+  # A STANDING VERDICT DECLINE IS NOT RETRIED (BH-9029, the bh-9029-decline-mark
+  # fragment): rc 3, no rung, while the same verdict row stands on the same head
+  # and the ladder has not moved.
+  if command -v bdm_skip >/dev/null 2>&1 && bdm_skip "$src" "$p" "$rkey" "$ck" "$reason" "$url" "$st"; then br_reset_token; return 3; fi
   # AN EXTERNAL PR (BH-4664) takes the external module's gates and hooks, never
   # this ladder: nothing below may close, rebuild or abandon an outsider's PR.
   case "$reason" in
@@ -7838,7 +7872,18 @@ br_remote_open_prime
 # BR_PER_TICK while that source would otherwise still offer only BR_PER_TICK
 # candidates, and the carry would buy rungs with nothing to spend them on.
 command -v br_opt_prof_stage >/dev/null 2>&1 && br_opt_prof_stage discovery
+# BH-9029: the retired-row index the sources skip on, and two per-tick files
+# (the sources run inside $(...), so a count must travel in a file).
+BDI_SKIPS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-skips.XXXXXX" 2>/dev/null) || BDI_SKIPS=""
+BDI_SRC_SECS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-src.XXXXXX" 2>/dev/null) || BDI_SRC_SECS=""
+command -v bdi_load >/dev/null 2>&1 && bdi_load
 RAW=$(br_candidates)
+BDI_SKIPPED=0
+if [ -n "$BDI_SKIPS" ]; then BDI_SKIPPED=$(grep -c . "$BDI_SKIPS" 2>/dev/null); rm -f "$BDI_SKIPS"
+else say "no scratch file for the retired-skip count — this tick's retired_skipped= is reported as 0"; fi
+case "$BDI_SKIPPED" in ''|*[!0-9]*) BDI_SKIPPED=0 ;; esac
+BDI_SRC=""
+if [ -n "$BDI_SRC_SECS" ]; then BDI_SRC=$(paste -sd, "$BDI_SRC_SECS" 2>/dev/null); rm -f "$BDI_SRC_SECS"; fi
 # A PROJECT RUN SEES ONLY ITS PROJECT (BH-5913). Each source filters on ONLY,
 # and this line holds it for any source that does not: runs of other projects
 # are live at the same time, and a row of theirs is theirs to move.
@@ -7850,7 +7895,7 @@ ORDERED=""; ORDER_RC=0
 # stays the DISCOVERED number — it is the 785 the hub reports and the one an
 # operator compares across ticks — and `retired` says what came off it, so
 # candidates minus retired is what the loop below could reach.
-RAWCOUNT=0; RETIRED=0; PRE_RC=0; IDX_BAD=0
+RAWCOUNT=0; RETIRED=0; PRE_RC=0; IDX_BAD=0; IDX_NEW=""
 if [ -n "$RAW" ]; then
   RAWCOUNT=$(printf '%s\n' "$RAW" | grep -c . 2>/dev/null)
   case "$RAWCOUNT" in ''|*[!0-9]*) RAWCOUNT=0 ;; esac
@@ -7878,10 +7923,12 @@ if [ -n "$RAW" ]; then
   if [ -n "$PRE" ] && { [ "$PREF" = /dev/null ] || [ -s "$PREF" ]; }; then
     [ -s "$PREF" ] && RETIRED=$(sed -n 1p "$PREF" 2>/dev/null)
     [ -s "$PREF" ] && IDX_BAD=$(sed -n 2p "$PREF" 2>/dev/null)
+    [ -s "$PREF" ] && IDX_NEW=$(sed -n 3p "$PREF" 2>/dev/null)
   elif [ -z "$PRE" ] && [ -s "$PREF" ] && [ "$(sed -n 1p "$PREF" 2>/dev/null)" = "$RAWCOUNT" ]; then
     # Every row was retired. An empty list is the honest answer, not a failure.
     RETIRED="$RAWCOUNT"
     IDX_BAD=$(sed -n 2p "$PREF" 2>/dev/null)
+    IDX_NEW=$(sed -n 3p "$PREF" 2>/dev/null)
   else
     # rc 2 puts `+prepass-fallback` on the tick line for the reason ORDER_RC=2
     # puts `+ordering-fallback` there: a stage nobody can see fail is a stage
@@ -8298,7 +8345,7 @@ if [ "$RAWCOUNT" -gt 0 ]; then
   # `carried`, `mechanical` and `families` are the optional seam's (BH-1468) and
   # read 0 until #1470 and #1471 land; `llm_rungs` is every dispatch that
   # REACHED a model call, which is the number to read `rungs` against.
-  say "tick: candidates=$RAWCOUNT retired=$RETIRED carried=$N_CARRIED mechanical=$N_MECHANICAL families=$N_FAMILIES llm_rungs=$N_LLM projects=$NPROJ visited=[$VISITLIST] skipped=[$SKIPLIST] rungs=$N/$EFF_PER_TICK reason=$TICKREASON secs=$TICKSECS rebuilds=$REBUILDS_BOUGHT/$REBUILD_CAP budget_carry=$BUDGET_CARRY oldest_untouched=$OLDEST_UNTOUCHED"
+  say "tick: candidates=$RAWCOUNT retired=$RETIRED carried=$N_CARRIED mechanical=$N_MECHANICAL families=$N_FAMILIES llm_rungs=$N_LLM projects=$NPROJ visited=[$VISITLIST] skipped=[$SKIPLIST] rungs=$N/$EFF_PER_TICK reason=$TICKREASON secs=$TICKSECS rebuilds=$REBUILDS_BOUGHT/$REBUILD_CAP budget_carry=$BUDGET_CARRY oldest_untouched=$OLDEST_UNTOUCHED${IDX_NEW:+ bad_records=[$IDX_NEW]}"
   # Where this tick's time and calls went (BH-5946, bin/lib/br/opt/profile.sh).
   command -v br_opt_prof_tick_end >/dev/null 2>&1 && br_opt_prof_tick_end
   # THE STARVATION CLOCK. A project is starved when it HAD candidates this tick

@@ -1,0 +1,11 @@
+{
+  "env": "BR_BAD_RECORD_QUARANTINE_MIN",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9029-discovery-index.sh",
+  "note": "BH-9029: a state record the pre-pass cannot parse is named on the tick line once per episode (bad_records=[...]). Once its mtime is this many minutes old (a non-atomic write lasts milliseconds) it is moved to state/blocked-resolver/<project>/.bad/<key>.<stamp>.json; the next tick restores its counters and outcome from the ledger row (BH-2317). 0 = off: the record is named only, never moved."
+}

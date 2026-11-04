@@ -7,7 +7,8 @@
 # state/blocked-resolver/profile/[<project>.]<UTC stamp>.<pid>.tsv (a project run, BH-5913, prefixes its project and keeps its own BR_PROFILE_KEEP):
 #
 #   prof: secs= discovery= prepass= order= loop= rows= gh= gh_rows= search=
-#         pulls= issues= raw= d1= llm= memo_hits= unchanged= top=[<p>/<rkey>:<s>s …]
+#         pulls= issues= raw= d1= llm= memo_hits= unchanged= discovery_rows=
+#         retired_skipped= discovery_src=<src>:<s>,… top=[<p>/<rkey>:<s>s …]
 #   TSV:  p rkey src reason rc secs gh_total gh_search gh_pulls gh_issues d1 llm
 #         memo_hit unchanged
 #
@@ -15,7 +16,9 @@
 # raw= every other `gh api` call, both made through the lane's `gh` function.
 # A memo hit (readmemo.sh) never reaches `gh`, so it is not counted as a GitHub
 # call. gh_rows= is the GitHub calls (REST and raw) made inside the rows; the
-# rest were made by discovery and the stages before the loop. d1= counts
+# rest were made by discovery and the stages before the loop. discovery_rows=
+# is the tick line's candidates=; retired_skipped= the rows the sources skipped
+# as already retired; discovery_src= each source's seconds (BH-9029). d1= counts
 # _jobs_req calls. llm= is the lane's own `llm` token. Seconds are integers.
 # A call made before the tick's ledger ($TICK_COUNTS) exists is not counted:
 # the lane gate's liveness post and knob read at the top of the script, and the
@@ -210,6 +213,6 @@ br_opt_prof_tick_end() {
     grows=$(awk -F'\t' '{ s += $7 } END { printf "%d", s }' "$f" 2>/dev/null)
     top=$(sort -t$'\t' -k6,6nr "$f" 2>/dev/null | head -5 | awk -F'\t' '{ printf "%s%s/%s:%ss", (NR > 1 ? " " : ""), $1, $2, $6 }')
   fi
-  say "prof: secs=$secs discovery=$dis prepass=$pre order=$ord loop=$lop rows=$_BR_PROF_ROWS gh=${g:-0} gh_rows=${grows:-0} search=${s:-0} pulls=${pu:-0} issues=${is:-0} raw=${r:-0} d1=${d1:-0} llm=${l:-0} memo_hits=${m:-0} unchanged=${u:-0} project=${ONLY:-fleet} top=[$top]"
+  say "prof: secs=$secs discovery=$dis prepass=$pre order=$ord loop=$lop rows=$_BR_PROF_ROWS gh=${g:-0} gh_rows=${grows:-0} search=${s:-0} pulls=${pu:-0} issues=${is:-0} raw=${r:-0} d1=${d1:-0} llm=${l:-0} memo_hits=${m:-0} unchanged=${u:-0} discovery_rows=${RAWCOUNT:-0} retired_skipped=${BDI_SKIPPED:-0} discovery_src=${BDI_SRC:--} project=${ONLY:-fleet} top=[$top]"
   return 0
 }

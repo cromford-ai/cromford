@@ -171,6 +171,9 @@ br_from_builds() {
     [ -f "$d/RESULT" ] || continue
     [ -f "$d/.blocked-resolver-abandoned" ] && continue
     [ -f "$d/.blocked-resolver-superseded" ] && continue
+    # BH-9029: the pre-pass retired this build row (its dir is the only key a
+    # url-less row has); counted in the prof line's retired_skipped.
+    [ -f "$d/.blocked-resolver-retired" ] && { command -v bdi_count >/dev/null 2>&1 && bdi_count; continue; }
     core="${bn#pool-}"; core="${core#pool-}"; project=""
     for bproj in $pl; do
       case "$core" in "$bproj"-*) project="$bproj"; break ;; esac
@@ -190,7 +193,9 @@ br_from_builds() {
        && [ "$(jq -r '.outcome // ""' "$ST/$project/$(br_rkey "$project-$key").json" 2>/dev/null)" != HELD ]; then
       continue
     fi
-    first=$(head -1 "$d/RESULT" 2>/dev/null)
+    # Line 1 with a builtin, not a head fork: the same value, also for a
+    # RESULT with no trailing newline.
+    first=""; { IFS= read -r first < "$d/RESULT" || [ -n "$first" ]; } 2>/dev/null
     fi
     rec_reason=""
     case "$first" in
@@ -366,6 +371,9 @@ br_from_rebuilds() {
     # every project's state files, so a fork here is paid 13 times per file.
     p="${f%/*}"; p="${p##*/}"
     [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
+    # BH-9029: a record whose outcome the index already holds as finished is
+    # dropped before the cat and the jq forks below would drop it.
+    command -v bdi_rec_skip >/dev/null 2>&1 && bdi_rec_skip "$f" && continue
     st=$(cat "$f" 2>/dev/null); [ -n "$st" ] || continue
     oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
     ck="${f##*/}"; ck="${ck%.json}"
@@ -587,7 +595,19 @@ br_from_rebuilds() {
 }
 
 br_candidates() {
-  br_from_rebuilds; br_from_conductor; br_from_queue; br_from_builds; br_from_reviews
+  # BH-9029: each source's whole seconds go to the prof line through
+  # bdi_src_secs (the bh-9029-discovery-index fragment; SECONDS deltas, no
+  # fork). Without the fragment the sources run exactly as before.
+  local _s0 _t=:
+  command -v bdi_src_secs >/dev/null 2>&1 && _t=bdi_src_secs
+  _s0=$SECONDS; br_from_rebuilds;  $_t rebuilds "$_s0"
+  _s0=$SECONDS; br_from_conductor; $_t conductor "$_s0"
+  _s0=$SECONDS; br_from_queue;     $_t queue "$_s0"
+  _s0=$SECONDS; br_from_builds;    $_t builds "$_s0"
+  _s0=$SECONDS; br_from_reviews;   $_t reviews "$_s0"
   # BH-4664: an external PR source, when bin/lib/br/opt/external.sh is installed.
+  _s0=$SECONDS
   ! command -v br_opt_external_candidates >/dev/null 2>&1 || br_opt_external_candidates
+  $_t external "$_s0"
 }
+
