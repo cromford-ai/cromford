@@ -702,7 +702,9 @@ run_leadreview_job() { # run_leadreview_job <job key>
   d=$(mktemp -d "${TMPDIR:-/tmp}/leadreview-job.XXXXXX" 2>/dev/null) \
     || { leadreview_setup_result "no temp dir" "$url" "$head"; return 1; }
   jq -c '.leadreview.item' "$JOB" > "$d/item.json" 2>/dev/null
-  HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" \
+  # LEAD_REVIEW_EPHEMERAL=1 (BH-8945): this disk dies with the machine, so
+  # finish_done posts the hub copy as report_ref and checks the full-body push.
+  HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" LEAD_REVIEW_EPHEMERAL=1 \
     bash "$lane" item "$PROJECT" "$d/item.json" "${mode:-full}" "$d/word"; rc=$?
   word=$(head -1 "$d/word" 2>/dev/null | tr -cd 'a-z_-')
   rm -rf "$d"

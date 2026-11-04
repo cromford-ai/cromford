@@ -55,6 +55,45 @@ claim_req() {
   log "claim of $1 for $3 refused: $res"; job_update "$2" status=failed 'meta={"reason":"claim refused"}'; return 1
 }
 
+# lr_push_report_checked <job> <sha> <report> <key> — BH-8945: on a pool machine
+#   the disk report dies with the machine, so the whole body of a cut report must
+#   reach the hub before RESULT (the reaper destroys only after RESULT).
+#   transcript-push.sh always exits 0, so the proof is a read-back that is byte
+#   equal to the scrubbed body. Up to LEAD_REVIEW_REPORT_PUSH_ATTEMPTS tries,
+#   LEAD_REVIEW_REPORT_PUSH_BACKOFF_S apart, one log line per failed try, and one
+#   alert at the cap. The review stays done: the prefix artifact is stored and a
+#   second model call would pay again.
+lr_push_report_checked() {
+  local job="$1" sha="$2" rep="$3" key="$4" n b k=0 tmp clean got pr
+  # Knob rows: catalog/lanes.d/lead-review.knobs.d/LEAD_REVIEW_REPORT_PUSH_ATTEMPTS.json
+  # (fallback 3) and LEAD_REVIEW_REPORT_PUSH_BACKOFF_S.json (fallback 5).
+  n="${LEAD_REVIEW_REPORT_PUSH_ATTEMPTS:-3}"; [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le 10 ] || n=3
+  b="${LEAD_REVIEW_REPORT_PUSH_BACKOFF_S:-5}"; [[ "$b" =~ ^[0-9]+$ ]] && [ "$b" -le 60 ] || b=5
+  pr="https://github.com/${LR_RING_REPO:-?}/pull/${LR_RING_PR:-?}"
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/lr-push.XXXXXX") || tmp=""
+  clean="$tmp/clean"; got="$tmp/got"
+  if [ -z "$tmp" ] || ! bash "$H/bin/transcript-scrub.sh" < "$rep" > "$clean" 2>/dev/null || [ ! -s "$clean" ]; then
+    log "full report for $key (PR $pr head ${sha:0:12}) not on the hub: the scrub refused it, no retry"
+  else
+    while [ "$k" -lt "$n" ]; do
+      k=$((k + 1))
+      HARNESS="$H" JOB_ID="$job" JOB_PHASE_ID= TRANSCRIPT_SOURCE=lead_report \
+        bash "$H/bin/transcript-push.sh" lead-review pipeline "" "$rep" >/dev/null 2>&1 || true
+      if job_transcript_get_source "$job" lead_report > "$got" 2>/dev/null && cmp -s "$got" "$clean"; then
+        log "full report for $key stored on the hub as lead_report (job $job, attempt $k/$n)"
+        rm -rf "$tmp"; return 0
+      fi
+      log "full report for $key (PR $pr head ${sha:0:12}) not on the hub after attempt $k/$n"
+      [ "$k" -lt "$n" ] && [ "$b" -gt 0 ] && sleep "$b"
+    done
+  fi
+  [ -n "$tmp" ] && rm -rf "$tmp"
+  HARNESS="$H" "$H/bin/alert-line.sh" --id "lead-report-push-$job" \
+    "LEAD REPORT NOT ON HUB: the full lead review report for $pr head ${sha:0:12} (job $job) was not stored after $k attempt(s); only the 4000-unit prefix artifact survives the pool machine; disk copy $rep" \
+    >/dev/null 2>&1 || true
+  return 1
+}
+
 # finish_done <id> <job> <sha> <verdict> <report> <model> <suite_line> <key> [stored] —
 # artifact (ref = the report path, detail = its body, lr_detail) -> result
 # done -> job done, each only when the one before it succeeded. The fresh
@@ -62,15 +101,23 @@ claim_req() {
 # without a delivered result. stored=1 is the artifact replay: the row it read
 # IS the artifact, and re-encoding a truncated body would drop its flag.
 finish_done() {
-  local detail
+  local detail ref="$5"
+  # BH-8945: a pool machine (LEAD_REVIEW_EPHEMERAL=1, set only by
+  # fly/builder-runner.sh run_leadreview_job) is destroyed after its RESULT,
+  # so its report_ref names the hub copy, which bin/lead-review-report.sh reads.
+  [ "${LEAD_REVIEW_EPHEMERAL:-}" = 1 ] && ref="artifact:$2/lead_review_report"
   if [ "${9:-}" != 1 ]; then
     detail=$(lr_detail "$5" "$5" "$4") || { log "artifact detail for $8 could not be built; job left open for the watchdog"; return; }
     # A cut detail is a prefix (BH-5915): the whole report also goes to the
     # job's transcript ledger as lead_report, fail-open, so the hub can read it.
     if jq -e '.truncated == true' <<<"$detail" >/dev/null 2>&1; then
-      HARNESS="$H" JOB_ID="$2" JOB_PHASE_ID= TRANSCRIPT_SOURCE=lead_report \
-        bash "$H/bin/transcript-push.sh" lead-review pipeline "" "$5" >/dev/null 2>&1 || true
-      log "full report for $8 handed to transcript-push.sh as lead_report (job $2)"
+      if [ "${LEAD_REVIEW_EPHEMERAL:-}" = 1 ]; then
+        lr_push_report_checked "$2" "$3" "$5" "$8"
+      else
+        HARNESS="$H" JOB_ID="$2" JOB_PHASE_ID= TRANSCRIPT_SOURCE=lead_report \
+          bash "$H/bin/transcript-push.sh" lead-review pipeline "" "$5" >/dev/null 2>&1 || true
+        log "full report for $8 handed to transcript-push.sh as lead_report (job $2)"
+      fi
     fi
     job_artifact_put lead_review_report "$5" "$detail" "$2" \
       || { log "artifact put for $8 failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "artifact put failed" open; return; }
@@ -78,7 +125,7 @@ finish_done() {
   # LR_DONE_DETAIL (BH-7123 wave B): a short note the caller sets for this one
   # result (`golive:N`, bin/lead-review.sh), carried on the row's detail so the
   # land lane needs no artifact read to know a MERGE noted a go-live step.
-  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg v "$4" --arg p "$5" --arg m "$6" --arg d "${LR_DONE_DETAIL:-}" \
+  post_result "$1" "$(jq -nc --arg j "$2" --arg s "$3" --arg v "$4" --arg p "$ref" --arg m "$6" --arg d "${LR_DONE_DETAIL:-}" \
     '{job_id:$j,head_sha:$s,outcome:"done",verdict:$v,report_ref:$p,reviewer_model:$m} + (if $d == "" then {} else {detail:$d} end)')" \
     || { log "$8 reviewed ($4) but the result post failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "result post failed" open; return; }
   LR_RING=1; LR_RING_REPORT="$5"

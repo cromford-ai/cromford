@@ -112,7 +112,10 @@ tail -5 /root/harness/logs/lead-review.log
   `host suite: off (LEAD_REVIEW_HOST_SUITE)`) and the reviewer model; the
   reviewer's answer follows verbatim.
   The same path is the job's `lead_review_report` artifact and the request's
-  `report_ref`.
+  `report_ref`. On a pool machine (`LEAD_REVIEW_EPHEMERAL=1`, BH-8945) the
+  disk dies with the machine, so `report_ref` is
+  `artifact:<job>/lead_review_report`; `bin/lead-review-report.sh <id>` prints
+  the stored report from the hub on any box.
 - The host suite and CI (`LEAD_REVIEW_HOST_SUITE`, default `skip-if-ci-green`):
   before running the repo's Verification Contract command the lane reads the
   head's check runs (`GET repos/<repo>/commits/<sha>/check-runs`, REST). It
