@@ -342,6 +342,10 @@ PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # PLAN_BLOCKED. Missing, the gate is skipped and the pool spawns as before.
 # shellcheck source=bin/lib/plan-blocked-stop.sh
 . "$HARNESS/bin/lib/plan-blocked-stop.sh" 2>/dev/null || true
+# BH-8880: dfs_stop_check, the spawn gate for a key whose newest record is a
+# BUILD_DEFERRED on another key's open PR. Missing, the pool spawns as before.
+# shellcheck source=bin/lib/defer-after-stop.sh
+. "$HARNESS/bin/lib/defer-after-stop.sh" 2>/dev/null || true
 # BH-8335: ptr_build/ptr_push, a machine's own route to the Fly test host.
 # A tree without the lib ships no route, and the gate names the miss.
 # shellcheck source=bin/lib/pool-testhost-route.sh
@@ -2269,6 +2273,17 @@ pool_spawn_decision() {
   # the blocker is done, then released in the same tick. Before the HOLD read,
   # because a held row needs no other read.
   pool_after_gate "$JF" "$KEY" "$TICKET" || return 1
+  # >>> defer-after stop (BH-8880)
+  # 0d. A key whose newest hub record is BUILD_DEFERRED `After: <KEY>` or
+  # OVERLAP_DEFER on another key with an open PR gets no machine
+  # (bin/lib/defer-after-stop.sh): the machine would only stand down again.
+  # The row stays queued. Below pool_gates_applicable because it reads the
+  # open-PR list; above the HOLD gate and the cap, so a refusal costs no
+  # spawn-cap count.
+  if command -v dfs_stop_check >/dev/null 2>&1 && ! dfs_stop_check "$P" "$KEY" "$TICKET"; then
+    return 1
+  fi
+  # <<< defer-after stop
   # 1. HOLD gate (skip and retry next tick; leave the queue file). A cached
   # held verdict whose listing key did not change answers without a read
   # (BH-6549); it takes the same held arm below as a fresh one.

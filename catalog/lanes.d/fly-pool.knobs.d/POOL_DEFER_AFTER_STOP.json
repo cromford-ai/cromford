@@ -1,0 +1,12 @@
+{
+  "env": "POOL_DEFER_AFTER_STOP",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "read_in": "bin/lib/defer-after-stop.sh",
+  "note": "BH-8880: 1 = pool_spawn_decision runs dfs_stop_check: a key whose newest hub build record is BUILD_DEFERRED 'After: <KEY>' or 'OVERLAP_DEFER <key> vs <KEY>' gets no machine while <KEY> has an open PR in the tick's open-PR list; released when that PR merges or closes, or when a person comments on the ticket (GitHub-Issues projects). 0 = off, the pool spawns as before. Read as ${POOL_DEFER_AFTER_STOP:-1}.",
+  "settable": true
+}
