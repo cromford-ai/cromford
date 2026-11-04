@@ -98,7 +98,7 @@ MC_RED_RERUN="${MC_RED_RERUN:-1}"                              # 0 = no red is e
 MC_RED_RERUN_SETTLE_SECS="${MC_RED_RERUN_SETTLE_SECS:-300}"    # a red seen sooner than this after the rerun was dispatched is the OLD red, not a second one
 MC_AUTOPILOT_CONSUME="${MC_AUTOPILOT_CONSUME:-1}"              # 0 = the >12h review-autopilot verdict on a moved head is never read; the conductor buys its own, as before 2026-09-18 (BH-764)
 MC_AUTOPILOT_RECHECK_SECS="${MC_AUTOPILOT_RECHECK_SECS:-3600}" # how often ONE (PR, head) may re-read the PR's comments looking for that verdict
-MC_STATES="WAIT_CI WAIT_REVIEW HEAD_MOVED NEEDS_REBASE REBASING BLOCKED_HUMAN NEEDS_HUMAN_VERDICT RED_TWICE READY QUEUED STACKED_WAIT MERGED CLOSED ABANDONED"
+MC_STATES="WAIT_CI WAIT_REVIEW HEAD_MOVED NEEDS_REBASE REBASING BLOCKED_HUMAN NEEDS_HUMAN_VERDICT WAIT_LEAD RED_TWICE READY QUEUED STACKED_WAIT MERGED CLOSED ABANDONED"
 # ABANDONED (2026-09-13, the operator: "I will never do a human review") is the ONE
 # terminal this lane gained. BLOCKED_HUMAN is no longer a request for a person:
 # bin/blocked-resolver.sh drains it on an agent ladder (rebuild fresh / fix

@@ -27,7 +27,7 @@
 # (${HARNESS:-${H:-}}: a lib never defaults to a path, D43).
 
 # The state-to-bucket table, in the conductor's vocabulary (bin/merge-conductor.sh).
-UTIL_PR_REVIEW_STATES="WAIT_REVIEW HEAD_MOVED NEEDS_HUMAN_VERDICT"
+UTIL_PR_REVIEW_STATES="WAIT_REVIEW HEAD_MOVED NEEDS_HUMAN_VERDICT WAIT_LEAD"
 UTIL_PR_CI_STATES="WAIT_CI RED_TWICE"
 UTIL_MQ_LIMIT=500
 UTIL_PR_PAGE=1000

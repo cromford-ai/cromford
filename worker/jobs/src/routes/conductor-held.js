@@ -10,7 +10,7 @@ import { CONFIG_KINDS, configChangeStmts } from "../lib/config-changes.js";
 // Literal sets from bin/lib/mc/log.sh MC_STATES and bin/merge-conductor.sh MODE.
 const CONDUCTOR_STATES = new Set([
   "WAIT_CI", "WAIT_REVIEW", "HEAD_MOVED", "NEEDS_REBASE", "REBASING",
-  "BLOCKED_HUMAN", "NEEDS_HUMAN_VERDICT", "RED_TWICE", "READY", "QUEUED", "STACKED_WAIT",
+  "BLOCKED_HUMAN", "NEEDS_HUMAN_VERDICT", "WAIT_LEAD", "RED_TWICE", "READY", "QUEUED", "STACKED_WAIT",
   "MERGED", "CLOSED", "ABANDONED",
 ]);
 const CONDUCTOR_MODES = new Set(["merge", "actions", "observe", "kill-switch"]);

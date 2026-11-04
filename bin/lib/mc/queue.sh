@@ -1359,12 +1359,16 @@ mc_enqueue_mergify() {
          return 3 ;;
     esac
   fi
+  # BH-8890: on a lead_required repo, `lead-verdict` only when a lead or human
+  # MERGE stands on the head (lr_clear_context); a builder-only clearance there
+  # posts `harness-verdict`. Every other repo: `lead-verdict`, as before.
+  LR_CTX=lead-verdict; command -v lr_clear_context >/dev/null 2>&1 && lr_clear_context "$slug" "$(mc_num_of_url "$url")" "$head"
   if command -v vs_publish >/dev/null 2>&1 \
-     && ! vserr=$(vs_publish "$slug" "$head" success "harness verdict cleared ${head:0:12} for the queue" "$url" 2>&1 >/dev/null); then
+     && ! vserr=$(LEAD_VERDICT_CONTEXT="$LR_CTX" vs_publish "$slug" "$head" success "harness verdict cleared ${head:0:12} for the queue" "$url" 2>&1 >/dev/null); then
     # vs_publish ran in a substitution, so its GH_REST_STATUS never reached
     # this shell: the HTTP answer is the one its stderr line names.
     vserr=$(head -1 <<<"$vserr")
-    vsnote="the lead-verdict status could not be published on ${head:0:12} (${vserr:-no reason given}); "
+    vsnote="the $LR_CTX status could not be published on ${head:0:12} (${vserr:-no reason given}); "
     echo "${vserr:-vs_publish failed on $slug@${head:0:12}}" >&2
     command -v mc_log >/dev/null 2>&1 && mc_log "${vserr:-vs_publish failed on $slug@${head:0:12}} — $url"
     mc_status_unpublished_alert "$slug" "$url" "$vserr"

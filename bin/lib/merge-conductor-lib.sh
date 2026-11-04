@@ -25,7 +25,9 @@
 #     reads the model off review_model and never a literal; gh-rest.sh (BH-784)
 #     because the modules' decision reads go through gh_rest (no-graphql) and
 #     mc/log.sh stubs nothing for them; verdict-status.sh (BH-3348) because
-#     mc_enqueue_mergify publishes the lead-verdict status.
+#     mc_enqueue_mergify publishes the lead-verdict status; lead-required.sh
+#     (BH-8890) because every conductor publisher, the console Merge button's
+#     enqueue included, asks lr_clear_context which context it may publish.
 # mc/block-ci.sh (BH-3932) is the READY arm's CI-block hook, optional so a
 # hand-built mc/ still loads. mc/spawn-remote.sh (BH-6888) is the machine's
 # queued rebase, optional too: mc/rebase.sh checks `command -v mc_remote_on`.
@@ -54,6 +56,7 @@ command -v gh_auth_for >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/gh-app-auth.sh" 
 [ -r "$MC_H/bin/lib/review-model.sh" ] && . "$MC_H/bin/lib/review-model.sh"
 command -v gh_rest >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/gh-rest.sh" ] && . "$MC_H/bin/lib/gh-rest.sh"; }
 command -v vs_publish >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/verdict-status.sh" ] && . "$MC_H/bin/lib/verdict-status.sh"; }
+command -v lr_clear_context >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/lead-required.sh" ] && . "$MC_H/bin/lib/lead-required.sh"; }
 [ -r "$MC_H/bin/lib/flaky.sh" ] && . "$MC_H/bin/lib/flaky.sh"
 [ -r "$MC_H/bin/lib/review-provenance.sh" ] && . "$MC_H/bin/lib/review-provenance.sh"
 [ -r "$MC_LIB_DIR/snapshot-refs.sh" ] && . "$MC_LIB_DIR/snapshot-refs.sh"

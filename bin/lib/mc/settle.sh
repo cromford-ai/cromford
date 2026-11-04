@@ -1127,10 +1127,12 @@ mc_rebind_publish() {
   esac
   # In a substitution, as mc_enqueue_mergify does it: the HTTP answer is the
   # one vs_publish's stderr line names.
-  if err=$(vs_publish "$slug" "$head" success "harness verdict rebound from ${rev:0:12} to ${head:0:12}" "$url" 2>&1 >/dev/null); then
+  # BH-8890: lead-verdict only from a lead or human row on a lead_required repo.
+  LR_CTX=lead-verdict; command -v lr_clear_context >/dev/null 2>&1 && lr_clear_context "$slug" "$num" "$head"
+  if err=$(LEAD_VERDICT_CONTEXT="$LR_CTX" vs_publish "$slug" "$head" success "harness verdict rebound from ${rev:0:12} to ${head:0:12}" "$url" 2>&1 >/dev/null); then
     mc_attempt_put "vsrebind $key $head"
     rm -f "$f"
-    mc_log "$key VS_REBIND_PUBLISHED $head lead-verdict=success (rebound from ${rev:0:12})"
+    mc_log "$key VS_REBIND_PUBLISHED $head $LR_CTX=success (rebound from ${rev:0:12})"
     command -v pq_status_ensure >/dev/null 2>&1 && pq_status_ensure "$slug" "$head" "$url" "rebound from ${rev:0:12}"
   else
     mkdir -p "${f%/*}" 2>/dev/null; printf '%s\t%s\t%s\n' "$head" "$rev" "$url" > "$f"

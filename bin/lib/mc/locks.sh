@@ -543,6 +543,9 @@ mc_budget() {
     # entry in actions mode, and an hour on is one page whose reason carries the command — the
     # same hour QUEUED gave #3753/#3758, now in words that say what moves it.
     NEEDS_HUMAN_VERDICT) echo 3600 ;;
+    # WAIT_LEAD (BH-8890) waits on a lead review the conductor asked for once
+    # per head; an hour on, one page. Knob MC_BUDGET_WAIT_LEAD.
+    WAIT_LEAD) echo "${MC_BUDGET_WAIT_LEAD:-3600}" ;;
     # STACKED_WAIT is a child PR based on its parent's branch (2026-09-14,
     # stacked child builds). It is SUPPOSED to sit there: it waits for the
     # parent to merge, which is one chain level — 60-75 min on project-5 — plus

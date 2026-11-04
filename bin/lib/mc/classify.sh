@@ -1361,6 +1361,7 @@ mc_ttl() {
     STACKED_WAIT)  d=21600 ;;  # 6h: one chain level is 60-75 min on project-5 plus the parent's own review
     BLOCKED_HUMAN) d=7200 ;;   # 2h: the resolver's ladder runs every 10 min, so two hours is many rungs
     NEEDS_HUMAN_VERDICT) d=3600 ;;  # an hour: only a person moves it, so the page is the hand-off (BH-3777)
+    WAIT_LEAD)     d=21600 ;;  # 6h: a lead review is a queued model run on a box (BH-8890); knob MC_TTL_WAIT_LEAD
     RED_TWICE)     d=7200 ;;
     *)             d=-1 ;;     # MERGED, CLOSED, ABANDONED and anything unknown
   esac
@@ -1539,6 +1540,7 @@ mc_stuck_waiting_on() {
                    fi ;;
     STACKED_WAIT)  printf 'the parent PR to merge and this one to be retargeted' ;;
     NEEDS_HUMAN_VERDICT) printf 'a human lead verdict on this head (%s)' "${2:-no reason recorded}" ;;
+    WAIT_LEAD)     printf 'a lead or human MERGE verdict on this head (%s)' "${2:-no reason recorded}" ;;
     BLOCKED_HUMAN|RED_TWICE) printf 'bin/blocked-resolver.sh to drain the park (%s)' "${2:-no reason recorded}"
                              act=$(mc_park_human_action "${2:-}"); [ -n "$act" ] && printf ' — %s' "$act" ;;
     *)             printf 'nothing this lane knows how to name (%s)' "${2:-no reason recorded}" ;;
@@ -3575,6 +3577,8 @@ stuck_rekick() {
       fi ;;
     NEEDS_HUMAN_VERDICT)
       mc_log "$key stuck in NEEDS_HUMAN_VERDICT past its TTL — only a human verdict moves it: $why" ;;
+    WAIT_LEAD)
+      mc_log "$key stuck in WAIT_LEAD past its TTL — only a lead or human verdict on this head moves it: $why" ;;
     QUEUED)
       mc_vs_ttl_republish "$key" "$st" "$slug" "$num" "$url" "$head" "${13:-}" "${14:-}" "${15:-}" ;;
     READY)
@@ -3690,10 +3694,12 @@ mc_vs_ttl_republish() {
     *) mc_log "$key stuck in $st past its TTL — the lead authority could not be decided (${LA_REASON:-no reason given}); nothing republished"; return 0 ;;
   esac
   mc_attempt_put "vsttl $key $head"
-  if err=$(vs_publish "$slug" "$head" success "harness verdict on ${head:0:12} republished at the $st TTL" "$url" 2>&1 >/dev/null); then
-    mc_log "$key VS_REPUBLISHED $head lead-verdict=success at the $st TTL (it was $vst)"
+  # BH-8890: lead-verdict only from a lead or human row on a lead_required repo.
+  LR_CTX=lead-verdict; command -v lr_clear_context >/dev/null 2>&1 && lr_clear_context "$slug" "$num" "$head"
+  if err=$(LEAD_VERDICT_CONTEXT="$LR_CTX" vs_publish "$slug" "$head" success "harness verdict on ${head:0:12} republished at the $st TTL" "$url" 2>&1 >/dev/null); then
+    mc_log "$key VS_REPUBLISHED $head $LR_CTX=success at the $st TTL (it was $vst)"
   else
-    mc_log "$key stuck in $st past its TTL — the lead-verdict republish on ${head:0:8} FAILED ($(head -1 <<<"${err:-vs_publish failed}")); not retried, the alert stands"
+    mc_log "$key stuck in $st past its TTL — the $LR_CTX republish on ${head:0:8} FAILED ($(head -1 <<<"${err:-vs_publish failed}")); not retried, the alert stands"
   fi
   return 0
 }

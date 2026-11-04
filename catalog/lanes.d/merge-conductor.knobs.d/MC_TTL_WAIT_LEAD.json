@@ -1,0 +1,11 @@
+{
+  "env": "MC_TTL_WAIT_LEAD",
+  "read_in": "bin/lib/mc/classify.sh",
+  "type": "int",
+  "default": 21600,
+  "min": -1,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-8890: the stuck TTL of a WAIT_LEAD row (a READY row on a lead_required repo with no lead or human MERGE on its head). 6 h, because a lead review is a queued model run on a box. -1 turns the stuck page off for this state. mc_ttl reads it as MC_TTL_<STATE>."
+}

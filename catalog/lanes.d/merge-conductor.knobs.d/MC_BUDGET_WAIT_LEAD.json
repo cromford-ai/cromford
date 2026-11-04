@@ -1,0 +1,11 @@
+{
+  "env": "MC_BUDGET_WAIT_LEAD",
+  "read_in": "bin/lib/mc/locks.sh",
+  "type": "int",
+  "default": 3600,
+  "min": -1,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-8890: the age budget of a WAIT_LEAD row before mc_budget_check pages once. The conductor asks one lead review per head on entry; an hour on, the page says the review has not come. -1 = never page by age."
+}

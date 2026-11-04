@@ -536,14 +536,47 @@ regen_cmd_for() {
 #
 # No ownership library on this box: admitted as before, the answer every other
 # lane gives (merge-queue's mq_lead_hold, review-prs's rp_ticket_fence).
+#
+# AND A LEAD-REQUIRED REPO (BH-8890): every member, pool PRs included, needs a
+# lead or human MERGE standing on <head> (br_lead_required_fenced). The
+# conductor holds such a PR in WAIT_LEAD; without this question the train
+# would land it on the builder's APPROVE alone.
 br_member_fenced() {
   local num="$1" head="$2" who="$3"
   [ "$who" = - ] && who=""
-  command -v to_lane_lead_fence >/dev/null 2>&1 || return 1
-  to_lead_authors >/dev/null
-  to_lane_hold "$PROJECT" "$SLUG" "$num" "$LOG" && return 0
-  to_lane_lead_fence "$PROJECT" "$SLUG" "$num" "$head" "$who" "$LOG"
-  [ "$?" = 1 ] && return 1
+  if command -v to_lane_lead_fence >/dev/null 2>&1; then
+    to_lead_authors >/dev/null
+    to_lane_hold "$PROJECT" "$SLUG" "$num" "$LOG" && return 0
+    to_lane_lead_fence "$PROJECT" "$SLUG" "$num" "$head" "$who" "$LOG"
+    [ "$?" = 1 ] || return 0
+  fi
+  br_lead_required_fenced "$num" "$head"
+}
+
+# br_lead_required_fenced <num> <head> — rc 0 when the repo's
+#   lead_required.<owner>.<name> row is 1 and no lead or human MERGE /
+#   MERGE-WITH-NOTES stands on <head> (bin/lib/lead-required.sh, the same
+#   reader the conductor's WAIT_LEAD hold uses). FAIL CLOSED: an unreadable row
+#   or verdict keeps the member out this pass. rc 1 when the row is 0 or absent,
+#   or when the library is not loaded. The waiting line is written on each
+#   pass: there is no say-once memo, so this lane keeps no state for it.
+br_lead_required_fenced() {
+  local num="$1" head="$2" rc=0 other=""
+  command -v lr_required >/dev/null 2>&1 || return 1
+  lr_required "$SLUG" || rc=$?
+  case "$rc" in
+    1) return 1 ;;
+    0) ;;
+    *) say "#$num MERGE_HELD lead-required: the lead_required row of $SLUG could not be read (or is not 0/1) — not batched this pass"
+       return 0 ;;
+  esac
+  rc=0
+  other=$(lr_lead_stands - "$SLUG" "$num" "$head") || rc=$?
+  case "$rc" in
+    0) return 1 ;;
+    1) say "#$num MERGE_HELD lead-required on ${head:0:12}: lead_required=1 for $SLUG and no lead or human MERGE stands on this head${other:+ (standing: $other)} — a builder APPROVE alone never rides a train" ;;
+    *) say "#$num MERGE_HELD lead-required on ${head:0:12}: the lead verdict could not be read — not batched this pass" ;;
+  esac
   return 0
 }
 
