@@ -14,6 +14,8 @@
 # and TERMs the child. agent-call treats it as a policy stop (rc 143, no model
 # escalation, no vendor failover) and bin/lib/rb/execute.sh ends the build with
 # RESULT `EXECUTE_EMPTY EXECUTE_NO_PROGRESS: ...` and keeps the transcript.
+# One exception (BH-9021): a RESUMED build stopped by rule=time whose branch
+# diff is not empty ends as a normal execute result, and the PR path runs.
 #
 # THE KNOBS (catalog/lanes.d/_lib.execute-no-progress.json, resolved at call
 # time by lib_env_apply execute-no-progress: settings row > env > registry):

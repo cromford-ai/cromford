@@ -17,6 +17,18 @@
 #       reason (ee_reason) to <build-dir>/stop-reason.txt and the transcript to
 #       <build-dir>/execute-transcript.md (ee_transcript), which shows the
 #       reason at the top. Prints nothing and never fails the caller.
+#       BH-9021: when ee_oom finds an out-of-memory kill in the transcript,
+#       stop-reason.txt starts `EXECUTE_OOM: <command> ran out of memory ...`
+#       and names the machine memory (_ee_mem_mb) and the row
+#       lane.fly-pool.<project>.vm_memory_mb, and ONE bin/alert-line.sh line
+#       (--id execute-oom:<project>:<key>) says the same; <build-dir>/oom.alerted
+#       keeps it to one per build dir. PROJECT and KEY come from the caller.
+#   ee_oom <transcript>       `<signal>\t<command>` when the result of the NEWEST
+#       typecheck or test command (npm run typecheck, npm test, tsc, vitest,
+#       jest) in a rendered transcript holds FatalProcessOutOfMemory, heap out
+#       of memory, Mark-Compact or Exit code 137; nothing otherwise. Only
+#       `→`/`←` lines are read, paired in order, so a grep for the word or the
+#       model's own text never matches.
 #       THE MODEL'S TEXT NEVER GOES ON THE RESULT LINE (lead review of #5939):
 #       readers match RESULT line 1 by substring (bin/fly-pool.sh cools an
 #       account on *RUNNER_EXHAUSTED*, bin/postmerge-qa.sh and
@@ -44,6 +56,10 @@
 #       key may launch; rc 1 = refused. Counts the hub build records
 #       builds/pool-<project>-<key>-*/RESULT whose first line is EXECUTE_EMPTY
 #       and whose RESULT is younger than POOL_EXECUTE_EMPTY_WINDOW_S (86400).
+#       BH-9021: a record whose line 1 carries `[branch-head start=<sha>
+#       end=<sha>]` with two different shas is NOT counted: that attempt's
+#       checkpoints moved the branch on origin (bin/lib/rb/execute.sh writes
+#       the token). A token with `-`, a non-hex value or none is counted.
 #       At POOL_EXECUTE_EMPTY_MAX (2) or more it refuses, and ONCE per episode
 #       (<newest build dir>/needs-human.posted) asks a person on the ticket with
 #       the last stop reason (_ee_post_human): a NEEDS_HUMAN hold through
@@ -114,12 +130,67 @@ ee_transcript() { # ee_transcript <outfile> <dest> [stop-reason] [label]
   return 0
 }
 
+# _ee_mem_mb — the machine memory in MB: VM_MEMORY_MB when it is a whole
+# number (the hub has it from the fly-pool lane knobs), else MemTotal of
+# ${EE_MEMINFO:-/proc/meminfo} (a pool machine), else nothing.
+_ee_mem_mb() {
+  local kb
+  case "${VM_MEMORY_MB:-}" in ''|*[!0-9]*) ;; *) printf '%s' "$((10#$VM_MEMORY_MB))"; return 0 ;; esac
+  kb=$(awk '$1 == "MemTotal:" { print $2; exit }' "${EE_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  case "$kb" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s' "$((kb / 1024))"
+}
+
+ee_oom() { # ee_oom <rendered transcript> -> "<signal>\t<command>" or nothing
+  [ -s "${1:-}" ] || return 0
+  awk '
+    function clip(s) { return length(s) > 80 ? substr(s, 1, 80) "..." : s }
+    # A tool call: queue its command (a Bash call) or a placeholder (any other
+    # tool), so each result line pairs with its call in order (parallel calls).
+    /^  → [^:]+: / {
+      tool = $0; sub(/^  → /, "", tool); sub(/: .*/, "", tool)
+      cmd = $0; sub(/^  → [^:]+: /, "", cmd)
+      q[qt++] = (tool == "Bash") ? cmd : ""
+      next
+    }
+    /^  ← / {
+      if (qh >= qt) next
+      cmd = q[qh++]
+      if (cmd == "") next
+      if (cmd !~ /npm (run )?(typecheck|test)|npx (tsc|vitest|jest)|(^|[ \/])tsc( |$)|vitest|jest/) next
+      # The NEWEST check command decides: a later green run clears an earlier OOM.
+      sig = ""
+      if (index($0, "FatalProcessOutOfMemory")) sig = "FatalProcessOutOfMemory"
+      else if (index($0, "heap out of memory")) sig = "heap out of memory"
+      else if (index($0, "Mark-Compact")) sig = "Mark-Compact"
+      else if (index($0, "Exit code 137")) sig = "Exit code 137"
+      last_sig = sig; last_cmd = clip(cmd)
+    }
+    END { if (last_sig != "") printf "%s\t%s\n", last_sig, last_cmd }
+  ' "$1" 2>/dev/null
+}
+
 ee_on_empty() { # ee_on_empty <build-dir> [label]
-  local b="${1:-}" label="${2:-EXECUTE_EMPTY}" why
+  local b="${1:-}" label="${2:-EXECUTE_EMPTY}" why oom sig cmd mem r
   [ -n "$b" ] && [ -d "$b" ] || return 0
   why=$(ee_reason "$b/execute-run.txt") || why=""
   [ -n "$why" ] && printf '%s\n' "$why" > "$b/stop-reason.txt" 2>/dev/null
   ee_transcript "$b/execute-run.txt" "$b/execute-transcript.md" "$why" "$label" || true
+  # BH-9021: the newest typecheck or test command ran out of memory. The stop
+  # reason says EXECUTE_OOM, not the model's "no file changed", and one alert
+  # per build dir names the machine memory and the row that sets it.
+  oom=$(ee_oom "$b/execute-transcript.md") || oom=""
+  [ -n "$oom" ] || return 0
+  sig="${oom%%$'\t'*}"; cmd="${oom#*$'\t'}"
+  mem=$(_ee_mem_mb); mem="${mem:-unknown}"
+  printf 'EXECUTE_OOM: %s ran out of memory (%s) on a machine with %s MB (VM_MEMORY_MB). Raise the row lane.fly-pool.%s.vm_memory_mb. Last message: %s\n' \
+    "$cmd" "$sig" "$mem" "${PROJECT:-<project>}" "${why:-none}" > "$b/stop-reason.txt" 2>/dev/null || true
+  r=$(_ee_root)
+  if [ ! -e "$b/oom.alerted" ] && [ -x "$r/bin/alert-line.sh" ]; then
+    HARNESS="$r" "$r/bin/alert-line.sh" --id "execute-oom:${PROJECT:-?}:${KEY:-?}" ${PROJECT:+--project "$PROJECT"} \
+      "[execute/${PROJECT:-?}] ${KEY:-?}: EXECUTE_OOM — $cmd ran out of memory ($sig); the machine has VM_MEMORY_MB=$mem MB. Raise the row lane.fly-pool.${PROJECT:-<project>}.vm_memory_mb. Record: ${b##*/}/execute-transcript.md" >/dev/null 2>&1 || true
+    : > "$b/oom.alerted" 2>/dev/null || true
+  fi
   return 0
 }
 
@@ -257,9 +328,16 @@ ee_stop_check() { # ee_stop_check <project> <key> <ticket>
     le=$(head -1 "$lf" 2>/dev/null); case "$le" in ''|*[!0-9]*) continue ;; esac
     [ "$le" -gt "$lifted" ] && lifted=$le
   done
+  local l1
   for d in "$r/builds/pool-$p-$key-"*; do
     f="$d/RESULT"; [ -f "$f" ] || continue
-    case "$(head -1 "$f" 2>/dev/null)" in EXECUTE_EMPTY*) ;; *) continue ;; esac
+    l1=$(head -1 "$f" 2>/dev/null)
+    case "$l1" in EXECUTE_EMPTY*) ;; *) continue ;; esac
+    # BH-9021: an attempt whose checkpoints moved the branch on origin made
+    # progress; it is not counted. A missing, partial or malformed token
+    # (`-`, not hex, a record from before this change) is counted.
+    [[ "$l1" =~ \[branch-head\ start=([0-9a-f]{7,40})\ end=([0-9a-f]{7,40})\] ]] \
+      && [ "${BASH_REMATCH[1]}" != "${BASH_REMATCH[2]}" ] && continue
     mt=$(stat -c %Y "$f" 2>/dev/null) || continue
     [ $((now - mt)) -le "$win" ] || continue
     [ "$mt" -gt "$lifted" ] || continue

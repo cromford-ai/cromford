@@ -46,6 +46,11 @@ if [ "$CKPT_WIP_N" -gt 0 ]; then
 fi
 echo "$(STAMP) [$PROJECT/$KEY] EXECUTE ($EXECUTE_MODEL)" >> "$BUILD/pipeline.log"
 BB executing
+# BH-9021: the branch head at the start of this attempt (a resumed build: the
+# adopted checkpoint tip). The EXECUTE_EMPTY RESULT lines below carry it with
+# the head origin holds at the end, and the pool's cap (ee_stop_check) does
+# not count an attempt whose checkpoints moved the branch.
+EE_HEAD_START=$(git rev-parse -q --verify HEAD 2>/dev/null || echo -)
 CKPT_START
 # BH-7970: sp_render (bin/lib/stage-prompt.sh). A box without the lib refuses the stage below; it never sends an empty prompt.
 . "$HARNESS/bin/lib/stage-prompt.sh" 2>/dev/null || sp_render() { echo "stage-prompt: bin/lib/stage-prompt.sh not loaded" >&2; return 1; }
@@ -78,6 +83,12 @@ esac
 # bin/lib/execute-empty.sh. The model's text never goes on the RESULT line, which
 # readers match by substring: the line stays the fixed text it always was.
 command -v ee_on_empty >/dev/null 2>&1 || . "${HARNESS:-/nonexistent}/bin/lib/execute-empty.sh" 2>/dev/null || true
+# BH-9021: the head ORIGIN holds after CKPT_STOP's last checkpoint push.
+# bin/lane-checkpoint.sh moves refs/remotes/origin/$BRANCH only when a push
+# landed, so an unpushed commit is not progress. Fixed text: two shas, no model text.
+EE_HEAD_END=$(git rev-parse -q --verify "refs/remotes/origin/$BRANCH" 2>/dev/null || echo -)
+EE_HEADS=" [branch-head start=${EE_HEAD_START:--} end=${EE_HEAD_END:--}]"
+EE_NP_PASS=""
 # BH-8868: the context meter stopped a session that changed no file
 # (bin/lib/execute-no-progress.sh). Same first word EXECUTE_EMPTY, so every
 # RESULT reader (the pool's relaunch cap, results ingest, the resolver) routes
@@ -89,10 +100,21 @@ if [ -f "$BUILD/execute-run.txt.noprogress" ]; then
     case "$NP_F" in rule=*) NP_RULE="${NP_F#*=}" ;; elapsed_s=*) NP_EL="${NP_F#*=}" ;; total=*) NP_TOT="${NP_F#*=}" ;; ceiling=*) NP_CAP="${NP_F#*=}" ;; esac
   done
   echo "$(STAMP) [$PROJECT/$KEY] EXECUTE_NO_PROGRESS: the session changed no file ($NP_KV) — stopped before its context ceiling" >> "$BUILD/pipeline.log"
-  STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
-  command -v ee_on_empty >/dev/null 2>&1 && ee_on_empty "$BUILD" EXECUTE_NO_PROGRESS
-  RESULT "EXECUTE_EMPTY EXECUTE_NO_PROGRESS: ${NP_RULE:-?} after ${NP_EL:-?}s, ${NP_TOT:-?} of ${NP_CAP:-?} context tokens, 0 files changed — transcript in execute-transcript.md"
-  exit 5
+  # BH-9021: a RESUMED build stopped by rule=time found the work already done
+  # (TK-3552 attempt 2: the tree was on the branch, the session only checked
+  # it). When the branch carries a tree, that is a normal execute result: the
+  # squash below and the gates run, and CI is the gate. Any other rule, a
+  # build that did not resume, or an empty diff still ends EXECUTE_EMPTY.
+  if [ "$NP_RULE" = time ] && { [ -n "${CKPT_START_POINT:-}" ] || [ "${CKPT_WIP_N:-0}" -gt 0 ] 2>/dev/null; } \
+     && ! git diff --quiet "$BASE"...HEAD 2>/dev/null; then
+    echo "$(STAMP) [$PROJECT/$KEY] EXECUTE_NO_PROGRESS rule=time on a resumed build whose branch carries the work ($(CKPT_WIP_COUNT) wip, $(CKPT_NONWIP_COUNT) own commit(s)) — ends as a normal execute result; CI is the gate" >> "$BUILD/pipeline.log"
+    EE_NP_PASS=1
+  else
+    STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
+    command -v ee_on_empty >/dev/null 2>&1 && ee_on_empty "$BUILD" EXECUTE_NO_PROGRESS
+    RESULT "EXECUTE_EMPTY EXECUTE_NO_PROGRESS: ${NP_RULE:-?} after ${NP_EL:-?}s, ${NP_TOT:-?} of ${NP_CAP:-?} context tokens, 0 files changed — transcript in execute-transcript.md$EE_HEADS"
+    exit 5
+  fi
 fi
 git diff --quiet "$BASE"...HEAD 2>/dev/null && {
   STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
@@ -104,10 +126,12 @@ git diff --quiet "$BASE"...HEAD 2>/dev/null && {
 # the next attempt on this key adopts that branch instead of starting over. Same
 # RESULT prefix on purpose (every project prompt already routes EXECUTE_EMPTY to
 # one ALERTS line and no board comment); the detail says where the tree is.
-if [ "$(CKPT_NONWIP_COUNT)" = 0 ]; then
+# BH-9021: not after the resumed rule=time pass above (EE_NP_PASS); its squash
+# writes "<KEY>: work recovered from N lane checkpoint(s)" for an all-wip branch.
+if [ "$(CKPT_NONWIP_COUNT)" = 0 ] && [ -z "${EE_NP_PASS:-}" ]; then
   STAGE_LANE_DEFER execute "$BUILD/execute-run.txt"
   command -v ee_on_empty >/dev/null 2>&1 && ee_on_empty "$BUILD"
-  RESULT "EXECUTE_EMPTY the execute session committed nothing of its own — $(CKPT_WIP_COUNT) lane checkpoint(s) are pushed on $BRANCH and the next build of $KEY resumes from them (or force it with TARGET_BRANCH=$BRANCH)"
+  RESULT "EXECUTE_EMPTY the execute session committed nothing of its own — $(CKPT_WIP_COUNT) lane checkpoint(s) are pushed on $BRANCH and the next build of $KEY resumes from them (or force it with TARGET_BRANCH=$BRANCH)$EE_HEADS"
   exit 5
 fi
 CKPT_SQUASH_WIP || CKPT_SQUASH_REFUSED execute
