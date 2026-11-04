@@ -14,7 +14,8 @@
 #    class, cites, action: {name, args}}
 #   decision_key [A-Za-z0-9._:-]{1,128}; project [a-z0-9._-]+. A PR action
 #   (post_block post_findings requeue queue_approve dismiss_review fix_round
-#   lead_rerequest) also needs repo <owner>/<name>, pr > 0, head (40 hex).
+#   lead_rerequest update_branch) also needs repo <owner>/<name>, pr > 0, head
+#   (40 hex). ticket_comment and file_ticket need repo <owner>/<name>.
 #   action.args, per action:
 #     post_block, post_findings  {lines: [non-empty strings]}
 #     requeue                    {ticket_key?} (BH-8736: with ticket_key, a
@@ -40,6 +41,12 @@
 #                                and UB_ACT_CARD = the card JSON (the tick
 #                                records it); bin/unblock-reply.sh reads its
 #                                .lifecycle {project, ticket_key}
+#     update_branch              {} (BH-8817: Archie's rebase; GitHub's
+#                                update-branch with expected_head_sha = head)
+#     ticket_comment             {issue, lines: [non-empty strings]} (BH-8817:
+#                                one comment on issue <issue> of repo)
+#     file_ticket                {title, lines: [non-empty strings]} (BH-8817:
+#                                one open `ai-build` issue on repo)
 #   A ticket key is [A-Z][A-Z0-9]*-<n>[.<n>]; a question is 1 to
 #   UNBLOCK_ASK_QUESTION_MAX chars.
 #
@@ -69,6 +76,9 @@
 #   5. a PR action: the PR head is re-read (it must equal the record's head),
 #      then the issue comments and the reviews are searched for the marker
 #      <!-- tackler:<decision_key> -->. Found -> done marker-found.
+#      ticket_comment: the issue's comments are searched for the marker;
+#      file_ticket: the repo's open `ai-build` issues. Found -> done
+#      marker-found.
 #
 # Every GitHub comment, review body and dismissal message carries the marker.
 # Every verdict row is --source agent --reviewer tackler:<key12>.
@@ -114,8 +124,11 @@
 
 UB_NEVER_CLASSES="spend production live-probe client-board merge deploy governance"
 UB_NEVER_ACTIONS="merge force_push deploy pause_project"
-UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath rebuild ask"
-UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest"
+UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath rebuild ask update_branch ticket_comment file_ticket"
+UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest update_branch"
+# The actions that write to GitHub without a PR head (BH-8817): the App token
+# is armed for them too, and the marker gate is their own.
+UB_ISSUE_ACTIONS="ticket_comment file_ticket"
 UB_KNOB_ALLOWLIST_DEFAULT="lane.fly-pool-tick.pool_tick_max_parallel,hub_load.shed,lane.fly-pool.*.pool_record_read,lane_placement.*,conductor_remote_spawn.*"
 UB_MARKER_PAGES=5
 UB_TICKET_RE='^[A-Z][A-Z0-9]*-[0-9]+([.][0-9]+)?$'
@@ -173,6 +186,11 @@ _ub_valid() {
     [[ "$_UB_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
     _UB_URL="https://github.com/$_UB_SLUG/pull/$_UB_PR"
   fi
+  if _ub_in "$_UB_ACTION" "$UB_ISSUE_ACTIONS"; then
+    [[ "$_UB_SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+    printf '%s' "$_UB_ARGS" | jq -e '(.lines | type) == "array" and (.lines | length) > 0
+      and all(.lines[]; type == "string" and length > 0)' >/dev/null 2>&1 || return 1
+  fi
   case "$_UB_ACTION" in
     post_block|post_findings)
       printf '%s' "$_UB_ARGS" | jq -e '(.lines | type) == "array" and (.lines | length) > 0
@@ -199,6 +217,10 @@ _ub_valid() {
       [[ "$(_ub_arg key)" =~ $UB_TICKET_RE ]] || return 1
       f=$(_ub_arg question)
       [ -n "$f" ] && [ "${#f}" -le "$(_ub_knob_int "${UNBLOCK_ASK_QUESTION_MAX:-}" 2000)" ] || return 1 ;;
+    ticket_comment) [[ "$(_ub_arg issue)" =~ ^[1-9][0-9]{0,9}$ ]] || return 1 ;;
+    file_ticket)
+      f=$(_ub_arg title)
+      [ -n "${f//[[:space:]]/}" ] && [[ "$f" != *$'\n'* ]] || return 1 ;;
   esac
   return 0
 }
@@ -226,9 +248,10 @@ _ub_agent_source_ok() {
 # _ub_marker_in <path> — search up to UB_MARKER_PAGES pages of a list for the
 # marker. Prints found | absent | unreadable | truncated.
 _ub_marker_in() {
-  local path="$1" pg=1 body n
+  local path="$1" pg=1 body n sep='?'
+  [[ $path == *\?* ]] && sep='&'
   while [ "$pg" -le "$UB_MARKER_PAGES" ]; do
-    body=$(gh api "$path?per_page=100&page=$pg" 2>/dev/null) || { echo unreadable; return 0; }
+    body=$(gh api "$path${sep}per_page=100&page=$pg" 2>/dev/null) || { echo unreadable; return 0; }
     printf '%s' "$body" | jq -e 'type == "array"' >/dev/null 2>&1 || { echo unreadable; return 0; }
     printf '%s' "$body" | jq -e --arg m "$_UB_MARKER" 'any(.[]; (.body // "") | contains($m))' >/dev/null 2>&1 \
       && { echo found; return 0; }
@@ -497,6 +520,51 @@ _ub_setting_set() {
   if [ "$rc" = 0 ]; then _ub_out done set; else _ub_out failed "setting-set rc $rc"; fi
 }
 
+# update_branch (BH-8817): GitHub merges the base into the PR branch only
+# while the head is still the record's head (expected_head_sha). 2xx = done;
+# the head then moves, so a second call is refused head-moved by gate 5.
+_ub_update_branch() {
+  _ub_gh_write PUT "repos/$_UB_SLUG/pulls/$_UB_PR/update-branch" \
+    "$(jq -nc --arg h "$_UB_HEAD" '{expected_head_sha: $h}')" \
+    || { _ub_out failed update-branch-failed; return 0; }
+  _ub_out done update-branch-requested
+}
+
+# ticket_comment (BH-8817): one comment with the marker on issue <issue>.
+_ub_ticket_comment() {
+  local n s
+  n=$(_ub_arg issue)
+  s=$(_ub_marker_in "repos/$_UB_SLUG/issues/$n/comments")
+  case "$s" in
+    found) _ub_out done marker-found; return 0 ;;
+    absent) ;;
+    truncated) _ub_out failed marker-search-truncated; return 0 ;;
+    *) _ub_out failed marker-unreadable; return 0 ;;
+  esac
+  _ub_gh_write POST "repos/$_UB_SLUG/issues/$n/comments" "$(jq -nc --arg b "$(_ub_body)" '{body: $b}')" \
+    || { _ub_out failed comment-failed; return 0; }
+  _ub_out done "commented #$n"
+}
+
+# file_ticket (BH-8817): one open `ai-build` issue whose body carries the
+# marker. An open ai-build issue with the marker already = done marker-found.
+_ub_file_ticket() {
+  local s f out n rc
+  s=$(_ub_marker_in "repos/$_UB_SLUG/issues?state=open&labels=ai-build")
+  case "$s" in
+    found) _ub_out done marker-found; return 0 ;;
+    absent) ;;
+    truncated) _ub_out failed marker-search-truncated; return 0 ;;
+    *) _ub_out failed marker-unreadable; return 0 ;;
+  esac
+  f=$(mktemp "${TMPDIR:-/tmp}/ub-body.XXXXXX") || { _ub_out failed file-ticket-failed; return 0; }
+  jq -nc --arg t "$(_ub_arg title)" --arg b "$(_ub_body)" '{title: $t, body: $b, labels: ["ai-build"]}' > "$f"
+  out=$(gh api -X POST "repos/$_UB_SLUG/issues" --input "$f" 2>/dev/null); rc=$?
+  rm -f "$f"
+  n=$(printf '%s' "$out" | jq -r '.number // ""' 2>/dev/null)
+  if [ "$rc" = 0 ] && [[ $n =~ ^[1-9][0-9]*$ ]]; then _ub_out done "filed #$n"; else _ub_out failed file-ticket-failed; fi
+}
+
 _ub_send_card() {
   local text n
   text=$(_ub_arg text); n=${#text}
@@ -624,8 +692,10 @@ ub_act() {
       _ub_agent_source_ok || { _ub_out refused verdict-source-agent-unavailable; return 0; } ;;
   esac
   # 5. head and marker, under the App identity when the caller loaded it
-  if _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS"; then
+  if _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS $UB_ISSUE_ACTIONS"; then
     command -v gh_auth_for >/dev/null 2>&1 && { gh_auth_for "$_UB_SLUG" >/dev/null 2>&1 || true; }
+  fi
+  if _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS"; then
     _ub_pr_gates || { _ub_gh_reset; return 0; }
   fi
   case "$_UB_ACTION" in
@@ -642,7 +712,10 @@ ub_act() {
     launch_fastpath) _ub_launch_fastpath ;;
     rebuild)        _ub_rebuild ;;
     ask)            _ub_ask ;;
+    update_branch)  _ub_update_branch ;;
+    ticket_comment) _ub_ticket_comment ;;
+    file_ticket)    _ub_file_ticket ;;
   esac
-  _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS" && _ub_gh_reset
+  _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS $UB_ISSUE_ACTIONS" && _ub_gh_reset
   return 0
 }

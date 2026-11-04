@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── ARCHIE CARDS LANE (BH-8817) ─────────────────────────────────────────────
+# Every 10 minutes, offset 2, bin/archie-cards.sh tick takes each Tackler card
+# routed to Archie (settings row unblock.route_to=archie) in an act-mode
+# project. It claims the card before any spend, makes one bounded model call
+# (role stage.archie, stage archie-card, no tools) and answers through
+# bin/unblock-reply.sh archie: hold, none (false) or needs-operator. Tackler's own
+# tick pages the operator for needs-operator and for a card open past
+# unblock.archie_answer_max_min. flock -n dedupes; timeout 540.
+# Off: ARCHIE_CARDS_ENABLED=0, flags/lane-off-archie-cards, staff-kill-all,
+# or bin/harness-ctl.sh off archie-cards.
+2-52/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/archie-cards.sh tick >/dev/null 2>&1

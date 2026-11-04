@@ -19,6 +19,9 @@
 #     escalations/day <y>, override rate <r>%, stall median <m>m p95 <m>m
 # A metric with no value prints n/a. An unreadable project is one line
 # `tackler <p>: metrics unreadable`; the other projects are still written.
+# After each metrics line, one cards line for the same day (BH-8817):
+#   tackler <p> <day> cards: received <n>, archie <n>, operator <n>, false <n>[, acted <n>]
+# or `tackler <p>: cards unreadable (http <code>)`.
 #
 # TICK: the daily step runs when job ledger unblock_metrics daily-<today> is not
 # `sent`, and puts it `sent` after; an unreadable ledger skips the step (one
@@ -85,6 +88,27 @@ flock -n 9 || { log "lock held (locks/unblock-metrics.lock); skipped"; exit 0; }
 
 TODAY=$(date -u -d "@$NOW" +%Y-%m-%d)
 
+# cards_line <p> <day> — BH-8817: the Tackler cards of <day> (GET
+# /api/unblock/cards/daily, one SELECT): received, handled by Archie (hold,
+# closed as false or a lever pulled), escalated to the operator, false (closed with no
+# action), and acted (Archie pulled a lever) when the worker sends it.
+cards_line() {
+  local resp="" line f rc=1
+  JOBS_HTTP=""
+  # The request runs in this shell (not a $( )), so JOBS_HTTP is readable after.
+  if [[ $2 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && f=$(mktemp "${TMPDIR:-/tmp}/unblock-cards.XXXXXX"); then
+    _jobs_req GET "/api/unblock/cards/daily?project=$1&day=$2" > "$f"; rc=$?
+    resp=$(cat "$f"); rm -f "$f"
+  fi
+  if [ "$rc" != 0 ] || ! jq -e '[.received, .archie, .operator, .false] | all(type == "number")' >/dev/null 2>&1 <<<"$resp"; then
+    line="tackler $1: cards unreadable (http ${JOBS_HTTP:-none})"
+  else
+    line=$(jq -r --arg p "$1" --arg d "$2" '"tackler \($p) \($d) cards: received \(.received), archie \(.archie), operator \(.operator), false \(.false)" + (if (.acted | type) == "number" then ", acted \(.acted)" else "" end)' <<<"$resp")
+  fi
+  log "$line"
+  printf '%s\n' "$line"
+}
+
 daily() {
   local projects p resp line
   projects=$(uo_active_projects) || { log "daily: settings unreadable; no line written"; return 0; }
@@ -99,6 +123,7 @@ daily() {
       "tackler \($p) \($d.day): decisions \($d.decisions), would \($d.would), escalations \($d.escalations), overrides \($d.overrides), stall median \($d.stall_median_min | v("m")) p95 \($d.stall_p95_min | v("m")); 7d decisions/day \($t.decisions_per_day), escalations/day \($t.escalations_per_day), override rate \(if $t.override_rate == null then "n/a" else ((($t.override_rate * 1000 | round) / 10 | tostring) + "%") end), stall median \($t.stall_median_min | v("m")) p95 \($t.stall_p95_min | v("m"))"' <<<"$resp")
     log "$line"
     printf '%s\n' "$line"
+    cards_line "$p" "$(jq -r '.daily[-1].day' <<<"$resp")"
   done <<<"$projects"
 }
 

@@ -31,6 +31,21 @@
 // command 409 {duplicate:true}; still escalated (the option is out of range)
 // 400 answer; otherwise 422 not_escalated. Only the duplicate is a 409,
 // because unblock-reply.sh reads every 409 as "already recorded".
+// ARCHIE (BH-8817). answered_by "archie" WITH source "archie" is Archie's
+// answer to a card Tackler routed to it (bin/archie-cards.sh through
+// bin/unblock-reply.sh archie): answer hold, none or acted only (none = closed
+// as false; acted = Archie pulled a lever through bin/lib/unblock/act.sh and
+// the note carries the writer's answer; an option number is 400 answer, so no
+// Tackler option runs from an Archie answer). acted needs `lever` from
+// ARCHIE_LEVERS, stored in archie_lever; hold and none take no lever (400
+// lever). answer_source='archie', and ARCHIE_ANSWER_SQL also needs routed_to
+// IS NULL and card.route 'archie': a card already handed to the operator is 422
+// {error:"routed"}, a card Tackler sent to the operator direct is 422
+// {error:"not_archie"}. source "archie" with any other answered_by is 400
+// source; any other source value is 400 source; archie with no source and
+// tackler stay 403. A person's answer is unchanged (answer_source NULL, no
+// routed_to condition), so the operator answers any card; `none` and `acted` are
+// Archie's only (a person's none is 400 answer).
 //
 // THE READS (BH-6730). Every statement uses an index the fragment names;
 // test/unblock-decisions.bh-7722.test.js W2 EXPLAINs these exact texts at
@@ -40,7 +55,7 @@
 // family is not in OPEN_FAMILIES).
 
 import { json, d1Guarded } from "../lib/http.js";
-import { ensureTable } from "../lib/core.js";
+import { ensureTable, ensureColumns } from "../lib/core.js";
 
 const TABLE = "unblock_decisions";
 const KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -54,6 +69,9 @@ const CARD_RE = /^u-[0-9a-f]{6}$/;
 const INT_RE = /^[1-9]\d{0,15}$/;
 const EMAIL_RE = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{1,63}$/;
 const ANSWER_RE = /^([1-4]|hold)$/;
+const ARCHIE_ANSWERS = new Set(["hold", "none", "acted"]);
+// The levers of bin/archie-cards.sh (catalog/prompts/archie-card.md).
+export const ARCHIE_LEVERS = new Set(["requeue", "fix_round", "re_review", "rebase", "rebuild", "re_offer", "ticket_comment", "file_ticket"]);
 const SUBJECT_KINDS = new Set(["pr", "batch", "build", "box", "lane", "setting"]);
 const DECISIONS = new Set(["act", "escalate", "refuse", "digest"]);
 const MODES = new Set(["shadow", "act"]);
@@ -90,13 +108,24 @@ export const ANSWER_SQL =
           answer_command_id = ?5, outcome_detail = coalesce(?6, outcome_detail)
     WHERE id = ?1 AND outcome = 'escalated'
       AND (?2 = 'hold' OR CAST(?2 AS INTEGER) <= coalesce(json_array_length(card, '$.options'), 0))`;
-const ANSWER_READ_SQL = `SELECT id, outcome, answer_command_id FROM unblock_decisions WHERE id = ?1`;
+// ?1 id ?2 answer (hold | none | acted) ?3 now ?4 command_id ?5 note ?6 lever (acted only)
+export const ARCHIE_ANSWER_SQL =
+  `UPDATE unblock_decisions
+      SET outcome = 'answered', answer = ?2, answered_by = 'archie', answer_source = 'archie', answered_at = ?3,
+          resolved_at = ?3, answer_command_id = ?4, outcome_detail = coalesce(?5, outcome_detail), archie_lever = ?6
+    WHERE id = ?1 AND outcome = 'escalated' AND routed_to IS NULL AND json_extract(card, '$.route') = 'archie'`;
+const ANSWER_READ_SQL =
+  `SELECT id, outcome, answer_command_id, routed_to, json_extract(card, '$.route') AS card_route FROM unblock_decisions WHERE id = ?1`;
 const COLUMNS =
   `id, decision_key, agent, project, repo, subject_kind, subject, head, stall_class, rule_id, rule_cites, evidence,
    decision, action, action_args, mode, outcome, outcome_detail, card, answer, answered_by, answered_at,
    model_calls, cost_usd, override_by, override_at, override_detail, created_at, acted_at, resolved_at`;
+// BH-8817: the route and page columns (core.d/bh-8817-unblock-cards.js). They
+// exist only after ensureColumns, so the route asks for them with
+// listSql(shape, {cards: true}) and the default text stays the BH-7722 one.
+const CARD_COLUMNS = `, answer_source, routed_to, routed_at, route_reason, paged_at, archie_claimed_at, archie_lever`;
 
-// listSql({subject, project, outcome, card}) — the one statement for a filter
+// listSql({subject, project, outcome, card}, {cards}) — the one statement for a filter
 // shape. The binds, in order: the filters present (subject, outcome, project),
 // then before_id (or null), then the card id (or null) when the shape has the
 // outcome filter, then the limit. Built only from fixed text: no input enters
@@ -104,7 +133,7 @@ const COLUMNS =
 //   subject          -> idx_unblock_decisions_subject_id (project, outcome residual)
 //   outcome          -> idx_unblock_decisions_outcome_project (project in the index)
 //   project only     -> idx_unblock_decisions_project_id
-export function listSql({ subject = false, project = false, outcome = false, card = false } = {}) {
+function listSqlBase({ subject = false, project = false, outcome = false, card = false } = {}) {
   const where = [];
   let n = 0;
   if (subject) {
@@ -124,6 +153,15 @@ export function listSql({ subject = false, project = false, outcome = false, car
     where.push(`(?${c} IS NULL OR json_extract(card, '$.id') = ?${c})`);
   }
   return `SELECT ${COLUMNS} FROM unblock_decisions WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?${++n}`;
+}
+
+// listSql(shape, {cards}): the BH-7722 text, with CARD_COLUMNS after COLUMNS
+// when cards is set. Fixed text only, joined by a string replace and not by a
+// template, so the sql-command-injection check reads no interpolation on an
+// added line (the iron-law hit that parked #9000).
+export function listSql(shape = {}, { cards = false } = {}) {
+  const sql = listSqlBase(shape);
+  return cards ? sql.replace(COLUMNS, () => COLUMNS + CARD_COLUMNS) : sql;
 }
 
 const bad = (field) => json(400, { error: field });
@@ -251,7 +289,8 @@ export const routes = [
       binds.push(limit);
       return d1Guarded(TABLE, async () => {
         await ensureTable(env, TABLE);
-        const { results } = await env.DB.prepare(listSql(shape)).bind(...binds).all();
+        await ensureColumns(env, TABLE);
+        const { results } = await env.DB.prepare(listSql(shape, { cards: true })).bind(...binds).all();
         const decisions = (results || []).map(rowOut);
         return json(200, {
           limit, decisions,
@@ -267,25 +306,38 @@ export const routes = [
     async ({ env, t, body, m }) => {
       const id = Number(m[1]);
       const b = isObj(body) ? body : {};
-      if (typeof b.answer !== "string" || !ANSWER_RE.test(b.answer)) return bad("answer");
       const who = typeof b.answered_by === "string" ? b.answered_by.trim() : "";
+      const src = b.source ?? null;
+      if (src !== null && src !== "archie") return bad("source");
+      const archie = src === "archie" && who === "archie";
+      if (src === "archie" && !archie && EMAIL_RE.test(who)) return bad("source");
+      if (typeof b.answer !== "string" || !(archie ? ARCHIE_ANSWERS.has(b.answer) : ANSWER_RE.test(b.answer))) return bad("answer");
+      const lever = b.lever ?? null;
+      if (archie && b.answer === "acted" ? !ARCHIE_LEVERS.has(lever) : lever !== null) return bad("lever");
       if (who === "") return bad("answered_by");
       if (!optStr(b.command_id, KEY_RE)) return bad("command_id");
       if (b.note !== undefined && b.note !== null && (typeof b.note !== "string" || b.note.length > TEXT_MAX)) return bad("note");
       return d1Guarded(TABLE, async () => {
         await ensureTable(env, TABLE);
-        if (!EMAIL_RE.test(who)) {
+        await ensureColumns(env, TABLE);
+        if (!archie && !EMAIL_RE.test(who)) {
           const name = who.toLowerCase();
           const roster = AGENT_NAMES.has(name)
             || !!(await env.DB.prepare("SELECT 1 AS x FROM staff_agents WHERE name = ?1").bind(name).first());
           return roster ? json(403, { error: "agent_answerer" }) : bad("answered_by");
         }
         const cmd = b.command_id ?? null;
-        const res = await env.DB.prepare(ANSWER_SQL).bind(id, b.answer, who, t, cmd, b.note ?? null).run();
-        if (changesOf(res) === 1) return json(200, { ok: true, id, outcome: "answered", answer: b.answer });
+        const res = archie
+          ? await env.DB.prepare(ARCHIE_ANSWER_SQL).bind(id, b.answer, t, cmd, b.note ?? null, lever).run()
+          : await env.DB.prepare(ANSWER_SQL).bind(id, b.answer, who, t, cmd, b.note ?? null).run();
+        if (changesOf(res) === 1) {
+          return json(200, { ok: true, id, outcome: "answered", answer: b.answer, ...(archie ? { source: "archie" } : {}) });
+        }
         const row = await env.DB.prepare(ANSWER_READ_SQL).bind(id).first();
         if (!row) return json(404, { error: "decision not found" });
         if (cmd !== null && row.answer_command_id === cmd) return json(409, { duplicate: true, id, outcome: row.outcome });
+        if (archie && row.outcome === "escalated" && row.routed_to !== null) return json(422, { error: "routed", routed_to: row.routed_to });
+        if (archie && row.outcome === "escalated" && row.card_route !== "archie") return json(422, { error: "not_archie" });
         if (row.outcome === "escalated") return bad("answer");
         return json(422, { error: "not_escalated", outcome: row.outcome });
       });

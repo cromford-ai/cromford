@@ -1,0 +1,11 @@
+{
+  "env": "RULE_MINER_ARCHIE_MIN",
+  "read_in": "bin/rule-miner.sh",
+  "type": "int",
+  "default": 3,
+  "min": 2,
+  "max": 100,
+  "zero_means": null,
+  "note": "BH-8817: source (g), the least number of the same Archie card answer (project, stall class, answer, lever) inside RULE_MINER_ARCHIE_DAYS that makes one incident, a candidate rule for catalog/unblock-rules.d. Out of range is the default.",
+  "settable": true
+}

@@ -1,0 +1,9 @@
+# UNBLOCK CARDS (BH-8817, C0): Tackler cards go to Archie first. Archie claims
+# a card before its model call, a card is routed to the operator once (Archie's
+# needs-operator or Tackler's timeout), the page is stamped once, and the daily
+# digest counts the cards.
+POST re:/^\/api\/unblock\/decisions\/(\d{1,15})\/archie-claim$/
+POST re:/^\/api\/unblock\/decisions\/(\d{1,15})\/route$/
+POST re:/^\/api\/unblock\/decisions\/(\d{1,15})\/paged$/
+GET /api/unblock/cards/daily
+GET /api/unblock/cards/repeats

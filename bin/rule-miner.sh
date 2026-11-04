@@ -390,6 +390,58 @@ else
   "$SELF/rule-recur.sh" "$FINDINGS" "$HARNESS/prompts/rule-evidence" >> "$LOG" 2>&1 || true
 fi
 
+# ── (g) Archie's repeated card answers (BH-8817), rolling window ─────────────
+# REPETITION again, one lane down: Archie answering the same kind of Tackler
+# card the same way (the same project, stall class, answer and lever) is a
+# decision Tackler could make itself. Each group at or over
+# RULE_MINER_ARCHIE_MIN (default 3) answers inside RULE_MINER_ARCHIE_DAYS
+# (default 30) is ONE incident. RULE_MINER_ARCHIE_LIMIT (default 50, the
+# fallback of the knob catalog/lanes.d/rule-miner.knobs.d/RULE_MINER_ARCHIE_LIMIT.json)
+# caps the groups read per run; a run at the cap logs one line, keyed archie-card:<p>:<class>:<answer>:<lever>
+# so seen.txt mines it once. The candidate rule goes in
+# catalog/unblock-rules.d. No jobs client or no secret = this source is off,
+# one log line; a failed read is one log line and no incident.
+ARCHIE_MIN="${RULE_MINER_ARCHIE_MIN:-3}"; [[ $ARCHIE_MIN =~ ^[0-9]{1,3}$ ]] && [ "$ARCHIE_MIN" -ge 2 ] && [ "$ARCHIE_MIN" -le 100 ] || ARCHIE_MIN=3
+ARCHIE_DAYS="${RULE_MINER_ARCHIE_DAYS:-30}"; [[ $ARCHIE_DAYS =~ ^[0-9]{1,2}$ ]] && [ "$ARCHIE_DAYS" -ge 1 ] && [ "$ARCHIE_DAYS" -le 90 ] || ARCHIE_DAYS=30
+ARCHIE_LIMIT="${RULE_MINER_ARCHIE_LIMIT:-50}"; [[ $ARCHIE_LIMIT =~ ^[0-9]{1,3}$ ]] && [ "$ARCHIE_LIMIT" -ge 1 ] && [ "$ARCHIE_LIMIT" -le 200 ] || ARCHIE_LIMIT=50
+# A per-run scratch file in /tmp, not under state/: the rows live in
+# unblock_decisions and the loop below consumes the list at once (the
+# no-state-files ratchet, BH-4159, refuses a new raw state/ writer in bin/).
+ARCHIE_REP=$(mktemp /tmp/rule-miner-archie-XXXXXX) || ARCHIE_REP=/dev/null
+# shellcheck source=bin/lib/unblock/archie-repeats.sh
+if [ -n "${HARNESS_SECRET:-}" ] && command -v _jobs_req >/dev/null 2>&1 \
+   && . "$SELF/lib/unblock/archie-repeats.sh" 2>/dev/null; then
+  ARCHIE_SINCE=$(date -u -d "$ARCHIE_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  if uar_list "$ARCHIE_SINCE" "$ARCHIE_MIN" "$ARCHIE_LIMIT" > "$ARCHIE_REP"; then
+    [ "$(grep -c . "$ARCHIE_REP")" -ge "$ARCHIE_LIMIT" ] \
+      && echo "$(STAMP) archie card repeats: read the cap RULE_MINER_ARCHIE_LIMIT=$ARCHIE_LIMIT groups; groups past it wait for a later run" >> "$LOG"
+  else
+    echo "$(STAMP) archie card repeats unreadable (http ${JOBS_HTTP:-none}); source (g) mined nothing" >> "$LOG"
+  fi
+else
+  echo "$(STAMP) archie card repeats: no jobs client or secret; source (g) off" >> "$LOG"
+fi
+while IFS=$'\t' read -r AP ACLASS AANS ALEVER ACNT ALAST; do
+  [ -n "$AP" ] || continue
+  add_incident "archie-card:$AP:$ACLASS:$AANS:$ALEVER" "Archie answered $ACLASS cards of $AP with $AANS ($ALEVER) ${ACNT}x in ${ARCHIE_DAYS}d" <<EOF
+TYPE: archie-card-repeat
+PROJECT: $AP
+STALL_CLASS: $ACLASS
+ANSWER: $AANS
+LEVER: $ALEVER
+COUNT: $ACNT in ${ARCHIE_DAYS}d (threshold RULE_MINER_ARCHIE_MIN=$ARCHIE_MIN)
+NEWEST ROW: unblock_decisions id $ALAST
+
+Tackler escalated this stall class to a card, and Archie gave the same answer
+each time (bin/archie-cards.sh, answer_source archie). The candidate rule is
+one file in catalog/unblock-rules.d that decides this class without a card:
+hold or none as a wait or refuse rule, a lever as an act rule through
+bin/lib/unblock/act.sh. Not a rule when the answers depend on facts the
+collector record does not carry.
+EOF
+done < "$ARCHIE_REP"
+[ "$ARCHIE_REP" = /dev/null ] || rm -f "$ARCHIE_REP"
+
 # ── (d) Manual notes: hand-filed lessons in state/rule-mining/manual/*.md ───
 # Anything the fleet learned that no automatic source (revert/reopen/BLOCK)
 # would ever surface — orchestrator or the operator drops a .md here and the next

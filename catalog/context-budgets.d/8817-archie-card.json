@@ -1,0 +1,32 @@
+[
+    {
+        "lane": "archie-cards",
+        "stage": "archie-card",
+        "project": null,
+        "runner": null,
+        "job": "At most one hub call per Tackler card routed to Archie (bin/archie-cards.sh tick, every 10 minutes, model route stage.archie): answer the card as hold, none (false), act (one lever, pulled by the lane through bin/lib/unblock/act.sh) or needs-operator with a one-sentence reason.",
+        "target_tokens": 6000,
+        "ceiling_tokens": 20000,
+        "composition": [
+            {
+                "component": "lane SOP",
+                "source": "catalog/prompts/archie-card.md",
+                "cap": "static",
+                "purpose": "the answer contract, the MAY and NEVER lists, the plain-English rule for the reason"
+            },
+            {
+                "component": "one card and its evidence record",
+                "source": "the unblock_decisions row: the card fields and the stored stall evidence, scrubbed",
+                "cap": "ARCHIE_CARDS_PROMPT_MAX_BYTES (default 8192 bytes)",
+                "purpose": "THE SCOPED DELTA: only the card this call is about"
+            }
+        ],
+        "bounds": [
+            "[lane:one_card] one card per call, cut to ARCHIE_CARDS_PROMPT_MAX_BYTES (VERIFIED: tests/archie-cards.bh-8817-test.sh A1)",
+            "[lane:claim_first] the row is claimed (archie_claimed_at) before the call, so a second tick never pays twice (VERIFIED: tests/archie-cards.bh-8817-test.sh A1, A4)"
+        ],
+        "measured_before": null,
+        "measured_before_note": "never measured: the stage is new in BH-8817.",
+        "_unmeasured": "no archie-card call has run yet. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

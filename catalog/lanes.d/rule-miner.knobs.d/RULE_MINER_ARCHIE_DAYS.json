@@ -1,0 +1,12 @@
+{
+  "env": "RULE_MINER_ARCHIE_DAYS",
+  "read_in": "bin/rule-miner.sh",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 90,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-8817: source (g), the window in days of Archie card answers the miner reads (GET /api/unblock/cards/repeats). Out of range is the default.",
+  "settable": true
+}

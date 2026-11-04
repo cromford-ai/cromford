@@ -1,0 +1,12 @@
+{
+  "env": "RULE_MINER_ARCHIE_LIMIT",
+  "read_in": "bin/rule-miner.sh",
+  "type": "int",
+  "default": 50,
+  "min": 1,
+  "max": 200,
+  "unit": "groups",
+  "zero_means": null,
+  "note": "BH-8817: source (g), the most Archie card answer groups the miner reads per run (the limit of GET /api/unblock/cards/repeats, worker range 1..200). A run that reads the full limit writes one log line, because the groups past it are not mined this run. Out of range is the default.",
+  "settable": true
+}

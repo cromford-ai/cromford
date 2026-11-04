@@ -6,6 +6,11 @@
 #
 #   unblock-reply.sh intercept <text>   rc 0 = the reply is on stdout;
 #                                       rc 1 = not a card answer, nothing read
+#   unblock-reply.sh archie <card-id> <hold|none|needs-operator> <note>
+#   unblock-reply.sh archie <card-id> acted <note> <lever>
+#                                       Archie's answer to a card routed to
+#                                       him (bin/archie-cards.sh, BH-8817);
+#                                       see ARCHIE below.
 #
 # THE GRAMMAR. The message, after poll-commands.sh's one `[telegram: from …]`
 # attribution line, must be ONE line:
@@ -44,6 +49,24 @@
 #      id), writes the marker. Anything else = "not recorded", no marker.
 # The answer only records (step 4b excepted). The next Tackler tick
 # (UNB-0/UNB-4) acts on it.
+#
+# ARCHIE (BH-8817). <card-id> is u- and 6 lower-case hex. Any other answer than
+# hold, none, acted or needs-operator is ARCHIE_REFUSED, rc 2, 0 requests; `none`
+# (closed as false) and `acted` need a note; `acted` (Archie pulled a lever
+# through bin/lib/unblock/act.sh, the note carries the writer's answer) needs a
+# lever from: requeue fix_round re_review rebase rebuild re_offer ticket_comment
+# file_ticket. Any other answer takes no lever. The note goes through unblock_card_scrub and is cut to
+# ARCHIE_CARDS_NOTE_MAX characters (default 500, the worker's TEXT_MAX).
+#   1. GET /api/unblock/decisions?outcome=escalated&card=<id>. Refused when it
+#      fails, when there is no open row, when card.route is not archie, or when
+#      routed_to is already set (the operator owns the card).
+#   2. hold|none|acted: POST /<row id>/answer {answer, answered_by: "archie",
+#      source: "archie", command_id: "archie-<card id>", note, lever (acted)}. 2xx, or 409
+#      (that command id is already recorded) = ARCHIE_ANSWERED <id> <answer>.
+#      needs-operator: POST /<row id>/route {to: "operator", by: "archie", reason:
+#      <note>} = ARCHIE_ROUTED <id>; the page is Tackler's next tick
+#      (unblock_card_sweep). Anything else = ARCHIE_REFUSED <id> <why>.
+# rc 0 = recorded, rc 1 = not recorded. One line per call in the log.
 #
 # INPUT (set by bin/orchestrate.sh from the message sidecar): UNBLOCK_TRANSPORT,
 # UNBLOCK_FROM_USER, UNBLOCK_CMD_ID. Log: logs/unblock-reply.log.
@@ -176,7 +199,59 @@ intercept() {
   return 0
 }
 
+ARCHIE_LEVERS="requeue fix_round re_review rebase rebuild re_offer ticket_comment file_ticket"
+archie_answer() {
+  local id="$1" ans="$2" note="$3" lever="${4:-}" row rid route routed body max
+  if ! [[ $id =~ ^u-[0-9a-f]{6}$ ]] || ! [[ $ans =~ ^(hold|none|acted|needs-operator)$ ]]; then
+    echo "ARCHIE_REFUSED ${id:-?} usage"; echo "$USAGE" >&2; return 2
+  fi
+  if [ "$ans" = acted ]; then
+    [[ $lever =~ ^[a-z_]+$ ]] && [[ " $ARCHIE_LEVERS " == *" $lever "* ]] || { echo "ARCHIE_REFUSED $id lever"; return 2; }
+  elif [ -n "$lever" ]; then
+    echo "ARCHIE_REFUSED $id lever"; return 2
+  fi
+  if ! type unblock_card_scrub >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/unblock/card.sh
+    . "$SELF/lib/unblock/card.sh" 2>/dev/null || { echo "ARCHIE_REFUSED $id no-scrub"; return 1; }
+  fi
+  # Fallback 500 for the archie-cards lane knob ARCHIE_CARDS_NOTE_MAX
+  # (catalog/lanes.d/archie-cards.json), the worker's TEXT_MAX.
+  max="${ARCHIE_CARDS_NOTE_MAX:-500}"
+  if ! [[ $max =~ ^[0-9]{2,3}$ ]] || [ "$max" -lt 50 ] || [ "$max" -gt 500 ]; then max=500; fi
+  note=$(printf '%s' "$note" | tr '\r\n\t' '   ' | unblock_card_scrub) || { echo "ARCHIE_REFUSED $id no-scrub"; return 1; }
+  note="${note:0:$max}"
+  if [ "$ans" = none ] || [ "$ans" = acted ]; then
+    [ -n "${note//[[:space:]]/}" ] || { echo "ARCHIE_REFUSED $id $ans-needs-a-note"; return 2; }
+  fi
+  req GET "/api/unblock/decisions?outcome=escalated&card=$id"
+  if [ "$RC" != 0 ]; then
+    log "archie $id: ledger GET rc=$RC http=${JOBS_HTTP:-none}"; echo "ARCHIE_REFUSED $id ledger-unreadable"; return 1
+  fi
+  row=$(jq -c --arg id "$id" '[(.decisions // [])[] | select(.card.id == $id)] | first // empty' <<<"$BODY" 2>/dev/null)
+  [ -n "$row" ] || { echo "ARCHIE_REFUSED $id no-open-card"; return 1; }
+  rid=$(jq -r '.id // ""' <<<"$row"); route=$(jq -r '.card.route // ""' <<<"$row"); routed=$(jq -r '.routed_to // ""' <<<"$row")
+  [[ $rid =~ ^[0-9]{1,15}$ ]] || { echo "ARCHIE_REFUSED $id no-row-id"; return 1; }
+  if [ "$route" != archie ]; then log "archie $id: card route '${route:-none}', not archie"; echo "ARCHIE_REFUSED $id not-routed-to-archie"; return 1; fi
+  if [ -n "$routed" ]; then log "archie $id: already routed to $routed"; echo "ARCHIE_REFUSED $id routed-to-$routed"; return 1; fi
+  if [ "$ans" = needs-operator ]; then
+    body=$(jq -nc --arg r "$note" '{to: "operator", by: "archie", reason: $r}')
+    req POST "/api/unblock/decisions/$rid/route" "$body"
+    if [ "$RC" = 0 ]; then log "archie $id: routed to operator (row $rid)"; echo "ARCHIE_ROUTED $id"; return 0; fi
+    log "archie $id: route POST rc=$RC http=${JOBS_HTTP:-none}"; echo "ARCHIE_REFUSED $id route-http-${JOBS_HTTP:-none}"; return 1
+  fi
+  body=$(jq -nc --arg a "$ans" --arg c "archie-$id" --arg n "$note" --arg l "$lever" \
+    '{answer: $a, answered_by: "archie", source: "archie", command_id: $c} + (if $n == "" then {} else {note: $n} end)
+      + (if $l == "" then {} else {lever: $l} end)')
+  req POST "/api/unblock/decisions/$rid/answer" "$body"
+  case "$RC" in
+    0|9) log "archie $id: answer $ans recorded (row $rid, rc $RC)"; echo "ARCHIE_ANSWERED $id $ans"; return 0 ;;
+  esac
+  log "archie $id: answer POST rc=$RC http=${JOBS_HTTP:-none}"; echo "ARCHIE_REFUSED $id answer-http-${JOBS_HTTP:-none}"; return 1
+}
+
+USAGE="usage: unblock-reply.sh intercept <text> | archie <card-id> <hold|none|needs-operator> <note> | archie <card-id> acted <note> <lever>"
 case "${1:-}" in
   intercept) shift; intercept "${1:-}"; exit $? ;;
-  *) echo "usage: unblock-reply.sh intercept <text>" >&2; exit 2 ;;
+  archie) shift; archie_answer "${1:-}" "${2:-}" "${3:-}" "${4:-}"; exit $? ;;
+  *) echo "$USAGE" >&2; exit 2 ;;
 esac

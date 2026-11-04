@@ -1,0 +1,184 @@
+{
+  "id": "archie-cards",
+  "name": "Archie card lane (Tackler cards go to Archie first: hold, false, one lever, or needs-operator)",
+  "scope": "hub",
+  "script": "bin/archie-cards.sh",
+  "cadence": "2-52/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-archie-cards",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ARCHIE_CARDS_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-8817: 0 exits the tick before any read. Any value other than 0 runs.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_MAX_PER_TICK",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-8817: the most archie-routed cards one tick claims per project, oldest first; the rest are logged deferred=<n> and the next tick takes them. Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_CALL_TIMEOUT_S",
+      "type": "int",
+      "default": 120,
+      "min": 30,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-8817: the timeout of the one agent-call per card (stage archie-card). Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_TICK_TIMEOUT_S",
+      "type": "int",
+      "default": 540,
+      "min": 60,
+      "max": 590,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-8817: the outer timeout of one tick, inside the 10-minute cadence. Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_PROMPT_MAX_BYTES",
+      "type": "int",
+      "default": 8192,
+      "min": 1024,
+      "max": 32768,
+      "unit": "bytes",
+      "zero_means": null,
+      "note": "BH-8817: the most bytes of the card and its evidence record inside the prompt's UNTRUSTED fence. Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_NOTE_MAX",
+      "type": "int",
+      "default": 500,
+      "min": 50,
+      "max": 500,
+      "zero_means": null,
+      "read_in": "bin/unblock-reply.sh",
+      "note": "BH-8817: the most characters of Archie's reason that bin/unblock-reply.sh archie sends as the answer note or the route reason (the worker's TEXT_MAX is 500). Out of range is the default.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_ACT",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-8817: the UNBLOCK_ACT value bin/archie-cards.sh gives Tackler's writer (bin/lib/unblock/act.sh ub_act) when Archie picks a lever. 0 = every lever answers would and the card goes to the operator with what Archie would have pulled. The project's unblock.project.<p>.mode row must also be act.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_REREVIEW_PRIORITY",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 9,
+      "zero_means": null,
+      "note": "BH-8817: the lead-review request priority of Archie's re_review lever (ub_act lead_rerequest). Out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "UNBLOCK_NOTES_MAX_CHARS",
+      "read_in": "bin/archie-cards.sh",
+      "type": "int",
+      "default": 300,
+      "min": 20,
+      "max": 2000,
+      "unit": "characters",
+      "zero_means": null,
+      "note": "BH-8817: the longest re_review brief Archie's lane passes to ub_act lead_rerequest; the brief is cut to it. The same bound act.sh reads (the unblock lane's knob of this name). Out of range is one warn line and the default 300.",
+      "settable": true
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet. Covers the one agent-call of this lane (stage archie-card); a card with no call times out to the operator through Tackler's sweep.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend, never from the box's own logs/cost.csv.",
+      "settable": true
+    },
+    {
+      "env": "ARCHIE_CARDS_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/archie-cards.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ARCHIE_CARDS_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a stub file bin/archie-cards.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1 (tests/archie-cards.bh-8817-test.sh). NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ARCHIE_CARDS_TIMED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Internal: 1 marks the run inside the outer timeout, so the script does not wrap itself twice. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/archie-cards.sh honours ARCHIE_CARDS_NOW and ARCHIE_CARDS_FIXTURE only when this is 1. Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": "archie-card",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/archie-cards.log"
+  }
+}

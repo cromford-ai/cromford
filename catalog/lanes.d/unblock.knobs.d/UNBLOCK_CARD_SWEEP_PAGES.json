@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_CARD_SWEEP_PAGES",
+  "read_in": "bin/lib/unblock/card.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 20,
+  "unit": "pages",
+  "zero_means": null,
+  "note": "BH-8817: the most pages of 100 escalated ledger rows one read takes, in Tackler's card sweep (bin/unblock.sh) and in Archie's card lane (bin/archie-cards.sh). The next page is read only while a page is full and its oldest row is younger than UNBLOCK_CARD_TTL_H. A full last page logs `sweep truncated`. A bad value is the code fallback 5 and one log line.",
+  "settable": true
+}

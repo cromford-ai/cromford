@@ -53,6 +53,13 @@
 #      UB_ACT_OUTCOME / UB_ACT_DETAIL, and UB_ACT_CARD as the row's card when
 #      act.sh set one (ask: outcome escalated, BH-8736). rc 1 = RECORD failed
 #      bad-input.
+#   7b. PAGE (BH-8817), act mode only, whatever UNBLOCK_ACT says:
+#      unblock_card_sweep (card.sh) pages the operator once for each card Archie
+#      routed back (needs-operator) or left open past the settings row
+#      unblock.archie_answer_max_min. The tick line adds `sweep_paged=<n>`
+#      when n > 0. A card sent ROUTED_ARCHIE whose RECORD POST failed is in no
+#      ledger row, so step 6/7 pages the operator for it direct
+#      (unblock_card_page_direct) and the tick line adds `paged_direct=<n>`.
 #   8. One summary line per project:
 #      <UTC> tick <p> mode=<m> collectors=<n> unwired=<n> failed=<n>
 #        records=<n> decisions=<n> claimed=<n> rows=<n> deferred=<n>
@@ -294,8 +301,20 @@ ubt_decide() {
       ans=$("$seam" "$d" "$model" "$cm" 2>/dev/null)
       if jq -e 'type == "object" and (.outcome | IN("would","done","failed","refused","escalated"))
           and ([.model_calls | tonumber?] | length == 1) and ([.cost_usd | tonumber?] | length == 1)' >/dev/null 2>&1 <<<"$ans"; then
-        ubt_record "$key" "$(jq -r .outcome <<<"$ans")" "$(jq -r '.detail // ""' <<<"$ans")" \
-          "$(jq -r .model_calls <<<"$ans")" "$(jq -r .cost_usd <<<"$ans")" "$(jq -c '.card // null' <<<"$ans")"
+        if ! ubt_record "$key" "$(jq -r .outcome <<<"$ans")" "$(jq -r '.detail // ""' <<<"$ans")" \
+          "$(jq -r .model_calls <<<"$ans")" "$(jq -r .cost_usd <<<"$ans")" "$(jq -c '.card // null' <<<"$ans")" \
+          && jq -e '.outcome == "escalated" and ((.detail // "") | test("ROUTED_ARCHIE"))' >/dev/null 2>&1 <<<"$ans"; then
+          # BH-8817: the record is the only carrier of a card routed to Archie.
+          # With it lost, Archie's lane and the sweep never see the card, so
+          # page the operator direct now (fail toward a page, as unblock_card_route).
+          if declare -F unblock_card_page_direct >/dev/null \
+             && unblock_card_page_direct "$(jq -c '.card' <<<"$ans")" "the ledger record failed, so Archie cannot see this card"; then
+            PAGED_DIRECT=$((PAGED_DIRECT + 1)); ubt_log "record $key failed after ROUTED_ARCHIE; paged the operator direct"
+          else
+            ubt_log "record $key failed after ROUTED_ARCHIE; the direct page failed too"
+            "$H/bin/alert-line.sh" "[unblock] card $(jq -r '.card.id // "?"' <<<"$ans") ($key): the ledger record and the direct page both failed; nobody sees this card" >/dev/null 2>&1 || true
+          fi
+        fi
       else
         ubt_record "$key" failed "$seam answered no outcome object" 0 0
       fi ;;
@@ -318,7 +337,7 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   if ! unb_scope_lock "$P"; then ubt_log "tick $P: lock held (locks/unblock-$P.lock); skipped"; continue; fi
   REPO=$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { ubt_log "tick $P: no fleet.conf repo; skipped"; ubt_unlock; continue; }
-  CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 WAITED=0 ALERTED=""
+  CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 WAITED=0 PAGED_DIRECT=0 ALERTED=""
   UBC_MAX=$MAXREC ubc_collect "$P" "$REPO" "$COLLECTORS_DIR" > "$TMPD/records.jsonl"
   # BH-8748: a lane-wide batch_failure seam defect is one ALERT, never a card.
   SEAMD=$(ubs_fold "$P" "$TMPD/records.jsonl"); [[ $SEAMD =~ ^[0-9]+$ ]] || SEAMD=0
@@ -339,6 +358,14 @@ while IFS=$'\t' read -r -u 3 P MODE; do
     NDEC=$((NDEC + 1))
     ubt_decide "$D" "$MODE"
   done < "$TMPD/decisions.jsonl"
+  # 7b. PAGE (BH-8817): in act mode, Tackler pages the operator for each card Archie
+  # handed back (needs-operator) or left open past unblock.archie_answer_max_min.
+  # It runs whatever UNBLOCK_ACT says: that switch stops new cards, and must
+  # not strand a card already routed to Archie. Shadow makes no sweep read.
+  SWEPT=0
+  if [ "$MODE" = act ] && declare -F unblock_card_sweep >/dev/null; then
+    SWEPT=$(unblock_card_sweep "$P" "${NOW:-$(date -u +%s)}"); [[ $SWEPT =~ ^[0-9]+$ ]] || SWEPT=0
+  fi
   if [ "$UBC_COLLECTORS" = 0 ] && [ "$CLAIMED" = 0 ]; then
     LINE="tick $P mode=$MODE 0 collectors, 0 rows"
   else
@@ -347,6 +374,8 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   [ "$RULES" = unwired ] && [ "$UBC_RECORDS" -gt 0 ] && LINE="$LINE rules=unwired"
   [ "$SEAMD" -gt 0 ] && LINE="$LINE seam_defect=$SEAMD"
   [ "$WAITED" -gt 0 ] && LINE="$LINE waited=$WAITED"
+  [ "$SWEPT" -gt 0 ] && LINE="$LINE sweep_paged=$SWEPT"
+  [ "$PAGED_DIRECT" -gt 0 ] && LINE="$LINE paged_direct=$PAGED_DIRECT"
   ubt_log "$LINE"
   printf '%s\n' "$LINE"
   ubt_unlock

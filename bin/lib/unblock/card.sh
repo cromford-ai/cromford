@@ -50,8 +50,23 @@
 #                                       cost_usd (null: logs/cost.csv carries the
 #                                       bill), agent_call_rc and decide (the
 #                                       answer, or the fallback). rc 1 = refused.
+#   unblock_card_route                  archie or operator on stdout: the
+#                                       settings row unblock.route_to (seed
+#                                       archie). archie only when setting_get
+#                                       answers rc 0 and the trimmed value is
+#                                       exactly `archie`; operator on `operator`, on no
+#                                       row (rc 2), on any other rc or word,
+#                                       and when setting_get is not defined
+#                                       (fail toward a page).
 #   unblock_card_send <card.json> <mode>
-#                                       mode act AND UNBLOCK_ACT=1: one critical
+#                                       the route is the card's .route when it
+#                                       has one, else unblock_card_route.
+#                                       mode act AND UNBLOCK_ACT=1 AND route
+#                                       archie: 0 alerts, prints ROUTED_ARCHIE
+#                                       <id> (rc 0): the row waits for Archie
+#                                       (bin/archie-cards.sh) or the timeout
+#                                       sweep. mode act AND UNBLOCK_ACT=1 AND
+#                                       route operator: one critical
 #                                       alert DM, `lane-alert.sh --critical --id
 #                                       unblock-<key12>` (the operator 6294290004 item
 #                                       5), prints SENT_CARD <id> (rc 0) or
@@ -62,6 +77,58 @@
 #                                       --critical (_unblock_card_severity,
 #                                       BH-8766). Else prints WOULD_SEND_CARD
 #                                       <id>, 0 alerts.
+#   unblock_card_open_rows <project> <now_epoch>
+#                                       the project's escalated ledger rows,
+#                                       JSONL, newest first: GET
+#                                       /api/unblock/decisions?outcome=
+#                                       escalated, 100 per page, the next page
+#                                       (before_id) only while a page is full
+#                                       and its oldest row is younger than
+#                                       UNBLOCK_CARD_TTL_H, at most
+#                                       UNBLOCK_CARD_SWEEP_PAGES pages (default
+#                                       5, 1..20); a full last page logs `sweep
+#                                       truncated`. Any failed GET = rc 1 (the
+#                                       caller uses no row).
+#   unblock_card_page <row-json> [reason]
+#                                       one page for the operator: _unblock_card_alert
+#                                       with id unblock-<key12> (the id and
+#                                       severity rule of unblock_card_send),
+#                                       text = the card + `NEEDS OPERATOR: <reason,
+#                                       else the row's route_reason>`. lane-alert
+#                                       rc 0 = POST /api/unblock/decisions/<id>/
+#                                       paged and rc 0; else no stamp, rc 1 (the
+#                                       next sweep sends again with the same
+#                                       id: a REMIND, never a second FIRE).
+#   unblock_card_page_direct <card-json> <why>
+#                                       the page for a card that no ledger row
+#                                       carries (bin/unblock.sh: the record POST
+#                                       failed after ROUTED_ARCHIE, so neither
+#                                       Archie's lane nor the sweep can see the
+#                                       card): _unblock_card_alert with id
+#                                       unblock-<key12>, text = the card +
+#                                       `NEEDS OPERATOR: <why>`. rc = lane-alert's
+#                                       (0 = sent). No ledger request.
+#   unblock_card_sweep <project> [now_epoch]
+#                                       Tackler's page duty for archie-routed
+#                                       cards (bin/unblock.sh, act mode). Per
+#                                       open row: routed_to operator and paged_at
+#                                       null = page. card.route archie,
+#                                       routed_to null, open longer than the
+#                                       row unblock.archie_answer_max_min
+#                                       (fallback 60, 5..1440) and no Archie
+#                                       claim inside the row
+#                                       unblock.archie_claim_lease_min
+#                                       (fallback 15, 1..240) = POST /route
+#                                       {to operator, by timeout, claimed_before},
+#                                       then on 200 a page; 409 = Archie won,
+#                                       no page; 404 (a worker with no /route
+#                                       yet) = a page with no route, sent again
+#                                       each sweep with the same id (a REMIND)
+#                                       until the route exists. A row with no
+#                                       card.route (sent
+#                                       before BH-8817) is skipped. Prints the
+#                                       count paged; a failed list read is one
+#                                       log line, 0 pages, rc 1.
 #   _unblock_card_severity <card-or-row.json>
 #                                       warn when the recommended option
 #                                       (.options[.recommendation - 1] when
@@ -80,10 +147,14 @@
 #                                       decision_key, project, subject and
 #                                       near_miss [{rule, predicate, read}].
 #                                       Then decide (with <model>), compose and
-#                                       send (mode, default shadow). Prints
-#                                       {outcome, detail, model_calls, cost_usd,
-#                                       card}: WOULD_SEND_CARD = would,
-#                                       SENT_CARD = escalated, SEND_FAILED or a
+#                                       send (mode, default shadow). The card
+#                                       carries route (unblock_card_route) and
+#                                       class (the decision's .class or null).
+#                                       Prints {outcome, detail, model_calls,
+#                                       cost_usd, card}: WOULD_SEND_CARD = would,
+#                                       SENT_CARD and ROUTED_ARCHIE = escalated
+#                                       (the row waits for an answer),
+#                                       SEND_FAILED or a
 #                                       compose failure = failed (the spend is
 #                                       still counted). cost_usd is 0:
 #                                       logs/cost.csv carries the bill.
@@ -100,7 +171,9 @@
 #                                       `wait`. rc 1 on a row it cannot read.
 #
 # The root is ${HARNESS:-${H:-}} (D43): agent-call.sh, lane-alert.sh and
-# catalog/prompts/unblock-decide.md are read under it.
+# catalog/prompts/unblock-decide.md are read under it. Log lines of the open
+# rows read and the sweep go to the file UNBLOCK_CARD_LOG when it is set, else
+# to ubt_log when the caller defines it, else to stderr.
 
 _unblock_card_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 UNBLOCK_CARD_DEFAULT="it stays as it is now; nothing runs on silence"
@@ -296,10 +369,24 @@ _unblock_card_alert() {
   fi
 }
 
+unblock_card_route() {
+  local v rc
+  declare -F setting_get >/dev/null || { echo operator; return 0; }
+  # Fallback operator when the row unblock.route_to (seed archie,
+  # schema.d/*-bh-8817-archie-cards.sql) is absent or unreadable: a card is
+  # never hidden from the operator because settings could not be read.
+  v=$(setting_get unblock.route_to 2>/dev/null); rc=$?
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  if [ "$rc" = 0 ] && [ "$v" = archie ]; then echo archie; else echo operator; fi
+}
+
 unblock_card_send() {
-  local card="${1:-}" mode="${2:-shadow}" id key12
+  local card="${1:-}" mode="${2:-shadow}" id key12 route
   id=$(jq -r '.id // ""' "$card" 2>/dev/null); [ -n "$id" ] || return 1
   if [ "$mode" = act ] && [ "${UNBLOCK_ACT:-0}" = 1 ]; then
+    route=$(jq -r '.route // ""' "$card" 2>/dev/null)
+    [ "$route" = archie ] || [ "$route" = operator ] || route=$(unblock_card_route)
+    if [ "$route" = archie ]; then printf 'ROUTED_ARCHIE %s\n' "$id"; return 0; fi
     key12=$(_unblock_card_hex "$(jq -r '.key // ""' "$card")" | cut -c1-12)
     if _unblock_card_alert "$card" "unblock-$key12" "$(jq -r .text "$card")"; then
       printf 'SENT_CARD %s\n' "$id"; return 0
@@ -345,11 +432,13 @@ _ubt_stage_card_run() {
   now=${UB_NOW:-}; [[ $now =~ ^[0-9]+$ ]] || now=$(date -u +%s)
   card=$(unblock_card_compose "$tmp/stall.json" "$tmp/decide.json" "$key" "$now") && [ -n "$card" ] \
     || { _ubt_card_out failed card-compose-failed "$calls"; return 0; }
+  card=$(jq -c --arg r "$(unblock_card_route)" --argjson c "$(jq -c '.class // null' <<<"$d" 2>/dev/null || echo null)" \
+    '. + {route: $r, class: $c}' <<<"$card") || { _ubt_card_out failed card-route-failed "$calls"; return 0; }
   printf '%s' "$card" > "$tmp/card.json"
   send=$(unblock_card_send "$tmp/card.json" "$mode")
   case "$send" in
     WOULD_SEND_CARD*) outcome=would ;;
-    SENT_CARD*) outcome=escalated ;;
+    SENT_CARD*|ROUTED_ARCHIE*) outcome=escalated ;;
     *) outcome=failed ;;
   esac
   _ubt_card_out "$outcome" "$dout; ${send:-no send line}" "$calls" "$card"
@@ -372,4 +461,132 @@ unblock_card_redeclare() {
     printf 'REMIND_FAILED %s\n' "$id"; return 1
   fi
   printf 'WOULD_REMIND %s\n' "$id"
+}
+
+# _unblock_card_log <line> — see the header: UNBLOCK_CARD_LOG, ubt_log, stderr.
+_unblock_card_log() {
+  if [ -n "${UNBLOCK_CARD_LOG:-}" ]; then
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$UNBLOCK_CARD_LOG" 2>/dev/null
+  elif declare -F ubt_log >/dev/null; then ubt_log "$*"
+  else printf '%s\n' "$*" >&2; fi
+}
+
+# _unblock_card_setting_int <key> <fallback> <min> <max> — the row as an
+# integer in min..max; no row, unreadable, not an integer or out of range =
+# the fallback and one log line.
+_unblock_card_setting_int() {
+  local v rc=1
+  if declare -F setting_get >/dev/null; then v=$(setting_get "$1" 2>/dev/null); rc=$?; fi
+  v="${v:-}"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  if [ "$rc" = 0 ] && [[ $v =~ ^[0-9]{1,6}$ ]] && [ "$((10#$v))" -ge "$3" ] && [ "$((10#$v))" -le "$4" ]; then
+    echo "$((10#$v))"; return 0
+  fi
+  _unblock_card_log "warn: $1 is not readable as $3..$4 (rc $rc, '${v:0:40}'); $2 used"
+  echo "$2"
+}
+
+_unblock_card_epoch() { jq -rn --arg t "${1:-}" '$t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null; }
+
+unblock_card_open_rows() {
+  local p="${1:-}" now="${2:-}" max ttl before="" body n page=0 oldest out
+  [[ $p =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] && [[ $now =~ ^[0-9]+$ ]] || return 1
+  declare -F _jobs_req >/dev/null || { _unblock_card_log "open rows $p: no jobs client"; return 1; }
+  # Fallback 5 pages of 100 for the lane knob UNBLOCK_CARD_SWEEP_PAGES
+  # (catalog/lanes.d/unblock.knobs.d/UNBLOCK_CARD_SWEEP_PAGES.json).
+  max="${UNBLOCK_CARD_SWEEP_PAGES:-5}"
+  if ! [[ $max =~ ^[0-9]{1,2}$ ]] || [ "$max" -lt 1 ] || [ "$max" -gt 20 ]; then
+    _unblock_card_log "warn: UNBLOCK_CARD_SWEEP_PAGES='$max' is not 1..20; 5 used"; max=5
+  fi
+  ttl="${UNBLOCK_CARD_TTL_H:-72}"; [[ $ttl =~ ^[1-9][0-9]{0,4}$ ]] || ttl=72
+  out=""
+  while :; do
+    page=$((page + 1))
+    if ! body=$(_jobs_req GET "/api/unblock/decisions?outcome=escalated&project=$p&limit=100${before:+&before_id=$before}") \
+       || ! jq -e '.decisions | type == "array"' >/dev/null 2>&1 <<<"$body"; then
+      _unblock_card_log "open rows $p: list unreadable (http ${JOBS_HTTP:-none}, page $page)"; return 1
+    fi
+    out+=$(jq -c '.decisions[]' <<<"$body")$'\n'
+    n=$(jq '.decisions | length' <<<"$body")
+    [ "$n" -ge 100 ] || break
+    before=$(jq -r '.next_before_id // .decisions[-1].id // empty' <<<"$body")
+    [[ $before =~ ^[0-9]+$ ]] || break
+    oldest=$(_unblock_card_epoch "$(jq -r '.decisions[-1].created_at // ""' <<<"$body")")
+    [[ $oldest =~ ^[0-9]+$ ]] && [ $((now - oldest)) -ge $((ttl * 3600)) ] && break
+    if [ "$page" -ge "$max" ]; then
+      _unblock_card_log "open rows $p: sweep truncated at $max page(s) of 100 (UNBLOCK_CARD_SWEEP_PAGES); older rows not read"
+      break
+    fi
+  done
+  printf '%s' "$out" | grep .
+  return 0
+}
+
+unblock_card_page() {
+  local row="${1:-}" reason="${2:-}" rid key12 tmp text rc
+  rid=$(jq -r '.id // ""' <<<"$row" 2>/dev/null)
+  [[ $rid =~ ^[0-9]{1,15}$ ]] && jq -e '.card | type == "object"' >/dev/null 2>&1 <<<"$row" || return 1
+  [ -n "$reason" ] || reason=$(jq -r '.route_reason // "no reason recorded"' <<<"$row")
+  key12=$(_unblock_card_hex "$(jq -r '.card.key // .decision_key // ""' <<<"$row")" | cut -c1-12)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/unblock-page.XXXXXX") || return 1
+  jq -c '.card' <<<"$row" > "$tmp"
+  text="$(jq -r '.text // ""' "$tmp")"$'\n'"NEEDS OPERATOR: $reason"
+  _unblock_card_alert "$tmp" "unblock-$key12" "$text"; rc=$?
+  rm -f "$tmp"
+  if [ "$rc" != 0 ]; then _unblock_card_log "page row $rid: lane-alert rc $rc; not stamped, the next sweep sends again"; return 1; fi
+  _jobs_req POST "/api/unblock/decisions/$rid/paged" '{}' >/dev/null \
+    || _unblock_card_log "page row $rid: sent, paged stamp failed (http ${JOBS_HTTP:-none}); the next sweep sends a REMIND"
+  return 0
+}
+
+unblock_card_page_direct() {
+  local card="${1:-}" why="${2:-}" key12 tmp rc
+  jq -e 'type == "object" and (.id | type) == "string"' >/dev/null 2>&1 <<<"$card" || return 1
+  key12=$(_unblock_card_hex "$(jq -r '.key // ""' <<<"$card")" | cut -c1-12)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/unblock-page.XXXXXX") || return 1
+  printf '%s' "$card" > "$tmp"
+  _unblock_card_alert "$tmp" "unblock-$key12" "$(jq -r '.text // ""' "$tmp")"$'\n'"NEEDS OPERATOR: $why"; rc=$?
+  rm -f "$tmp"
+  return "$rc"
+}
+
+unblock_card_sweep() {
+  local p="${1:-}" now="${2:-}" rows maxmin lease row rid routed paged route claimed created age cl paged_n=0 reason body rc
+  [[ $now =~ ^[0-9]+$ ]] || now=$(date -u +%s)
+  if ! rows=$(unblock_card_open_rows "$p" "$now"); then
+    _unblock_card_log "sweep $p: open rows unreadable; 0 pages"; echo 0; return 1
+  fi
+  maxmin=""; lease=""
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    # \037 (unit separator) is not IFS white space, so an empty field stays a field.
+    IFS=$'\037' read -r rid routed paged route claimed created < <(jq -r '[(.id // "" | tostring), (.routed_to // ""),
+      (.paged_at // ""), (.card.route // ""), (.archie_claimed_at // ""), (.created_at // "")] | join("\u001f")' <<<"$row" 2>/dev/null)
+    [[ ${rid:-} =~ ^[0-9]{1,15}$ ]] || continue
+    if [ "$routed" = operator ]; then
+      [ -z "$paged" ] && unblock_card_page "$row" && paged_n=$((paged_n + 1))
+      continue
+    fi
+    [ "$route" = archie ] && [ -z "$routed" ] || continue
+    [ -n "$maxmin" ] || maxmin=$(_unblock_card_setting_int unblock.archie_answer_max_min 60 5 1440)
+    [ -n "$lease" ] || lease=$(_unblock_card_setting_int unblock.archie_claim_lease_min 15 1 240)
+    created=$(_unblock_card_epoch "$created"); [[ $created =~ ^[0-9]+$ ]] || continue
+    age=$((now - created))
+    [ "$age" -gt $((maxmin * 60)) ] || continue
+    if [ -n "$claimed" ]; then
+      cl=$(_unblock_card_epoch "$claimed")
+      [[ $cl =~ ^[0-9]+$ ]] && [ "$cl" -ge $((now - lease * 60)) ] && continue
+    fi
+    reason="no Archie answer in $maxmin min"
+    body=$(jq -nc --arg r "$reason" --arg cb "$(date -u -d "@$((now - lease * 60))" +%Y-%m-%dT%H:%M:%SZ)" \
+      '{to: "operator", by: "timeout", reason: $r, claimed_before: $cb}')
+    _jobs_req POST "/api/unblock/decisions/$rid/route" "$body" >/dev/null; rc=$?
+    case "$rc" in
+      0) unblock_card_page "$row" "timeout: $reason" && paged_n=$((paged_n + 1)) ;;
+      9) _unblock_card_log "sweep $p: row $rid route 409 (Archie answered or claimed first); no page" ;;
+      2) _unblock_card_log "sweep $p: row $rid route 404 (the worker has no /route yet); paged with no route"
+         unblock_card_page "$row" "timeout: $reason" && paged_n=$((paged_n + 1)) ;;
+      *) _unblock_card_log "sweep $p: row $rid route failed (http ${JOBS_HTTP:-none}); the next sweep tries again" ;;
+    esac
+  done <<<"$rows"
+  echo "$paged_n"
 }
