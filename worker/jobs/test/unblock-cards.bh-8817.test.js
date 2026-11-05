@@ -371,7 +371,7 @@ test('BH-8817 unblock cards: archie route, claim, page, daily', async (t) => {
     assert.deepEqual(r.body, { project: 'cromford', day, received: 5, archie: 2, operator: 3, false: 1, acted: 0 });
     const none = await call(DB, `/api/unblock/cards/daily?project=project-4&day=${day}`);
     assert.deepEqual(none.body, { project: 'project-4', day, received: 0, archie: 0, operator: 0, false: 0, acted: 0 });
-    const project-3 = await call(DB, `/api/unblock/cards/daily?project=project-3&day=${day}`);
-    assert.deepEqual([project-3.body.received, project-3.body.operator], [1, 1], 'the other project counts only its own card');
+    const project_3 = await call(DB, `/api/unblock/cards/daily?project=project-3&day=${day}`);
+    assert.deepEqual([project_3.body.received, project_3.body.operator], [1, 1], 'the other project counts only its own card');
   });
 });

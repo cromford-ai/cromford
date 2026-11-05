@@ -118,7 +118,7 @@ test('S2 a click on Paper persists the pick, paints Paper, and presses its butto
 test('S3 the bar keeps the identity pill, the snapshot age, and every NAV link inside .topbar__nav', () => {
   installDom('mill');
   const out = render(h(TopBar, BASE));
-  assert.match(out, /<span class="pill"[^>]*>operator@cto\.com<\/span>/);
+  assert.match(out, /<span class="pill"[^>]*>operator@example\.com<\/span>/);
   assert.match(out, /WATCHDOG OK/);
   const nav = between(out, /<nav class="topbar__nav"/);
   for (const n of NAV) assert.match(nav, new RegExp(`<a href="${n.to.replace(/\//g, '\\/')}"[^>]*class="navlink[^"]*"`), n.label);

@@ -86,7 +86,7 @@ test('(P1) parseRepoSlug: every ACCEPT row gives its slug, every REFUSE row give
   for (const raw of REFUSE.filter((r) => r !== 'example-org/project-11\n')) {
     assert.equal(parseRepoSlug(raw), null, `refuse ${JSON.stringify(raw)}`);
   }
-  const padded = `example-org/project-11${' '.repeat(2029)}`;
+  const padded = `example-org/project-11${' '.repeat(2049 - 'example-org/project-11'.length)}`;
   assert.equal(padded.length, 2049);
   assert.equal(parseRepoSlug(padded), null, 'over 2048 characters before the trim');
   assert.equal(parseRepoSlug(padded.slice(0, 2048)).slug, 'example-org/project-11', '2048 characters is in');

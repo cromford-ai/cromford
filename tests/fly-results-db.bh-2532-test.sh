@@ -168,7 +168,7 @@ mkdir -p "$HI/bin/lib/jobs" "$HI/env" "$HI/flags" "$HI/logs" "$HI/state/fly" "$H
 cp "$DIR/bin/lib/builder-direct.sh" "$HI/bin/lib/"
 cp "$DIR/bin/jobs-client.sh" "$HI/bin/"
 cp "$DIR"/bin/lib/jobs/*.sh "$HI/bin/lib/jobs/"
-printf 'FLY_API_TOKEN_project-3_OS=tok\n' > "$HI/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_3_OS=tok\n' > "$HI/env/fly.env"
 printf '#!/bin/bash\nexit 0\n' > "$HI/bin/beat.sh"; chmod +x "$HI/bin/beat.sh"
 cat > "$HI/bin/fleet-conf.sh" <<'SH'
 #!/bin/bash

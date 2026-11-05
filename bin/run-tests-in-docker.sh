@@ -195,7 +195,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   # node:sqlite, so the worker/jobs node tests
   # "did not run" here while CI passed them). The version comes from
   # bin/lib/test-image-node.sh (NODE_VERSION, else the bake.node.version row,
-  # else the newest release of the major harness-ci.yml pins) and is refused
+  # else the exact shipped .node-version) and is refused
   # unless its major is CI's. It is installed by fly/testhost/node-install.sh,
   # the test hosts' own installer (BH-1617): sha256-checked, and it refuses a
   # node without node:sqlite or --experimental-strip-types.

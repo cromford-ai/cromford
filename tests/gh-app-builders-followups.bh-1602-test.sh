@@ -186,7 +186,7 @@ chmod +x "$T/fakebin/fly" "$H/bin"/*.sh
 tick() { # tick [VAR=VAL ...] — one bin/fly-pool.sh pass over the scratch tree
   : > "$H/logs/fly-pool.log"; : > "$T/curl.log"; rm -f "$T/rec"/*
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok PREC="$T/rec" GH_APP_API_BASE="http://api.test" \
+           FLY_API_TOKEN_PROJECT_5=tok PREC="$T/rec" GH_APP_API_BASE="http://api.test" \
            CURL_LOG="$T/curl.log" TOKSEQ="$T/tokseq" BLD_APP="$BLD_APP" BLD_INST="$BLD_INST" \
            HUB_INST="$HUB_INST" FAIL_BLD="$T/fail-bld" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )

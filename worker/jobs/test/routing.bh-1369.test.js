@@ -130,14 +130,14 @@ test('a torn percent-escape in the prefix GET is a 400, never a 500', { skip: !D
   assert.equal(r.status, 400);
 });
 
-test('prefix GET is exact: project-3 never answers project-3; miss is 404; bearer required', { skip: !DatabaseSync }, async () => {
+test('prefix GET is exact: project-3 never answers project-3-extra; miss is 404; bearer required', { skip: !DatabaseSync }, async () => {
   const { env } = fresh();
   await call(env, 'PUT', '/api/routing', { project: 'project-3', builder: 'fly1' });
   // Positive half first, so the 404s below cannot pass on a worker with no route.
   const hit = await call(env, 'GET', '/api/routing/project-3');
   assert.equal(hit.status, 200);
   assert.equal(hit.body.routing.project, 'project-3');
-  assert.equal((await call(env, 'GET', '/api/routing/project-3')).status, 404);
+  assert.equal((await call(env, 'GET', '/api/routing/project-3-extra')).status, 404);
   assert.equal((await call(env, 'GET', '/api/routing/nope')).status, 404);
   assert.equal((await call(env, 'GET', '/api/routing', undefined, { auth: false })).status, 401);
   assert.equal((await call(env, 'PUT', '/api/routing', { project: 'y', builder: 'local' }, { auth: false })).status, 401);

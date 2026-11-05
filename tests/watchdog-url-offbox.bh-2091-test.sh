@@ -38,7 +38,7 @@ printf '%s\n' "\$*" >> "$CALLS"
 exit 0
 EOF
 chmod +x "$T/bin/curl"
-printf 'testsecret' > "$T/secret"
+printf 'fixture-watchdog-secret' > "$T/secret"
 printf '{"timestamp":"%s.000Z","message":{"model":"m","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
   "$(date -u '+%Y-%m-%dT%H:%M:%S')" > "$T/ledger/proj/s.jsonl"
 printf '{"per_token": {"m": {"prompt": 0.01, "completion": 0.05, "cache_read": 0.001, "cache_write": 0.0125}}}\n' > "$T/prices.json"
@@ -82,7 +82,7 @@ for pair in "M2 https://github.com/example-org/cromford.git" "M2b git@github.com
   CK=$(clone "ck-$id" "$url"); HM="$T/home-$id"; mkdir -p "$HM"; rm -f "$CALLS"
   mac "$HM" "$CK" ""; RC=$?
   [ "$RC" -eq 0 ] && ok || bad "$id: fleet origin must exit 0 (got $RC; log: $(cat "$HM/.mk-macburn.log" 2>/dev/null))"
-  grep -qF "https://$FLEET_HOST/api/mac-burn?s=" "$CALLS" 2>/dev/null && ok \
+  grep -qF "https://$FLEET_HOST/api/mac-burn" "$CALLS" 2>/dev/null && ok \
     || bad "$id: POST did not go to the catalog URL (curl: $(cat "$CALLS" 2>/dev/null | cut -c1-200))"
   [ "$(notset_count "$HM")" = 0 ] && ok || bad "$id: resolved URL but still logged not-set"
 done
@@ -91,7 +91,7 @@ done
 CK=$(clone ck-m3 https://github.com/example-org/cromford.git); HM="$T/home-m3"; mkdir -p "$HM"; rm -f "$CALLS"
 mac "$HM" "$CK" "http://watchdog.invalid/"; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "M3: explicit URL run must exit 0 (got $RC)"
-grep -qF "http://watchdog.invalid/api/mac-burn?s=" "$CALLS" 2>/dev/null && ok \
+grep -qF "http://watchdog.invalid/api/mac-burn" "$CALLS" 2>/dev/null && ok \
   || bad "M3: explicit WATCHDOG_URL did not win (curl: $(cut -c1-200 "$CALLS" 2>/dev/null))"
 grep -qF "$FLEET_HOST" "$CALLS" 2>/dev/null && bad "M3: catalog URL used despite explicit WATCHDOG_URL" || ok
 

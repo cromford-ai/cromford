@@ -7,6 +7,7 @@
 // made, the same body is serialised with the same content-type.
 
 import { isD1Overloaded } from "./d1-retry.js";
+import { qaReadOk } from "./qa-read.js";
 
 export function nowIso() { return new Date().toISOString().replace(/\.\d{3}Z$/, "Z"); }
 
@@ -80,7 +81,10 @@ export function overloadGuardedRoute(table, handler) {
 // make an empty bearer match an unset secret.
 export function bearerOk(req, env) {
   const auth = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  return Boolean(env.HARNESS_SECRET) && auth === env.HARNESS_SECRET;
+  if (Boolean(env.HARNESS_SECRET) && auth === env.HARNESS_SECRET) return true;
+  // QA never receives the fleet bearer. This capability is read-only and
+  // deny-by-default; adding a GET route cannot silently expose it to previews.
+  return qaReadOk(req, env);
 }
 
 // The JSON body, for the methods that carry one. A malformed body is `{}` and

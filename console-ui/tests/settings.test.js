@@ -348,10 +348,10 @@ test('the held strip is never duplicated into itself', () => {
 // ------------------------------------------------ I2: the whole key is bound
 
 test('a key over 64 characters is refused CLIENT-side, before the click costs a 400', () => {
-  // A real one: review-autopilot on project-8 is 65 characters.
+  // Keep the project long enough that the whole key is 65 characters.
   const knob = { env: 'AUTOPILOT_DAILY_CAP_USD', type: 'int', min: 0, max: 999 };
   const res = validateKnob(knob, '50', {
-    laneId: 'review-autopilot', project: 'project-8'
+    laneId: 'review-autopilot', project: 'fixture-project-xyz'
   });
   assert.equal(res.ok, false);
   assert.match(res.message, /65/, 'it names the length');

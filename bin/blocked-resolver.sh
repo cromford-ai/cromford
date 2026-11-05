@@ -2603,7 +2603,7 @@ br_starved_alert() {
 
 # br_per_tick_for <project> — how many rungs this project may spend in this
 # tick. BR_PER_TICK_<PROJECT> (uppercased, every non-alphanumeric an
-# underscore: project-1 -> BR_PER_TICK_project-1_OS) when it is set to a
+# underscore: project-1 -> BR_PER_TICK_PROJECT_1) when it is set to a
 # number, and the fleet total BR_PER_TICK otherwise.
 #
 # The fleet total is still the tick's hard ceiling. This only says how much of

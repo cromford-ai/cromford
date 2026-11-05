@@ -4,10 +4,10 @@
 # This exists to get the shared secret OUT of crontab. Every box's crontab used
 # to carry the literal `?s=<hex>` in the ping URL, so the secret was in git, in
 # `crontab -l`, in every cron mail and in any log that echoed the command line.
-# The secret now lives in env/.watchdog-secret (mode 600), with $HARNESS_SECRET
-# from env/global.env as the fallback so this keeps pinging on boxes where that
-# file has not been provisioned yet — a rotation must never take the dead-man
-# signal down, since a silent ping is exactly what the watchdog pages about.
+# The dedicated credential lives in env/.watchdog-secret (mode 600), then
+# WATCHDOG_SECRET from env/global.env. The jobs secret never authenticates here.
+# It is sent in a header through a descriptor, so neither the URL nor the curl
+# process arguments expose it.
 #
 # Fail-quiet by contract: a ping that cannot be sent must not produce cron mail
 # or a nonzero status. The watchdog noticing the SILENCE is the alarm.
@@ -39,7 +39,7 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    watchdog-ping
 . "${HARNESS:-/root/harness}/bin/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 BASE=$(watchdog_url watchdog-ping "$HARNESS") || exit 0
 
-# The dedicated file still WINS over $HARNESS_SECRET: the whole point is to give
+# The dedicated file WINS over $WATCHDOG_SECRET: the whole point is to give
 # the ping its own rotatable credential.
 # Readability is tested BEFORE the redirect: `2>/dev/null` on tr does not
 # suppress the SHELL's "no such file" for a failed `<` redirection, so an
@@ -47,8 +47,8 @@ BASE=$(watchdog_url watchdog-ping "$HARNESS") || exit 0
 # noise this script promises never to make.
 S=""
 [ -r "$HENV/.watchdog-secret" ] && S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$S" ] || S="${HARNESS_SECRET:-}"
+[ -n "$S" ] || S="${WATCHDOG_SECRET:-}"
 [ -n "$S" ] || exit 0
 
-curl -fsS -m 10 "$BASE/api/ping/$BOX?s=$S" >/dev/null 2>&1 || true
+watchdog_curl -fsS -m 10 "$BASE/api/ping/$BOX" >/dev/null 2>&1 || true
 exit 0

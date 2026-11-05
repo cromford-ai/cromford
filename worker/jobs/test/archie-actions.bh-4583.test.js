@@ -225,9 +225,9 @@ test('BH-4583 archie action ledger', async (t) => {
     assert.deepEqual(capped.body.counts, COUNTS, 'the limit never shortens a count');
     assert.equal((await get(DB, `day=${D}&limit=7`)).body.truncated, false);
 
-    const project-3 = await get(DB, `day=${D}&project=project-3&playbook=stacked-parent-merged`);
-    assert.deepEqual(project-3.body.actions.map((r) => r.dedupe_key), ['r4', 'r3']);
-    assert.deepEqual(project-3.body.counts, { 'stacked-parent-merged': { on: { requested: 1 }, observe: { would: 1 } } });
+    const project_3 = await get(DB, `day=${D}&project=project-3&playbook=stacked-parent-merged`);
+    assert.deepEqual(project_3.body.actions.map((r) => r.dedupe_key), ['r4', 'r3']);
+    assert.deepEqual(project_3.body.counts, { 'stacked-parent-merged': { on: { requested: 1 }, observe: { would: 1 } } });
 
     const s = await get(DB, `day=${D}&summary=1`);
     assert.equal(s.status, 200);

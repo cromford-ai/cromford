@@ -27,7 +27,7 @@ mkdir -p "$H/bin" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/fly" "$H/state/fly-pool/project-5" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/builds" "$T/fakebin" "$T/ledger"
-printf 'FLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -79,7 +79,7 @@ export -f job_ledger_row
 run_pool() {
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"; : > "$T/destroyed"; : > "$T/ledger/reads"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok FLY_BIN_DIR="$T/fakebin" LEDGER_FIX="$T/ledger" \
+           FLY_API_TOKEN_PROJECT_5=tok FLY_BIN_DIR="$T/fakebin" LEDGER_FIX="$T/ledger" \
            POOL_SPAWN=0 "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

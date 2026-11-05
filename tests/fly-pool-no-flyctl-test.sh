@@ -53,7 +53,7 @@ tick() { # tick <dir> [FLY_BIN_DIR] [extra PATH dir]
   local h="$1" fbd="${2:-$1/emptybin}" extra="${3:-}"
   ( export PATH="$h/fakebin${extra:+:$extra}:$SYS" HARNESS="$h" HOME="$h/home" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 FLEET_CONF="$h/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok TMPDIR="$h" FLY_BIN_DIR="$fbd" FD_SINK="$h/fly.txt" \
+           FLY_API_TOKEN_PROJECT_5=tok TMPDIR="$h" FLY_BIN_DIR="$fbd" FD_SINK="$h/fly.txt" \
            FLY_SYSTEM_DIRS="${SYSDIRS-}"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 ); echo $?
 }

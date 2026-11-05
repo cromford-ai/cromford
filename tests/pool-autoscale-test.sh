@@ -70,7 +70,7 @@ queue() { # queue <n> — n queued rows, materialised the way fly-dispatch.sh do
 tick() { # tick [VAR=VAL ...] — one bin/fly-pool.sh pass, prints machines spawned
   : > "$H/logs/fly-pool.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok "$@"
+           FLY_API_TOKEN_PROJECT_5=tok "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
   ls "$H/state/fly-pool/project-5"/*.json 2>/dev/null | wc -l | tr -d ' '
 }

@@ -332,7 +332,7 @@ cd /root/harness-checkout/worker/watchdog
 npx wrangler kv namespace create harness-watchdog-kv   # put the id in wrangler.jsonc
 printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
 printf '%s' "$TELEGRAM_CHAT_ID"   | npx wrangler secret put TELEGRAM_CHAT_ID
-printf '%s' "$WATCHDOG_SECRET"    | npx wrangler secret put HARNESS_SECRET
+printf '%s' "$WATCHDOG_SECRET"    | npx wrangler secret put WATCHDOG_SECRET
 npx wrangler deploy
 ```
 
@@ -353,17 +353,15 @@ minutes; a wedged build lane; stale owed tickets; and a hub silent for 30
 minutes (`worker/watchdog/src/index.js:207-290`). Re-alerts are damped to once
 an hour, and recovery is announced.
 
-**Its auth is a query parameter, not a header** — `?s=<secret>`
-(`src/index.js:51-53`). A deliberate difference from the jobs worker, and it
-will confuse you once.
+**Authentication uses `Authorization: Bearer <WATCHDOG_SECRET>`.** The
+watchdog accepts only its dedicated credential. Query parameters and the jobs
+worker's `HARNESS_SECRET` do not authenticate watchdog requests.
 
-**Why the watchdog gets its own secret.** Its binding is still called
-`HARNESS_SECRET` — that is the variable name in the Worker — but the *value*
-must differ from the fleet's. Each box sends the contents of
-`env/.watchdog-secret` if that file exists, falling back to the shared secret
-(`bin/watchdog-ping.sh:32-35`), so giving it a distinct value means the alarm
-survives a rotation of the main secret. That is the whole point: the alarm is
-what tells you the rotation broke something.
+Each client reads `env/.watchdog-secret` first, then `WATCHDOG_SECRET` from
+`env/global.env`. Keep this value different from the jobs bearer so the alarm
+survives a jobs credential rotation. The worker still needs `HARNESS_SECRET`
+separately if jobs failover is enabled; that binding is used only for its
+outgoing requests to the jobs worker.
 
 Put the same value on the box:
 
@@ -389,7 +387,8 @@ export WATCHDOG_URL='https://<the url wrangler printed>'
 Prove the Telegram path end to end before you rely on it:
 
 ```bash
-curl -X POST "$WATCHDOG_URL/api/test-alert?s=$WATCHDOG_SECRET"
+. /root/harness/bin/lib/watchdog-url.sh
+watchdog_curl -X POST "$WATCHDOG_URL/api/test-alert"
 ```
 
 **The ping is not generated — you must add it.** Every box in the upstream
@@ -688,7 +687,7 @@ matters on a fresh box:
 | `WATCHDOG_URL` | if self-hosted | Same story, different default |
 | `RUNNER_<STAGE>_FALLBACK` | no | Bootstrap appends these for 14 stages if absent |
 | `XAI_API_KEY`, `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY` | no | The fallback ladder. Absent, a Claude failure ends the attempt instead of degrading |
-| `WATCHDOG_SECRET` | if self-hosted | Not read by the harness — but the verification step below needs it, and this is the only file that survives your shell |
+| `WATCHDOG_SECRET` | if self-hosted | Dedicated watchdog bearer; clients prefer `env/.watchdog-secret` when present |
 | `ACCOUNT_ROUTING` | no | `1` to enable multi-account picking |
 | `CLOUDFLARE_API_TOKEN` | if this box deploys Workers | `bin/harness-sync.sh` redeploys a changed Worker only on a box that has Cloudflare credentials, and reads them from `cloudflare.env`, not this file. On the hub after BH-3905's runbook it is a Pages Read token, and deploy credentials sit only in `cloudflare-deploy.env` for a rollback (see "Which Cloudflare token lives where") |
 
@@ -1835,7 +1834,8 @@ PROJECT=myproj                                                # your column-1 na
 bin/fleet-conf.sh --projects                                  # the registry parses
 set -a; . env/global.env; set +a
 bin/jobs-client.sh lanes                                      # the worker answers
-curl -X POST "$WATCHDOG_URL/api/test-alert?s=$(cat env/.watchdog-secret)"
+. /root/harness/bin/lib/watchdog-url.sh
+watchdog_curl -X POST "$WATCHDOG_URL/api/test-alert"
 bin/healthcheck.sh "$PROJECT"                                 # your app is reachable
 bin/run-triage.sh "$PROJECT"                                  # one real tick
 ```

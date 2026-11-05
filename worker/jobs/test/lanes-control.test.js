@@ -228,8 +228,8 @@ test('a registry-seed row is ABSENT too: a mirror of the default is not a value 
 });
 
 test('every settings key the registry can build is legal and fits 64 chars', async () => {
-  // PUT /api/settings validates ^[a-z0-9_.-]{1,64}$. project-8 is the
-  // longest slug in fleet.conf, and only a PROJECT-scoped lane ever gets a
+  // PUT /api/settings validates ^[a-z0-9_.-]{1,64}$. Keep a representative
+  // 19-character fixture slug, and only a PROJECT-scoped lane ever gets a
   // project segment. A knob whose key overflows is a knob an operator can never
   // set, and the 400 would arrive at the click.
   for (const l of REGISTRY.lanes) {
@@ -241,13 +241,13 @@ test('every settings key the registry can build is legal and fits 64 chars', asy
       // it whose project key would have fitted is a per-project knob quietly
       // made global, so the assertion runs in both directions.
       const lanewide = k.project_scoped === false;
-      const seg = l.scope === 'project' && !lanewide ? 'project-8.' : '';
+      const seg = l.scope === 'project' && !lanewide ? 'fixture-project-xyz.' : '';
       const key = `lane.${l.id}.${seg}${k.env.toLowerCase()}`;
       assert.ok(key.length <= 64, `${key} is ${key.length} chars`);
       assert.match(key, /^[a-z0-9_.-]{1,64}$/);
       if (lanewide) {
         assert.equal(l.scope, 'project', `${l.id}/${k.env} is not on a project lane`);
-        const would = `lane.${l.id}.project-8.${k.env.toLowerCase()}`;
+        const would = `lane.${l.id}.fixture-project-xyz.${k.env.toLowerCase()}`;
         assert.ok(would.length > 64,
           `${l.id}/${k.env} was made lane-wide but its project key is only ${would.length} chars`);
       }
@@ -274,7 +274,7 @@ test('the payload carries every field the console renders, and the fleet tab str
   assert.equal(r.status, 200);
   assert.ok(r.body.as_of);
   // projects is the fleet's own declaration, not a list derived from spend.
-  assert.deepEqual(r.body.projects, ['project-4', 'project-3']);
+  assert.deepEqual(r.body.projects, ['project-3', 'project-4']);
   assert.equal(r.body.all_off, false);
   for (const f of ['id', 'name', 'scope', 'project', 'cadence', 'script', 'off', 'off_source',
     'paused_since', 'last_tick_at', 'last_outcome', 'runs_today', 'cost_today', 'cost_7d',
@@ -583,10 +583,10 @@ test('a sighting for ANOTHER project does not report this project\'s lane as off
     { name: 'lane-off-review-prs-project-2', lane: 'review-prs', project: 'project-2',
       box: 'orgo-2', active: 1, seen_at: '2026-09-20T11:00:00Z' }
   ] };
-  const project-3 = await call('/api/lanes/status?project=project-3', { state });
-  assert.equal(lane(project-3, 'review-prs').off, false, 'project-3 reported a project-2 file as its own stop');
-  assert.equal(lane(project-3, 'review-prs').off_source, null);
-  assert.deepEqual(lane(project-3, 'review-prs').flag_boxes, []);
+  const project_3 = await call('/api/lanes/status?project=project-3', { state });
+  assert.equal(lane(project_3, 'review-prs').off, false, 'project-3 reported a project-2 file as its own stop');
+  assert.equal(lane(project_3, 'review-prs').off_source, null);
+  assert.deepEqual(lane(project_3, 'review-prs').flag_boxes, []);
   // the project it REALLY stopped still reports it
   const ta = await call('/api/lanes/status?project=project-2', { state });
   assert.equal(lane(ta, 'review-prs').off, true);
@@ -627,7 +627,7 @@ test('PUT /api/settings REFUSES a knob the registry marks settable:false', async
   for (const key of [
     'lane.doorbell-coverage-check.jobs_url',
     'lane.cli-version-check.cli_check_ssh',
-    'lane.apply-migrations.project-4.project-4_api_base',
+    'lane.apply-migrations.project-4.project_4_api_base',
     'lane.disk-clean.disk_clean_repos.unlimited',
   ]) {
     const r = await call('/api/settings', { method: 'PUT', body: { key, value: 'x' } });

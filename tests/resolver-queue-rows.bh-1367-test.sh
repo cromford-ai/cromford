@@ -40,7 +40,7 @@ cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
 cp "$DIR"/bin/lib/env-path.sh "$H/bin/lib/" 2>/dev/null
 cp "$DIR"/bin/lib/queue-row-job.sh "$H/bin/lib/" 2>/dev/null
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
-printf 'FLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf '{"app":"pool-project-5"}\n' > "$H/state/fly/project-5.json"
 printf 'registry.fly.io/pool-project-5:deploy-01\n' > "$H/state/fly/project-5.image"
@@ -225,7 +225,7 @@ pool() {
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 JOBS_TIMEOUT=5 \
            REQ_SINK="$T/req.txt" FLY_SINK="$T/fly.txt" ROWS="$ROWS" \
            FLEET_CONF="$H/fleet.conf" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok FLY_MSTATE=stopped \
+           FLY_API_TOKEN_PROJECT_5=tok FLY_MSTATE=stopped \
            CURL_MODE="${CURL_MODE:-up}" FLAG_BQ="${FLAG_BQ:-0}"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

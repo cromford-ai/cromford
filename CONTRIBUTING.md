@@ -68,12 +68,18 @@ makes it safe, and covers the two checks CI runs over the suite itself.
 ## CI on this repository
 
 `.github/workflows/ci.yml` runs on every push and pull request, on a hosted
-runner with no secrets. It checks that every script parses (`bash -n`), runs
-shellcheck at error severity through `bin/ci-shellcheck.sh`, runs
-`tests/no-client-identifiers-test.sh`, and scans the tree with gitleaks
-8.30.1. Every one of those steps runs the same way on your machine, from the
-repo root. It is not the whole suite: run that with the commands under
-*Before you push* above.
+runner with no secrets. It checks shell and JavaScript syntax, builds the
+dashboard, runs the Node suites for the dashboard, jobs, OTP, watchdog, MCP and
+agent core, and runs the authorization and lock-worker security regressions.
+It also runs focused shell regressions, dependency audits, shellcheck at error
+severity, the identifier guard and gitleaks 8.30.1. The full shell corpus runs
+weekly and on manual dispatch; run it locally before pushing as shown above.
+
+Node is pinned in `.node-version`, shared by CI and the Linux test image.
+The jobs and OTP `npm test` commands prepare their ignored lane and LLM-site
+catalogs automatically. For a direct `node --test` invocation importing the
+jobs worker, first run `bash bin/test-worker-bootstrap.sh`. That preparation
+requires Bash and jq, as do the repository's existing catalog generators.
 
 ## Example names
 

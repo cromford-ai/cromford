@@ -14,10 +14,10 @@
   // Telegram forum topic for fleet alerts (Fleet topic in "the operator Harness").
   "vars": { "TELEGRAM_THREAD_ID": "9" }
   // secrets (set via wrangler secret put / API, never in this file):
-  //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, HARNESS_SECRET, ORGO_API_KEY
+  //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WATCHDOG_SECRET, ORGO_API_KEY
   //   STAMP_SECRET — K2: opens ONLY POST /api/stamp/<name> (docs/OUTSIDE-DEADMAN.md)
   //   JOBS_URL: harness-jobs worker base URL for hub failover (BH-401).
-  //     HARNESS_SECRET doubles as its bearer. Unset = failover off.
+  //     HARNESS_SECRET is the separate jobs bearer. Unset = failover off.
   // KV knobs (hub failover): cfg:failover ("on" arms it; absent = off),
   //   cfg:failover_hub_fence_s (the hub's HUB_LEASE_FENCE_S, required to arm),
   //   cfg:failover_ping_min (default 16), cfg:failover_lease_min (default 10).
