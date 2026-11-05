@@ -61,6 +61,12 @@
 #       local worker as today, after one `fallback=<word>` line. Reads
 #       LAND_FIRE; counts into MC_FLY_N_ENQ, MC_FLY_N_SKIP and MC_FLY_N_FB,
 #       and appends enq|skip|fb to MC_FLY_COUNT_FILE when it is set.
+#   mc_fly_rereview_request <project> <slug> <pr> <head40> <url> <labels>
+#       BH-9026: rc 5 with `rereview` in MC_FLY_DEFERRED asks the lead for a
+#       review of the head (bin/lead-verdict.sh request), once per (PR, head),
+#       for a repo in LEAD_REVIEW_AUTO_REPOS. A failed request parks the PR
+#       BLOCKED_HUMAN rereview-request-failed with one alert, and mc_fly_arm
+#       answers rc 0 (skipped:rereview-request-failed). Prints its outcome.
 #   mc_fly_project_gate <project>
 #       BH-6890: the per-project branch, which runs before the per-PR branch,
 #       first in tick_project. With lane_placement.merge-conductor.<project>
@@ -255,7 +261,21 @@ mc_fly_arm() {
         hotfix_pending_is "$p" "$num" 2>/dev/null && hotfix_pending_drop "$p" "$num"
         MC_FLY_N_SKIP=$(( ${MC_FLY_N_SKIP:-0} + 1 )); _mc_fly_count skip
         return 0 ;;
-      5) why=machine-deferred ;;
+      5)
+        why=machine-deferred
+        # BH-9026: a machine that left the re-review of a moved head to the
+        # hub created no lead review request, so a repo whose merge needs the
+        # lead's verdict waited for a person. Ask the lead in this tick.
+        if [[ ,$MC_FLY_DEFERRED, == *,rereview,* ]]; then
+          local rr
+          rr=$(mc_fly_rereview_request "$p" "$slug" "$num" "$head" "$(printf '%s' "$row" | cut -f2)" "$(printf '%s' "$row" | cut -f10)")
+          if [ "$rr" = failed ]; then
+            fanin_account "$slug#$num" skipped:rereview-request-failed
+            mc_log "$slug#$num skipped:rereview-request-failed — BLOCKED_HUMAN for ${head:0:12}; no local worker this tick, the next tick asks the lead again"
+            MC_FLY_N_SKIP=$(( ${MC_FLY_N_SKIP:-0} + 1 )); _mc_fly_count skip
+            return 0
+          fi
+        fi ;;
       6) why=key-too-long ;;
       7) why=machine-failed ;;
       8) why=no-capacity ;;
@@ -265,6 +285,80 @@ mc_fly_arm() {
   MC_FLY_N_FB=$(( ${MC_FLY_N_FB:-0} + 1 )); _mc_fly_count fb
   mc_log "$slug#$num fallback=$why${MC_FLY_DEFERRED:+ ($MC_FLY_DEFERRED)}${MC_FLY_FAILED:+ ($MC_FLY_FAILED at ${MC_FLY_KEY:-?})}$(_mc_fly_stale_note) — this PR runs on the hub this tick"
   return 1
+}
+
+# mc_fly_rereview_request <project> <slug> <pr> <head40> <url> <labels-csv>
+# (BH-9026) — the lead review request for a head a machine deferred with
+# `deferred=rereview`. Prints one word: requested | exists | skip | failed.
+# Only a repo in LEAD_REVIEW_AUTO_REPOS (lead-review-land's knob) is asked;
+# for any other repo the conductor's own re-review is the reviewer. The call
+# is bin/lead-verdict.sh request, with --priority for a hotfix-labelled PR.
+# The marker `rrleadreq <slug>#<pr> <head>` is written only AFTER the call
+# answered created or 409 (the worker's UNIQUE(repo, pr, head_sha)), so a
+# later tick makes no call, and a lost marker costs one 409. Any other answer
+# writes no marker: one FAILED line, the PR BLOCKED_HUMAN
+# rereview-request-failed, and one alert per (PR, head) (`rrleadreqfail`).
+mc_fly_rereview_request() {
+  local p="$1" slug="$2" n="$3" head="$4" url="${5:--}" labels="${6:--}"
+  local auto repo lv pri="" out err rc id why note="" c409=0
+  [ "${MC_ON_MACHINE:-}" = 1 ] && { echo skip; return 0; }
+  if ! [[ $head =~ ^[0-9a-f]{40}$ ]]; then
+    mc_log "$slug#$n rereview request skipped: head '${head:0:40}' is not 40 hex"
+    echo skip; return 0
+  fi
+  auto=$(command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply lead-review-land >/dev/null 2>&1 \
+           && printf '%s' "${LEAD_REVIEW_AUTO_REPOS:-}")
+  if [ -z "${auto//[[:space:],]/}" ]; then
+    mc_log "$slug#$n rereview request not decided for ${head:0:12}: LEAD_REVIEW_AUTO_REPOS unreadable"
+    echo skip; return 0
+  fi
+  local inlist=0
+  for repo in ${auto//,/ }; do
+    [ "${repo,,}" = "${slug,,}" ] && { inlist=1; break; }
+  done
+  [ "$inlist" = 1 ] || { echo skip; return 0; }
+  mc_attempt_has "rrleadreq $slug#$n $head" && { echo skip; return 0; }
+  if command -v hotfix_labels_csv_has >/dev/null 2>&1 && hotfix_labels_csv_has "$labels"; then
+    # Fallback of the settings row lane.merge-conductor.mc_rereview_request_hotfix_priority.
+    pri="${MC_REREVIEW_REQUEST_HOTFIX_PRIORITY:-500}"
+    if ! [[ $pri =~ ^[0-9]{1,4}$ ]] || [ "$((10#$pri))" -lt 1 ] || [ "$((10#$pri))" -gt 1000 ]; then
+      mc_log "$slug#$n MC_REREVIEW_REQUEST_HOTFIX_PRIORITY='$pri' is not an integer 1..1000; using 500"
+      pri=500
+    fi
+    pri=$((10#$pri))
+  fi
+  lv="$MC_H/bin/lead-verdict.sh"
+  err=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/mc-rr.$$.$n")
+  if [ -x "$lv" ]; then
+    out=$("$lv" request "$slug" "$n" "$head" ${pri:+--priority "$pri"} \
+      --notes "pool deferred rereview of ${head:0:12} (BH-9026)" 2>"$err" </dev/null); rc=$?
+  else
+    out=""; rc=127; echo "$lv is missing" > "$err"
+  fi
+  # lr_post_lead writes the bare line `HTTP <code>` to stderr on a non-2xx.
+  grep -qx 'HTTP 409' "$err" 2>/dev/null && c409=1
+  why=$(tr '\n' ' ' < "$err" 2>/dev/null | sed 's/[[:space:]]*$//'); rm -f "$err"
+  id=$(printf '%s\n' "$out" | sed -n 's/^requested lead review #\([^ ]*\) on .*/\1/p' | head -n 1)
+  if [ -n "$id" ]; then
+    [ "$rc" = 0 ] || note=" (priority not stored)"
+    mc_attempt_put "rrleadreq $slug#$n $head"
+    mc_log "$slug#$n rereview requested $id for ${head:0:12} (pool deferred)$note"
+    echo requested; return 0
+  fi
+  if [ "$rc" != 0 ] && [ "$c409" = 1 ]; then
+    mc_attempt_put "rrleadreq $slug#$n $head"
+    mc_log "$slug#$n rereview request exists for ${head:0:12} (pool deferred)"
+    echo exists; return 0
+  fi
+  [ "$rc" = 0 ] && why="no request id in the answer: ${out:0:120}"
+  why="${why:0:200}"
+  mc_log "$slug#$n rereview request FAILED for ${head:0:12} (pool deferred): ${why:-rc=$rc}"
+  mc_transition "$slug#$n" BLOCKED_HUMAN "rereview-request-failed" "$head" - "$url" - - - >/dev/null
+  if ! mc_attempt_has "rrleadreqfail $slug#$n $head"; then
+    mc_attempt_put "rrleadreqfail $slug#$n $head"
+    mc_alert "$slug#$n" BLOCKED_HUMAN "lead review request for ${head:0:12} failed (${why:-rc=$rc}); the next tick asks again. By hand: bin/lead-verdict.sh request $slug $n $head"
+  fi
+  echo failed; return 0
 }
 
 # _mc_fly_stale_note — the fallback line's note for rc 8: the age of a queued

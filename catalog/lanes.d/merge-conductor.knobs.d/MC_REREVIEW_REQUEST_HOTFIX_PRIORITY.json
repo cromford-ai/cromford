@@ -1,0 +1,11 @@
+{
+  "env": "MC_REREVIEW_REQUEST_HOTFIX_PRIORITY",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 1000,
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/mc/fly-workers.sh",
+  "note": "BH-9026: the --priority the hub gives the lead review request it files for a hotfix-labelled PR whose newest merge-conductor-pr row says deferred=rereview (mc_fly_rereview_request). A PR with no hotfix label gets no --priority. A value outside 1..1000 falls back to 500 with one merge-conductor.log line. Settings row: lane.merge-conductor.mc_rereview_request_hotfix_priority."
+}
