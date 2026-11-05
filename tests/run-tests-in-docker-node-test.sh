@@ -3,8 +3,7 @@
 # CI runs, not Debian's apt nodejs.
 #
 # WHY. bin/run-tests-in-docker.sh built its image with trixie's apt `nodejs`, a
-# node 20.19 with no `node:sqlite`. CI pins node-version '22'
-# (.github/workflows/harness-ci.yml). So on a Mac the worker/jobs node tests
+# node 20.19 with no `node:sqlite`. CI and the resolver share .node-version. So on a Mac the worker/jobs node tests
 # (and the tests/cloud-* suites, since removed by BH-6303) ended "suite did
 # not run" while CI passed them: a local run that could not reproduce CI for
 # a whole family of suites.
@@ -21,10 +20,9 @@
 #   3 the runner resolves NODE_VERSION through bin/lib/test-image-node.sh, passes
 #     it and fly/testhost/node-install.sh (base64) as --build-arg, and builds
 #     with `-` as the context;
-#   4 the resolver: CI's workflow pins exactly one node major; the fallback picks
-#     the newest release OF THAT MAJOR from the index (not the newest overall);
-#     an override or row on another major is refused; a workflow that pins two
-#     majors is refused.
+#   4 the resolver: CI and the fallback read the same exact .node-version;
+#     an override or row on another major is refused, as is a missing or
+#     malformed pin.
 #
 # Run from anywhere: tests/run-tests-in-docker-node-test.sh (exit 0 = all pass)
 set -uo pipefail
@@ -32,7 +30,7 @@ set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 RUNNER="$DIR/bin/run-tests-in-docker.sh"
 LIB="$DIR/bin/lib/test-image-node.sh"
-CI="$DIR/.github/workflows/harness-ci.yml"
+PIN="$DIR/.node-version"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
@@ -76,18 +74,13 @@ else
   # shellcheck source=../bin/lib/test-image-node.sh
   . "$LIB"
   export TEST_IMAGE_NODE_NO_ROW=1
-  M=$(ci_node_major "$CI" 2>"$T/m.err")
-  [[ "$M" =~ ^[0-9]+$ ]] && ok || bad "4 harness-ci.yml does not pin one bare node major: '$M' $(cat "$T/m.err")"
+  PINNED=$(cat "$PIN")
+  M=${PINNED%%.*}
+  [[ "$M" =~ ^[0-9]+$ ]] && ok || bad "4 .node-version does not pin a node major: '$M'"
   M=${M:-0}
 
-  # The index lists a NEWER major first, the way nodejs.org does: the fallback
-  # must skip it and land on CI's major, not on the newest node.
-  cat > "$T/index.json" <<JSON
-[{"version":"v$((M+2)).1.0"},{"version":"v$((M+1)).4.0"},{"version":"v$M.30.1"},{"version":"v$M.30.0"},{"version":"v$((M-2)).19.2"}]
-JSON
-  export TEST_IMAGE_NODE_INDEX="file://$T/index.json"
   v=$(unset NODE_VERSION; test_image_node_version "$DIR" 2>"$T/e1"); rc=$?
-  [ "$rc" = 0 ] && [ "$v" = "$M.30.1" ] && ok || bad "4 fallback picked '$v' (rc=$rc), want the newest v$M.x, $M.30.1: $(cat "$T/e1")"
+  [ "$rc" = 0 ] && [ "$v" = "$PINNED" ] && ok || bad "4 fallback picked '$v' (rc=$rc), want .node-version $PINNED: $(cat "$T/e1")"
   [ "${v%%.*}" = "$M" ] && ok || bad "4 the resolved node major (${v%%.*}) is not CI's ($M)"
 
   v=$(NODE_VERSION="v$M.7.3" test_image_node_version "$DIR" 2>/dev/null); rc=$?
@@ -100,12 +93,13 @@ JSON
   v=$(NODE_VERSION=latest test_image_node_version "$DIR" 2>/dev/null); rc=$?
   [ "$rc" != 0 ] && ok || bad "4 NODE_VERSION=latest accepted ('$v')"
 
-  printf '[]\n' > "$T/empty.json"
-  v=$(unset NODE_VERSION; TEST_IMAGE_NODE_INDEX="file://$T/empty.json" test_image_node_version "$DIR" 2>/dev/null); rc=$?
-  [ "$rc" != 0 ] && ok || bad "4 an index with no v$M.x resolved to '$v'"
+  mkdir -p "$T/missing-pin"
+  v=$(NODE_VERSION="$PINNED" test_image_node_version "$T/missing-pin" 2>/dev/null); rc=$?
+  [ "$rc" != 0 ] && ok || bad "4 missing .node-version was accepted ('$v')"
 
-  printf "      - uses: actions/setup-node@v4\n        with:\n          node-version: '22'\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n" > "$T/two.yml"
-  ci_node_major "$T/two.yml" >/dev/null 2>&1 && bad "4 a workflow pinning two majors was accepted" || ok
+  printf 'latest\n' > "$T/missing-pin/.node-version"
+  v=$(NODE_VERSION="$PINNED" test_image_node_version "$T/missing-pin" 2>/dev/null); rc=$?
+  [ "$rc" != 0 ] && ok || bad "4 a non-exact .node-version was accepted ('$v')"
 fi
 
 echo "run-tests-in-docker-node: $PASS passed, $FAIL failed"

@@ -129,11 +129,11 @@ test('T5 a ticket with only job rows (no detail yet) still renders its jobs and 
 // TK-70 lives on its own product board; github.com/<repo>/issues/70 would be an
 // unrelated issue, shown as if it were the ticket.
 test('T6 a board-API project gets no GitHub issue link; an unknown project gets none either', () => {
-  const project-3Jobs = { as_of: iso(0), jobs: [{ ...JOBS.jobs[1], id: 'b-70', project: 'project-3', ticket_id: 'TK-70', meta: null }] };
-  const project-3 = { project: 'project-3', repo: 'example-org/project-3', board_api_prefix: '/api/feature-board' };
-  const f = D.ticketFacts({ ticket: 'TK-70', rows: jobRows(project-3Jobs), detail: null, pr: null, project: project-3 });
+  const project_3Jobs = { as_of: iso(0), jobs: [{ ...JOBS.jobs[1], id: 'b-70', project: 'project-3', ticket_id: 'TK-70', meta: null }] };
+  const project_3 = { project: 'project-3', repo: 'example-org/project-3', board_api_prefix: '/api/feature-board' };
+  const f = D.ticketFacts({ ticket: 'TK-70', rows: jobRows(project_3Jobs), detail: null, pr: null, project: project_3 });
   assert.equal(f.issueUrl, null);
-  const out = render(h(TicketView, { ticket: 'TK-70', rows: jobRows(project-3Jobs), project: project-3 }));
+  const out = render(h(TicketView, { ticket: 'TK-70', rows: jobRows(project_3Jobs), project: project_3 }));
   assert.doesNotMatch(out, /github\.com\/example-org\/project-3\/issues/);
   assert.doesNotMatch(visible(out), /OPEN ON GITHUB|Issue #70/);
   // No project row: the board type is not known, so no issue link is guessed.

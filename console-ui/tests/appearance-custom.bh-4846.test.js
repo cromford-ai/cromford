@@ -114,7 +114,7 @@ test('V1 a saved custom theme is a card in the picker, saying who saved it', () 
   const out = view();
   assert.match(out, /<section class="theme-card[^"]*" data-theme-id="custom\.night" style="[^"]*--accent:#e07a50/);
   assert.match(out, />Night Shift</);
-  assert.match(out, /saved by operator@cto\.com/);
+  assert.match(out, /saved by operator@example\.com/);
   assert.match(out, /data-theme-pick="custom\.night"/);
   assert.match(out, /data-theme-export="custom\.night"/);
   assert.match(out, /data-theme-delete="custom\.night"/);
@@ -282,7 +282,7 @@ test('M1 create, save, reload, set as fleet default, export, import, delete: the
 
   // The saved theme is in the picker, and as the fleet default it is what the page wears.
   assert.ok(s.by('data-theme-id', 'custom.night'), 'the custom card');
-  assert.match(s.text(), /saved by operator@cto\.com/);
+  assert.match(s.text(), /saved by operator@example\.com/);
   assert.match(s.text(), /Fleet default: Night Shift \(settings row\)/);
   assert.equal(s.doc.documentElement.getAttribute('data-theme'), 'custom.night');
   assert.equal(s.doc.documentElement.props.get('--accent'), '#e07a50');

@@ -53,11 +53,11 @@ test('2 utilizationRows: one row per fleet project, in fleet order, no snapshot 
   const resp = { rows: [tracer('project-5'), tracer('cromford')] };
   const out = utilizationRows(resp, ['cromford', 'project-3', 'project-5', 'cromford'], NOW);
   assert.deepEqual(out.rows.map((r) => r.project), ['cromford', 'project-3', 'project-5']);
-  const project-3 = out.rows[1];
-  assert.equal(project-3.verdict, 'no snapshot');
-  assert.equal(project-3.snapshot, null);
+  const project_3 = out.rows[1];
+  assert.equal(project_3.verdict, 'no snapshot');
+  assert.equal(project_3.snapshot, null);
   for (const k of ['ready', 'blocked', 'held', 'parked', 'running', 'cap', 'free', 'pauses', 'prReview', 'prCi', 'prMq']) {
-    assert.equal(project-3[k], null, `no-snapshot ${k}`);
+    assert.equal(project_3[k], null, `no-snapshot ${k}`);
   }
   assert.equal(out.rows[0].verdict, 'unknown', 'a stored unknown stays unknown, never "no snapshot"');
   assert.equal(out.fleetUnread, false);

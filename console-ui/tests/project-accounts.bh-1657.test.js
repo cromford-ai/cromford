@@ -21,7 +21,7 @@ const settings = [
 
 test('accountRows: one row per project, the union of the fleet and the account rows', () => {
   const rows = accountRows(settings, ['project-4', 'project-3', 'project-5-os']);
-  assert.deepEqual(rows.map((r) => r.project), ['project-4', 'project-3', 'retired-os', 'project-5-os']);
+  assert.deepEqual(rows.map((r) => r.project), ['project-3', 'project-4', 'project-5-os', 'retired-os']);
   const by = Object.fromEntries(rows.map((r) => [r.project, r]));
   assert.equal(by['project-3'].label, 'own:project-3');
   assert.equal(by['project-3'].actor, 'console');

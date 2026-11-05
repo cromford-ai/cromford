@@ -87,7 +87,7 @@ test('the string "true" still counts as ours — JSON round-trips are not all ty
 test('external claims are collected across every project, with their project', () => {
   const rows = externalClaims(snap);
   assert.equal(rows.length, 2, 'the fleet claim is not external');
-  assert.deepEqual(rows.map((r) => r.project).sort(), ['project-4', 'project-1']);
+  assert.deepEqual(rows.map((r) => r.project).sort(), ['project-1', 'project-4']);
   const pb = rows.find((r) => r.ticket === 'TK-249');
   assert.equal(pb.actor, 'collaborator-1');
   assert.equal(pb.label, 'partner (collaborator-1)');
@@ -231,7 +231,7 @@ test('two logins for the SAME person are one pseudo-box, not two', () => {
   assert.equal(actors[0].label, 'partner (collaborator-1)');
   assert.deepEqual(actors[0].projects.sort(), ['project-1', 'project-3']);
   assert.equal(actors[0].lanes.length, 2);
-  assert.deepEqual(actors[0].logins.sort(), ['partner-dev', 'collaborator-1'],
+  assert.deepEqual(actors[0].logins.sort(), ['collaborator-1', 'partner-dev'],
     'the underlying logins stay visible — the person is one, the accounts are two');
   assert.equal(actors[0].latestAt, '2026-08-24T14:00:00Z');
 });

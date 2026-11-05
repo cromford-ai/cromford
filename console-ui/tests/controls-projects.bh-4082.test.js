@@ -20,7 +20,7 @@ const loaded = (data) => ({ data, error: null, loading: false });
 const view = (rows, extra = {}) =>
   render(h(ControlsView, { desc: PROJECTS, state: loaded({ projects: rows }), onReload: noop, onNew: noop, onEdit: noop, ...extra }));
 
-const project-3 = {
+const project_3 = {
   project: 'project-3', repo: 'example-org/project-3', prod_url: 'https://os.project-3.example', board_api_prefix: '/api/feature-board',
   cron_offset: 6, box: 'box-project-3-2', tailnet_ip: '10.0.0.3', note: null
 };
@@ -45,7 +45,7 @@ test('R1 the projects kind: paths, list key, key and edit fields, audit name, ex
     ['repo', 'text'], ['prod_url', 'text'], ['board_api_prefix', 'text'], ['cron_offset', 'int'],
     ['box', 'text'], ['tailnet_ip', 'text'], ['note', 'text']
   ]);
-  assert.equal(PROJECTS.auditName(project-3), 'project-3');
+  assert.equal(PROJECTS.auditName(project_3), 'project-3');
   assert.match(PROJECTS.explainer, /same columns as fleet\.conf/);
   assert.match(PROJECTS.explainer, /does not change fleet\.conf on the boxes yet/);
   assert.equal(controlHref(PROJECTS.kind), '/controls/projects');
@@ -71,8 +71,8 @@ test('R1b controlBody refuses a blank cron_offset and sends a numeric one', () =
 });
 
 test('R2 two rows render both projects, their history links and NEW; zero rows render the empty state', () => {
-  const out = view([project-3, HARNESS]);
-  for (const r of [project-3, HARNESS]) {
+  const out = view([project_3, HARNESS]);
+  for (const r of [project_3, HARNESS]) {
     assert.ok(out.includes(`href="${configHref('project', r.project)}"`), `${r.project} links to its history`);
     assert.ok(out.includes(`>EDIT ${r.project}<`), `${r.project} has an EDIT`);
   }
@@ -90,7 +90,7 @@ test('R2b the real /controls/projects route mounts the projects page, not NO SUC
 });
 
 test('R3 sortable headers per field, the wide scroll container, the in-app modal, no native dialog', () => {
-  const out = view([project-3, HARNESS]);
+  const out = view([project_3, HARNESS]);
   for (const name of ['project', ...PROJECTS.editFields.map((f) => f.name)]) {
     const label = fieldLabel(PROJECTS, name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.match(out, new RegExp(`<th[^>]*aria-sort[^>]*><button[^>]*>\\s*${label}`), `no sortable header for ${name}`);

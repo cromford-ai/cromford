@@ -52,7 +52,7 @@ mkh() {
   cp "$SRC/$2" "$h/bin/$2"; chmod +x "$h/bin/$2"
   cp "$DIR/bin/lib/env-path.sh" "$h/bin/lib/"
   [ "${3:-}" = nolib ] || cp "$DIR/bin/lib/watchdog-url.sh" "$h/bin/lib/"
-  echo "HARNESS_SECRET=x" > "$h/env/global.env"
+  echo "WATCHDOG_SECRET=fixture-watchdog-secret" > "$h/env/global.env"
   printf '%s\n' "$h"
 }
 # run <h> <net-log> <script> [args...] -> RC ; WATCHDOG_URL comes only from global.env
@@ -88,8 +88,8 @@ for pair in "ping:watchdog-ping.sh:watchdog-ping" "poll:watchdog-poll.sh:watchdo
   h=$(mkh "$tag-set" "$script"); net="$T/$tag-set/net.log"
   echo "WATCHDOG_URL=http://watchdog.invalid/" >> "$h/env/global.env"
   run "$h" "$net" "$script" "${args[@]}"
-  if [ "$tag" = ping ]; then want='http://watchdog.invalid/api/ping/box1?s=x'
-  else want='http://watchdog.invalid/api/commands?s=x'; fi
+  if [ "$tag" = ping ]; then want='http://watchdog.invalid/api/ping/box1'
+  else want='http://watchdog.invalid/api/commands'; fi
   [ "$RC" = 0 ] && grep -qF "$want" "$net" && ok || bad "§4 $lane set: want rc 0 + a call to $want, rc=$RC saw: $(seen "$net")"
   grep -qF "$FLEET_HOST" "$net" && bad "§4 $lane set: called the fleet host: $(seen "$net")" || ok
   [ "$(lines "$h" "$lane")" = 0 ] && ok || bad "§4 $lane set: must log no not-set line"
@@ -128,8 +128,8 @@ echo "WATCHDOG_URL=http://watchdog.invalid" >> "$h/env/global.env"
 run "$h" "$net" tickets-snapshot-push.sh
 [ "$RC" = 0 ] && ok || bad "§5b snapshot set: want rc 0, got $RC"
 grep -q 'board.invalid/api/boards' "$net" && ok || bad "§5b snapshot set: the board read should run, saw: $(seen "$net")"
-grep -F -- '-X POST' "$net" | grep -qF 'http://watchdog.invalid/api/tickets-snapshot?s=x' && ok \
-  || bad "§5b snapshot set: want a POST to http://watchdog.invalid/api/tickets-snapshot?s=x, saw: $(seen "$net")"
+grep -F -- '-X POST' "$net" | grep -qF 'http://watchdog.invalid/api/tickets-snapshot' && ok \
+  || bad "§5b snapshot set: want a POST to http://watchdog.invalid/api/tickets-snapshot, saw: $(seen "$net")"
 grep -qF "$FLEET_HOST" "$net" && bad "§5b snapshot set: called the fleet host" || ok
 
 h=$(mksnap snap-nolib nolib); net="$T/snap-nolib/net.log"

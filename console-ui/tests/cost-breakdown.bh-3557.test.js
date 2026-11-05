@@ -76,8 +76,8 @@ test('D4: breakdownRows labels nulls, renders null usd as — and keys two-dim g
 });
 
 test('D5: filtersFor turns a null dim into "" (IS NULL) and keeps the parent filters', () => {
-  const [project-4, none] = breakdownRows(projectData, ['project']);
-  assert.deepEqual(filtersFor(project-4, ['project'], {}), { project: 'project-4' });
+  const [project_4, none] = breakdownRows(projectData, ['project']);
+  assert.deepEqual(filtersFor(project_4, ['project'], {}), { project: 'project-4' });
   assert.deepEqual(filtersFor(none, ['project'], {}), { project: '' });
   const [stage] = breakdownRows({ groups: [{ stage: 'triage', usd: 1 }] }, ['stage']);
   assert.deepEqual(filtersFor(stage, ['stage'], { project: '' }), { project: '', stage: 'triage' });
@@ -94,8 +94,8 @@ test('D6: ticketHref and rowHref prefer the build, then the job, then nothing', 
 
 test('D6b: every view drills to rows; childRequest walks the levels', () => {
   assert.deepEqual(BREAKDOWN_VIEWS.map((v) => v.key), ['project', 'runner', 'billing', 'ticket']);
-  const [project-4] = breakdownRows(projectData, ['project']);
-  const c1 = childRequest('project', 0, project-4, {});
+  const [project_4] = breakdownRows(projectData, ['project']);
+  const c1 = childRequest('project', 0, project_4, {});
   assert.deepEqual(c1.params, { project: 'project-4', group: 'stage' });
   const [stage] = breakdownRows({ groups: [{ stage: 'triage', usd: 1 }] }, ['stage']);
   const c2 = childRequest('project', 1, stage, c1.filters);
@@ -138,8 +138,8 @@ test('D7b: empty, error, loading and truncated states', () => {
 });
 
 test('D7c: an open row drills to stages, then to cost rows that link to their build', () => {
-  const [project-4] = breakdownRows(projectData, ['project']);
-  const c1 = childRequest('project', 0, project-4, {});
+  const [project_4] = breakdownRows(projectData, ['project']);
+  const c1 = childRequest('project', 0, project_4, {});
   const [stage] = breakdownRows({ groups: [{ stage: 'triage', usd: 5 }] }, ['stage']);
   const c2 = childRequest('project', 1, stage, c1.filters);
   const kids = {
@@ -151,7 +151,7 @@ test('D7c: an open row drills to stages, then to cost rows that link to their bu
         billing_mode: 'metered', ticket: null, run_id: null, job_id: 'job-a1', cost_usd: 3 }
     ], truncated: true } }
   };
-  const out = view({ open: [project-4.key, stage.key], kids });
+  const out = view({ open: [project_4.key, stage.key], kids });
   assert.ok(out.includes('aria-expanded="true"'));
   assert.ok(out.includes('>triage<'), 'the stage level rendered');
   assert.ok(out.includes('href="/builds/run-a2"'), 'a leaf row links to its build');
@@ -159,9 +159,9 @@ test('D7c: an open row drills to stages, then to cost rows that link to their bu
   assert.ok(out.includes('capped: newest 2 rows'));
   for (const hdr of ['WHEN', 'RUNNER', 'MODEL', 'BILLING', 'TICKET']) assert.ok(out.includes(hdr), hdr);
   // a child still loading shows a skeleton; a child error shows an ErrorBox
-  const loadingOut = view({ open: [project-4.key], kids: { [c1.key]: { loading: true } } });
+  const loadingOut = view({ open: [project_4.key], kids: { [c1.key]: { loading: true } } });
   assert.match(loadingOut, /class="skel"/, "a loading child shows the Skeleton");
-  const errOut = view({ open: [project-4.key], kids: { [c1.key]: { error: new Error('child_down') } } });
+  const errOut = view({ open: [project_4.key], kids: { [c1.key]: { error: new Error('child_down') } } });
   assert.ok(errOut.includes('child_down'));
 });
 

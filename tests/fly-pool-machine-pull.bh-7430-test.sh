@@ -44,7 +44,7 @@ mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/state/build-notes/project-5" \
          "$H/state/vercel-deploys" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-fly\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 # Seven columns: the box is remote (192.0.2.9), so the real bundler ssh-es.
 printf 'project-5 example-org/project-5 - - 0 boxa 192.0.2.9\n' > "$H/fleet.conf"
@@ -253,7 +253,7 @@ run_pool() { # run_pool [script] -- [VAR=val ...]
            JOBS_RETRIES=0 JOBS_TIMEOUT=5 FLY_SINK="$T/fly.txt" SSH_SINK="$T/ssh.txt" \
            SLEEP_SINK="$T/sleep.txt" CURL_SINK="$T/curl.txt" ORDER="$ORDER" RUN_MARK="$RUN_MARK" \
            SEEDCAP="$T/seed" PUSHCAP="$T/push" SECRETSTORE="$T/secrets" LISTCAP="$T/listcap.jsonl" \
-           FLY_API_TOKEN_project-5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" "$@"
     bash "$script" project-5 >/dev/null 2>&1 )
 }
 reset_case() { # reset_case <n-jobs>
@@ -413,7 +413,7 @@ exit 0
 SF
 chmod +x "$T/syncbin/fly"
 ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" SSH_SINK=/dev/null \
-         FLY_API_TOKEN_project-5=tok-fixture-fly FLY_BIN_DIR="$T/syncbin"
+         FLY_API_TOKEN_PROJECT_5=tok-fixture-fly FLY_BIN_DIR="$T/syncbin"
   bash "$SYNC" project-5 >/dev/null 2>&1 ) || bad "R0: the sync must run: rc $?"
 grep -q '^HBUNDLE_SYNCED_AT=' "$IMPORT" && ok || bad "R0: the sync import carries the marker: $(cut -d= -f1 "$IMPORT" | tr '\n' ' ')"
 ER="$T/eroot"; mkdir -p "$ER/run/harness-env" "$ER/run/harness" "$ER/data/harness/state"

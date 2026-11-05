@@ -105,7 +105,7 @@ test('L2b parseSlug answers what the worker\'s parseRepoSlug answers', { skip: W
 // ── L3 ────────────────────────────────────────────────────────────────────
 test('L3 derivePrefix copies load-project.sh; prefixOk is the worker\'s prefix rule', () => {
   const cases = [
-    ['project-11', 'RA', true], ['project-16', 'SL', true], ['cromford', 'BH', true],
+    ['project-11', 'P1', true], ['project-16', 'P1', true], ['cromford', 'CR', true],
     ['harness', 'HA', true], ['a', 'A', false], ['a--b', 'AB', true], ['x-y-z', 'XYZ', true], ['3d-app', '3A', false]
   ];
   for (const [name, want, ok] of cases) {
@@ -369,7 +369,7 @@ test('M1 slug -> detect facts -> Continue -> GitHub Issues -> a double Start set
   const gh = all(facts).find((n) => n.localName === 'a');
   assert.equal(gh.attrs.href, 'https://github.com/example-org/project-11');
   assert.equal(byId(root, 'onboard-project').attrs.value, 'project-11');
-  assert.equal(byId(root, 'onboard-prefix').attrs.value, 'RA');
+  assert.equal(byId(root, 'onboard-prefix').attrs.value, 'P1');
   assert.equal(byId(root, 'onboard-base').attrs.value, 'main');
   const boxes = all(root).filter((n) => n.attrs && n.attrs.name === 'onboard-box');
   assert.deepEqual(boxes.map((n) => [n.attrs.value, isDisabled(n)]), [['shared', false], ['dedicated', true], ['fly', true]]);
@@ -386,7 +386,7 @@ test('M1 slug -> detect facts -> Continue -> GitHub Issues -> a double Start set
   }
   const review = cls(root, 'onboard-review')[0];
   assert.match(review.textContent, /fleet pool/);
-  assert.match(review.textContent, /project-11 · prefix RA/);
+  assert.match(review.textContent, /project-11 · prefix P1/);
   assert.match(review.textContent, /Nothing is built until a ticket is labeled\.$/);
   assert.equal(all(review).filter((n) => n.localName === 'input').length, 0, 'the AI account has no input');
 
@@ -401,7 +401,7 @@ test('M1 slug -> detect facts -> Continue -> GitHub Issues -> a double Start set
   assert.equal(posts[0].url, '/api/coord/onboarding/runs');
   assert.match(posts[0].headers['Idempotency-Key'], UUID_RE);
   const sent = JSON.parse(posts[0].body);
-  for (const [k, v] of Object.entries({ repo: 'example-org/project-11', project: 'project-11', tracker: 'github-issues', box: 'shared', prefix: 'RA', base: 'main' })) {
+  for (const [k, v] of Object.entries({ repo: 'example-org/project-11', project: 'project-11', tracker: 'github-issues', box: 'shared', prefix: 'P1', base: 'main' })) {
     assert.equal(sent[k], v, k);
   }
   assert.equal('prod' in sent, false, 'an empty prod is not sent');

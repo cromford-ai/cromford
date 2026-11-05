@@ -78,8 +78,8 @@ test('2: an empty plan disables APPLY and says nothing to apply, counts still sh
 
 test('6: RECENT APPLIES shows the actor and a stale started row as outcome unknown', () => {
   const out = render(h(SeedRegistryView, viewProps()));
-  assert.match(out, /operator@cto\.com/);
-  assert.match(out, /ops@cto\.com/);
+  assert.match(out, /operator@example\.com/);
+  assert.match(out, /ops@example\.com/);
   assert.match(out, /outcome unknown/);
   assert.match(out, />applied</);
   assert.doesNotMatch(out, /showing the last 20 applies/);

@@ -299,7 +299,7 @@ gate hotfix-only HOTFIX= HF_RC=1 BUILDER_EXEC=1
 Q="$T/pool"; PP=project-5
 mkdir -p "$Q/bin" "$Q/logs" "$Q/flags" "$Q/locks" "$Q/env" "$Q/fly" "$Q/state/fly" "$Q/state/fly-pool/$PP" \
          "$Q/state/build-queue/$PP" "$Q/state/remote-results/$PP" "$Q/state/pool/$PP" "$Q/builds" "$T/qbin"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-1\n' > "$Q/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-1\n' > "$Q/env/fly.env"
 : > "$Q/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$Q/fleet.conf"
 printf '3\n' > "$Q/flags/fly-pool-$PP"
@@ -349,7 +349,7 @@ poolreset() {
 }
 pooltick() {
   : > "$Q/logs/fly-pool.log"
-  ( export PATH="$T/qbin:$PATH" HARNESS="$Q" FLEET_CONF="$Q/fleet.conf" FLY_API_TOKEN_project-5=tok-fixture-1 FLY_BIN_DIR="$T/qbin"
+  ( export PATH="$T/qbin:$PATH" HARNESS="$Q" FLEET_CONF="$Q/fleet.conf" FLY_API_TOKEN_PROJECT_5=tok-fixture-1 FLY_BIN_DIR="$T/qbin"
     bash "$DIR/bin/fly-pool.sh" "$PP" >/dev/null 2>&1 )
 }
 spawned() { grep -lsh "\"key\": *\"$1\"" "$Q/state/fly-pool/$PP"/*.json >/dev/null 2>&1; }
@@ -396,7 +396,7 @@ reuse() { # reuse <queued-key> [hot|normal] -> the key on the reaped machine aft
     '{ticket_id:$t,key:$k,attempt:0,deferrals:0,enqueued_at:"2026-10-13 00:00:00Z"} + (if $h then {hotfix:true} else {} end)' \
     > "$Q/state/build-queue/$PP/$1.json"
   : > "$Q/logs/fly-pool.log"
-  ( export PATH="$T/qbin:$PATH" HARNESS="$Q" FLEET_CONF="$Q/fleet.conf" FLY_API_TOKEN_project-5=tok-fixture-1 FLY_BIN_DIR="$T/qbin" POOL_SPAWN=0
+  ( export PATH="$T/qbin:$PATH" HARNESS="$Q" FLEET_CONF="$Q/fleet.conf" FLY_API_TOKEN_PROJECT_5=tok-fixture-1 FLY_BIN_DIR="$T/qbin" POOL_SPAWN=0
     bash "$DIR/bin/fly-pool.sh" "$PP" >/dev/null 2>&1 )
   jq -r '.key // ""' "$Q/state/fly-pool/$PP/m-reuse.json" 2>/dev/null
 }

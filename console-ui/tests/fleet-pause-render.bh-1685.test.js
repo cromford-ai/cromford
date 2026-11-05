@@ -44,9 +44,9 @@ const rowHtml = (html, name) => {
 
 test('the project pause renders as a red PAUSED(merges) on its own row only', () => {
   const out = render(h(ProjectsTable, { rows, recentRuns: {}, pauses }));
-  const project-3 = rowHtml(out, 'project-3');
+  const project_3 = rowHtml(out, 'project-3');
   const ts = rowHtml(out, 'project-5');
-  assert.match(project-3, /<span class="tag tag--bad"[^>]*>PAUSED\(merges\)<\/span>/);
+  assert.match(project_3, /<span class="tag tag--bad"[^>]*>PAUSED\(merges\)<\/span>/);
   assert.doesNotMatch(ts, /PAUSED\(merges\)/);
 });
 
@@ -85,10 +85,10 @@ test('ProjectsTable without a pauses prop renders exactly as before', () => {
 });
 
 test('the FLAGS sort ranks an active pause above a flag-file pause above nothing', () => {
-  const project-3Rank = flagsRank(project('project-3'), pauses);
+  const project_3Rank = flagsRank(project('project-3'), pauses);
   const bare = { ...project('x'), automerge: true };
   // `x` still gets the fleet pause, so rank it against an empty list.
-  assert.ok(project-3Rank > flagsRank({ ...project('project-3'), paused: true }, []));
+  assert.ok(project_3Rank > flagsRank({ ...project('project-3'), paused: true }, []));
   assert.ok(flagsRank({ ...project('project-3'), paused: true }, []) > flagsRank(bare, []));
   assert.equal(flagsRank(bare, []), 0);
 });

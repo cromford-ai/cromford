@@ -115,15 +115,16 @@ direct stamps, pending/cooling/open keys — readable while the hub is down.
 
 | credential | opens | lives in |
 |---|---|---|
-| watchdog secret (`env/.watchdog-secret`, else `HARNESS_SECRET` — the same lookup as `bin/watchdog-ping.sh`) | `POST /api/progress`, `/api/progress/dry-run`, `GET /api/progress` (and the existing routes) | hub env; worker `HARNESS_SECRET` |
-| `STAMP_SECRET` | ONLY `POST /api/stamp/<name>`, and only for a name in the stored `cfg.detectors`. `HARNESS_SECRET` does not open it; with it unset the route is closed. | worker secret; GitHub **Environment** `watchdog-stamp` secret `WATCHDOG_STAMP_SECRET`, deployment branches restricted to `main` |
+| watchdog secret (`env/.watchdog-secret`, else `WATCHDOG_SECRET` — the same lookup as `bin/watchdog-ping.sh`) | `POST /api/progress`, `/api/progress/dry-run`, `GET /api/progress` (and the existing routes), via `Authorization: Bearer` | hub env; worker `WATCHDOG_SECRET` |
+| `STAMP_SECRET` | ONLY `POST /api/stamp/<name>` via `Authorization: Bearer`, and only for a name in the stored `cfg.detectors`. Neither `WATCHDOG_SECRET` nor `HARNESS_SECRET` opens it; with it unset the route is closed. | worker secret; GitHub **Environment** `watchdog-stamp` secret `WATCHDOG_STAMP_SECRET`, deployment branches restricted to `main` |
 
 The push is not given a separate secret: the hub already holds exactly one
 watchdog credential for its ping and status push, and a second one on the same
 box would not narrow what a compromised hub can do.
 
-Follow-up (not in this change): a hub-only push secret file, so a builder box
-holding `HARNESS_SECRET` cannot forge a progress snapshot.
+The jobs credential `HARNESS_SECRET` cannot forge a progress snapshot. Builder
+boxes that also receive the watchdog credential retain that credential's
+watchdog permissions; per-route credentials would require a separate policy.
 
 ## Dry run (before arming)
 

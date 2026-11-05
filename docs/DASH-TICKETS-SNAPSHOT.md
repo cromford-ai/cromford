@@ -5,8 +5,9 @@ every 10 minutes (bin/tickets-snapshot-push.sh, hub cron). No board tokens
 leave the fleet; the CF side only ever holds the rendered snapshot.
 
 Store: watchdog KV key `tickets-snapshot`.
-  GET  https://harness-watchdog.operator.workers.dev/api/tickets-snapshot?s=<secret>
+  GET  https://harness-watchdog.operator.workers.dev/api/tickets-snapshot
   POST same URL (hub only) replaces it.
+Both requests require `Authorization: Bearer <WATCHDOG_SECRET>`.
 Shape:
   {"generated_at": <epoch-seconds>,
    "projects": {"project-1": {"board_id": "...",
@@ -19,13 +20,13 @@ The SPA must read same-origin (dash cookie), so add to harness-console:
     app.get("/api/dash/tickets-snapshot", async (c) => {
       // reuse the dash-cookie auth your other /api/dash routes use
       const r = await fetch(
-        `https://harness-watchdog.operator.workers.dev/api/tickets-snapshot?s=${c.env.HARNESS_SECRET}`);
+        `https://harness-watchdog.operator.workers.dev/api/tickets-snapshot`,
+        { headers: { authorization: `Bearer ${c.env.WATCHDOG_SECRET}` } });
       return new Response(r.body, { headers: { "content-type": "application/json" } });
     });
 
-(HARNESS_SECRET is already a binding on harness-console. If the watchdog's
-ping secret rotates away from HARNESS_SECRET someday, mirror the new value as
-a console binding.)
+Provision `WATCHDOG_SECRET` on the external console with the dedicated
+watchdog credential. The jobs binding `HARNESS_SECRET` cannot open this route.
 
 Kanban then renders projects[*].tickets grouped by status, with
 generated_at driving the "snapshot Xm ago" banner. First push verified live

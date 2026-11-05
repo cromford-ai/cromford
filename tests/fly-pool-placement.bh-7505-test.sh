@@ -108,7 +108,7 @@ echo "PR_CREATED https://github.com/x/y/pull/0" > "$OLD/RESULT"; echo "old artif
 mkdir -p "$HUB/state/build-queue/$P"; echo '{"key":"TK-1"}' > "$HUB/state/build-queue/$P/TK-1.json"
 printf '3\n' > "$HUB/flags/fly-pool-$P"; printf 'pool-%s\n' "$P" > "$HUB/flags/fly-pool-app-$P"
 printf '{"app":"pool-%s"}\n' "$P" > "$HUB/state/fly/$P.json"
-printf 'FLY_API_TOKEN_project-6_OS=tok\n' > "$HUB/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_6_OS=tok\n' > "$HUB/env/fly.env"
 
 # The hub's fly: every call is a line in $KT/fly.txt. `agent start` also
 # records the project lease row of this instant (L1).
@@ -162,10 +162,10 @@ ENVS=(HARNESS_SECRET=fixture-harness-secret JOBS_URL="$W" GH_TOKEN=pat-fixture J
   JOBS_OVERLOAD_RETRIES=0 BOX_NAME=fixture-box POOL_TICK_BUDGET_S=30)
 # htick [VAR=val...] — one hub tick of the project (bin/fly-pool.sh).
 htick() { ( cd "$KT" && env "${ENVS[@]}" HARNESS="$HUB" PATH="$FB:$PATH" FLY_BIN_DIR="$FB" FLEET_CONF="$HUB/fleet.conf" \
-            FLY_API_TOKEN_project-6_OS=tok "$@" bash "$HUB/bin/fly-pool.sh" "$P" >/dev/null 2>"$KT/htick.err" ); }
+            FLY_API_TOKEN_PROJECT_6_OS=tok "$@" bash "$HUB/bin/fly-pool.sh" "$P" >/dev/null 2>"$KT/htick.err" ); }
 # mrun [VAR=val...] — the machine's worker, one drain of the queue.
 mrun() { ( cd "$KT" && env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m1 \
-           FLY_API_TOKEN_project-6_OS=tok POOL_HARNESS_SRC="$SRCD" LANE_RUN=1 "$@" bash "$MAC/bin/lane-run-worker.sh" --once --machine m1 ) \
+           FLY_API_TOKEN_PROJECT_6_OS=tok POOL_HARNESS_SRC="$SRCD" LANE_RUN=1 "$@" bash "$MAC/bin/lane-run-worker.sh" --once --machine m1 ) \
          > "$KT/mrun.out" 2> "$KT/mrun.err"; }
 reset() {
   scratch_rm "$HUB/state/pool-fly"; scratch_rm "$MAC/state"; scratch_rm "$MAC/builds"; mkdir -p "$MAC/builds" "$MAC/state"
@@ -269,7 +269,7 @@ WAITFOR '[ "$(lease | jq -r .holder 2>/dev/null)" = m1 ]' 100 || bad "S1 setup: 
 WAITFOR '[ "$(grep -c . "$KT/ticks.txt")" = 1 ]' 100 || bad "S1 setup: the tick never started"
 # a second entry start, as another machine would
 ( cd "$KT" && env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m2 \
-    FLY_API_TOKEN_project-6_OS=tok POOL_HARNESS_SRC="$SRCD" bash "$MAC/bin/fly-pool-project.sh" "$P" ) > "$KT/s1.out" 2> "$KT/s1.err"; rc=$?
+    FLY_API_TOKEN_PROJECT_6_OS=tok POOL_HARNESS_SRC="$SRCD" bash "$MAC/bin/fly-pool-project.sh" "$P" ) > "$KT/s1.out" 2> "$KT/s1.err"; rc=$?
 [ "$rc" = 0 ] && ok "S1 the second start exits 0" || bad "S1 rc=$rc $(cat "$KT/s1.err")"
 grep -q "^PROF fly-pool-project state=LEASE_HELD " "$KT/s1.out" && ok "S1 PROF state=LEASE_HELD" || bad "S1 out: $(cat "$KT/s1.out")"
 [ "$(grep -c . "$KT/ticks.txt")" = 1 ] && ok "S1 the second start ran no tick" || bad "S1 ticks: $(cat "$KT/ticks.txt")"
@@ -328,7 +328,7 @@ nowork "F1 off"
 echo "F2: a machine that lacks what a spawn needs defers; the hub takes the tick back, then backs off"
 reset; setting lane_fallback.$LANE.$P hub
 htick; N0=$(rows | jq length)
-mrun FLY_BIN_DIR="$KT/empty-bin" POOL_HARNESS_SRC="$KT/no-such-dir" FLY_API_TOKEN_project-6_OS=
+mrun FLY_BIN_DIR="$KT/empty-bin" POOL_HARNESS_SRC="$KT/no-such-dir" FLY_API_TOKEN_PROJECT_6_OS=
 [ "$(grep -c . "$KT/ticks.txt")" = 0 ] && ok "F2 the machine ran no tick" || bad "F2 ticks: $(cat "$KT/ticks.txt")"
 R=$(rows | jq -c '.[0]')
 jq -r .prof_line <<<"$R" | grep -qE '^PROF fly-pool-project state=DEFERRED spawned=0 reaped=0 deferred=([a-z-]+,)*fly-token,harness-src fence=[0-9]+$' && ok "F2 PROF state=DEFERRED names what is missing" || bad "F2 row: $R"
@@ -362,11 +362,11 @@ dowork G1
 echo "PF1: bin/fly-pool-project.sh --preflight"
 pf() { ( cd "$KT" && env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" POOL_HARNESS_SRC="$SRCD" "$@" \
          bash "$MAC/bin/fly-pool-project.sh" --preflight "$P" ) 2>&1; }
-OUT=$(pf FLY_API_TOKEN_project-6_OS=tok); [ "$OUT" = "preflight $P: ok" ] && ok "PF1 nothing missing: ok" || bad "PF1 ok: $OUT"
-OUT=$(pf FLY_API_TOKEN_project-6_OS= POOL_HARNESS_SRC="$KT/none")
+OUT=$(pf FLY_API_TOKEN_PROJECT_6_OS=tok); [ "$OUT" = "preflight $P: ok" ] && ok "PF1 nothing missing: ok" || bad "PF1 ok: $OUT"
+OUT=$(pf FLY_API_TOKEN_PROJECT_6_OS= POOL_HARNESS_SRC="$KT/none")
 [[ "$OUT" == "preflight $P: missing "*fly-token,harness-src ]] && ok "PF1 names the token and the tree: $OUT" || bad "PF1 missing: $OUT"
 printf '%s example-org/project-6 - - 1 box-project-6-os-1 192.0.2.81\n' "$P" > "$MAC/fleet.conf"
-OUT=$(pf FLY_API_TOKEN_project-6_OS=tok HOME="$KT/nohome")
+OUT=$(pf FLY_API_TOKEN_PROJECT_6_OS=tok HOME="$KT/nohome")
 [[ "$OUT" == "preflight $P: missing "*env-bundle* ]] && ok "PF1 an owning box over the tailnet, with no ssh key: env-bundle" || bad "PF1 env-bundle: $OUT"
 printf '%s example-org/project-6 - - 1 local local\n' "$P" > "$MAC/fleet.conf"
 
@@ -378,7 +378,7 @@ RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
 [ -n "$RID" ] || bad "T1 setup: no queued row: $(rows)"
 : > "$KT/hold"
 W0=$(grep -c "POST /api/lane-snapshots/$LANE/$P/writebacks 20" "$T/srv.log")
-( cd "$KT" && exec env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m6 FLY_API_TOKEN_project-6_OS=tok \
+( cd "$KT" && exec env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m6 FLY_API_TOKEN_PROJECT_6_OS=tok \
     POOL_HARNESS_SRC="$SRCD" LANE_RUN=1 STUB_HOLD="$KT/hold" POOL_PROJECT_TERM_WAIT_S=1 bash "$MAC/bin/lane-run-worker.sh" --once --machine m6 ) > "$KT/t1.out" 2>&1 &
 WP=$!
 WAITFOR '[ "$(grep -c . "$KT/ticks.txt")" = 1 ]' 150 || bad "T1 setup: the tick never started: $(cat "$KT/t1.out") $(tail -3 "$MAC/logs/lane-run-worker.log" 2>/dev/null)"
@@ -551,7 +551,7 @@ RID=$(rows | jq -r '[.[] | select(.status == "queued")][0].id // empty')
 [ -n "$RID" ] || bad "N7 setup: no queued row: $(rows)"
 : > "$KT/hold"
 W0=$(grep -c "POST /api/lane-snapshots/$LANE/$P/writebacks 20" "$T/srv.log")
-( cd "$KT" && exec env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m7 FLY_API_TOKEN_project-6_OS=tok \
+( cd "$KT" && exec env "${ENVS[@]}" HARNESS="$MAC" FLY_BIN_DIR="$MFB" FLEET_CONF="$MAC/fleet.conf" FLY_MACHINE_ID=m7 FLY_API_TOKEN_PROJECT_6_OS=tok \
     POOL_HARNESS_SRC="$SRCD" LANE_RUN=1 STUB_HOLD="$KT/hold" bash "$MAC/bin/lane-run-worker.sh" --once --machine m7 ) > "$KT/n7.out" 2>&1 &
 WP=$!
 WAITFOR '[ "$(grep -c . "$KT/ticks.txt")" = 1 ]' 150 || bad "N7 setup: the tick never started: $(cat "$KT/n7.out")"

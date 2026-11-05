@@ -110,7 +110,13 @@ export async function onRequest(context) {
     }
     const refusal = pauseRefusal(sent);
     if (refusal) return jsonError(400, refusal);
-    if (sent.type === 'merge_pr') await rekeyHeadMovedRefusal(env && env.CONSOLE_DB, sent);
+    if (sent.type === 'merge_pr' && env && env.CONSOLE_DB) {
+      // Identity stamping is not authorization. Probe the console before
+      // freeing a deduplication key, including when it later refuses the POST.
+      if (!(await signedIn({ cookie: request.headers.get('cookie') || '',
+        authorization: request.headers.get('authorization') || '' }))) return jsonError(403, 'unauthorized');
+      await rekeyHeadMovedRefusal(env.CONSOLE_DB, sent);
+    }
     ({ actor } = await resolveIdentity(request, env || {}));
     init.body = JSON.stringify({ ...sent, actor });
     headers.set('content-type', 'application/json');

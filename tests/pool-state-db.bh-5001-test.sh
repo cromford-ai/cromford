@@ -184,7 +184,7 @@ make_hub() { # <dir>
   mkdir -p "$h/bin" "$h/logs" "$h/flags" "$h/locks" "$h/env" "$h/state/fly" \
            "$h/state/fly-pool/project-5" "$h/state/build-queue/project-5" \
            "$h/state/remote-results/project-5" "$h/state/pool/project-5" "$h/builds"
-  printf 'FLY_API_TOKEN_project-5=tok\n' > "$h/env/fly.env"
+  printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$h/env/fly.env"
   : > "$h/env/global.env"
   printf 'project-5 example-org/project-5 - - 0 local\n' > "$h/fleet.conf"
   printf '3\n' > "$h/flags/fly-pool-project-5"
@@ -210,7 +210,7 @@ tick() {
   local h="$1"; shift
   : > "$h/logs/fly-pool.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$h" JOBS_HARNESS="$h" FLEET_CONF="$h/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok FLY_BIN_DIR="$T/fakebin" JOBS_BOX="$(box_of "$h")" "${JENV[@]}" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok FLY_BIN_DIR="$T/fakebin" JOBS_BOX="$(box_of "$h")" "${JENV[@]}" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 # fx <name> — one function's text out of the real bin/fly-pool.sh.

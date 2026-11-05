@@ -38,7 +38,7 @@ mkdir -p "$H/bin/lib" "$H/env" "$H/logs" "$H/state/fly" "$STUB" "$TOOLS" "$T/tmp
 for s in bin/jobs-client.sh bin/project-secrets.sh; do
   scratch_install_closure "$s" "$H" >/dev/null || bad "closure install failed for $s"
 done
-printf 'FLY_API_TOKEN_project-6_OS=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_6_OS=tok-fixture-fly\n' > "$H/env/fly.env"
 printf '{"app":"%s"}\n' "$POOL" > "$H/state/fly/$P.json"
 cat > "$H/bin/alert-line.sh" <<'EOF'
 #!/bin/bash

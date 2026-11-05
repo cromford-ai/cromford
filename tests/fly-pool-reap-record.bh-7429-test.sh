@@ -33,7 +33,7 @@ mkdir -p "$H/bin" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/builds" "$T/fakebin" "$T/ledger" "$T/rec" "$T/tmp"
 scratch_install_closure bin/fly-pool.sh "$H" >/dev/null || { echo "FAIL: cannot install the fly-pool closure"; exit 1; }
-printf 'FLY_API_TOKEN_project-5=tok-fixture\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -105,7 +105,7 @@ POSTED_AT=$(date -u -d "@$((SPAWN_EPOCH+600))" '+%Y-%m-%dT%H:%M:%SZ')
 run_pool() { # run_pool [env assignments...]
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"; : > "$T/destroyed"; : > "$T/fly.calls"; : > "$T/jobs.calls"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" TMPDIR="$T/tmp" \
-           FLY_API_TOKEN_project-5=tok-fixture FLY_BIN_DIR="$T/fakebin" LEDGER_FIX="$T/ledger" REC_FIX="$T/rec" \
+           FLY_API_TOKEN_PROJECT_5=tok-fixture FLY_BIN_DIR="$T/fakebin" LEDGER_FIX="$T/ledger" REC_FIX="$T/rec" \
            POOL_SPAWN=0 POOL_RECORD_READ="${KNOB:-1}" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

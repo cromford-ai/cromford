@@ -16,8 +16,8 @@ import { FLEET_LOGIN } from './deployment.js';
 // usernames. A null prototype fixes the label lookup and the pseudo-box group
 // key in one move, since both index this map.
 const ACTOR_LABELS = Object.assign(Object.create(null), {
-  collaborator-1: 'partner (collaborator-1)',
-  partner-dev: 'partner (collaborator-1)'
+  'collaborator-1': 'partner (collaborator-1)',
+  'partner-dev': 'partner (collaborator-1)'
 });
 
 // Values are normalised the same way triage verdicts are: GitHub logins are
