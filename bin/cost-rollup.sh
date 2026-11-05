@@ -2067,7 +2067,7 @@ rm -f "$CD/last-success"
 if [ -s "$CD/summary.json" ]; then
   CS=""
   [ -r "$HENV/.watchdog-secret" ] && CS=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-  [ -n "$CS" ] || CS="${HARNESS_SECRET:-}"
+  [ -n "$CS" ] || CS="${WATCHDOG_SECRET:-}"
   if [ -z "$CS" ]; then
     echo "$(STAMP) cost-rollup: no watchdog secret — cost snapshot NOT pushed" >> "$H/logs/agent-rules.log"
   # global.env loads only further down (the metrics push), and cron exports no
@@ -2076,9 +2076,9 @@ if [ -s "$CD/summary.json" ]; then
   elif ! CWD=$( { [ -f "$HENV/global.env" ] && set -a && . "$HENV/global.env"; set +a; } 2>/dev/null
                 watchdog_url cost-rollup "$H"); then
     echo "$(STAMP) cost-rollup: WATCHDOG_URL not set, cost snapshot NOT pushed" >> "$H/logs/agent-rules.log"
-  elif ! curl -sf -m 30 -X POST -H 'Content-Type: application/json' \
+  elif ! watchdog_curl -sf -m 30 -X POST -H 'Content-Type: application/json' \
        --data-binary @"$CD/summary.json" \
-       "$CWD/api/cost-snapshot?s=$CS" >/dev/null 2>&1; then
+       "$CWD/api/cost-snapshot" >/dev/null 2>&1; then
     echo "$(STAMP) cost-rollup: cost-snapshot push to watchdog FAILED — Mission Control spend figure will go stale" >> "$H/logs/agent-rules.log"
     FLAG="$H/flags/alerted-cost-snapshot-$(date -u +%Y%m%d)"
     [ -f "$FLAG" ] || { touch "$FLAG"; HARNESS="$H" "$H/bin/alert-line.sh" "[cost-rollup] cost-snapshot push to watchdog FAILED — dashboard spend will go stale"; }

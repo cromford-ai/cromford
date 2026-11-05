@@ -5,7 +5,7 @@
 # side (the operator, 2026-08-24 "execute this yourself", after the dash showed stale
 # statuses fleet-wide while every board read answered correctly).
 #
-# Consumer contract: GET $WATCHDOG_URL/api/tickets-snapshot?s=<secret>
+# Consumer contract: GET $WATCHDOG_URL/api/tickets-snapshot with the dedicated bearer
 # -> {"generated_at":<epoch>,"projects":{"<proj>":
 # {"board_id":"...","tickets":[{"key","status","title","updatedAt"}]}}}.
 # The dash reads it same-origin via a console-worker pass-through (see
@@ -39,7 +39,7 @@ set -a; . "$HENV/global.env" 2>/dev/null; set +a
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    tickets-snapshot-push
 S=""
 [ -r "$HENV/.watchdog-secret" ] && S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$S" ] || S="${HARNESS_SECRET:-}"
+[ -n "$S" ] || S="${WATCHDOG_SECRET:-}"
 [ -n "$S" ] || exit 0
 # >>> wake backstop (BH-1034/BH-1060): a wake launch just ran this lane; the next cron tick within the window stands down. Fails open.
 # shellcheck source=bin/lib/wake-lanes.sh
@@ -280,8 +280,8 @@ LANES=$(jq -r '[.projects | to_entries[] | .key + ": claims=" + ([.value.tickets
       ] | join(" | ")' "$OUT" 2>/dev/null)
 [ -n "$LANES" ] && echo "$(STAMP) [tickets-snapshot] lane coverage — $LANES" >> "$H/logs/agent-rules.log"
 
-if ! curl -sf -m 30 -X POST --data-binary @"$OUT" -H "Content-Type: application/json" \
-     "$BASEURL/api/tickets-snapshot?s=$S" >/dev/null 2>&1; then
+if ! watchdog_curl -sf -m 30 -X POST --data-binary @"$OUT" -H "Content-Type: application/json" \
+     "$BASEURL/api/tickets-snapshot" >/dev/null 2>&1; then
   FLAG="$H/flags/alerted-tickets-snapshot-$(date -u +%Y%m%d)"
   [ -f "$FLAG" ] || { touch "$FLAG"; HARNESS="$H" "$H/bin/alert-line.sh" "[tickets-snapshot] push to watchdog FAILED — Mission Control kanban will go stale"; }
 fi

@@ -21,7 +21,7 @@ cf-d1-jobs	cloudflare	d1	harness-jobs	fixed	always	CLOUDFLARE_API_TOKEN	The jobs
 cf-d1-locks	cloudflare	d1	harness-locks	fixed	always	CLOUDFLARE_API_TOKEN	The locks D1 (locks-worker/schema.sql).
 cf-worker-jobs	cloudflare	worker	harness-jobs	fixed	always	CLOUDFLARE_API_TOKEN,HARNESS_SECRET,GITHUB_WEBHOOK_SECRET	The jobs worker, served on harness-jobs.<HARNESS_WORKERS_SUBDOMAIN>.workers.dev.
 cf-worker-locks	cloudflare	worker	harness-locks	fixed	always	CLOUDFLARE_API_TOKEN,HARNESS_TOKENS,ADMIN_TOKEN	The locks worker.
-cf-worker-watchdog	cloudflare	worker	harness-watchdog	fixed	always	CLOUDFLARE_API_TOKEN,HARNESS_SECRET,STAMP_SECRET	The outside dead-man watchdog worker.
+cf-worker-watchdog	cloudflare	worker	harness-watchdog	fixed	always	CLOUDFLARE_API_TOKEN,WATCHDOG_SECRET,HARNESS_SECRET,STAMP_SECRET	The outside dead-man watchdog worker (HARNESS_SECRET is only for jobs failover).
 cf-kv-watchdog	cloudflare	kv	harness-watchdog	fixed	always	CLOUDFLARE_API_TOKEN	The watchdog's KV namespace.
 cf-r2-backup	cloudflare	r2	${BACKUP_S3_BUCKET}	BACKUP_S3_BUCKET	always	CLOUDFLARE_API_TOKEN,BACKUP_S3_ACCESS_KEY_ID,BACKUP_S3_SECRET_ACCESS_KEY	The off-box state backup bucket (bin/state-backup.sh).
 cf-pages-console	cloudflare	pages	${CONSOLE_PAGES_PROJECT}	CONSOLE_PAGES_PROJECT	always	CLOUDFLARE_API_TOKEN	The console (bin/console-pages-deploy.sh).

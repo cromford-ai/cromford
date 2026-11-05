@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Email Worker for the otp inbox (BH-7732). No dependencies on purpose, so node --test can drive the worker directly.",
   "scripts": {
+    "pretest": "bash ../../bin/test-worker-bootstrap.sh",
     "test": "node --test test/*.test.js"
   }
 }

@@ -46,7 +46,7 @@ const counts = (db) => ({
 });
 
 // project-3 as fleet.conf carries it today.
-const project-3 = {
+const project_3 = {
   project: 'project-3', repo: 'example-org/project-3', prod_url: 'https://os.project-3.example',
   board_api_prefix: '/api/feature-board', cron_offset: 6, box: 'box-project-3-2', tailnet_ip: '10.0.0.3',
   note: 'the project-3 board',
@@ -67,7 +67,7 @@ test('P0 belt DDL == schema.sql, and a PUT self-creates the table', (t) => withD
   assert.equal(norm(stmts[0]), norm(m[0].replace(/;$/, '')));
 
   db.exec('DROP TABLE IF EXISTS projects');
-  const res = await put(DB, { ...project-3, actor: 'a@x', reason: 'first' });
+  const res = await put(DB, { ...project_3, actor: 'a@x', reason: 'first' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, 1);
 }));
@@ -80,7 +80,7 @@ test('P1 GET on an empty table is 200 {projects: []}', (t) => withDb(t, async ({
 }));
 
 test('P2 a new row lands with exactly one project audit row', (t) => withDb(t, async ({ db, DB }) => {
-  const res = await put(DB, { ...project-3, actor: 'operator@example.com', reason: 'adding project-3' });
+  const res = await put(DB, { ...project_3, actor: 'operator@example.com', reason: 'adding project-3' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.project.project, 'project-3');
   assert.equal(res.body.project.cron_offset, 6);
@@ -118,7 +118,7 @@ const REFUSED = [
 
 test('P3 every refused input is a 400 that writes nothing', (t) => withDb(t, async ({ db, DB }) => {
   for (const [field, value] of REFUSED) {
-    const body = { ...project-3, actor: 'a@x', reason: 'why' };
+    const body = { ...project_3, actor: 'a@x', reason: 'why' };
     if (value === undefined) delete body[field]; else body[field] = value;
     const res = await put(DB, body);
     assert.equal(res.status, 400, `${field}=${JSON.stringify(value)} answered ${res.status} ${JSON.stringify(res.body)}`);
@@ -128,23 +128,23 @@ test('P3 every refused input is a 400 that writes nothing', (t) => withDb(t, asy
 }));
 
 test('P3b a padded numeric cron_offset is trimmed, not refused', (t) => withDb(t, async ({ db, DB }) => {
-  const res = await put(DB, { ...project-3, cron_offset: '2 ', reason: 'why' });
+  const res = await put(DB, { ...project_3, cron_offset: '2 ', reason: 'why' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(projectRows(db)[0].cron_offset, 2);
   for (const ok of [0, 9, '9']) {
-    const r = await put(DB, { ...project-3, cron_offset: ok, reason: 'why' });
+    const r = await put(DB, { ...project_3, cron_offset: ok, reason: 'why' });
     assert.equal(r.status, 200, `cron_offset=${JSON.stringify(ok)}`);
   }
 }));
 
 test('P4 an identical re-PUT writes no audit row; a changed box writes one', (t) => withDb(t, async ({ db, DB }) => {
-  assert.equal((await put(DB, { ...project-3, actor: 'a@x', reason: 'one' })).status, 200);
+  assert.equal((await put(DB, { ...project_3, actor: 'a@x', reason: 'one' })).status, 200);
   const created = projectRows(db)[0].created_at;
-  const again = await put(DB, { ...project-3, actor: 'a@x', reason: 'two' });
+  const again = await put(DB, { ...project_3, actor: 'a@x', reason: 'two' });
   assert.equal(again.status, 200);
   assert.equal(audits(db).length, 1, 'an unchanged write is not a decision');
   assert.equal(projectRows(db).length, 1);
-  const moved = await put(DB, { ...project-3, box: 'hub', actor: 'b@x', reason: 'moving it' });
+  const moved = await put(DB, { ...project_3, box: 'hub', actor: 'b@x', reason: 'moving it' });
   assert.equal(moved.status, 200);
   assert.equal(moved.body.project.box, 'hub');
   const a = audits(db);
@@ -159,8 +159,8 @@ test('P4 an identical re-PUT writes no audit row; a changed box writes one', (t)
 }));
 
 test('P5 the project key is lowercased once: project-3 updates project-3', (t) => withDb(t, async ({ db, DB }) => {
-  assert.equal((await put(DB, { ...project-3, reason: 'one' })).status, 200);
-  const res = await put(DB, { ...project-3, project: '  project-3 ', box: 'hub', reason: 'two' });
+  assert.equal((await put(DB, { ...project_3, reason: 'one' })).status, 200);
+  const res = await put(DB, { ...project_3, project: '  project-3 ', box: 'hub', reason: 'two' });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.project.project, 'project-3');
   const r = projectRows(db);
@@ -179,12 +179,12 @@ test('P6 "-" and blank store NULL; box local and blank tailnet are fine', (t) =>
   assert.equal(row.board_api_prefix, null);
   assert.equal(row.box, 'local');
   assert.equal(row.tailnet_ip, null);
-  const r2 = await put(DB, { ...project-3, project: 'project-4', prod_url: '', board_api_prefix: '-', box: '', reason: 'x' });
+  const r2 = await put(DB, { ...project_3, project: 'project-4', prod_url: '', board_api_prefix: '-', box: '', reason: 'x' });
   assert.equal(r2.status, 200, JSON.stringify(r2.body));
-  const project-4 = projectRows(db).find((x) => x.project === 'project-4');
-  assert.equal(project-4.prod_url, null);
-  assert.equal(project-4.board_api_prefix, null);
-  assert.equal(project-4.box, null);
+  const project_4 = projectRows(db).find((x) => x.project === 'project-4');
+  assert.equal(project_4.prod_url, null);
+  assert.equal(project_4.board_api_prefix, null);
+  assert.equal(project_4.box, null);
 }));
 
 // Invariant (c)'s accepted half: every live fleet.conf row, read from the file.
@@ -204,7 +204,7 @@ test('P6b every current fleet.conf row is accepted as it stands', (t) => withDb(
 
 test('P7 a missing or blank reason is a 400 at the worker, nothing written', (t) => withDb(t, async ({ db, DB }) => {
   for (const extra of [{}, { reason: '' }, { reason: '   ' }]) {
-    const res = await put(DB, { ...project-3, ...extra });
+    const res = await put(DB, { ...project_3, ...extra });
     assert.equal(res.status, 400, JSON.stringify(extra));
     assert.match(res.body.error, /reason/);
   }
@@ -212,7 +212,7 @@ test('P7 a missing or blank reason is a 400 at the worker, nothing written', (t)
 }));
 
 test('P8 there is no DELETE /api/projects; the row stays', (t) => withDb(t, async ({ db, DB }) => {
-  assert.equal((await put(DB, { ...project-3, reason: 'one' })).status, 200);
+  assert.equal((await put(DB, { ...project_3, reason: 'one' })).status, 200);
   const res = await call(DB, '/api/projects', { method: 'DELETE', body: { project: 'project-3', reason: 'x' } });
   assert.ok([404, 405].includes(res.status), `DELETE answered ${res.status}`);
   assert.equal(projectRows(db).length, 1);

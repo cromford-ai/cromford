@@ -93,24 +93,24 @@ const payload = {
 test('a payload with a null metric becomes a row with null, not zero', () => {
   const rows = projectRows(payload);
   assert.equal(rows.length, 2);
-  const project-4 = rows.find((r) => r.project === 'project-4');
+  const project_4 = rows.find((r) => r.project === 'project-4');
   // The whole reason this is a separate assertion: `Number(null)` is 0, and a
   // lead time of 0 on a project that merged nothing reads as the fastest lane
   // in the fleet.
-  assert.equal(project-4.leadP50, null);
-  assert.equal(project-4.cfr, null);
-  assert.equal(project-4.laneP90, null);
+  assert.equal(project_4.leadP50, null);
+  assert.equal(project_4.cfr, null);
+  assert.equal(project_4.laneP90, null);
   // Counts are counts: an unrestored failure on a project with no merges is a
   // real 3 and must survive.
-  assert.equal(project-4.unrestored, 3);
+  assert.equal(project_4.unrestored, 3);
 });
 
 test('projectRows carries the two lead-time bases separately, and basisNote names them', () => {
-  const project-3 = projectRows(payload).find((r) => r.project === 'project-3');
-  assert.equal(project-3.leadFromJob, 6);
-  assert.equal(project-3.leadFromPrSeen, 1);
-  assert.equal(project-3.leadUnattributed, 1);
-  const note = basisNote(project-3);
+  const project_3 = projectRows(payload).find((r) => r.project === 'project-3');
+  assert.equal(project_3.leadFromJob, 6);
+  assert.equal(project_3.leadFromPrSeen, 1);
+  assert.equal(project_3.leadUnattributed, 1);
+  const note = basisNote(project_3);
   assert.match(note, /6 from the build job/);
   assert.match(note, /1 from when the conductor first saw the PR/);
   assert.match(note, /1 unattributable \(excluded\)/);

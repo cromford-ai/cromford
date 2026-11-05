@@ -306,7 +306,7 @@ chmod +x "$T/fakebin"/*
 A="$T/hub-a"; PA="$A/state/pool/project-5"
 mkdir -p "$A/bin" "$A/logs" "$A/flags" "$A/locks" "$A/env" "$A/state/fly" "$A/state/fly-pool/project-5" \
          "$A/state/build-queue/project-5" "$A/state/remote-results/project-5" "$PA" "$A/builds"
-printf 'FLY_API_TOKEN_project-5=tok\n' > "$A/env/fly.env"; : > "$A/env/global.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$A/env/fly.env"; : > "$A/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$A/fleet.conf"
 printf '3\n' > "$A/flags/fly-pool-project-5"
 printf 'pool-project-5\n' > "$A/flags/fly-pool-app-project-5"
@@ -323,7 +323,7 @@ JENV=(HARNESS_SECRET=s JOBS_URL=https://jobs.test JOBS_RETRIES=0 JOBS_RETRY_SLEE
 tick() {
   : > "$A/logs/fly-pool.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$A" JOBS_HARNESS="$A" FLEET_CONF="$A/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok FLY_BIN_DIR="$T/fakebin" JOBS_BOX=hub-a "${JENV[@]}" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok FLY_BIN_DIR="$T/fakebin" JOBS_BOX=hub-a "${JENV[@]}" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 runs() { [ -f "$T/runs.log" ] && wc -l < "$T/runs.log" | tr -d ' ' || echo 0; }

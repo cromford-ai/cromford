@@ -20,6 +20,7 @@
 // D1 overload give-up is a 503 "pause_flags unavailable", not a thrown 500.
 
 import { d1Guarded, d1OverloadGuarded, json } from "../lib/http.js";
+import { qaReadOk, qaFlags } from "../lib/qa-read.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { isD1Overloaded } from "../lib/d1-retry.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
@@ -112,7 +113,7 @@ export const routes = [
     // BH-4153: both stores, merged, every row in the full shape
     // (fleetFlagRows). A ported name with a fleet harness_flags row comes from
     // that row only, so an old pause_flags mirror row never appears twice.
-    async ({ env, url, t }) => {
+    async ({ req, env, url, t }) => {
       const qs = url.searchParams.get("scope");
       const scope = qs === null || qs === "" ? null : validScope(qs);
       if (qs !== null && qs !== "" && scope === null) return json(400, { error: "valid scope required" });
@@ -121,7 +122,7 @@ export const routes = [
       const onlyOn = url.searchParams.get("active") === "1" ? 1 : 0;
       await ensureColumns(env, "pause_flags");
       const { flags, truncated } = await fleetFlagRows(env, { scope, prefix, onlyOn, limit: LIST_MAX });
-      const out = { flags, as_of: t };
+      const out = { flags: req && qaReadOk(req, env) ? qaFlags(flags) : flags, as_of: t };
       if (truncated) out.truncated = true;
       return json(200, out);
     },

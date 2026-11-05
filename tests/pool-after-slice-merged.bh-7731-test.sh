@@ -33,7 +33,7 @@ mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/fly" "$H/state/fly-pool/$PJ" \
          "$H/state/build-queue/$PJ" "$H/state/remote-results/$PJ" \
          "$H/state/pool/$PJ" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-6_OS=fixture-fly-token\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_6_OS=fixture-fly-token\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf '%s example-org/project-6 - - 0 local\n' "$PJ" > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-$PJ"
@@ -85,7 +85,7 @@ chmod +x "$H/bin/"*.sh "$T/fakebin"/*
 run_pool() {
   : > "$H/logs/fly-pool.log"; : > "$T/fly-calls"; : > "$T/q.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" \
-           FLY_API_TOKEN_project-6_OS=fixture-fly-token FLY_BIN_DIR="$T/fakebin"
+           FLY_API_TOKEN_PROJECT_6_OS=fixture-fly-token FLY_BIN_DIR="$T/fakebin"
     bash "$DIR/bin/fly-pool.sh" "$PJ" >/dev/null 2>&1 )
 }
 cat > "$T/fakebin/fly" <<FLY

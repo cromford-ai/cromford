@@ -479,7 +479,7 @@ dispatch_pick() { # dispatch_pick -> the KEY this tick claimed, or nothing
   ( export PATH="$DB/fakebin:$PATH" HARNESS="$DB/h" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
            SSH_SINK="$DB/ssh.txt" BOXQ="$DB/boxq" ROW_META="" NO_QUEUE_ROWS=1 \
-           FLEET_CONF="$DB/h/fleet.conf" FLY_API_TOKEN_project-3_OS=tok
+           FLEET_CONF="$DB/h/fleet.conf" FLY_API_TOKEN_PROJECT_3_OS=tok
     bash "$DIR/bin/fly-dispatch.sh" >/dev/null 2>&1 )
   sed -n 's/.*claiming job \([^ ]*\) -> active.*/\1/p' "$DB/h/logs/fly-dispatch.log" | head -1
 }

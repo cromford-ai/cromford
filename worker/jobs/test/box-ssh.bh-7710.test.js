@@ -12,6 +12,7 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { plan, fullScans } from './lib/d1-volume.bh-6727.js';
 
 const SECRET = 'tok-fixture-bh7710';
+const OPS = 'fixture-box-ops-token';
 const OWNER = 'owner@fixture.test';
 const SQL = await import('../src/routes/box-ssh.js').catch(() => ({}));
 const POST_BODY = JSON.parse(readFileSync(new URL('./fixtures/box-ssh-post.bh-7710.json', import.meta.url), 'utf8'));
@@ -24,10 +25,10 @@ async function fresh(t) {
 }
 function call(DB, method, path, body, auth = true) {
   const headers = { 'content-type': 'application/json' };
-  if (auth) headers.authorization = `Bearer ${SECRET}`;
+  if (auth) { headers.authorization = `Bearer ${SECRET}`; headers['x-box-ops-token'] = OPS; }
   const init = { method, headers };
   if (method !== 'GET') init.body = JSON.stringify(body ?? {});
-  return worker.fetch(new Request(`https://jobs.test${path}`, init), { DB, HARNESS_SECRET: SECRET, BOX_OPS_OWNERS: OWNER })
+  return worker.fetch(new Request(`https://jobs.test${path}`, init), { DB, HARNESS_SECRET: SECRET, BOX_OPS_TOKEN: OPS, BOX_OPS_OWNERS: OWNER })
     .then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
 }
 const post = (DB, b) => call(DB, 'POST', '/api/box-ssh', b);

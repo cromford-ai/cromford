@@ -69,7 +69,7 @@ FLY_ORG=testorg
 FLY_API_TOKEN="FlyV1 fixture-org-token"
 FLY_API_TOKEN_ALPHA="FlyV1 fixture-alpha"
 export FLY_API_TOKEN_BETA="FlyV1 fixture-beta"
-FLY_API_TOKEN_project-6_OS="FlyV1 fixture-mk"
+FLY_API_TOKEN_PROJECT_6_OS="FlyV1 fixture-mk"
 #FLY_API_TOKEN_GAMMA="FlyV1 fixture-gamma"
 ENV
 }
@@ -86,7 +86,7 @@ mk c1
 export NPX_LIST_JSON='[{"name":"FLY_API_TOKEN_ALPHA","type":"secret_text"},{"name":"OTHER","type":"secret_text"}]'
 run
 [ "$RC" = 0 ] && ok || bad "§1 dry run must exit 0 (got $RC: $ERR)"
-[ "$(grep '^MISSING ' <<<"$OUT" | LC_ALL=C sort | tr '\n' ' ')" = "MISSING FLY_API_TOKEN_BETA MISSING FLY_API_TOKEN_project-6_OS " ] \
+[ "$(grep '^MISSING ' <<<"$OUT" | LC_ALL=C sort | tr '\n' ' ')" = "MISSING FLY_API_TOKEN_BETA MISSING FLY_API_TOKEN_PROJECT_6_OS " ] \
   && ok || bad "§1 MISSING set must be BETA + PROJECT_6_OS only: $OUT"
 grep -q 'console-fly-secrets: 2 missing of 3 on harness-console (dry run; --apply to put)' <<<"$OUT" \
   && ok || bad "§1 summary must say 2 missing of 3: $OUT"
@@ -107,7 +107,7 @@ PUTS=$(sed -n 's/.*secret put \([^ ]*\) --name harness-console$/\1/p' "$NPX_LOG_
 [ "$PUTS" = "$DRY" ] && ok || bad "§2 round trip: the dry-run MISSING set ($DRY) must equal the put set ($PUTS)"
 [ "$(cat "$NPX_LOG_DIR/npx-stdin-FLY_API_TOKEN_BETA.txt" 2>/dev/null)" = "FlyV1 fixture-beta" ] \
   && ok || bad "§2 BETA put stdin must be its token byte for byte"
-[ "$(cat "$NPX_LOG_DIR/npx-stdin-FLY_API_TOKEN_project-6_OS.txt" 2>/dev/null)" = "FlyV1 fixture-mk" ] \
+[ "$(cat "$NPX_LOG_DIR/npx-stdin-FLY_API_TOKEN_PROJECT_6_OS.txt" 2>/dev/null)" = "FlyV1 fixture-mk" ] \
   && ok || bad "§2 PROJECT_6_OS put stdin must be its token byte for byte"
 [ "$(wc -c < "$NPX_LOG_DIR/npx-stdin-FLY_API_TOKEN_BETA.txt" 2>/dev/null | tr -dc 0-9)" = 18 ] \
   && ok || bad "§2 stdin must carry no trailing newline"
@@ -116,7 +116,7 @@ grep -qx 'PUT FLY_API_TOKEN_BETA ok' <<<"$OUT" && ok || bad "§2 must print PUT 
 
 # ══ 3. ALL PRESENT: 0 missing, no put ═══════════════════════════════════════
 mk c3
-NPX_LIST_JSON='[{"name":"FLY_API_TOKEN_ALPHA"},{"name":"FLY_API_TOKEN_BETA"},{"name":"FLY_API_TOKEN_project-6_OS"}]' run --apply
+NPX_LIST_JSON='[{"name":"FLY_API_TOKEN_ALPHA"},{"name":"FLY_API_TOKEN_BETA"},{"name":"FLY_API_TOKEN_PROJECT_6_OS"}]' run --apply
 [ "$RC" = 0 ] && ok || bad "§3 all present must exit 0 (got $RC)"
 grep -q '0 missing of 3' <<<"$OUT" && ok || bad "§3 summary must say 0 missing of 3: $OUT"
 [ "$(nput)" = 0 ] && ok || bad "§3 all present must make 0 puts"
@@ -144,10 +144,10 @@ grep -q 'wrangler list .*failed (rc 1): .*More than one account available' <<<"$
 mk c6
 run --project project-6-os
 [ "$RC" = 0 ] && ok || bad "§6 --project project-6-os must exit 0 (got $RC: $ERR)"
-[ "$(grep -c 'wrangler@3 secret put FLY_API_TOKEN_project-6_OS --name harness-console' "$NPX_LOG_DIR/npx-argv.log" 2>/dev/null)" = 1 ] \
-  && ok || bad "§6 --project must make 1 put of FLY_API_TOKEN_project-6_OS"
+[ "$(grep -c 'wrangler@3 secret put FLY_API_TOKEN_PROJECT_6_OS --name harness-console' "$NPX_LOG_DIR/npx-argv.log" 2>/dev/null)" = 1 ] \
+  && ok || bad "§6 --project must make 1 put of FLY_API_TOKEN_PROJECT_6_OS"
 [ "$(ncall)" = 1 ] && ok || bad "§6 --project must make exactly 1 wrangler call (got $(ncall))"
-grep -qx 'PUT FLY_API_TOKEN_project-6_OS ok' <<<"$OUT" && ok || bad "§6 must print PUT ok: $OUT"
+grep -qx 'PUT FLY_API_TOKEN_PROJECT_6_OS ok' <<<"$OUT" && ok || bad "§6 must print PUT ok: $OUT"
 mk c6b
 run --project nope
 [ "$RC" = 1 ] && ok || bad "§6 --project with no token line must exit 1 (got $RC)"
@@ -186,7 +186,7 @@ NPX_FAIL_NAME=FLY_API_TOKEN_BETA run --apply
 [ "$RC" = 1 ] && ok || bad "§7 one failed put must exit 1 (got $RC)"
 [ "$(nput)" = 2 ] && ok || bad "§7 a failed put must not stop the others (got $(nput) puts)"
 grep -qx 'PUT FLY_API_TOKEN_BETA FAILED' <<<"$OUT" && ok || bad "§7 must print PUT BETA FAILED: $OUT"
-grep -qx 'PUT FLY_API_TOKEN_project-6_OS ok' <<<"$OUT" && ok || bad "§7 the other put must still be ok: $OUT"
+grep -qx 'PUT FLY_API_TOKEN_PROJECT_6_OS ok' <<<"$OUT" && ok || bad "§7 the other put must still be ok: $OUT"
 grep -q 'wrangler put FLY_API_TOKEN_BETA failed (rc 1): .*More than one account available' <<<"$ERR" \
   && ok || bad "§7 the put error body must be kept: $ERR"
 grep -q 'fixture-beta\|fixture-cf-token\|abc\.fixture' <<<"$ERR$OUT" && bad "§7 a token leaked into the output: $ERR" || ok

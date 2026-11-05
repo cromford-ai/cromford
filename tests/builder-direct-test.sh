@@ -404,7 +404,7 @@ run_bd "" 1
 
 # ══ 7. THE HUB'S INGEST IS BOOKKEEPING ON AN ALREADY-TERMINAL RESULT ═════════
 mkdir -p "$T/h/state/fly" "$T/h/logs"
-printf 'FLY_API_TOKEN_project-3_OS=tok\n' > "$T/h/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_3_OS=tok\n' > "$T/h/env/fly.env"
 printf '#!/bin/bash\nexit 0\n' > "$T/h/bin/beat.sh"; chmod +x "$T/h/bin/beat.sh"
 # The probe rides through `printf %q`, so the stub matches on the words that
 # survive the escaping rather than on the shell line the script composed.

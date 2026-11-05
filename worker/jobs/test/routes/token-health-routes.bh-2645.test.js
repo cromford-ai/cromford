@@ -50,6 +50,9 @@ const setWarn = (db, v) => db.prepare('UPDATE settings SET value=? WHERE key=?')
 const byKey = (accounts) => Object.fromEntries(accounts.map((a) => [`${a.kind}/${a.subject}`, a]));
 
 test('BH-2645 token health routes', async (t) => {
+  // Keep the worker clock at the same second as the expiry fixtures. Database
+  // preparation and earlier subtests must not consume G4's one-second margin.
+  t.mock.timers.enable({ apis: ['Date'], now: Math.floor(ANCHOR / 1000) * 1000 });
   const probe = await openDb();
   if (probe === null) { t.skip('node:sqlite unavailable in this runtime'); return; }
 
@@ -238,6 +241,7 @@ test('BH-2645 token health routes', async (t) => {
     putToken(db, 'oauth', 'edge', fromNow(24 * 3600 + 1));
     putToken(db, 'oauth', 'inside', fromNow(24 * 3600 - 5));
     const m = byKey((await health(DB)).body.accounts);
+    assert.equal(m['oauth/edge'].expires_in_s, 24 * 3600 + 1);
     assert.equal(m['oauth/edge'].expiring, false, `expires_in_s=${m['oauth/edge'].expires_in_s}`);
     assert.equal(m['oauth/inside'].expiring, true);
   });

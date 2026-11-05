@@ -10,10 +10,11 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 // records from bin/lib/box-ops-orgo.sh and bin/box-launch.sh output.
 
 const SECRET = 'test-secret-fixture';
+const OPS = 'fixture-box-ops-token';
 const OWNER = 'owner@example.com';
 const OWNER2 = 'second@example.com';
 const NOW_MS = Date.parse('2026-10-10T12:00:00Z');
-const RESIZE_PLAN = 'PLAN cost +$12/mo (now $40/mo, after $52/mo); --apply needs --confirm-monthly-usd 12 | box-ops: verb=resize box=project-3 orgo=fixture-oid result=PLAN dry run';
+const RESIZE_PLAN = 'PLAN cost +$12/mo (now $40/mo, after $52/mo); --apply needs --confirm-monthly-usd 12 | box-ops: verb=resize box=box3 orgo=fixture-oid result=PLAN dry run';
 const LAUNCH_PLAN = 'capacity: pool fits 4c/16gb/100gb (used 3 computers, 12 vCPU, 48 GB RAM) | box-launch: box=newbox orgo=- ip=- specs=4c/16gb/100gb usd_mo=40 smoke=PENDING';
 
 async function open(t) {
@@ -24,13 +25,13 @@ async function open(t) {
 }
 async function call(env, method, path, body) {
   const res = await worker.fetch(new Request(`https://jobs.test${path}`, {
-    method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }), { DB: env.DB, HARNESS_SECRET: SECRET, BOX_OPS_OWNERS: `${OWNER},${OWNER2}` });
+    method, headers: { authorization: `Bearer ${SECRET}`, 'x-box-ops-token': OPS, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }), { DB: env.DB, HARNESS_SECRET: SECRET, BOX_OPS_TOKEN: OPS, BOX_OPS_OWNERS: `${OWNER},${OWNER2}` });
   return { status: res.status, body: await res.json() };
 }
 const post = (env, body) => call(env, 'POST', '/api/box-commands', { box: 'hub', reason: 'grow', confirm: true, actor: OWNER, ...body });
 const SPECS = { account: 'acct-a', vcpus: 8 };
-const resize = (over = {}) => ({ type: 'orgo_resize', target: 'project-3', ...SPECS, ...over });
+const resize = (over = {}) => ({ type: 'orgo_resize', target: 'box3', ...SPECS, ...over });
 const launch = (over = {}) => ({ type: 'orgo_launch', target: 'newbox', account: 'acct-a', project: 'proj-x', vcpus: 4, mem_gb: 16, disk_gb: 100, ...over });
 
 // POST the quote, claim it as the hub, post the result. Returns the quote id.
@@ -43,7 +44,7 @@ async function quote(env, body, { ok = true, detail = RESIZE_PLAN } = {}) {
   assert.equal(r.status, 200);
   return q.body.id;
 }
-const resizeQuote = (env, over = {}, opts) => quote(env, { type: 'orgo_resize_quote', target: 'project-3', ...SPECS, ...over }, opts);
+const resizeQuote = (env, over = {}, opts) => quote(env, { type: 'orgo_resize_quote', target: 'box3', ...SPECS, ...over }, opts);
 const cmds = (db, type) => db.prepare('SELECT * FROM box_commands_v2 WHERE type=? ORDER BY id').all(type);
 const refusals = (db) => db.prepare("SELECT outcome FROM hub_lease_changes WHERE action='box_command_refused' ORDER BY id").all().map((r) => r.outcome);
 
@@ -88,7 +89,7 @@ test('Q4: a quote older than the TTL is stale (fallback 900 s; the settings row 
   const env = await open(t); if (!env) return;
   const id = await resizeQuote(env);
   t.mock.timers.tick(900 * 1000);
-  assert.equal((await post(env, resize({ quote_id: id, confirm_monthly_usd: '12', target: 'project-3' }))).status, 201, 'at 900 s it is fresh');
+  assert.equal((await post(env, resize({ quote_id: id, confirm_monthly_usd: '12', target: 'box3' }))).status, 201, 'at 900 s it is fresh');
   const env2 = await open(t); if (!env2) return;
   const id2 = await resizeQuote(env2);
   t.mock.timers.tick(901 * 1000);
@@ -100,7 +101,7 @@ test('Q4: a quote older than the TTL is stale (fallback 900 s; the settings row 
 test('Q5: a quote for other specs, account or target is stale', async (t) => {
   const env = await open(t); if (!env) return;
   const id = await resizeQuote(env);
-  for (const over of [{ vcpus: 16 }, { mem_gb: 32 }, { account: 'acct-b' }, { target: 'project-4' }]) {
+  for (const over of [{ vcpus: 16 }, { mem_gb: 32 }, { account: 'acct-b' }, { target: 'box4' }]) {
     const r = await post(env, resize({ quote_id: id, confirm_monthly_usd: '12', ...over }));
     assert.equal(r.status, 409, JSON.stringify(over));
   }
@@ -108,7 +109,7 @@ test('Q5: a quote for other specs, account or target is stale', async (t) => {
 
 test('Q6: a failed quote is stale even when its detail holds a COST line', async (t) => {
   const env = await open(t); if (!env) return;
-  const id = await resizeQuote(env, {}, { ok: false, detail: 'COST: resize project-3 +$12/mo (now $40/mo, after $52/mo) | box-ops: verb=resize result=REFUSED' });
+  const id = await resizeQuote(env, {}, { ok: false, detail: 'COST: resize box3 +$12/mo (now $40/mo, after $52/mo) | box-ops: verb=resize result=REFUSED' });
   assert.equal((await post(env, resize({ quote_id: id, confirm_monthly_usd: '12' }))).status, 409);
 });
 
@@ -135,18 +136,18 @@ test('Q8: an open resize with other args is 409 open_command_differs; the same a
   assert.equal(cmds(env.db, 'orgo_resize').length, 1);
 });
 
-test('Q9: restart, stop, retire, the quotes and the Fly pool types need no token', async (t) => {
+test('Q9: restart, stop, retire, the quotes and the Fly pool types need no price token', async (t) => {
   const env = await open(t); if (!env) return;
-  for (const body of [{ type: 'orgo_restart', target: 'project-3' }, { type: 'orgo_stop', target: 'project-3', account: 'acct-a' },
-    { type: 'orgo_retire', target: 'project-3', to: 'project-4', ip: '192.0.2.10', delete: true },
-    { type: 'orgo_resize_quote', target: 'project-3', ...SPECS }, { type: 'fly_pool_cap', target: 'proj-x', cap: 5 },
+  for (const body of [{ type: 'orgo_restart', target: 'box3' }, { type: 'orgo_stop', target: 'box3', account: 'acct-a' },
+    { type: 'orgo_retire', target: 'box3', to: 'box4', ip: '192.0.2.10', delete: true },
+    { type: 'orgo_resize_quote', target: 'box3', ...SPECS }, { type: 'fly_pool_cap', target: 'proj-x', cap: 5 },
     { type: 'fly_onboard', target: 'proj-x' }]) {
     const r = await post(env, body);
     assert.equal(r.status, 201, `${body.type} ${JSON.stringify(r.body)}`);
   }
   const ret = cmds(env.db, 'orgo_retire')[0];
   const ra = JSON.parse(ret.args);
-  assert.equal(ra.to, 'project-4');
+  assert.equal(ra.to, 'box4');
   assert.equal(ra.ip, '192.0.2.10');
   assert.equal(ra.delete, true);
 });
@@ -154,20 +155,20 @@ test('Q9: restart, stop, retire, the quotes and the Fly pool types need no token
 test('Q10: bad args are 400 and never clamped', async (t) => {
   const env = await open(t); if (!env) return;
   const bad = [
-    { type: 'orgo_resize_quote', target: 'project-3', account: 'acct-a', vcpus: 0 },
-    { type: 'orgo_resize_quote', target: 'project-3', account: 'acct-a', vcpus: '4' },
-    { type: 'orgo_resize_quote', target: 'project-3', account: 'acct-a', vcpus: -1 },
-    { type: 'orgo_resize_quote', target: 'project-3', account: 'acct-a', vcpus: 2.5 },
-    { type: 'orgo_resize_quote', target: 'project-3', account: 'acct-a' },
-    { type: 'orgo_resize_quote', target: 'project-3', vcpus: 4 },
+    { type: 'orgo_resize_quote', target: 'box3', account: 'acct-a', vcpus: 0 },
+    { type: 'orgo_resize_quote', target: 'box3', account: 'acct-a', vcpus: '4' },
+    { type: 'orgo_resize_quote', target: 'box3', account: 'acct-a', vcpus: -1 },
+    { type: 'orgo_resize_quote', target: 'box3', account: 'acct-a', vcpus: 2.5 },
+    { type: 'orgo_resize_quote', target: 'box3', account: 'acct-a' },
+    { type: 'orgo_resize_quote', target: 'box3', vcpus: 4 },
     { type: 'orgo_restart', target: 'hub' },
-    { type: 'orgo_restart', target: 'project-3;id' },
-    { type: 'orgo_restart', target: 'project-3' },
-    { type: 'orgo_restart', target: 'project-3', box: 'project-3-1' },
-    { type: 'orgo_retire', target: 'project-3', delete: 'true' },
-    { type: 'orgo_retire', target: 'project-3', ip: '192.0.2' },
-    { type: 'orgo_retire', target: 'project-3', to: 'hub' },
-    { type: 'orgo_retire', target: 'project-3', to: 'project-3' },
+    { type: 'orgo_restart', target: 'box3;id' },
+    { type: 'orgo_restart', target: 'box-3' },
+    { type: 'orgo_restart', target: 'box3', box: 'box3-1' },
+    { type: 'orgo_retire', target: 'box3', delete: 'true' },
+    { type: 'orgo_retire', target: 'box3', ip: '192.0.2' },
+    { type: 'orgo_retire', target: 'box3', to: 'hub' },
+    { type: 'orgo_retire', target: 'box3', to: 'box3' },
     { type: 'orgo_launch_quote', target: 'newbox', account: 'acct-a', project: 'proj-x', vcpus: 4, mem_gb: 16 },
     { type: 'orgo_launch_quote', target: 'newbox', account: 'acct-a', vcpus: 4, mem_gb: 16, disk_gb: 100 },
     { type: 'fly_pool_cap', target: 'proj-x', cap: 0 },
@@ -186,11 +187,11 @@ test('Q10: bad args are 400 and never clamped', async (t) => {
 
 test('Q11: the FIRST price line counts; a quote with no price line costs 0 (a shrink)', async (t) => {
   const env = await open(t); if (!env) return;
-  const two = await resizeQuote(env, {}, { detail: 'COST: resize project-3 +$12/mo (now $40/mo) | COST: resize project-3 +$99/mo | box-ops: verb=resize' });
+  const two = await resizeQuote(env, {}, { detail: 'COST: resize box3 +$12/mo (now $40/mo) | COST: resize box3 +$99/mo | box-ops: verb=resize' });
   assert.equal((await post(env, resize({ quote_id: two, confirm_monthly_usd: '99' }))).status, 409);
   assert.equal((await post(env, resize({ quote_id: two, confirm_monthly_usd: '12' }))).status, 201);
   const env2 = await open(t); if (!env2) return;
-  const shrink = await resizeQuote(env2, { vcpus: 2 }, { detail: 'resize: project-3 8c/32gb/-gb -> 2c/32gb/-gb, delta $-18/mo | box-ops: verb=resize box=project-3 orgo=fixture-oid result=PLAN dry run' });
+  const shrink = await resizeQuote(env2, { vcpus: 2 }, { detail: 'resize: box3 8c/32gb/-gb -> 2c/32gb/-gb, delta $-18/mo | box-ops: verb=resize box=box3 orgo=fixture-oid result=PLAN dry run' });
   assert.equal((await post(env2, resize({ vcpus: 2, quote_id: shrink, confirm_monthly_usd: '1' }))).status, 409);
   assert.equal((await post(env2, resize({ vcpus: 2, quote_id: shrink, confirm_monthly_usd: '0' }))).status, 201);
 });
