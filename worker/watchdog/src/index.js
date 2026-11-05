@@ -85,15 +85,15 @@ function authed(req, env) {
 async function maybeAlert(env, key, text) {
   const last = await env.KV.get(`alerted:${key}`);
   if (last && now() - Number(last) < REALERT_MIN * 60000) return false;
+  if (!(await tg(env, text))) return false;
   await env.KV.put(`alerted:${key}`, String(now()));
-  await tg(env, text);
   return true;
 }
 async function clearAlert(env, key, recoveryText) {
   const was = await env.KV.get(`alerted:${key}`);
   if (was) {
+    if (recoveryText && !(await tg(env, recoveryText))) return;
     await env.KV.delete(`alerted:${key}`);
-    if (recoveryText) await tg(env, recoveryText);
   }
 }
 

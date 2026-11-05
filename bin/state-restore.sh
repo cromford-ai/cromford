@@ -53,7 +53,7 @@
 #   bin/state-restore.sh <box> [ts|latest] [--apply] [--identity <file>]
 #                        [--live <dir>] [--dest <dir>]
 #                        [--backup-dir <dir>] [--orchestrator-live <dir>]
-#                        [--standby]
+#                        [--standby] [--allow-unverified]
 #
 #   <box>                      the box prefix in the bucket ([a-z0-9-])
 #   [ts|latest]                20260915T232000Z, or `latest`. No ts at all
@@ -76,6 +76,13 @@
 #                              and a --dest under $H/tmp/ (default
 #                              $H/tmp/standby-restore) because it deletes its
 #                              own run dirs
+#   --allow-unverified         manually recover a legacy object without usable
+#                              remote hash proof; never permits a hash mismatch
+#                              and cannot be used by the automatic standby stream
+#
+# Extraction accepts only regular files/directories, without following links.
+# RESTORE_MAX_BYTES (default 8 GiB) and RESTORE_MAX_MEMBERS (default 100000)
+# cap each outer/decrypted archive. A refusal never reaches the live merge.
 #
 # Exit: 0 everything asked for happened (or, --standby, already up to date). 1 refused or partly refused (not
 # configured, no backups, sha256 mismatch, wrong identity, extraction failed,
@@ -89,13 +96,13 @@ SELF=$(basename "$0")
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 usage() {
-  echo "$SELF: usage: $SELF <box> [ts|latest] [--apply] [--identity <file>] [--live <dir>] [--dest <dir>] [--backup-dir <dir>] [--orchestrator-live <dir>] [--standby]" >&2
+  echo "$SELF: usage: $SELF <box> [ts|latest] [--apply] [--identity <file>] [--live <dir>] [--dest <dir>] [--backup-dir <dir>] [--orchestrator-live <dir>] [--standby] [--allow-unverified]" >&2
   echo "$SELF:        no ts lists the backups for <box>; with a ts the default is a DRY RUN." >&2
   exit 2
 }
 
 BOX=""; TSARG=""; APPLY=0; IDFILE=""; LIVE="/root/harness"; DEST=""
-BACKUP_DIR=""; ORCH_LIVE=""; STANDBY=0
+BACKUP_DIR=""; ORCH_LIVE=""; STANDBY=0; ALLOW_UNVERIFIED=0
 # Set further down, read by the --standby EXIT trap. Initialised here so an
 # early exit never acts on (or reports) a value inherited from the caller's
 # environment: OUT is an rm -rf target.
@@ -104,6 +111,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --apply)             APPLY=1; shift ;;
     --standby)           STANDBY=1; shift ;;
+    --allow-unverified)  ALLOW_UNVERIFIED=1; shift ;;
     --identity)          [ $# -ge 2 ] || usage; IDFILE="$2"; shift 2 ;;
     --live)              [ $# -ge 2 ] || usage; LIVE="$2"; shift 2 ;;
     --dest)              [ $# -ge 2 ] || usage; DEST="$2"; shift 2 ;;
@@ -131,6 +139,9 @@ case "$TSARG" in
 esac
 if [ "$STANDBY" -eq 1 ] && { [ -z "$TSARG" ] || [ "$APPLY" -eq 0 ]; }; then
   echo "$SELF: --standby needs a ts (or latest) and --apply" >&2; usage
+fi
+if [ "$STANDBY" -eq 1 ] && [ "$ALLOW_UNVERIFIED" -eq 1 ]; then
+  echo "$SELF: --allow-unverified is for manual recovery, not --standby" >&2; usage
 fi
 
 H="${HARNESS_ROOT:-${HARNESS:-/root/harness}}"
@@ -198,7 +209,10 @@ for C in "$S3C" jq; do
   command -v "$C" >/dev/null 2>&1 || MISSING="$MISSING $C"
 done
 if [ -n "$TSARG" ]; then
-  command -v zstd >/dev/null 2>&1 || MISSING="$MISSING zstd"
+  for C in zstd python3 sha256sum; do
+    command -v "$C" >/dev/null 2>&1 || MISSING="$MISSING $C"
+  done
+  [ -r "$HERE/restore-archive.py" ] || MISSING="$MISSING bin/restore-archive.py"
   if [ -n "$IDFILE" ]; then
     command -v age >/dev/null 2>&1 || MISSING="$MISSING age"
   fi
@@ -217,6 +231,7 @@ fi
 # reports nothing), refuse when this box IS <box>, holds the hub lease (the
 # worker's answer, or the cache saying held), or is configured as a standby
 # of some other box.
+REPORT_OF="$BOX"
 if [ "$STANDBY" -eq 1 ]; then
   # state/standby-of is "<hub-name> <hub-id>", as bin/standby-install.sh writes
   # it (and fleet-conf.sh --standby-of prints it); the installer's cron passes
@@ -225,6 +240,8 @@ if [ "$STANDBY" -eq 1 ]; then
   if [ -f "$LIVE/state/standby-of" ]; then
     read -r SB_NAME SB_ID _ < "$LIVE/state/standby-of" 2>/dev/null || true
     [ -n "$SB_ID" ] || SB_ID="$SB_NAME"
+    # Bucket prefixes are IDs; the lease and watchdog use fleet box names.
+    [[ "$SB_NAME" =~ ^[a-z0-9-]+$ ]] && REPORT_OF="$SB_NAME"
   fi
   SBSELF=$(HARNESS="$H" "$HERE/box-name.sh" 2>/dev/null)
   # Self: this box's name is <box>, or is the hub NAME its standby-of lists —
@@ -279,14 +296,14 @@ standby_finish() { # $1 = the rc the run is exiting with
   elif ! wd=$(watchdog_url state-restore "$H"); then
     echo "standby report skipped: WATCHDOG_URL not configured"
   else
-    body=$(jq -nc --arg of "$BOX" --arg s "$TS" --argjson rc "$rc" '{of: $of, snapshot: $s, ok: ($rc == 0)}')
+    body=$(jq -nc --arg of "$REPORT_OF" --arg s "$TS" --argjson rc "$rc" '{of: $of, snapshot: $s, ok: ($rc == 0)}')
     watchdog_curl -fsS -m 10 -X POST -H 'content-type: application/json' --data "$body" \
       "$wd/api/standby/$self" >/dev/null 2>&1 \
       || echo "standby report failed (fail-open)"
   fi
   # The second report, to the hub's standby_status (BH-2640). Also fail-open:
   # it always exits 0 and prints its own one line.
-  HARNESS="$H" "$HERE/standby-heartbeat.sh" "$BOX" "$TS" "$rc" 2>/dev/null || true
+  HARNESS="$H" "$HERE/standby-heartbeat.sh" "$REPORT_OF" "$TS" "$rc" 2>/dev/null || true
   exit "$rc"
 }
 if [ "$STANDBY" -eq 1 ]; then
@@ -396,14 +413,19 @@ echo "pulled $KEY -> $TARBALL"
 # An empty stored sha256 is ABSENT, not a match: the one thing this must never
 # do is call a tampered or truncated tarball verified.
 DLSHA=$(sha256sum "$TARBALL" 2>/dev/null | cut -d' ' -f1)
+if ! [[ "$DLSHA" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "REFUSED: cannot hash downloaded object $KEY"; exit 1
+fi
 HEADJ=$(s3 head-object --bucket "$BUCKET" --key "$KEY" 2>/dev/null)
 HRC=$?
 if [ "$HRC" -ne 0 ]; then
   echo "sha256 unverified (head-object rc=$HRC)"
+  [ "$ALLOW_UNVERIFIED" -eq 1 ] || { echo "REFUSED: remote hash proof required (manual legacy recovery: --allow-unverified)"; exit 1; }
 else
   STORED=$(printf '%s' "$HEADJ" | jq -r '.Metadata.sha256 // empty' 2>/dev/null)
   if [ -z "$STORED" ]; then
     echo "sha256 unverified (no metadata)"
+    [ "$ALLOW_UNVERIFIED" -eq 1 ] || { echo "REFUSED: remote hash proof required (manual legacy recovery: --allow-unverified)"; exit 1; }
   elif [ "$STORED" != "$DLSHA" ]; then
     echo "REFUSED: sha256 mismatch for $KEY (stored $STORED, downloaded $DLSHA)"
     exit 1
@@ -412,16 +434,15 @@ else
   fi
 fi
 
-# ---- extract, in two steps -------------------------------------------------
-# env.tar.age first and on its own, so the encrypted blob lands NEXT TO the
-# tree and never inside it. The member is absent from a foreign or older
-# tarball, and tar says so with rc 2; the file on disk is the answer, not the
-# rc.
-tar --zstd -xf "$TARBALL" -C "$OUT" env.tar.age 2>"$OUT/tar-env.err"
-tar --zstd -xf "$TARBALL" -C "$OUT/tree" --exclude=env.tar.age 2>"$OUT/tar-tree.err"
-TRC=$?
-if [ "$TRC" -ne 0 ]; then
-  echo "REFUSED: tar rc=$TRC extracting $KEY ($(head -c 200 "$OUT/tar-tree.err" | tr '\n' ' '))"
+# ---- bounded extraction into staging --------------------------------------
+# The extractor opens directories no-follow and creates files exclusively;
+# env.tar.age goes next to the tree. A partial refusal is never merged.
+zstd -dc < "$TARBALL" 2>"$OUT/tar-env.err" \
+  | python3 -B "$HERE/restore-archive.py" --root "$OUT/tree" --env-blob "$OUT/env.tar.age" \
+      --max-bytes "${RESTORE_MAX_BYTES:-8589934592}" --max-members "${RESTORE_MAX_MEMBERS:-100000}" 2>"$OUT/tar-tree.err"
+TRCS=("${PIPESTATUS[@]}")
+if [ "${TRCS[0]}" -ne 0 ] || [ "${TRCS[1]}" -ne 0 ]; then
+  echo "REFUSED: tar rc=${TRCS[1]} (zstd rc=${TRCS[0]}) extracting $KEY ($(head -c 200 "$OUT/tar-tree.err" | tr '\n' ' '))"
   exit 1
 fi
 if [ -z "$(find "$OUT/tree" -mindepth 1 -print -quit 2>/dev/null)" ]; then
@@ -442,7 +463,9 @@ elif [ ! -f "$OUT/env.tar.age" ]; then
   echo "no env.tar.age in this snapshot"
 else
   mkdir -p "$OUT/env-stage" 2>/dev/null
-  age -d -i "$IDFILE" "$OUT/env.tar.age" 2>"$OUT/age.err" | tar -xf - -C "$OUT/env-stage" 2>"$OUT/tar-env-stage.err"
+  age -d -i "$IDFILE" "$OUT/env.tar.age" 2>"$OUT/age.err" \
+    | python3 -B "$HERE/restore-archive.py" --root "$OUT/env-stage" --prefix env \
+        --max-bytes "${RESTORE_MAX_BYTES:-8589934592}" --max-members "${RESTORE_MAX_MEMBERS:-100000}" 2>"$OUT/tar-env-stage.err"
   ERCS=("${PIPESTATUS[@]}")
   # Whatever a failure wrote stays in env-stage/, under the destination, never
   # under --live. Nothing is removed: a half-decrypt is evidence. Each failure

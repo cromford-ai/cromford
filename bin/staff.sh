@@ -414,8 +414,21 @@ while IFS= read -r fp; do
   hf="$STATE/held/$fp.json"
   r=$(jq -c '.row // empty' "$hf" 2>/dev/null)
   if [ -z "$r" ]; then log "held filing ${fp:0:12} unreadable; removed, the next tick asks the model"; rm -f "$hf"; continue; fi
+  # A saved recommendation is not a grant that survives a policy change.
+  # Reuse the same decision engine as a fresh model answer, without another call.
+  v=$(jq -cn --arg l "$LEVEL" --arg c "$CAP" --argjson n "$NEVER" --argjson r "$r" \
+    '{level:$l,cap:$c,never:$n,decisions:[{fingerprint:$r.fingerprint,action:$r.action}]}' \
+    | node "$SELF/staff-core.mjs" decide 2>/dev/null) || { log "held filing ${fp:0:12}: current policy unreadable; nothing filed"; HELD=$((HELD+1)); continue; }
+  verdict=$(jq -r '.items[0].verdict // "refuse"' <<<"$v")
+  if [ "$verdict" = refuse ] || [ "$(jq -r '.items[0].executable // false' <<<"$v")" != true ]; then
+    digest refuse "$(jq -r '.action // ""' <<<"$r")" "$fp" "$(jq -r .ftitle "$hf")" "$(jq -r '.url // ""' <<<"$r")"
+    finish "$fp" refused "$(jq -r .class "$hf")" "$(jq -r .ftitle "$hf")" && rm -f "$hf"
+    REFUSED=$((REFUSED+1))
+    continue
+  fi
+  [ "$verdict" = allow ] && mode=auto || mode=ask
   if file_issue "$r"; then
-    finish "$fp" filed "$(jq -r .class "$hf")" "$(jq -r .ftitle "$hf")" "$ISSUE_URL" "$(jq -r .mode "$hf")" && rm -f "$hf"
+    finish "$fp" filed "$(jq -r .class "$hf")" "$(jq -r .ftitle "$hf")" "$ISSUE_URL" "$mode" && rm -f "$hf"
     FILED=$((FILED+1))
   else
     HELD=$((HELD+1))
@@ -467,7 +480,7 @@ pf="$TMPD/prompt.md"; raw="$TMPD/answer"
   jq -sc '.' "$TMPD/todo"; } > "$pf"
 callfp=$({ jq -r .fingerprint "$TMPD/todo"; jq -r '"note:\(.id)"' "$TMPD/notes"; } | sort | sha256sum | cut -c1-64)
 # agent-call's _budget_for reads AGENT_CALL_BUDGET_USD_<STAGE>: STAFF_TICK.
-env AGENT_CALL_LANE=staff STAFF_AGENT="$AGENT" AGENT_CALL_FP="staff:$AGENT:$callfp" AGENT_CALL_BUDGET_USD_STAFF_TICK="$USD" \
+env AGENT_CALL_NO_TOOLS=1 AGENT_CALL_LANE=staff STAFF_AGENT="$AGENT" AGENT_CALL_FP="staff:$AGENT:$callfp" AGENT_CALL_BUDGET_USD_STAFF_TICK="$USD" \
   COST_RUN_ID="staff-tick:$TICK_KEY" "$H/bin/agent-call.sh" staff-tick fleet "$model" 300 "$raw" "@$pf" >/dev/null 2>&1
 rc=$?
 CALLS=1; MODEL_RC=$rc

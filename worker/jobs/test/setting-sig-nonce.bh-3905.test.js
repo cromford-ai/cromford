@@ -203,7 +203,7 @@ test('N7 a protected PUT with the key unset writes no sig row and no sig_seq', a
 test('L1 lead_authority.* and risk_tier.* PUTs are signed; other keys are not', async () => {
   const db = openDb();
   for (const k of ['lead_authority.example-org.cromford', 'risk_tier.low_globs']) {
-    const r = await putSetting(db, k, 'human');
+    const r = await putSetting(db, k, 'human', { human: HUMAN });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.signed, true, k);
     assert.equal(r.body.sig_seq, 1, k);

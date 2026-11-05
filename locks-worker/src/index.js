@@ -218,8 +218,8 @@ export default {
       const { key, lease_id, ttl_s = 7200 } = body;
       const exp = t + Math.min(Math.max(ttl_s, 60), 86400);
       const r = await env.DB.prepare(
-        "UPDATE locks SET expires_at=?1 WHERE key=?2 AND lease_id=?3 AND holder=?4"
-      ).bind(exp, key, lease_id, harness).run();
+        "UPDATE locks SET expires_at=?1 WHERE key=?2 AND lease_id=?3 AND holder=?4 AND expires_at > ?5"
+      ).bind(exp, key, lease_id, harness, t).run();
       if (r.meta.changes === 0) return json(404, { error: "no such lease (expired or stolen)" });
       return json(200, { key, expires_at: exp });
     }

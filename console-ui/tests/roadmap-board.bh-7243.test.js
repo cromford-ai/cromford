@@ -427,6 +427,7 @@ test('R11 a drop answered 409 says so and reloads', async () => {
   fire(card('f1'), 'dragstart', { dataTransfer: { setData() {} } });
   fire(col('next'), 'drop');
   await waitFor(() => /Someone changed this idea\. Reloaded\./.test(text(root)), 'the 409 line', describe);
+  await waitFor(() => reads() > before, 'the conflict reload', describe);
   assert.ok(reads() > before);
   assert.ok(!isDisabled(buttonIn(card('f1'), 'MOVE')), 'the card is usable again');
 });

@@ -33,7 +33,7 @@
 #        operator notices;
 #   R5   a tampered object is refused on the sha256 before anything is
 #        extracted and before restore-merge is ever called; absent metadata is
-#        `unverified` and continues (R5b);
+#        refused by default, with an explicit manual legacy override (R5b);
 #   R6   an existing destination is refused rather than overwritten, a --dest
 #        inside --live is rc 2, and a box name outside [a-z0-9-] never reaches
 #        the bucket;
@@ -526,20 +526,24 @@ mkdir -p "$T/live5b/logs" "$T/orch5b"
 printf 'live one\n' > "$T/live5b/logs/ALERTS.log"
 : > "$T/s3meta/bkt/$KEY"
 rr small latest --dest "$T/d5b" --live "$T/live5b" --orchestrator-live "$T/orch5b"; RC=$?
-[ "$RC" -eq 0 ] && ok || bad "R5b: an unverifiable object exited $RC, want 0 ($(tail -5 "$T/rr.out"))"
+[ "$RC" -eq 1 ] && ok || bad "R5b: an unverifiable object exited $RC, want refusal ($(tail -5 "$T/rr.out"))"
 grep -q 'sha256 unverified (no metadata)' "$T/rr.out" \
   && ok || bad "R5b: it did not say the object is unverified: $(grep -i sha256 "$T/rr.out")"
-[ -f "$T/d5b/small/$TSNOW/tree/state/box-id" ] \
-  && ok || bad "R5b: it refused an object that simply has no metadata"
+[ ! -f "$T/d5b/small/$TSNOW/tree/state/box-id" ] \
+  && ok || bad "R5b: it extracted an object without proof"
+rr small latest --allow-unverified --dest "$T/d5b-legacy" --live "$T/live5b" --orchestrator-live "$T/orch5b"; RC=$?
+[ "$RC" -eq 0 ] && ok || bad "R5b: explicit manual legacy recovery exited $RC ($(tail -5 "$T/rr.out"))"
+[ -f "$T/d5b-legacy/small/$TSNOW/tree/state/box-id" ] \
+  && ok || bad "R5b: explicit legacy recovery did not extract the object"
 printf '%s\n' "$OSHA" > "$T/s3meta/bkt/$KEY"
 
 # ── R6: destination hygiene, and the box name never reaches the bucket ──────
 mkdir -p "$T/live6" "$T/orch6"
-rr small latest --dest "$T/d5b" --live "$T/live6" --orchestrator-live "$T/orch6"; RC=$?
+rr small latest --dest "$T/d5b-legacy" --live "$T/live6" --orchestrator-live "$T/orch6"; RC=$?
 [ "$RC" -eq 1 ] && ok || bad "R6: an existing destination exited $RC, want 1"
 grep -q 'already pulled at' "$T/rr.out" \
   && ok || bad "R6: it did not name the existing pull: $(cat "$T/rr.out")"
-[ -f "$T/d5b/small/$TSNOW/tree/state/box-id" ] \
+[ -f "$T/d5b-legacy/small/$TSNOW/tree/state/box-id" ] \
   && ok || bad "R6: it removed a destination it had refused"
 rr small latest --dest "$T/live6/sub" --live "$T/live6"; RC=$?
 [ "$RC" -eq 2 ] && ok || bad "R6: --dest under --live exited $RC, want 2"

@@ -30,6 +30,7 @@
 
 import { json, d1Guarded } from "../lib/http.js";
 import { LEVELS, precision } from "../../../../agent-core/src/index.js";
+import { humanTokenOk } from "./verdicts.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const DAY_MS = 86400000;
@@ -234,7 +235,7 @@ export const routes = [
   // ── POST /api/staff/promotions/decide — a human approves or voids one ──────
   [
     "POST", "/api/staff/promotions/decide",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       if (!(typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0)) return bad("id");
       if (b.decision !== "approve" && b.decision !== "void") return bad("decision");
@@ -260,6 +261,7 @@ export const routes = [
         // Independent reads, in parallel.
         const [isAgent, p] = await Promise.all([isAgentActor(env, actor), readPromotion()]);
         if (isAgent) return json(403, { error: "agent_approver" });
+        if (!humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
         if (!p) return json(404, { error: "promotion not found" });
         if (p.status !== "pending") {
           const prior = await readDecision();

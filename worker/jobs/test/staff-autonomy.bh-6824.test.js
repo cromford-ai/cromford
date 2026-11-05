@@ -16,13 +16,14 @@ import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 
 const SECRET = 'test-secret';
+const HUMAN = 'fixture-independent-human-token';
 const call = (DB, path, { method = 'POST', body } = {}) => {
   const req = new Request(`https://jobs.test${path}`, {
     method,
-    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'x-human-verdict-token': HUMAN },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return worker.fetch(req, { DB, HARNESS_SECRET: SECRET }).then(async (res) => ({
+  return worker.fetch(req, { DB, HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN }).then(async (res) => ({
     status: res.status, body: await res.json().catch(() => null),
   }));
 };

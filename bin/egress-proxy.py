@@ -53,6 +53,10 @@ PROXY_PORT = 3128
 CATCH_PORTS = (80, 443)
 HEAD_MAX = 16384
 CONNECT_TIMEOUT_S = 10
+READ_TIMEOUT_S = 15
+BODY_MAX = 1024 * 1024
+MAX_CONNECTIONS = 64
+STREAM_IDLE_S = 120
 
 
 def now():
@@ -162,6 +166,7 @@ class Proxy:
         self.entries, self.log = entries, log
         self.allow = 0
         self.deny = 0
+        self.active = 0
 
     async def refuse(self, writer, host, port, stage):
         self.deny += 1
@@ -188,11 +193,22 @@ class Proxy:
                                       CONNECT_TIMEOUT_S)
 
     async def handle(self, reader, writer):
+        admitted = False
         try:
+            if self.active >= MAX_CONNECTIONS:
+                return await self.bad(writer, 503, 'Service Unavailable')
+            self.active += 1
+            admitted = True
             await self._handle(reader, writer)
-        except (OSError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, ValueError):
+        except asyncio.TimeoutError:
+            await self.bad(writer, 408, 'Request Timeout')
+        except asyncio.LimitOverrunError:
+            await self.bad(writer, 431, 'Request Header Fields Too Large')
+        except (OSError, asyncio.IncompleteReadError, ValueError):
             pass
         finally:
+            if admitted:
+                self.active -= 1
             try:
                 writer.close()
             except OSError:
@@ -202,7 +218,7 @@ class Proxy:
         stage = self.log.stage
         while True:
             try:
-                head = await reader.readuntil(b'\r\n\r\n')
+                head = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), READ_TIMEOUT_S)
             except asyncio.IncompleteReadError:
                 return
             if len(head) > HEAD_MAX:
@@ -212,7 +228,34 @@ class Proxy:
             if len(parts) != 3:
                 return await self.bad(writer, 400, 'Bad Request')
             method, target, version = parts
+            if version not in ('HTTP/1.0', 'HTTP/1.1') or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", method):
+                return await self.bad(writer, 400, 'Bad Request')
+            headers = [h for h in lines[1:] if h]
+            low = []
+            for h in headers:
+                name, sep, value = h.partition(':')
+                if not sep or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) or re.search(r'[\x00-\x08\x0a-\x1f\x7f]', value):
+                    return await self.bad(writer, 400, 'Bad Request')
+                low.append(name.lower())
+            if low.count('content-length') > 1 or low.count('host') > 1:
+                return await self.bad(writer, 400, 'Bad Request')
+            if 'transfer-encoding' in low:
+                return await self.bad(writer, 501, 'Not Implemented')
+            length = 0
+            host_header = None
+            for name, h in zip(low, headers):
+                value = h.split(':', 1)[1].strip()
+                if name == 'host':
+                    host_header = value
+                elif name == 'content-length':
+                    if not re.fullmatch(r'[0-9]{1,20}', value):
+                        return await self.bad(writer, 400, 'Bad Request')
+                    length = int(value)
+            if length > BODY_MAX:
+                return await self.bad(writer, 413, 'Content Too Large')
             if method.upper() == 'CONNECT':
+                if length:
+                    return await self.bad(writer, 400, 'Bad Request')
                 hp = split_hostport(target, 443)
                 if hp is None:
                     return await self.bad(writer, 400, 'Bad Request')
@@ -225,9 +268,12 @@ class Proxy:
                 except (OSError, asyncio.TimeoutError):
                     self.log.write(f'ERR {safe(host)}:{port} upstream-unreachable')
                     return await self.bad(writer, 502, 'Bad Gateway')
-                writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-                await writer.drain()
-                await pipe_both(reader, writer, ur, uw)
+                try:
+                    writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+                    await asyncio.wait_for(writer.drain(), READ_TIMEOUT_S)
+                    await pipe_both(reader, writer, ur, uw)
+                finally:
+                    uw.close()
                 return
             m = re.match(r'^http://([^/?#]+)(.*)$', target, re.I)
             if not m:
@@ -236,20 +282,14 @@ class Proxy:
             if hp is None:
                 return await self.bad(writer, 400, 'Bad Request')
             host, port = hp
+            host = host.lower().rstrip('.')
             if not allowed(host, port, self.entries):
                 return await self.refuse(writer, host, port, stage)
-            headers = [h for h in lines[1:] if h]
-            low = [h.split(':', 1)[0].strip().lower() for h in headers]
-            if 'transfer-encoding' in low:
-                return await self.bad(writer, 501, 'Not Implemented')
-            length = 0
-            for name, h in zip(low, headers):
-                if name == 'content-length':
-                    v = h.split(':', 1)[1].strip()
-                    if not v.isdigit():
-                        return await self.bad(writer, 400, 'Bad Request')
-                    length = int(v)
-            body = await reader.readexactly(length) if length else b''
+            supplied = split_hostport(host_header, 80) if host_header is not None else None
+            if (version == 'HTTP/1.1' and supplied is None) or (host_header is not None and
+                    (supplied is None or (supplied[0].lower().rstrip('.'), supplied[1]) != (host, port))):
+                return await self.bad(writer, 400, 'Bad Request')
+            body = await asyncio.wait_for(reader.readexactly(length), READ_TIMEOUT_S) if length else b''
             self.allow += 1
             try:
                 ur, uw = await self.upstream(host, port)
@@ -260,29 +300,33 @@ class Proxy:
             # its response: the NEXT request line on this client connection is
             # read and checked again here, never passed through blind.
             keep = [h for n, h in zip(low, headers)
-                    if n not in ('connection', 'proxy-connection', 'keep-alive', 'proxy-authorization')]
+                    if n not in ('host', 'connection', 'proxy-connection', 'keep-alive', 'proxy-authorization')]
+            # The HTTP virtual host is the same authority that passed the allowlist.
+            keep.append(f'Host: {host}' + (f':{port}' if port != 80 else ''))
             path = m.group(2) or '/'
             req = f'{method} {path} {version}\r\n' + ''.join(h + '\r\n' for h in keep) + 'Connection: close\r\n\r\n'
-            uw.write(req.encode('latin-1') + body)
-            await uw.drain()
-            while True:
-                d = await ur.read(65536)
-                if not d:
-                    break
-                writer.write(d)
-                await writer.drain()
-            uw.close()
+            try:
+                uw.write(req.encode('latin-1') + body)
+                await asyncio.wait_for(uw.drain(), READ_TIMEOUT_S)
+                while True:
+                    d = await asyncio.wait_for(ur.read(65536), STREAM_IDLE_S)
+                    if not d:
+                        break
+                    writer.write(d)
+                    await asyncio.wait_for(writer.drain(), STREAM_IDLE_S)
+            finally:
+                uw.close()
 
 
 async def pipe(reader, writer):
     try:
         while True:
-            d = await reader.read(65536)
+            d = await asyncio.wait_for(reader.read(65536), STREAM_IDLE_S)
             if not d:
                 break
             writer.write(d)
-            await writer.drain()
-    except (OSError, asyncio.IncompleteReadError):
+            await asyncio.wait_for(writer.drain(), STREAM_IDLE_S)
+    except (OSError, asyncio.IncompleteReadError, asyncio.TimeoutError):
         pass
     finally:
         try:
@@ -337,13 +381,20 @@ async def run_serve(a):
 # --- the forwarder (inside the namespace, and `fwd`) ---------------------------
 
 def forwarder(sock_path):
+    active = 0
     async def handle(reader, writer):
-        try:
-            ur, uw = await asyncio.open_unix_connection(sock_path)
-        except OSError:
+        nonlocal active
+        if active >= MAX_CONNECTIONS:
             writer.close()
             return
-        await pipe_both(reader, writer, ur, uw)
+        active += 1
+        try:
+            ur, uw = await asyncio.wait_for(asyncio.open_unix_connection(sock_path), CONNECT_TIMEOUT_S)
+            await pipe_both(reader, writer, ur, uw)
+        except (OSError, asyncio.TimeoutError):
+            writer.close()
+        finally:
+            active -= 1
     return handle
 
 
@@ -421,6 +472,10 @@ def set_pdeathsig(sig=signal.SIGKILL):
 
 async def run_inner(a, cmd):
     log = Log(a.log, a.stage, a.id)
+    setpriv = shutil.which('setpriv')
+    if not setpriv:
+        log.write('ERR capability-drop-unavailable')
+        return 127
     direct = 0
     try:
         lo_up()
@@ -464,13 +519,9 @@ async def run_inner(a, cmd):
               'npm_config_https_proxy', 'npm_config_proxy'):
         env[k] = url
     env['NO_PROXY'] = env['no_proxy'] = 'localhost,127.0.0.1,::1'
-    caps = 'kept'
-    setpriv = shutil.which('setpriv')
-    if setpriv:
-        cmd = [setpriv, '--inh-caps=-sys_admin,-net_admin',
-               '--bounding-set=-sys_admin,-net_admin', '--'] + cmd
-        caps = 'dropped'
-    log.write(f'INNER direct_log={direct_log} caps={caps}')
+    cmd = [setpriv, '--inh-caps=-sys_admin,-net_admin',
+           '--bounding-set=-sys_admin,-net_admin', '--'] + cmd
+    log.write(f'INNER direct_log={direct_log} caps=dropped')
 
     try:
         child = await asyncio.create_subprocess_exec(*cmd, env=env, preexec_fn=set_pdeathsig)

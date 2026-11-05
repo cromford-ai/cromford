@@ -344,11 +344,11 @@ function participantApproveBody(sent) {
 const seen = new Map();
 const TTL_MS = 60000;
 
-async function signedIn(cookie) {
+async function signedIn(cookie, fresh = false) {
   if (!cookie) return false;
   const now = Date.now();
   const hit = seen.get(cookie);
-  if (hit && now - hit.at < TTL_MS) return hit.ok;
+  if (!fresh && hit && now - hit.at < TTL_MS) return hit.ok;
   let ok = false;
   try {
     const res = await fetch(CONSOLE + AUTH_PROBE, { headers: { cookie }, redirect: 'manual' });
@@ -386,7 +386,7 @@ export async function onRequest(context) {
   }
 
   const cookie = request.headers.get('cookie') || '';
-  if (!(await signedIn(cookie))) {
+  if (!(await signedIn(cookie, request.method !== 'GET'))) {
     // The same shape src/api.js already treats as "not signed in".
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 403, headers: { 'content-type': 'application/json' }
@@ -453,6 +453,14 @@ export async function onRequest(context) {
     }
   };
   if (lead) init.headers['x-lead-verdict-token'] = lead;
+  const humanRoutes = new Set(['staff/agents/autonomy', 'staff/classes/delegation',
+    'staff/promotions/decide', 'staff/suppressions', 'staff/suppressions/decide', 'archie/classes/delegation']);
+  if (row && identity.access === 'on' && humanRoutes.has(rest)) {
+    const human = String(env.HUMAN_VERDICT_TOKEN || '').trim();
+    if (human && human !== String(env.HARNESS_SECRET || '').trim() && human !== String(env.LEAD_VERDICT_TOKEN || '').trim()) {
+      init.headers['x-human-verdict-token'] = human;
+    }
+  }
   // BH-7999: a row with `idempotencyKey` forwards the browser's Idempotency-Key
   // (the worker's own key rule) and the stamped actor as x-harness-actor. A
   // missing or bad key is refused before anything is forwarded.

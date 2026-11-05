@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
@@ -40,6 +40,7 @@ jobs:
         run: |
           bash bin/test-worker-bootstrap.sh
           node --test tests/audit-authorization.test.mjs tests/locks-worker-security-audit.test.mjs
+          node --test tests/audit-followup-*.test.mjs
       - name: Dashboard production build
         run: npm run build --prefix console-ui
       - name: Dashboard dependency audit
@@ -53,8 +54,8 @@ jobs:
       matrix:
         package: [console-ui, worker/jobs, worker/otp-inbox, worker/watchdog, mcp, agent-core]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
       - name: Install locked dependencies when present
@@ -72,8 +73,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
       - name: Shell security and runner behavior
@@ -93,7 +94,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Full shell corpus on Linux
         run: bin/run-tests-in-docker.sh --shard '${{ matrix.shard }}/4'
 
@@ -101,7 +102,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Syntax (bash -n on every script)
         run: |
@@ -139,8 +140,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
@@ -153,7 +154,7 @@ jobs:
         run: tests/e2e-audit/node_modules/.bin/playwright-core install --with-deps chromium --only-shell
       - name: Tester Army browser and HTTP regression suite
         run: npm test --prefix tests/e2e-audit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: audit-e2e-results

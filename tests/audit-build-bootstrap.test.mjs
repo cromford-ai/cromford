@@ -55,7 +55,7 @@ for (const pkg of ['jobs', 'otp-inbox']) {
       mkdirSync(pkgDir, { recursive: true });
       mkdirSync(catalog, { recursive: true });
       mkdirSync(join(scratch, 'bin'), { recursive: true });
-      for (const script of ['test-worker-bootstrap.sh', 'lanes-build.sh', 'llm-sites-build.sh']) {
+      for (const script of ['test-worker-bootstrap.sh', 'lanes-build.sh', 'llm-sites-build.sh', 'context-budgets-build.sh']) {
         copyFileSync(join(repo, 'bin', script), join(scratch, 'bin', script));
       }
       copyFileSync(join(repo, 'worker', pkg, 'package.json'), join(pkgDir, 'package.json'));
@@ -64,15 +64,22 @@ for (const pkg of ['jobs', 'otp-inbox']) {
       const sites = join(scratch, 'catalog', 'llm-sites.d');
       mkdirSync(sites);
       writeFileSync(join(sites, '_head.json'), '{\n  "version": 1\n}\n');
+      const budgets = join(scratch, 'catalog', 'context-budgets.d');
+      mkdirSync(budgets);
+      writeFileSync(join(budgets, '_head.json'), '{\n  "version": 1\n}\n');
+      writeFileSync(join(budgets, '_tail.json'), '{\n  "defaults": {}\n}\n');
       for (const value of ['fixture-first', 'fixture-updated']) {
         writeFileSync(lane, JSON.stringify({ id: 'fixture-lane', note: value, knobs: [] }));
         writeFileSync(join(sites, '0000-fixture-site.json'), `[\n${JSON.stringify({ id: 'fixture-site', stage: value })}\n]\n`);
+        writeFileSync(join(budgets, '0000-fixture.json'), `[\n${JSON.stringify({ lane: 'fixture-lane', note: value })}\n]\n`);
         const result = spawnSync('npm', ['run', 'pretest'], { cwd: pkgDir, encoding: 'utf8' });
         assert.equal(result.status, 0, result.stderr);
         const registry = JSON.parse(readFileSync(join(scratch, 'catalog', 'lanes.json'), 'utf8'));
         assert.equal(registry.lanes[0].note, value);
         const siteRegistry = JSON.parse(readFileSync(join(scratch, 'catalog', 'llm-sites.json'), 'utf8'));
         assert.equal(siteRegistry.sites[0].stage, value);
+        const budgetRegistry = JSON.parse(readFileSync(join(scratch, 'catalog', 'context-budgets.json'), 'utf8'));
+        assert.equal(budgetRegistry.lanes[0].note, value);
       }
     } finally { rmSync(scratch, { recursive: true, force: true }); }
   });

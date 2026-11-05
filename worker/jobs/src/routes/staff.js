@@ -7,7 +7,8 @@
 //
 // An agent's level moves only through POST /api/staff/agents/autonomy. It is
 // refused above the agent's cap (409 above_cap) and a raise by archie or by any
-// staff agent is refused (403 self_promotion): a human promotes. A lower level
+// staff agent is refused (403 self_promotion): a human promotes using the
+// independent human verdict token. Body actor names are audit labels. A lower level
 // is open to any actor. agent-core decide() is not the gate here, because it
 // refuses every automation request, and automation is the level a demotion
 // goes to. The level must be one of agent-core LEVELS, and the UPDATE moves it
@@ -40,6 +41,7 @@ import { json, d1Guarded } from "../lib/http.js";
 import { decide, validate, LEVELS } from "../../../../agent-core/src/index.js";
 import CHARTER from "../../../../agent-core/schema/charter.schema.json" with { type: "json" };
 import { isProtectedSlug } from "./archie-autonomy.js";
+import { humanTokenOk } from "./verdicts.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const CLASS_RE = /^[a-z][a-z0-9-]{1,40}$/;
@@ -155,7 +157,7 @@ export const routes = [
   // ── POST /api/staff/agents/autonomy — set an agent's level, never above cap ─
   [
     "POST", "/api/staff/agents/autonomy",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const name = agentOf(b.agent);
       if (name === null) return bad("agent");
@@ -170,6 +172,7 @@ export const routes = [
         if (!row) return NOT_FOUND();
         const rises = rank(b.autonomy) > rank(row.autonomy);
         if (rises && await isAgentActor(env, actor)) return json(403, { error: "self_promotion" });
+        if (rises && !humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
         if (row.autonomy === b.autonomy) {
           return json(200, { ok: true, existing: true, agent: charterOf(row, await readLanes(env, name)) });
         }
@@ -202,7 +205,7 @@ export const routes = [
   // ── POST /api/staff/classes/delegation — delegate or ask_first one class ───
   [
     "POST", "/api/staff/classes/delegation",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const name = agentOf(b.agent);
       if (name === null) return bad("agent");
@@ -239,6 +242,7 @@ export const routes = [
           return json(200, { ok: true, ...(id === undefined ? { existing: true } : { change_id: id }), class_state: classState(after) });
         }
         if (await isAgentActor(env, actor)) return json(403, { error: "self_delegation" });
+        if (!humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
         if (agent.status !== "active") return json(409, { error: "agent_not_active", status: agent.status });
         const effectiveCap = LEVELS[Math.min(rank(agent.cap), rank(row.cap))];
         if (decide("autonomy", effectiveCap, { name: c, never: [] }) !== "allow") {

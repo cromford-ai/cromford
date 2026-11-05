@@ -12,6 +12,7 @@ import locks from '../../locks-worker/src/index.js';
 import watchdog from '../../worker/watchdog/src/index.js';
 import { openDb, d1 } from '../../worker/jobs/test/lib/d1-sqlite.bh-1030.js';
 import { onRequest as coord } from '../../console-ui/functions/api/coord/[[path]].js';
+import { onRequest as apiMiddleware } from '../../console-ui/functions/_middleware.js';
 import { onRequest as dash } from '../../console-ui/functions/api/[[path]].js';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const dist = resolve(root, 'console-ui/dist');
@@ -52,8 +53,10 @@ async function handle(req) {
   if (url.pathname.startsWith('/locks/')) return locks.fetch(new Request(new URL(url.pathname.slice(6)+url.search,url),req),lockEnv,ctx);
   if (url.pathname.startsWith('/watchdog/')) return watchdog.fetch(new Request(new URL(url.pathname.slice(9)+url.search,url),req),wdEnv);
   if (url.pathname === '/fixture/command') return Response.json(commandDb.prepare('SELECT ckey FROM commands WHERE id=1').get());
-  if (url.pathname.startsWith('/api/coord/')) return coord({ request:req, env:pageEnv, params:{path:url.pathname.slice(11).split('/')} });
-  if (url.pathname.startsWith('/api/')) return dash({ request:req, env:pageEnv, params:{} });
+  if (url.pathname.startsWith('/api/')) return apiMiddleware({request:req, next:() =>
+    url.pathname.startsWith('/api/coord/')
+      ? coord({ request:req, env:pageEnv, params:{path:url.pathname.slice(11).split('/')} })
+      : dash({ request:req, env:pageEnv, params:{} })});
   const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
   const file = resolve(dist, rel);
   if (file !== dist && !file.startsWith(dist+'/')) return new Response('not found',{status:404});
