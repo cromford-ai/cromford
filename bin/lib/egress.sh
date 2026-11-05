@@ -18,7 +18,7 @@
 #   a cache that is not a JSON object with .values, or a row with no valid
 #     entries / one bad entry -> FAILS CLOSED to EG_FALLBACK_HOSTS (the model
 #     hosts only), source fallback:<reason>; the stage still runs;
-#   no unshare, unshare refused, no python3, no proxy script, or the proxy
+#   no unshare, unshare refused, no setpriv, no python3, no proxy script, or the proxy
 #     socket not up within 5 s -> not-enforced: the call runs UNFENCED, the
 #     state line says so, and ONE ALERTS line goes out per box/stage/day. The
 #     fence never refuses the call (the FENCE_ENV doctrine in agent-call.sh).
@@ -102,6 +102,7 @@ eg_mechanism() {
   fi
   EG_MECH=no
   if ! command -v unshare >/dev/null 2>&1; then EG_MECH_REASON=no-unshare
+  elif ! command -v setpriv >/dev/null 2>&1; then EG_MECH_REASON=no-setpriv
   elif ! command -v python3 >/dev/null 2>&1; then EG_MECH_REASON=no-python3
   elif [ ! -r "$(_eg_proxy)" ]; then EG_MECH_REASON=no-proxy-script
   elif [ "$(id -u)" = 0 ] && unshare -n true >/dev/null 2>&1; then EG_MECH=ok; EG_MECH_REASON=""

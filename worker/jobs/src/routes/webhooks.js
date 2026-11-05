@@ -20,6 +20,33 @@ import { mapMergeQueueDelivery } from "../lib/merge-queue-intake.js";
 import { recordGithubGate } from "../lib/pr-gate-intake.js";
 import { recordPrRecord } from "../lib/pr-record-intake.js";
 
+// Bound the raw bytes before decoding, HMAC or JSON allocation. Missing or
+// misleading Content-Length cannot bypass this stream limit.
+const MAX_WEBHOOK_BYTES = 1024 * 1024;
+async function webhookBody(req) {
+  const declared = req.headers.get('content-length');
+  if (declared && (!/^\d+$/.test(declared) || Number(declared) > MAX_WEBHOOK_BYTES)) return null;
+  if (!req.body?.getReader) {
+    const raw = await req.text();
+    return new TextEncoder().encode(raw).byteLength <= MAX_WEBHOOK_BYTES ? raw : null;
+  }
+  const reader = req.body.getReader();
+  const chunks = []; let size = 0;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_WEBHOOK_BYTES) { await reader.cancel(); return null; }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+const bodyTooLarge = () => json(413, { error: 'webhook body exceeds 1 MiB' });
+
 // recordWake — the one write every receiver makes (BH-4079). With a delivery
 // id, the delivery row and the wake row go in ONE env.DB.batch (one D1
 // transaction): the wake INSERT only runs `WHERE changes() = 1`, i.e. when the
@@ -149,7 +176,9 @@ export const routes = [
         return json(503, { error: "webhook receiver not configured (GITHUB_WEBHOOK_SECRET unset)" });
       }
       const sig = req.headers.get("x-hub-signature-256") || "";
-      const raw = await req.text().catch(() => "");
+      if (!/^sha256=[a-f0-9]{64}$/.test(sig)) return json(401, { error: "bad signature" });
+      const raw = await webhookBody(req);
+      if (raw === null) return bodyTooLarge();
       const want = "sha256=" + await hmacSha256Hex(env.GITHUB_WEBHOOK_SECRET, raw);
       if (!hexEqual(sig, want)) return json(401, { error: "bad signature" });
 
@@ -212,7 +241,10 @@ export const routes = [
     "*", "/webhooks/jira",
     async ({ req, env, t }) => {
       if (req.method !== "POST") return json(405, { error: "POST only" });
-      const raw = await req.text().catch(() => "");
+      if (!env.JIRA_WEBHOOK_SECRET) return json(503, { error: "webhook receiver not configured (JIRA_WEBHOOK_SECRET unset)" });
+      if (!/^sha256=[a-f0-9]{64}$/.test(req.headers.get('x-hub-signature') || '')) return json(401, { error: 'bad signature' });
+      const raw = await webhookBody(req);
+      if (raw === null) return bodyTooLarge();
       const bad = await verifyJira(env, req.headers, raw);
       if (bad) return json(bad.status, { error: bad.error });
       const payload = parseObj(raw);
@@ -224,7 +256,10 @@ export const routes = [
     "*", "/webhooks/linear",
     async ({ req, env, t }) => {
       if (req.method !== "POST") return json(405, { error: "POST only" });
-      const raw = await req.text().catch(() => "");
+      if (!env.LINEAR_WEBHOOK_SECRET) return json(503, { error: "webhook receiver not configured (LINEAR_WEBHOOK_SECRET unset)" });
+      if (!/^[a-f0-9]{64}$/.test(req.headers.get('linear-signature') || '')) return json(401, { error: 'bad signature' });
+      const raw = await webhookBody(req);
+      if (raw === null) return bodyTooLarge();
       const bad = await verifyLinear(env, req.headers, raw);
       if (bad) return json(bad.status, { error: bad.error });
       const payload = parseObj(raw);

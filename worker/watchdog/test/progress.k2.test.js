@@ -29,8 +29,8 @@ import {
   PROGRESS_SNAP_KEY, PROGRESS_CFG_KEY, INCIDENT_PREFIX, PENDING_PREFIX, COOL_PREFIX,
 } from "../src/progress.js";
 
-const SECRET = "sec";
-const STAMP = "stamp-only";
+const SECRET = "fixture-watchdog-secret";
+const STAMP = "fixture-stamp-only";
 const T = Date.parse("2026-09-25T12:00:00Z");
 const at = (base, min) => new Date(base - min * 60000).toISOString().replace(/\.\d{3}Z$/, "Z");
 const ago = (min) => at(T, min);
@@ -283,7 +283,7 @@ beforeEach(() => {
     }
     return new Response("ok");
   };
-  env = { KV: fakeKV(), HARNESS_SECRET: SECRET, STAMP_SECRET: STAMP, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_CHAT_ID: "c" };
+  env = { KV: fakeKV(), WATCHDOG_SECRET: SECRET, STAMP_SECRET: STAMP, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_CHAT_ID: "c" };
 });
 // Tick tests judge only the push and the project rules (the clock moves by
 // hours and the stamps are absolute).
@@ -414,7 +414,7 @@ test("an oversized burst is cut to one Telegram-sized message", async () => {
 
 // ── routes ───────────────────────────────────────────────────────────────
 const post = (path, body, s = SECRET) =>
-  worker.fetch(new Request(`https://wd.invalid${path}?s=${s}`, { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body) }), env);
+  worker.fetch(new Request(`https://wd.invalid${path}`, { method: "POST", headers: s === null ? {} : { authorization: `Bearer ${s}` }, body: typeof body === "string" ? body : JSON.stringify(body) }), env);
 
 test("POST /api/progress: authed, stores the snapshot and a valid config; a broken config never replaces a good one", async () => {
   assert.equal((await post("/api/progress", snap(), "wrong")).status, 403);
@@ -484,7 +484,7 @@ test("(5) three consecutive rejected configs page once; a valid push resets the 
 
 test("(4) POST /api/stamp/<name>: only the dedicated stamp secret, only a configured detector", async () => {
   await post("/api/progress", snap());
-  assert.equal((await post("/api/stamp/share-mirror", "", SECRET)).status, 403, "HARNESS_SECRET does not open stamps");
+  assert.equal((await post("/api/stamp/share-mirror", "", SECRET)).status, 403, "WATCHDOG_SECRET does not open stamps");
   assert.equal((await post("/api/stamp/share-mirror", "", "wrong")).status, 403);
   assert.equal((await post("/api/stamp/not-configured", "", STAMP)).status, 404);
   assert.equal((await post("/api/stamp/Bad_Name", "", STAMP)).status, 404);
@@ -514,7 +514,7 @@ test("GET /api/progress: snapshot age, config in force, stamps, open incidents",
   await post("/api/progress", snap());
   await post("/api/stamp/share-mirror", "", STAMP);
   await env.KV.put(`${INCIDENT_PREFIX}silent:alpha:merge`, JSON.stringify({ first: 1, paged: 1, text: "x" }));
-  const j = await (await worker.fetch(new Request(`https://wd.invalid/api/progress?s=${SECRET}`), env)).json();
+  const j = await (await worker.fetch(new Request(`https://wd.invalid/api/progress`, { headers: { authorization: `Bearer ${SECRET}` } }), env)).json();
   assert.equal(typeof j.snapshot_age_min, "number");
   assert.equal(j.cfg.spend_min_usd, 5);
   assert.ok("share-mirror" in j.stamps);

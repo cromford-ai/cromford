@@ -32,6 +32,7 @@ import worker from '../src/index.js';
 import { openDb } from './lib/d1-sqlite.bh-1030.js';
 
 const SECRET = 'test-secret';
+const HUMAN = 'fixture-independent-human-token';
 const NOW = Date.now();  // determinism: ok the single anchor; every seeded time is an offset from it
 const ago = (days) => new Date(NOW - days * 86400e3).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const FP = (i) => String(i).padStart(64, '0');
@@ -40,9 +41,9 @@ const FAM = 'f'.repeat(64);
 async function run(DB, body = {}) {
   const res = await worker.fetch(new Request('https://jobs.test/api/retention/run', {
     method: 'POST',
-    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'x-human-verdict-token': HUMAN },
     body: JSON.stringify(body),
-  }), { DB, HARNESS_SECRET: SECRET });
+  }), { DB, HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 const live = (db) => db.prepare("UPDATE settings SET value='0' WHERE key='retention.dry_run'").run();
@@ -218,9 +219,9 @@ function recorder(DB) {
   return { db, seen };
 }
 const callAs = (DB, method, path, body) => worker.fetch(new Request(`https://jobs.test${path}`, {
-  method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+  method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'x-human-verdict-token': HUMAN },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-}), { DB, HARNESS_SECRET: SECRET }).then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
+}), { DB, HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN }).then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
 let item = 0;
 async function fileOne(DB, cls = 'leak', agentName = 'watchman') {
   item += 1;

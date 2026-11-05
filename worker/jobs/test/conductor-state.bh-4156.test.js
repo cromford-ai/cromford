@@ -107,7 +107,7 @@ test('R5: another repo\'s rows never appear, and the repo match is exact', async
   if (!open) { t.skip('node:sqlite unavailable on this runtime'); return; }
   await put(open.DB, 2, 'rebase', 'mine');
   await put(open.DB, 2, 'rebase', 'theirs', 'example-org/y');
-  await put(open.DB, 2, 'rebase', 'case', 'example-org/x');
+  await put(open.DB, 2, 'rebase', 'case', 'EXAMPLE-ORG/X');
   const r = await batch(open.DB, `repo=${encodeURIComponent(REPO)}&numbers=2`);
   assert.deepEqual(r.body.attempts.map((a) => a.sha), ['mine']);
 });

@@ -42,9 +42,9 @@ NOW0=1791860000   # pinned for the pure tables
 . "$DIR/bin/lib/pool-stall.sh" || { echo "FAIL: bin/lib/pool-stall.sh cannot be sourced"; exit 1; }
 
 # T1 lib: project token first, org token second, FLY_ACCESS_TOKEN never.
-( FLY_API_TOKEN_project-6_OS=tok-fixture-proj FLY_API_TOKEN=tok-fixture-org
+( FLY_API_TOKEN_PROJECT_6_OS=tok-fixture-proj FLY_API_TOKEN=tok-fixture-org
   fly_token_resolve project-6-os; rc=$?
-  [ "$rc" = 0 ] && [ "$FLY_TOKEN_SRC" = FLY_API_TOKEN_project-6_OS ] && [ "$FLY_TOKEN_VAL" = tok-fixture-proj ] ) && ok \
+  [ "$rc" = 0 ] && [ "$FLY_TOKEN_SRC" = FLY_API_TOKEN_PROJECT_6_OS ] && [ "$FLY_TOKEN_VAL" = tok-fixture-proj ] ) && ok \
   || bad "U1: the project token must win over the org token"
 ( FLY_API_TOKEN=tok-fixture-org
   fly_token_resolve project-6-os; rc=$?
@@ -84,11 +84,11 @@ OUT=$(v 3 0 0 '' ok - "$NOW0" 1800); RC=$?
 [ "$(v 3 -1 0 0 ok $((NOW0-1800)) "$NOW0" 1800)" = "stall${TAB}1800" ] && ok || bad "S8: a negative budget (POOL_AUTOSCALE=0, cap below live) is no budget"
 
 # The cause line.
-C=$(pool_stall_cause missing 0 "" 0 unknown 0 FLY_API_TOKEN_project-6_OS)
-[ "$C" = "no Fly token (FLY_API_TOKEN_project-6_OS or FLY_API_TOKEN) in fly.env: the pool cannot reap, sweep or spawn" ] && ok || bad "C1: missing-token cause: '$C'"
-C=$(pool_stall_cause FLY_API_TOKEN 1 "" 8 0 8 FLY_API_TOKEN_project-6_OS)
+C=$(pool_stall_cause missing 0 "" 0 unknown 0 FLY_API_TOKEN_PROJECT_6_OS)
+[ "$C" = "no Fly token (FLY_API_TOKEN_PROJECT_6_OS or FLY_API_TOKEN) in fly.env: the pool cannot reap, sweep or spawn" ] && ok || bad "C1: missing-token cause: '$C'"
+C=$(pool_stall_cause FLY_API_TOKEN 1 "" 8 0 8 FLY_API_TOKEN_PROJECT_6_OS)
 [ "$C" = "8 slots held by 8 job files, 0 building: 8 on machines Fly does not list" ] && ok || bad "C2: orphan cause: '$C'"
-C=$(pool_stall_cause FLY_API_TOKEN 0 "empty-with-tracked" 8 unknown 0 FLY_API_TOKEN_project-6_OS)
+C=$(pool_stall_cause FLY_API_TOKEN 0 "empty-with-tracked" 8 unknown 0 FLY_API_TOKEN_PROJECT_6_OS)
 [ "$C" = "machines list unusable (empty-with-tracked): cannot tell if the 8 held slots are building" ] && ok || bad "C3: listing cause: '$C'"
 
 a() { pool_inflight_hold_action "$@"; }

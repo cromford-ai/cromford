@@ -42,7 +42,16 @@ const call = (DB, path, { method = 'GET', body, lead = false } = {}) => {
 
 const head = (c) => c.repeat(40);
 const row = (db, id) => db.prepare('SELECT * FROM lead_review_requests WHERE id=?').get(id);
-const NOW = Date.now(); // determinism: ok the single anchor; the worker stamps claims and the reset cutoff off the real clock, so every backdated age derives from this one read
+const RealDate = Date;
+const NOW = Date.now(); // determinism: ok the single real-clock anchor; both fixture ages and worker cutoffs use the fixed clock below
+class FixedDate extends RealDate {
+  constructor(...args) { if (args.length) super(...args); else super(NOW); }
+  static now() { return NOW; }
+}
+// A loaded runner must not turn the 59-second fixture into a stale heartbeat
+// while earlier tests run. Advance neither side of the 60-second boundary.
+globalThis.Date = FixedDate;
+test.after(() => { globalThis.Date = RealDate; });
 const isoAgo = (s) => new Date(NOW - s * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const setting = (db, key, value) => db.prepare(
   "INSERT INTO settings (key,value,note,actor,updated_at) VALUES (?1,?2,'test','test','2026-10-20T00:00:00Z') ON CONFLICT(key) DO UPDATE SET value=excluded.value"

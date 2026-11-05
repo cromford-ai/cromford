@@ -116,6 +116,9 @@ LRI_PART_BYTES=1000000
 LRI_B64_MAX=1400000
 LRI_FILE_MAX=262144
 LRI_LOG_APPEND_MAX=262144
+# Safety caps cover expansion, not just the compressed transport size.
+LRI_ARCHIVE_EXPANDED_MAX=134217728
+LRI_ARCHIVE_MEMBERS_MAX=32768
 # The lane of the call forms that name none (lri_member_ok with four
 # arguments, _lri_validate, _lri_base_line). It selects a manifest only.
 LRI_LANE_DEFAULT=blocked-resolver
@@ -688,14 +691,43 @@ _lri_skips_log() {
   return 0
 }
 
-# _lri_members <archive> — prints `<type> TAB <name>` per member, or rc 1 when
-# the archive does not list. GNU tar's verbose listing starts with the type
-# letter; the name list comes from the plain listing, in the same order.
+# _lri_members <archive> — prints `<type> TAB <name>` per member, or rc 1 on
+# an invalid archive, unsupported member or exceeded expansion/member budget.
 _lri_members() {
-  local names types
-  names=$(tar -tzf "$1" 2>/dev/null) || return 1
-  types=$(tar -tvzf "$1" 2>/dev/null | cut -c1) || return 1
-  paste <(printf '%s\n' "$types") <(printf '%s\n' "$names") | awk -F'\t' 'NF == 2 && $2 != ""'
+  # Stream headers once, bounding declared content before extraction. Reject
+  # unsupported types and control characters so each output row is unambiguous.
+  python3 - "$1" "$LRI_ARCHIVE_EXPANDED_MAX" "$LRI_ARCHIVE_MEMBERS_MAX" <<'PYMEMBERS'
+import sys, tarfile
+class BoundedInfo(tarfile.TarInfo):
+    def _proc_pax(self, archive):
+        if self.size > 65536:
+            raise ValueError("extended header too large")
+        return super()._proc_pax(archive)
+    def _proc_gnulong(self, archive):
+        if self.size > 65536:
+            raise ValueError("extended name too large")
+        return super()._proc_gnulong(archive)
+    def _proc_sparse(self, *args):
+        raise ValueError("sparse members are not supported")
+    _proc_gnusparse_00 = _proc_sparse
+    _proc_gnusparse_01 = _proc_sparse
+    _proc_gnusparse_10 = _proc_sparse
+try:
+    total = 0
+    with tarfile.open(sys.argv[1], mode="r|gz", tarinfo=BoundedInfo) as archive:
+        for count, member in enumerate(archive, 1):
+            total += member.size
+            if count > int(sys.argv[3]) or total > int(sys.argv[2]) or member.size < 0:
+                raise ValueError("archive budget exceeded")
+            if len(member.name) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in member.name):
+                raise ValueError("invalid member name")
+            kind = "-" if member.isfile() and not member.issparse() else "d" if member.isdir() else "?"
+            if kind == "?":
+                raise ValueError("unsupported archive member")
+            print(kind + "\t" + member.name)
+except (OSError, tarfile.TarError, ValueError):
+    sys.exit(1)
+PYMEMBERS
 }
 
 # _lri_validate <project> <archive> snapshot|writeback — rc 0 when every member
@@ -978,8 +1010,8 @@ _lri_visited_merge() {
   mkdir -p "$(dirname "$f")" "$root/locks" 2>/dev/null
   (
     exec 9>"$root/locks/$LRI_ROWLOCK.lock" || exit 1
-    flock -w 5 9 2>/dev/null || true
-    [ -f "$f" ] || : > "$f"
+    flock -w 5 9 2>/dev/null || exit 1
+    [ -f "$f" ] || : > "$f" || exit 1
     { awk -F'\t' -v p="$p" '$1 != p && NF' "$f"; awk -F'\t' -v p="$p" '$1 == p' "$rowf" | tail -n 1; } > "$f.tmp.$$" \
       && mv -f "$f.tmp.$$" "$f"
   )
@@ -1155,29 +1187,37 @@ _lri_apply_locked() {
         cur=$(_lri_sha "$root/$rel"); cur="${cur:--}"
         if [ -f "$x/$rel" ]; then
           [ "$cur" = "$(_lri_sha "$x/$rel")" ] && continue
-          if [ "$cur" = "$base" ]; then mkdir -p "$root/$(dirname "$rel")" && cp -p "$x/$rel" "$root/$rel"
+          if [ "$cur" = "$base" ]; then
+            mkdir -p "$root/$(dirname "$rel")" && cp -p "$x/$rel" "$root/$rel.lri-tmp.$$" \
+              && mv -fT "$root/$rel.lri-tmp.$$" "$root/$rel" \
+              || { rm -f "$root/$rel.lri-tmp.$$"; busy=1; break; }
           else conflicts=$((conflicts + 1)); fi
         else
           [ "$cur" = - ] && continue
-          if [ "$cur" = "$base" ]; then rm -f "$root/$rel"; else conflicts=$((conflicts + 1)); fi
+          if [ "$cur" = "$base" ]; then rm -f "$root/$rel" || { busy=1; break; }; else conflicts=$((conflicts + 1)); fi
         fi
       done < "$x/.lri/base.tsv"
     fi
     [ "$busy" = 0 ] || { rc=1; break; }
-    [ -s "$x/.lri/visited.tsv" ] && _lri_visited_merge "$p" "$x/.lri/visited.tsv"
+    if [ -s "$x/.lri/visited.tsv" ]; then
+      _lri_visited_merge "$p" "$x/.lri/visited.tsv" || { rc=1; break; }
+    fi
     # The log bytes are not idempotent: logs-through records the newest id
     # whose bytes are in the hub log, so a re-apply after a failed ack skips
     # them. The hub caps them too; a machine is not trusted to.
     if [ -s "$x/.lri/log-append" ] && [ "$id" -gt "$logs_through" ]; then
-      mkdir -p "$root/logs"; tail -c "$LRI_LOG_APPEND_MAX" "$x/.lri/log-append" >> "$root/logs/$lane.log"
-      logs_through="$id"; echo "$id" > "$st/logs-through"
+      mkdir -p "$root/logs" && tail -c "$LRI_LOG_APPEND_MAX" "$x/.lri/log-append" >> "$root/logs/$lane.log" \
+        || { rc=1; break; }
+      echo "$id" > "$st/logs-through.tmp" && mv -fT "$st/logs-through.tmp" "$st/logs-through" \
+        || { rc=1; break; }
+      logs_through="$id"
     fi
     applied=$((applied + 1)); through="$id"
     rm -rf "$x"
   done <<<"$list"
   if [ -n "$through" ]; then
     if _jobs_req POST "$api/writebacks/ack" "$(jq -nc --argjson t "$through" '{through:$t, rejected:($ARGS.positional | map(tonumber))}' --args "${rej[@]}")" > /dev/null; then
-      echo "$through" > "$st/applied-through"
+      echo "$through" > "$st/applied-through.tmp" && mv -fT "$st/applied-through.tmp" "$st/applied-through" || rc=1
     else
       rc=1
     fi

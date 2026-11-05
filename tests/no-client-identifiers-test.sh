@@ -103,6 +103,10 @@ KNOWN_FAKES = KNOWN_FAKE_CREDENTIALS | KNOWN_FAKE_IDENTIFIERS
 # reviewer can re-hash it, and nothing is secret about knowing it. A checksum
 # of anything built here, or of anything behind a credential, does not qualify.
 KNOWN_PUBLIC_CHECKSUMS = {
+    # Ubuntu 24.04 official multi-platform OCI image index, pinned in
+    # fly/Dockerfile; public registry manifest verified on 2026-11-05 with
+    # docker buildx imagetools inspect ubuntu:24.04 (Manifest.Digest).
+    'fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852',
     # ShellCheck 0.11.0, the pin in bin/ci-shellcheck.sh — release assets
     # shellcheck-v0.11.0.linux.x86_64.tar.xz and .linux.aarch64.tar.xz.
     '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198',

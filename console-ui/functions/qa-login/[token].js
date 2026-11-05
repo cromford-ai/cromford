@@ -22,15 +22,20 @@
 //     host's alias.
 
 const WORKER = 'https://harness-console.operator.workers.dev';
-const PREVIEW_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.mission-control-9bu\.pages\.dev$/;
 const DEPLOYMENT_HASH = /^[0-9a-f]{8}$/;
 
 function isPreviewAlias(host, env) {
-  const m = PREVIEW_HOST.exec(host);
-  if (!m || DEPLOYMENT_HASH.test(m[1]) || m[1] === 'main') return false;
+  // Configure the Pages project domain at deployment time. Never derive it
+  // from a caller's Host header: that would admit arbitrary QA origins.
+  const domain = String(env?.QA_PREVIEW_DOMAIN || 'console.example.pages.dev').toLowerCase();
+  if (!domain.endsWith('.pages.dev') || !domain.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return false;
+  const suffix = `.${domain}`;
+  if (!host.endsWith(suffix)) return false;
+  const alias = host.slice(0, -suffix.length);
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(alias) || DEPLOYMENT_HASH.test(alias) || alias === 'main') return false;
   const branch = String((env && env.CF_PAGES_BRANCH) || '').toLowerCase();
   if (branch === 'main') return false;
-  return !branch || branch === m[1];
+  return !branch || branch === alias;
 }
 
 export async function onRequest(context) {

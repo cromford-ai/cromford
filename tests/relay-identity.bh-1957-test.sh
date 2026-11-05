@@ -96,7 +96,7 @@ reap() { # reap <SSH_RC>   (fly-pool.log and ALERTS accumulate across calls)
   ( export PATH="$P/fakebin:$PATH" HARNESS="$P/h" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
            FLEET_CONF="$P/h/fleet.conf" SSH_SINK="$P/ssh.txt" SSH_RC="$1" \
-           FLY_API_TOKEN_project-3_OS=tok FLY_BIN_DIR="$P/fakebin"
+           FLY_API_TOKEN_PROJECT_3_OS=tok FLY_BIN_DIR="$P/fakebin"
     bash "$DIR/bin/fly-pool.sh" project-3 >/dev/null 2>&1 )
 }
 MQT='MERGE-QUEUE TOUCH FAILED'

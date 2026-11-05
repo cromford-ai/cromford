@@ -210,7 +210,7 @@ export function createWriteGate({ mode = 'read', project = '', site = '', issue 
     try { const p = await snap(page, name); return p && existsSync(p) ? p : null; } catch { return null; }
   }
 
-  async function gate(page, desc, act) {
+  async function gate(page, desc, act, validate) {
     if (stopped) return out('refused: run stopped', true);
     if (await paymentReason(page) !== '') {
       const host = hostOf(page);
@@ -224,6 +224,7 @@ export function createWriteGate({ mode = 'read', project = '', site = '', issue 
     n += 1;
     const k = n;
     const action = redact((desc && desc.action) || `click ${(desc && (desc.name || desc.tag)) || 'control'}`);
+    const approvedUrl = String(page.url());
     const before = await shot(page, `before-${k}`);
     if (!before) return out(`stopped: no screenshot for write ${k}; nothing written`, true);
     const ctl = new AbortController();
@@ -244,6 +245,14 @@ export function createWriteGate({ mode = 'read', project = '', site = '', issue 
     if (answer !== 'approve') {
       const why = typeof answer === 'string' && answer.startsWith('error: ') ? answer.slice(7) : 'unexpected answer';
       return out(`stopped: approval failed for write ${k} (${why}); nothing written`, true);
+    }
+    try {
+      if (String(page.url()) !== approvedUrl || (validate && !await validate()) ||
+          (await paymentReason(page) !== '' && !allowed.includes(hostOf(page)))) {
+        return out(`stopped: write ${k} changed while awaiting approval; nothing written`, true);
+      }
+    } catch {
+      return out(`stopped: write ${k} changed while awaiting approval; nothing written`, true);
     }
     try {
       await act();

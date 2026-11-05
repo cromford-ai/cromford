@@ -24,7 +24,7 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 H="$T/h"
 mkdir -p "$H/bin/lib" "$H/logs" "$H/env" "$H/state/fly" "$H/flags" "$T/fakebin" "$T/flybin" "$T/tmp"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-fly\n' > "$H/env/fly.env"
 printf 'project-5 example-org/project-5 - - 0 boxa 192.0.2.9\n' > "$H/fleet.conf"
 printf '{"app":"pool-project-5"}\n' > "$H/state/fly/project-5.json"
 cp "$DIR/bin/fleet-conf.sh" "$DIR/bin/fly-envbundle.sh" "$H/bin/"

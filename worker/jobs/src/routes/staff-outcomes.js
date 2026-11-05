@@ -39,6 +39,7 @@ import { json, d1Guarded } from "../lib/http.js";
 import { LEVELS, nextLevel, precision } from "../../../../agent-core/src/index.js";
 import { isProtectedSlug } from "./archie-autonomy.js";
 import { classSlug, familyFingerprint } from "../lib/staff-family.js";
+import { humanTokenOk } from "./verdicts.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const FP_RE = /^[0-9a-f]{64}$/;
@@ -321,7 +322,7 @@ export const routes = [
   // ── POST /api/staff/suppressions/decide — a human decides a pending row ────
   [
     "POST", "/api/staff/suppressions/decide",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       if (!(typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0)) return bad("id");
       if (b.decision !== "approve" && b.decision !== "decline") return bad("decision");
@@ -331,6 +332,7 @@ export const routes = [
 
       return d1Guarded("staff_suppressions", async () => {
         if (await isAgentName(env, approver)) return json(403, { error: "agent_approver" });
+        if (!humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
         const read = () => env.DB.prepare(`SELECT * FROM staff_suppressions WHERE id=?1`).bind(b.id).first();
         const row = await read();
         if (!row) return json(404, { error: "suppression not found" });

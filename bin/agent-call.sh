@@ -2372,6 +2372,24 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
     RC=78
     return 78
   fi
+  # Configured guard enforcement is fail-closed. The historical alert-only
+  # default remains available until an operator explicitly arms this contract.
+  if [ "${IRON_LAW_ENFORCE:-0}" = 1 ] && [ "$NO_TOOLS" != 1 ]; then
+    case " ${IRON_LAW_LANES:-plan execute review fix qa triage} " in
+      *" $STAGE "*)
+        local _guard_ready=0
+        if [ "$runner" = claude ]; then
+          [ -x "$HARNESS/bin/iron-law-guard.sh" ] && _guard_ready=1
+        elif [ "${LANE_FENCE:-1}" != 0 ] && [ -x "$HARNESS/bin/lane-shims/_fence.sh" ] && [ -x "$HARNESS/bin/lane-fence.sh" ]; then
+          _guard_ready=1
+        fi
+        if [ "$_guard_ready" != 1 ]; then
+          printf 'AGENT_CALL_REFUSED armed iron-law enforcement unavailable for %s\n' "$runner" > "$OUT" 2>/dev/null
+          echo "$(STAMP) [$PROJECT] $STAGE REFUSED: IRON_LAW_ENFORCE=1 but the $runner guard is unavailable; nothing called" >> "$ALERTS"
+          RC=78; return 78
+        fi ;;
+    esac
+  fi
   # >>> llm-gate-runner
   # THE PER-RUNG GATE (BH-1141 phase 2), in the ONE place every rung of the
   # ladder passes through. `runner_allowed` is per LANE, where the caller-side
@@ -2656,7 +2674,8 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           # tools there is nothing to permit, and if the ban ever failed to take
           # effect the safe failure is a call that stalls on a permission prompt
           # rather than one that silently acts with the hub's credentials.
-          ARGS=(-p --tools "" --model "$cm" --output-format json
+          ARGS=(-p --tools "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+                --model "$cm" --output-format json
                 --max-budget-usd "$(_budget_for "$STAGE" "$PROJECT" "$runner")")
         elif [ -n "$TOOLS_ALLOW" ]; then
           # The allowlist (BH-4065): only these built-ins, and no MCP server.
@@ -2706,20 +2725,25 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         local SP_ACTIVE="" SP_SETTINGS="" SP_TTL="" _SP_CDIR=""; local -a SP_ARGS=() SP_ENV=()
         _SP_CDIR=$( eval "$ACCT_EXPORTS" 2>/dev/null; printf '%s' "${CLAUDE_CONFIG_DIR:-}" )
         session_profile_build "$STAGE" "$PWD" "$_SP_CDIR"
-        # Under the allowlist the profile's MCP pair is dropped: its servers
-        # are the ones the allowlist's empty set exists to keep out.
-        if [ -n "$TOOLS_ALLOW" ] && [ "${#SP_ARGS[@]}" -gt 0 ]; then
+        # Under either tool restriction the profile's MCP pair is dropped:
+        # its servers are the ones the empty set exists to keep out.
+        if [ "$TOOL_FENCED" = 1 ] && [ "${#SP_ARGS[@]}" -gt 0 ]; then
           local -a _spk=(); local _i
           for ((_i = 0; _i < ${#SP_ARGS[@]}; _i++)); do
             case "${SP_ARGS[$_i]}" in
               --strict-mcp-config) ;;
               --mcp-config) _i=$((_i + 1)) ;;
+              --setting-sources)
+                if [ "$NO_TOOLS" = 1 ]; then _i=$((_i + 1)); else _spk+=("${SP_ARGS[$_i]}"); fi ;;
               *) _spk+=("${SP_ARGS[$_i]}") ;;
             esac
           done
           SP_ARGS=(${_spk[@]+"${_spk[@]}"})
         fi
         [ "${#SP_ARGS[@]}" -gt 0 ] && ARGS+=("${SP_ARGS[@]}")
+        # Tool-free classification also excludes ambient user/project/local
+        # settings and their plugins. Explicit caller-owned settings below stay.
+        [ "$NO_TOOLS" = 1 ] && ARGS+=(--setting-sources "")
         # SETTINGS COMPOSITION. Three lanes want a --settings file and the flag
         # takes ONE value, so they are collected and merged here rather than
         # appended one after another (a second --settings REPLACES the first —
@@ -2776,10 +2800,15 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
               # 30s, not 10: a hook the CLI KILLS on its timeout runs the
               # command UNGUARDED, so the ceiling sits well above anything the
               # guard's own bounded read and classifier can take.
+              _guard_written=0
               jq -n --arg c "$HARNESS/bin/iron-law-guard.sh" \
                 '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$c,timeout:30}]}]}}' \
                 > "$_guard.tmp.$$" 2>/dev/null \
-                && mv -f "$_guard.tmp.$$" "$_guard" 2>/dev/null && _sets+=("$_guard")
+                && mv -f "$_guard.tmp.$$" "$_guard" 2>/dev/null && _sets+=("$_guard") && _guard_written=1
+              if [ "${IRON_LAW_ENFORCE:-0}" = 1 ] && [ "$_guard_written" != 1 ]; then
+                printf 'AGENT_CALL_REFUSED armed iron-law settings could not be written\n' > "$OUT" 2>/dev/null
+                RC=78; return 78
+              fi
             else
               echo "$(STAMP) [$PROJECT] $STAGE: act-time iron-law guard MISSING at $HARNESS/bin/iron-law-guard.sh — this lane is running UNGUARDED (merge/push/deploy/prod-write are prompt-only here). Deploy the harness: bin/harness-sync.sh." >> "$ALERTS"
             fi ;;

@@ -27,6 +27,7 @@
 import { json, d1Guarded } from "../lib/http.js";
 import { fingerprint, canonicalUrl, isOwnOutput, validate } from "../../../../agent-core/src/index.js";
 import { classSlug, familyFingerprint } from "../lib/staff-family.js";
+import { humanTokenOk } from "./verdicts.js";
 import FINDING from "../../../../agent-core/schema/finding.schema.json" with { type: "json" };
 import SUPPRESSION from "../../../../agent-core/schema/suppression.schema.json" with { type: "json" };
 
@@ -130,7 +131,7 @@ export const routes = [
   // ── POST /api/staff/suppressions — a human mutes one fingerprint until expiry ─
   [
     "POST", "/api/staff/suppressions",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const fp = typeof b.fingerprint === "string" ? b.fingerprint.trim().toLowerCase() : "";
       if (!FP_RE.test(fp)) return bad("fingerprint");
@@ -149,6 +150,7 @@ export const routes = [
         const a = approver.toLowerCase();
         const isAgent = a === "archie" || (await rosterNames(env)).includes(a);
         if (isAgent) return json(403, { error: "agent_approver" });
+        if (!humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
 
         const res = await env.DB.prepare(
           `INSERT OR IGNORE INTO staff_suppressions (fingerprint, reason, approver, expires_at, status, created_at)

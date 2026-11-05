@@ -92,7 +92,7 @@ mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/fly" "$H/state/fly-pool/project-5" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -207,7 +207,7 @@ run_pool() { # run_pool [VAR=val ...]
            HARNESS_SECRET=test-secret JOBS_URL=https://jobs.invalid JOBS_BOX=hub \
            JOBS_RETRIES=0 JOBS_TIMEOUT=5 FLY_SINK="$T/fly.txt" EB_MARK="$EB_MARK" \
            CLOCK="$CLOCK" ORDER="$ORDER" T_START="$T_START" \
-           FLY_API_TOKEN_project-5=tok FLY_BIN_DIR="$T/fakebin" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok FLY_BIN_DIR="$T/fakebin" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 reset_case() {

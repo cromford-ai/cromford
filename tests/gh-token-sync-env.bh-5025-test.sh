@@ -249,7 +249,7 @@ machine() {
 tick() {
   : > "$P/logs/fly-pool.log"; rm -f "$T/rec"/*; : > "$T/rec/console.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$P" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok PREC="$T/rec" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok PREC="$T/rec" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 SYNC='gh_token_live_sync_env /run/harness-env/global.env'

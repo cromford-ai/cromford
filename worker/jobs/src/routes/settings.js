@@ -156,7 +156,8 @@ async function effectiveLead(env, key, row) {
 // Is `to` looser than `from` (the current value as judged; null = no row,
 // undefined = unknowable)? null when a bearer may write it, else what the 403
 // says. Authority is normalised the way bin/lib/lead-authority.sh reads it, with
-// all whitespace removed (la_decide); risk_tier.* is a whitespace-split glob set.
+// all whitespace removed (la_decide). Risk keys have different directions:
+// low_globs grants eligibility, while high/sensitive_globs withhold it.
 function leadLoosening(key, from, to) {
   if (key.startsWith("lead_authority.")) {
     const f = from == null ? from : from.replace(/\s+/g, "");
@@ -165,10 +166,19 @@ function leadLoosening(key, from, to) {
     if (t === "human:precision") return f === "human" ? {} : null;
     return f === null || f === "lane" || f === "human:precision" ? null : {};
   }
-  if (from === undefined) return {};
+  // An absent row uses a consumer-specific fallback. Without that effective
+  // value, neither the first write nor an unproven row can establish tightening.
+  if (from == null) return {};
+  if (from === to) return null;
+  if (!['risk_tier.low_globs', 'risk_tier.high_globs', 'risk_tier.sensitive_globs'].includes(key)) return {};
   const globs = (v) => (v || "").split(/\s+/).filter(Boolean);
+  const prior = new Set(globs(from));
   const next = new Set(globs(to));
-  const removed = [...new Set(globs(from))].filter((g) => !next.has(g));
+  if (key === 'risk_tier.low_globs') {
+    const added = [...next].filter((g) => !prior.has(g));
+    return added.length ? { added } : null;
+  }
+  const removed = [...prior].filter((g) => !next.has(g));
   return removed.length ? { removed } : null;
 }
 
@@ -366,6 +376,9 @@ export const routes = [
       return d1Guarded("settings", async () => {   // BH-1000: body unchanged
       const key = String(body.key || "").trim();
       if (!SETTING_KEY_RE.test(key)) return json(400, { error: "key must match ^[a-z0-9_.-]{1,64}$" });
+      if (key === 'hub_envelope_public_key') {
+        return json(403, { error: 'hub_envelope_public_key is service-managed; use PUT /api/secrets/envelope/public-key with the hub token' });
+      }
       // BH-3831: the switch that makes the human verdict token mandatory is
       // changed only by the holder of that token. With the bearer alone, any box
       // could flip enforce back to shadow and the enforcement would be decorative.

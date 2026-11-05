@@ -55,11 +55,11 @@ set -a; . "$HENV/global.env" 2>/dev/null; set +a
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply progress-push
 
 # The watchdog credential, looked up exactly as bin/watchdog-ping.sh does: the
-# dedicated env/.watchdog-secret wins, HARNESS_SECRET is the fallback. The jobs
+# dedicated env/.watchdog-secret wins, WATCHDOG_SECRET is the fallback. The jobs
 # read below is the jobs worker's own bearer (bin/jobs-client.sh), not this.
 WD_S=""
 [ -r "$HENV/.watchdog-secret" ] && WD_S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$WD_S" ] || WD_S="${HARNESS_SECRET:-}"
+[ -n "$WD_S" ] || WD_S="${WATCHDOG_SECRET:-}"
 [ -n "$WD_S" ] || exit 0
 
 # An unreadable fleet.conf yields no projects: say nothing and let the push go
@@ -166,7 +166,7 @@ CFG=$(jq -nc \
 post_wd() { # post_wd <path> <body> — prints the watchdog's answer
   local wd
   wd=$(watchdog_url progress-push "$H") || { printf 'skipped: WATCHDOG_URL not set'; return 0; }
-  printf %s "$2" | curl -sS -m 15 -X POST "$wd$1?s=$WD_S" \
+  printf %s "$2" | watchdog_curl -sS -m 15 -X POST "$wd$1" \
     -H 'content-type: application/json' --data-binary @- 2>/dev/null
 }
 

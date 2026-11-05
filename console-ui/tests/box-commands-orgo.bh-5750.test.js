@@ -8,12 +8,24 @@ import { boxCommandFor } from '../src/lib/box-commands.js';
 // body builder refuses a blank required field and never computes a price.
 
 const SECRET = 'test-harness-secret-fixture';
+const OPS = 'fixture-owner-token';
+const OWNER = 'operator@example.com';
+const TEAM = 'fixture.cloudflareaccess.com';
+const AUD = 'fixture-aud';
+const key = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048,
+  publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+const jwk = { ...await crypto.subtle.exportKey('jwk', key.publicKey), kid: 'fixture-key' };
+const enc = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
+const data = `${enc({ alg: 'RS256', kid: jwk.kid })}.${enc({ email: OWNER, aud: [AUD], iss: `https://${TEAM}`, exp: 9999999999 })}`;
+const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key.privateKey, new TextEncoder().encode(data));
+const assertion = `${data}.${Buffer.from(signature).toString('base64url')}`;
 
 function stubFetch() {
   const seen = [];
   const real = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
     const target = typeof input === 'string' ? input : input.url;
+    if (target.includes('/cdn-cgi/access/certs')) return Response.json({ keys: [jwk] });
     if (target.startsWith('https://harness-console.operator.workers.dev')) return new Response('', { status: 200 });
     seen.push({ url: target, body: init.body });
     return new Response(JSON.stringify({ id: 7, status: 'requested' }), { status: 201, headers: { 'content-type': 'application/json' } });
@@ -23,9 +35,10 @@ function stubFetch() {
 let seq = 0;
 const call = (body) => onRequest({
   request: new Request('https://console.example.pages.dev/api/coord/box-commands', {
-    method: 'POST', headers: { cookie: `dash=orgo${++seq}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+    method: 'POST', headers: { cookie: `dash=orgo${++seq}`, 'content-type': 'application/json',
+      'cf-access-authenticated-user-email': OWNER, 'cf-access-jwt-assertion': assertion }, body: JSON.stringify(body),
   }),
-  env: { HARNESS_SECRET: SECRET },
+  env: { HARNESS_SECRET: SECRET, BOX_OPS_TOKEN: OPS, CF_ACCESS_TEAM_DOMAIN: TEAM, CF_ACCESS_AUD: AUD },
   params: { path: ['box-commands'] },
 });
 
@@ -45,7 +58,7 @@ test('P1: the proxy forwards the Orgo args and the price token, and drops a brow
     assert.equal(fwd.mem_gb, 32);
     assert.equal(fwd.disk_gb, 200);
     assert.equal(fwd.account, 'acct-a');
-    assert.equal(fwd.actor, 'console', 'the stamped actor, never the browser one');
+    assert.equal(fwd.actor, OWNER, 'the stamped verified actor, never the browser one');
     assert.equal('status' in fwd, false);
     const ret = JSON.parse((await (async () => { f.seen.length = 0; await call({ box: 'hub', type: 'orgo_retire', target: 'project-3', to: 'project-4', ip: '192.0.2.10', delete: true, reason: 'r', confirm: true }); return f.seen; })())[0].body);
     assert.equal(ret.to, 'project-4');

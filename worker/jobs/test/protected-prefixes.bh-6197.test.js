@@ -39,16 +39,16 @@ const setRaw = (db, k, v) => db.prepare('UPDATE settings SET value=? WHERE key=?
 const sigs = (db, k) => db.prepare('SELECT * FROM setting_sigs WHERE key=?').all(k).length;
 const ENV = { HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN, HUMAN_VERDICT_SIG_KEY: 'sig-test-key' };
 
-const send = (db, path, method, body) => {
+const send = (db, path, method, body, human = false) => {
   const req = new Request(`https://jobs.test${path}`, {
     method,
-    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', ...(human ? { 'x-human-verdict-token': HUMAN } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return worker.fetch(req, { DB: sqliteDB(db), ...ENV })
     .then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
 };
-const put = (db, key, value) => send(db, '/api/settings', 'PUT', { key, value });
+const put = (db, key, value, human = false) => send(db, '/api/settings', 'PUT', { key, value }, human);
 
 test('E1 a bearer PUT of an extras key is not signed', async () => {
   const db = openDb();
@@ -93,7 +93,7 @@ test('E4 the prefix is not protected', () => {
 test('E5 control: lead_authority.* and risk_tier.* PUTs are still signed', async () => {
   const db = openDb();
   for (const [k, v] of [['lead_authority.example-org.cromford', 'human'], ['risk_tier.low_globs', 'docs/**']]) {
-    const r = await put(db, k, v);
+    const r = await put(db, k, v, true);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.signed, true, k);
     assert.equal(sigs(db, k), 1, k);

@@ -32,3 +32,4 @@ CREATE TABLE IF NOT EXISTS tokens (
 --   ALTER TABLE tokens ADD COLUMN role TEXT NOT NULL DEFAULT 'machine';
 --   ALTER TABLE tokens ADD COLUMN prefix TEXT;
 CREATE INDEX IF NOT EXISTS tokens_name ON tokens(name);
+CREATE INDEX IF NOT EXISTS tokens_issuer_created ON tokens(created_by, created_at);

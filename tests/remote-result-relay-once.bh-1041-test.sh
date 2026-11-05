@@ -107,7 +107,7 @@ cp "$DIR/bin/alert-line.sh" "$HI/bin/"
 # BH-1194: bin/jobs-client.sh is a shim over bin/lib/jobs/*.sh and exit-1s when
 # a module is missing, so a fixture that copies the client copies the modules.
 mkdir -p "$HI/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$HI/bin/lib/jobs/"
-printf 'FLY_API_TOKEN_project-3_OS=tok\n' > "$HI/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_3_OS=tok\n' > "$HI/env/fly.env"
 printf '#!/bin/bash\nexit 0\n' > "$HI/bin/beat.sh"; chmod +x "$HI/bin/beat.sh"
 cat > "$HI/bin/fleet-conf.sh" <<'SH'
 #!/bin/bash
@@ -429,7 +429,7 @@ pool_run() { # pool_run <FEED_HAS_KEY> [CLIENT_DOWN]
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
            FLEET_CONF="$HP/fleet.conf" REQ_SINK="$T/preq.txt" SSH_SINK="$T/pssh.txt" \
            SSH_BODY="$T/pssh-body.txt" FEED_HAS_KEY="$1" CLIENT_DOWN="${2:-0}" \
-           FLY_API_TOKEN_project-3_OS=tok FLY_BIN_DIR="$T/poolbin" FIX_TS="$TS_NEW" \
+           FLY_API_TOKEN_PROJECT_3_OS=tok FLY_BIN_DIR="$T/poolbin" FIX_TS="$TS_NEW" \
            POOL_RESULT_SRC="$T/pool-result.src" POOL_REVIEW_SRC="$T/pool-review.src" \
            POOL_MBD="$MBD"
     bash "$DIR/bin/fly-pool.sh" project-3 >/dev/null 2>&1 )

@@ -320,8 +320,8 @@ test('M1: the mounted screen reads /api/coord/flags, links PROJECT from the flee
   const c = await mountFlags();
   assert.ok(calls.some((x) => x.method === 'GET' && x.url.startsWith('/api/coord/flags')));
   assert.deepEqual(rowNames(c.root), ['automerge-disabled', 'lanedown-boxa-codex-20261003', 'paused-ghost', 'paused-project-3']);
-  const project-3 = all(c.root).find((n) => n.localName === 'a' && n.attrs.href === '/p/project-3');
-  assert.ok(project-3, 'PROJECT links project-3, a fleet project');
+  const project_3 = all(c.root).find((n) => n.localName === 'a' && n.attrs.href === '/p/project-3');
+  assert.ok(project_3, 'PROJECT links project-3, a fleet project');
   assert.ok(!all(c.root).some((n) => n.localName === 'a' && n.attrs.href === '/p/ghost'));
 
   fire(all(header(c.root, 'NAME')).find((n) => n.localName === 'button'), 'click');

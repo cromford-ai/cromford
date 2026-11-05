@@ -130,9 +130,11 @@ export async function failoverTick(env, t) {
     // `of` is the hub the standby follows: a replica of some other box is not
     // a copy of this hub's state.
     if (r.box === holder || r.ok !== true || r.of !== holder) continue;
-    if (!Number.isFinite(r.report_age_min) || r.report_age_min > STANDBY_REPORT_MAX_MIN) continue;
+    if (!Number.isFinite(r.report_age_min) || r.report_age_min < 0 || r.report_age_min > STANDBY_REPORT_MAX_MIN) continue;
+    // A recently repeated report of the same old snapshot is not fresh state.
+    if (!Number.isFinite(r.stream_age_min) || r.stream_age_min < 0 || r.stream_age_min > STANDBY_REPORT_MAX_MIN) continue;
     const age = await pingAgeMs(env, r.box, t);
-    if (age === null || age > STANDBY_PING_FRESH_MIN * 60000) continue;
+    if (age === null || age < 0 || age > STANDBY_PING_FRESH_MIN * 60000) continue;
     eligible.push(r.box);
   }
   if (eligible.length !== 1) {

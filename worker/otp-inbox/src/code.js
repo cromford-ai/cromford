@@ -32,7 +32,12 @@ function clean(s) {
   const blank = (m) => " ".repeat(m.length);
   return String(s || "")
     .replace(/\b(?:https?:\/\/|www\.)\S+/gi, blank)
-    .replace(/[^\s<>()"',;:]+@[^\s<>()"',;:]+\.[a-z]{2,}/gi, blank)
+    .replace(/[^\s<>()"',;:]+/g, (token) => {
+      const at = token.indexOf('@');
+      // Prose often puts punctuation after the address. Blank the entire
+      // token once its address-like domain is found, as the former regex did.
+      return at > 0 && /\.[a-z]{2,}/i.test(token.slice(at + 1)) ? blank(token) : token;
+    })
     .replace(/\b\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d)?Z?)?\b/g, blank)
     .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, blank)
     .replace(/\b\d{1,2}:\d\d(?::\d\d)?\b/g, blank);
@@ -43,6 +48,16 @@ const isDigit = (c) => !!c && /\d/.test(c);
 const yearByMonth = (s, start, end, v) =>
   v.length === 4 && +v >= 1900 && +v <= 2099 && MONTH_RE.test(s.slice(Math.max(0, start - 12), end + 12));
 
+// Sorted non-overlapping spans let each candidate examine adjacent hits only.
+function lowerBound(spans, value, column = 0) {
+  let lo = 0, hi = spans.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (spans[mid][column] < value) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 // Every candidate token in s as { start, end, value, digits }.
 function candidates(s) {
   const out = [];
@@ -51,7 +66,10 @@ function candidates(s) {
     out.push({ start: m.index, end: m.index + m[0].length, value: m[1], digits: true });
     taken.push([m.index, m.index + m[0].length]);
   }
-  const overlaps = (a, b) => taken.some(([x, y]) => a < y && b > x);
+  const overlaps = (a, b) => {
+    const i = lowerBound(taken, a, 1);
+    return i < taken.length && taken[i][0] < b;
+  };
   for (const m of s.matchAll(/\d+(?:[ -]\d+)*/g)) {
     const run = m[0], start = m.index, end = start + run.length;
     if (overlaps(start, end)) continue;
@@ -71,7 +89,7 @@ function candidates(s) {
       add(groups[1], end - groups[1].length, end);
     }
   }
-  for (const m of s.matchAll(/(?<![\w#$€£+/-])(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{4,8}(?![\w])/g)) {
+  for (const m of s.matchAll(/(?<![\w#$€£+/-])(?=[A-Z0-9]{0,7}[A-Z])(?=[A-Z0-9]{0,7}\d)[A-Z0-9]{4,8}(?![\w])/g)) {
     out.push({ start: m.index, end: m.index + m[0].length, value: m[0], digits: false });
   }
   return out;
@@ -90,8 +108,13 @@ function nearest(raw) {
   }
   let best = null;
   for (const c of cands) {
-    if (banned.some(([a, b]) => c.start >= a && c.start <= b)) continue;
-    for (const [hs, he] of hits) {
+    const bi = lowerBound(banned, c.start, 1);
+    if (bi < banned.length && c.start >= banned[bi][0]) continue;
+    const after = lowerBound(hits, c.end);
+    const before = lowerBound(hits, c.start + 1, 1) - 1;
+    for (const index of new Set([before, after])) {
+      if (index < 0 || index >= hits.length) continue;
+      const [hs, he] = hits[index];
       let d = null;
       if (c.end <= hs && hs - c.end <= BEFORE) d = hs - c.end;
       else if (c.start >= he && c.start - he <= AFTER) d = c.start - he;

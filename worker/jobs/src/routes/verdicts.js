@@ -134,8 +134,11 @@ export function leadTokenOk(req, env) {
 // HUMAN_VERDICT_TOKEN`) whose value lives only on the operator's Mac, never on the hub,
 // a box or in a bundle. Unset on the worker is DENIED, the leadTokenOk rule.
 export function humanTokenOk(req, env) {
-  const got = req.headers.get("x-human-verdict-token") || "";
-  return Boolean(env.HUMAN_VERDICT_TOKEN) && got === env.HUMAN_VERDICT_TOKEN;
+  const got = req?.headers?.get("x-human-verdict-token") || "";
+  const token = env.HUMAN_VERDICT_TOKEN;
+  // Reusing a fleet/lead credential would give every automated caller the
+  // operator authority this second credential is intended to separate.
+  return Boolean(token) && token !== env.HARNESS_SECRET && token !== env.LEAD_VERDICT_TOKEN && got === token;
 }
 
 // BH-3846. The worker-only signing key, or null when unset. Never on the hub,

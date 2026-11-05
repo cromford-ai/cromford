@@ -13,13 +13,14 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { isProtectedSlug } from '../src/routes/archie-autonomy.js';
 
 const SECRET = 'test-secret';
+const HUMAN = 'fixture-independent-human-token';
 const call = (DB, path, body) => {
   const req = new Request(`https://jobs.test${path}`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'x-human-verdict-token': HUMAN },
     body: JSON.stringify(body),
   });
-  return worker.fetch(req, { DB, HARNESS_SECRET: SECRET }).then(async (res) => ({
+  return worker.fetch(req, { DB, HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN }).then(async (res) => ({
     status: res.status, body: await res.json().catch(() => null),
   }));
 };
