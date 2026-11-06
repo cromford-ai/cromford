@@ -67,14 +67,18 @@
 // the table against it, entry for entry, in order.
 //
 // THE BEARER STILL SITS BETWEEN THE TWO TABLES. OPEN_ROUTES is consulted
-// FIRST and holds eight routes. Three are POST /webhooks/github, /webhooks/jira
+// FIRST and holds twenty routes. Three are POST /webhooks/github, /webhooks/jira
 // and /webhooks/linear (BH-4079). No vendor can send our bearer, so each carries
 // its own HMAC, keyed on its own secret, instead. Two are POST and GET
 // /api/ci/suite-durations (BH-5653). CI must not hold HARNESS_SECRET, so they
 // check their own scoped bearer: CI_DURATIONS_TOKEN or HARNESS_SECRET. Three are
 // the suite-ledger routes (BH-5366), for the same reason: each authenticates
 // itself with credentialClass() (bearer or x-suite-ledger-token) before it reads
-// the body. Everything
+// the body. The hosted Board API (BH-8918) adds ten rows under
+// /api/hosted-board/<project>/: its callers are lanes that hold a board token
+// for one project, never HARNESS_SECRET, so each route checks a
+// hosted_board_tokens row itself (health takes none, and the last row 404s any
+// other path under the prefix). Everything
 // in ROUTES is reached only after `bearerOk`, so a route in the wrong table is
 // a route with the wrong credential.
 import { bearerOk, json, nowIso, readBody } from "./lib/http.js";
@@ -88,6 +92,7 @@ import { routes as webhooks } from "./routes/webhooks.js";
 import { routes as suiteResults } from "./routes/suite-results.js";
 import { routes as ciDurations } from "./routes/ci-durations.js";
 import { routes as ciTestTiers } from "./routes/ci-test-tiers.js";
+import { routes as hostedBoard } from "./routes/hosted-board.js";
 
 // The names this module has always exported. They live in ./lib/core.js now;
 // console-ui, the tests and bin/ read them from here, so here is where they
@@ -118,8 +123,9 @@ export { alertDecision } from "./routes/alerts.js";
 // (CI_DURATIONS_TOKEN or HARNESS_SECRET) before it reads anything. So do the
 // two ci-test-tiers routes (BH-5653 C1); their PUT takes HARNESS_SECRET only.
 // The three suite-ledger routes (BH-5366) each make their own credential check
-// before they read anything.
-export const OPEN_ROUTES = [...webhooks, ...ciDurations, ...ciTestTiers, ...suiteResults];
+// before they read anything. So do the hosted-board routes (BH-8918), with a
+// hosted_board_tokens row; HARNESS_SECRET opens none of them.
+export const OPEN_ROUTES = [...webhooks, ...ciDurations, ...ciTestTiers, ...suiteResults, ...hostedBoard];
 
 // Every other route: the gated families, in test/route-table.d fragment order.
 // "#routes" builds the table (see HOW A REQUEST FINDS ITS HANDLER above).

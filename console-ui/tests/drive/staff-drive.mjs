@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
+import { navLink } from './nav.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
@@ -201,7 +202,7 @@ async function run() {
     check(agents[0] === 'Archie', `E1 ${name}: the first row by name is Archie (${agents[0]})`);
     const mill = ['Archivist', 'Clerk', 'Dispatcher', 'Inspector', 'Millwright', 'Quartermaster', 'Watchman'];
     check(mill.every((m) => agents.includes(m)), `E1 ${name}: the 7 mill names show (${agents.join(', ')})`);
-    check(await page.$('.bottomnav a[href="/staff"], .topbar__nav a[href="/staff"]') !== null, `${name}: STAFF is in the nav`);
+    check(await page.$(navLink('/staff')) !== null, `${name}: STAFF is in the nav`);
     const na = await page.$$eval('table.tbl tbody td span[title^="not built"]', (s) => s.map((x) => x.innerText.trim()));
     check(na.length === 16 && na.every((t) => t === 'n/a'), `${name}: PRECISION and SPEND read n/a on all 8 rows (${na.length})`);
     await noSideScroll(page, `${name} /staff`);

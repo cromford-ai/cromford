@@ -1,0 +1,13 @@
+{
+  "env": "SELECTION_GATE_MAIN_TIMEOUT_MIN_S",
+  "type": "int",
+  "default": 300,
+  "min": 60,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9061. The floor of the selection gate's main-run bound after the base run's reserve is taken out (never over SELECTION_GATE_TIMEOUT_S).",
+  "read_in": "bin/lib/selection-gate.sh",
+  "project_scoped": false
+}

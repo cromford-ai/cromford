@@ -423,17 +423,19 @@ test('T3 a link inside a one-line truncator gets a box rule, not only the clippe
   const trunc = truncators(STYLES);
   for (const c of ['cell-wrap', 'stat__value']) assert.ok(trunc.has(c), `styles.css .${c} is a truncator`);
   const clip = clippers(STYLES);
-  for (const c of ['topbar__nav', 'statgrid', 'bottomnav']) assert.ok(clip.has(c), `styles.css .${c} clips`);
+  // BH-9118 deleted .topbar__nav: the section links are in the side menu.
+  for (const c of ['statgrid', 'bottomnav']) assert.ok(clip.has(c), `styles.css .${c} clips`);
+  assert.ok(!clip.has('topbar__nav'), 'the old scrolling tab row is gone');
   const block = phoneBlock(floorText());
   assert.ok(block !== null, `${FLOOR_REL} has no @media (max-width: 600px) block`);
   const cov = coverage(block, trunc);
   const els = interactive(render(COMPONENTS.SortableTable())).filter((e) => truncatedBy(e, trunc));
   assert.ok(els.some((e) => e.classes.includes('cell-wrap')), 'the fixture carries a cell-wrap link');
   for (const el of els) assert.equal(cov(el), null, label(el));
-  // the flush children of a clipper: the section nav, the stat grid, the bottom nav
+  // the flush children of a clipper: the stat grid, the bottom nav
   const flush = ['TopBar', 'StatGrid', 'BottomNav'].flatMap((n) => interactive(render(COMPONENTS[n]())))
     .filter((e) => e.parent.classes.some((c) => clip.has(c)));
-  assert.deepEqual([...new Set(flush.map((e) => e.parent.classes[0]))].sort(), ['bottomnav', 'statgrid', 'topbar__nav']);
+  assert.deepEqual([...new Set(flush.map((e) => e.parent.classes[0]))].sort(), ['bottomnav', 'statgrid']);
   for (const el of flush) assert.equal(cov(el), null, `${label(el)} in .${el.parent.classes[0]}`);
   // a link INSIDE a truncator span (LeadReviews' stat value, Needs' cell-wrap span)
   for (const m of [html`<span class="stat__value"><${Link} to="/x">3<//></span>`, html`<span class="cell-wrap"><${Link} to="/x">t<//></span>`]) {

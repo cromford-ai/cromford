@@ -1,5 +1,5 @@
 import { createContext } from 'preact';
-import { useContext, useState, useEffect } from 'preact/hooks';
+import { useContext, useState, useEffect, useRef } from 'preact/hooks';
 import { html, Link, useRoute, matchRoute, navigate, currentSearch, currentHash } from './router.js';
 import { api } from './api.js';
 import { useApi, useCountdown } from './lib/hooks.js';
@@ -9,6 +9,7 @@ import {
   IconWorld, IconOutcomes, IconDora, IconSettings, IconModels
 } from './ui/icons.js';
 import { TopBar as ShellTopBar } from './ui/TopBar.js';
+import { SideMenu } from './ui/SideMenu.js';
 
 import { FleetScreen } from './screens/Fleet.js';
 import { MachinesScreen } from './screens/Machines.js';
@@ -148,73 +149,91 @@ export const ROUTES = [
   ['/llm-sites/:site', LlmSiteScreen]
 ];
 
+// The side menu's groups, in order (BH-9118). Every NAV entry names one; the
+// menu lists a group's entries in NAV order.
+export const NAV_GROUPS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'team', label: 'Team' },
+  { id: 'reports', label: 'Reports' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'system', label: 'System' }
+];
+
+// Every screen of the side menu (BH-9118). `group` is its NAV_GROUPS id;
+// `bottom` puts it in the phone's bottom nav too, which keeps five key tabs on
+// one row. `match` is the set of paths that light the entry: one path lights
+// one entry (tests/sidemenu.bh-9118.test.js A1 walks every ROUTES pattern).
 export const NAV = [
   // WORLD is the same fleet the tabs below already report on, drawn as a place:
   // a hexagon per project, a body per live claim, a raised hand where something
   // needs a person. It reads the very same endpoints and writes nothing.
-  { to: '/world', label: 'WORLD', icon: IconWorld, match: (p) => p === '/world' },
-  { to: '/', label: 'FLEET', icon: IconFleet, match: (p) => p === '/' || p.startsWith('/p/') || p.startsWith('/runs/') || p.startsWith('/builds/') || p === '/machines' || p.startsWith('/machines/') },
+  { to: '/world', label: 'WORLD', icon: IconWorld, group: 'overview', match: (p) => p === '/world' },
+  { to: '/', label: 'FLEET', icon: IconFleet, group: 'overview', bottom: true, match: (p) => p === '/' || p.startsWith('/p/') || p.startsWith('/projects/') || p.startsWith('/runs/') || p.startsWith('/builds/') || p === '/machines' || p.startsWith('/machines/') },
   // NOW is the old cockpit's home: what the harness is DOING (last tick per
   // board, what is building, the activity feed), where FLEET is what the
-  // machines ARE. HISTORY is its drill-down and rides the same tab rather than
-  // taking a tenth slot in a bottom nav that has to stay one row on a phone.
-  { to: '/now', label: 'NOW', icon: IconNow, match: (p) => p === '/now' || p === '/history' || p === '/history/commands' },
-  { to: '/kanban', label: 'KANBAN', icon: IconKanban, match: (p) => p === '/kanban' || p === '/build-order' || p === '/merge-queue' || p === '/lead-reviews' || p.startsWith('/pr/') },
-  { to: '/chat', label: 'CHAT', icon: IconChat, match: (p) => p === '/chat' },
-  { to: '/alerts', label: 'ALERTS', icon: IconAlerts, match: (p) => p === '/alerts' || p === '/components' || p.startsWith('/alerts/decisions/'), badge: true },
+  // machines ARE. HISTORY and the command log are its drill-downs; the side
+  // menu gives each its own entry in Logs (BH-9118).
+  { to: '/now', label: 'NOW', icon: IconNow, group: 'overview', bottom: true, match: (p) => p === '/now' },
+  { to: '/kanban', label: 'KANBAN', icon: IconKanban, group: 'overview', bottom: true, match: (p) => p === '/kanban' || p === '/build-order' || p === '/merge-queue' || p === '/lead-reviews' || p.startsWith('/pr/') },
+  { to: '/chat', label: 'CHAT', icon: IconChat, group: 'overview', match: (p) => p === '/chat' },
+  { to: '/alerts', label: 'ALERTS', icon: IconAlerts, group: 'overview', bottom: true, match: (p) => p === '/alerts' || p === '/components' || p.startsWith('/alerts/decisions/'), badge: true },
   // NEEDS is the superset ALERTS is one quarter of: alerts, dead-lettered
   // commands, parked builds and ideas at the gate. Both stay, because the
   // resolve action lives on ALERTS and only there.
-  { to: '/needs', label: 'NEEDS', icon: IconNeeds, match: (p) => p === '/needs' },
-  { to: '/costs', label: 'COSTS', icon: IconCosts, match: (p) => p === '/costs' || p === '/llm-sites' || p.startsWith('/llm-sites/') },
+  { to: '/needs', label: 'NEEDS', icon: IconNeeds, group: 'overview', bottom: true, match: (p) => p === '/needs' },
+  // The run history and the command log (BH-2514), each its own entry.
+  { to: '/history', label: 'HISTORY', icon: IconNow, group: 'logs', match: (p) => p === '/history' },
+  { to: '/history/commands', label: 'COMMAND LOG', icon: IconNow, group: 'logs', match: (p) => p === '/history/commands' },
+  { to: '/costs', label: 'COSTS', icon: IconCosts, group: 'reports', match: (p) => p === '/costs' || p === '/llm-sites' || p.startsWith('/llm-sites/') },
   // OUTCOMES is the only screen that asks whether the work HELD: reverts,
   // reopens, what each landing cost, and which repos the review gate has
   // parked for a judged merge. It is its own tab rather than a panel on COSTS
   // because "what did we spend" and "did it survive" are different questions
   // and the second one is the one nobody was asking.
-  { to: '/outcomes', label: 'OUTCOMES', icon: IconOutcomes, match: (p) => p === '/outcomes' },
+  { to: '/outcomes', label: 'OUTCOMES', icon: IconOutcomes, group: 'reports', match: (p) => p === '/outcomes' },
   // DORA is the one screen about TIME rather than state. OUTCOMES asks whether
   // a landing held; this asks how long it took to get there, how long it then
   // sat approved, and how long a repo stayed broken. Its own tab because "where
   // is the bottleneck" is a different question from "did it survive", and the
   // whole point (the operator, 2026-09-12) is that the answer stops being felt.
-  { to: '/dora', label: 'DORA', icon: IconDora, match: (p) => p === '/dora' },
+  { to: '/dora', label: 'DORA', icon: IconDora, group: 'reports', match: (p) => p === '/dora' },
   // JOBS is the coordination DB's own view: who claimed what, whether it is
   // still heartbeating, and what it spent. It shares the COSTS glyph because
   // the money question is what sends most people to it.
-  { to: '/jobs', label: 'JOBS', icon: IconCosts, match: (p) => p === '/jobs' || p.startsWith('/jobs/') || p.startsWith('/t/') },
+  { to: '/jobs', label: 'JOBS', icon: IconCosts, group: 'logs', match: (p) => p === '/jobs' || p.startsWith('/jobs/') || p.startsWith('/t/') },
   // IDEAS is the product stage's own view: what the weekly generative run
   // proposed, what it drafted, and which of it reached a client board.
-  { to: '/ideas', label: 'IDEAS', icon: IconIdeas, match: (p) => p === '/ideas' || p.startsWith('/ideas/') || p === '/roadmap' || p.startsWith('/roadmap/') },
+  { to: '/ideas', label: 'IDEAS', icon: IconIdeas, group: 'system', match: (p) => p === '/ideas' || p.startsWith('/ideas/') || p === '/roadmap' || p.startsWith('/roadmap/') },
   // MODELS is the model-routes table (#1510): which model, which runner and
   // which failover ladder every role resolves, hub default and per project,
   // with the price and the week's spend beside it. Its own tab rather than a
   // SETTINGS panel because a model is not a lane knob: one role spans lanes,
   // and the question it answers is "what does this job run on, and what
   // does that cost", not "is this lane allowed to run".
-  { to: '/models', label: 'MODELS', icon: IconModels, match: (p) => p === '/models' || p.startsWith('/models/') },
+  { to: '/models', label: 'MODELS', icon: IconModels, group: 'system', match: (p) => p === '/models' || p.startsWith('/models/') },
   // CI is minutes, runners and flakes per repo, and the flaky-test quarantine
   // toggle (BH-2634). It shares the ALERTS glyph: it is where a red goes to be explained.
-  { to: '/ci', label: 'CI', icon: IconAlerts, match: (p) => p === '/ci' },
+  { to: '/ci', label: 'CI', icon: IconAlerts, group: 'reports', match: (p) => p === '/ci' },
   // UTIL is each project's build utilization and why it is idle (BH-4011); FLEET glyph.
-  { to: '/utilization', label: 'UTIL', icon: IconFleet, match: (p) => p === '/utilization' },
+  { to: '/utilization', label: 'UTIL', icon: IconFleet, group: 'reports', match: (p) => p === '/utilization' },
   // LANES is where each lane's runs ran and how long they queued (BH-6127):
   // per lane, per machine, per run. It shares the FLEET glyph.
-  { to: '/lane-runs', label: 'LANES', icon: IconFleet, match: (p) => p === '/lane-runs' || p.startsWith('/lane-runs/') },
+  { to: '/lane-runs', label: 'LANES', icon: IconFleet, group: 'logs', match: (p) => p === '/lane-runs' || p.startsWith('/lane-runs/') },
   // HUB is hub recovery (BH-1909): who holds the lease, the backup stamps,
   // promote and the restore lab. A stub until #1945/#1946; it shares the FLEET glyph.
-  { to: '/hub', label: 'HUB', icon: IconFleet, match: (p) => p === '/hub' },
+  { to: '/hub', label: 'HUB', icon: IconFleet, group: 'system', match: (p) => p === '/hub' },
   // STAFF is the staff roster (BH-5567): Archie and the mill agents, their open
   // findings down to the ticket, and a kill switch per agent. FLEET glyph.
-  { to: '/staff', label: 'STAFF', icon: IconFleet, match: (p) => p === '/staff' || p.startsWith('/staff/') || p === '/unblock' || p === '/factory' },
+  { to: '/staff', label: 'STAFF', icon: IconFleet, group: 'team', match: (p) => p === '/staff' || p.startsWith('/staff/') || p === '/unblock' || p === '/factory' },
   // SETTINGS is the only screen that turns the harness OFF. Every other tab
   // reports on what the fleet did; this one is the switch and the bounds —
   // which lane is allowed to run, on what cadence, and how much it may spend
   // before it stops. It sits last because it is the one you reach for when one
   // of the tabs to its left has told you something is wrong. /config (every
   // setting and flag, BH-2375) rides the same tab, and so do the CONTROLS
-  // editors (/controls/<kind>, BH-2513) SETTINGS links to.
-  { to: '/settings', label: 'SETTINGS', icon: IconSettings, match: (p) => p === '/settings' || p.startsWith('/settings/') || p === '/config' || p.startsWith('/config/') || p === '/flags' || p.startsWith('/controls/') }
+  // editors (/controls/<kind>, BH-2513) SETTINGS links to, and /connections
+  // (also /settings/fleet/connections, BH-7924).
+  { to: '/settings', label: 'SETTINGS', icon: IconSettings, group: 'system', match: (p) => p === '/settings' || p.startsWith('/settings/') || p === '/config' || p.startsWith('/config/') || p === '/flags' || p.startsWith('/controls/') || p === '/connections' }
 ];
 
 // The screen for a URL. A legacy path that moved (lib/settings-menu.js) is
@@ -258,6 +277,10 @@ export function App() {
   // Who this session's writes are recorded as (BH-2515). Read once: it only
   // changes when the Pages env or the Access login does, both a reload away.
   const identity = useApi(() => api.whoami(), []);
+  // The phone drawer (BH-9118). Any path change closes it, a link tap included.
+  const [drawer, setDrawer] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => setDrawer(false), [path]);
 
   if (locked) return html`<${LoginNeeded} />`;
 
@@ -276,7 +299,11 @@ export function App() {
     <${FleetContext.Provider} value=${{ ...fleet, secondsLeft }}>
       <div class="app">
         <${TopBar} path=${path} snap=${snap} openAlerts=${openAlerts}
-          loading=${fleet.loading} secondsLeft=${secondsLeft} watchdogDown=${watchdogDown} identity=${identity} />
+          loading=${fleet.loading} secondsLeft=${secondsLeft} watchdogDown=${watchdogDown} identity=${identity}
+          menuOpen=${drawer} onMenu=${() => setDrawer((d) => !d)} menuRef=${menuRef} />
+        <div class="app__main">
+        <${SideMenu} nav=${NAV} groups=${NAV_GROUPS} path=${path} openAlerts=${openAlerts}
+          open=${drawer} onClose=${() => setDrawer(false)} returnFocusRef=${menuRef} />
         <div class="app__body">
           ${(hubDown || watchdogDown) && fleet.data ? html`
             <div style="padding:14px 24px 0">
@@ -303,21 +330,25 @@ export function App() {
             </div>` : null}
           <${ErrorBoundary} key=${path}>${screen}<//>
         </div>
+        </div>
         <${BottomNav} path=${path} openAlerts=${openAlerts} />
       </div>
     <//>`;
 }
 
-// The bar itself lives in src/ui/TopBar.js (BH-4990). This is it with the NAV
-// table above, the one every caller (App, tests) means by TopBar.
+// The bar itself lives in src/ui/TopBar.js (BH-4990), the one every caller
+// (App, tests) means by TopBar. The section links moved to the side menu
+// (BH-9118); the bar keeps the hamburger that opens it on a phone.
 export function TopBar(props) {
-  return html`<${ShellTopBar} nav=${NAV} ...${props}/>`;
+  return html`<${ShellTopBar} ...${props}/>`;
 }
 
+// The phone's bottom nav: only the five `bottom` entries, so it stays one row
+// that never scrolls. Every other screen is in the side menu's drawer.
 export function BottomNav({ path, openAlerts }) {
   return html`
-    <nav class="bottomnav" aria-label="primary">
-      ${NAV.map((n) => {
+    <nav class="bottomnav" aria-label="key screens">
+      ${NAV.filter((n) => n.bottom).map((n) => {
         const on = n.match(path);
         return html`
           <${Link} key=${n.to} to=${n.to} class=${on ? 'on' : ''}>

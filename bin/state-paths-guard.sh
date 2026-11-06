@@ -29,7 +29,8 @@
 # of that file and is not checked, the same as a direct edit of it.
 #
 # Configuration (env):
-#   SPG_CATALOG  the catalog (default: catalog/state-paths.json beside bin/).
+#   SPG_CATALOG  the catalog (default: composed from catalog/state-paths.d/
+#                beside bin/ by bin/state-paths-build.sh, BH-8986).
 #   SPG_FILES    a file holding the added-file list, one path per line. Set it
 #                and no git call is made.
 #   SPG_ROOT     the checkout the files are read from (default '.').
@@ -52,8 +53,20 @@ CATALOG="${SPG_CATALOG:-$REPO/catalog/state-paths.json}"
 say() { echo "STATE-PATHS-GUARD: $*"; }
 
 # --- catalog -----------------------------------------------------------------
-command -v jq >/dev/null 2>&1 || { say "jq not found, cannot read $CATALOG"; exit 2; }
-[ -r "$CATALOG" ] || { say "catalog $CATALOG is missing or unreadable"; exit 2; }
+# BH-8986: the catalog is composed from catalog/state-paths.d/ and git-ignored.
+# With no SPG_CATALOG and a state-paths.d/ beside bin/, compose it into a temp
+# file; a tree with no state-paths.d/ (a fixture) reads the committed file.
+CTMP=""
+trap 'rm -f ${CTMP:+"$CTMP"}' EXIT
+if [ -z "${SPG_CATALOG:-}" ] && [ -d "$REPO/catalog/state-paths.d" ]; then
+  CTMP=$(mktemp) || { say "mktemp failed, cannot compose catalog/state-paths.d/"; exit 2; }
+  "$SELF/state-paths-build.sh" --repo "$REPO" --compose --to "$CTMP" >&2 \
+    || { say "catalog catalog/state-paths.d/ could not be composed (bin/state-paths-build.sh --check names the fragment)"; exit 2; }
+  CATALOG="$CTMP"
+fi
+CATNAME="$CATALOG"; [ -z "$CTMP" ] || CATNAME="catalog/state-paths.d/ (composed)"
+command -v jq >/dev/null 2>&1 || { say "jq not found, cannot read $CATNAME"; exit 2; }
+[ -r "$CATALOG" ] || { say "catalog $CATNAME is missing or unreadable"; exit 2; }
 DEFECT=$(jq -r '
   if (.paths | type) != "array" then "no .paths array"
   else
@@ -65,10 +78,10 @@ DEFECT=$(jq -r '
       | if length > 0 then "duplicate path \(.[0] | tojson)" else empty end )
   end' "$CATALOG" 2>/dev/null)
 JQ_RC=$?
-if [ "$JQ_RC" -ne 0 ]; then say "catalog $CATALOG is not valid JSON"; exit 2; fi
-if [ -n "$DEFECT" ]; then say "catalog $CATALOG: $(head -1 <<<"$DEFECT")"; exit 2; fi
+if [ "$JQ_RC" -ne 0 ]; then say "catalog $CATNAME is not valid JSON"; exit 2; fi
+if [ -n "$DEFECT" ]; then say "catalog $CATNAME: $(head -1 <<<"$DEFECT")"; exit 2; fi
 ROWS=$(jq -r '.paths[] | select(.class == "rows") | "\(.path)\t\(.authority // "")"' "$CATALOG") \
-  || { say "catalog $CATALOG could not be read"; exit 2; }
+  || { say "catalog $CATNAME could not be read"; exit 2; }
 
 # --- the added files ---------------------------------------------------------
 if [ -n "${SPG_FILES:-}" ]; then
@@ -136,8 +149,9 @@ cat <<EOF
 A new script writes a state/ path whose record is now a DB row (#4951). A file
 written next to the row is a second spelling of the same state, and the two
 drift. Write the row through bin/jobs-client.sh instead. If the path really is
-a local cache or belongs to this box only, change its class in
-catalog/state-paths.json in this same PR.
+a local cache or belongs to this box only, change its class in its fragment
+under catalog/state-paths.d/ (or add a new NNNN-<name>.json fragment) in this
+same PR.
 
 If this genuinely needs the file, take the escape hatch: add the
 'skip-guardrail' label AND a 'Guardrail-Justification: <reason>' line in the

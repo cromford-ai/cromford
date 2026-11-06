@@ -1,5 +1,6 @@
 import { html } from '../router.js';
 import { api } from '../api.js';
+import { fmtUsd } from '../lib/format.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
@@ -59,7 +60,7 @@ export function FlyIdlePanel() {
         empty=${html`<${Empty} title=${body.pass ? 'no started machines' : 'no reaper pass yet'}
           note=${body.pass ? 'The last pass found no started Fly machine.' : 'bin/fly-idle-reaper.sh has not reported a pass.'}/>`}/>
       <h3 class="section__note" style="margin:14px 0 4px">STOPS IN THE LAST 24 H · ${stops.total} stop${stops.total === 1 ? '' : 's'}
-        · $${stops.saved_usd_per_hour_24h.toFixed(3)}/h saved${stops.unpriced ? ` · ${stops.unpriced} unpriced` : ''}</h3>
+        · ${fmtUsd(stops.saved_usd_per_hour_24h, { decimals: 3 })}/h saved${stops.unpriced ? ` · ${stops.unpriced} unpriced` : ''}</h3>
       <${SortableTable} wide
         columns=${[
           { key: 'time', label: 'TIME', sort: (r) => r.stopped_at, cell: (r) => html`<span>${r.time}</span>` },
@@ -79,7 +80,7 @@ export function FlyIdlePanel() {
       ${destroys.available
         ? html`
       <h3 class="section__note" style="margin:14px 0 4px">DESTROYED (24 H) · ${destroys.count} destroy${destroys.count === 1 ? '' : 's'}
-        · restart $${destroys.usd_per_hour.toFixed(3)}/h${destroys.unpriced ? ` · ${destroys.unpriced} unpriced` : ''}</h3>
+        · restart ${fmtUsd(destroys.usd_per_hour, { decimals: 3 })}/h${destroys.unpriced ? ` · ${destroys.unpriced} unpriced` : ''}</h3>
       <${SortableTable} wide
         columns=${[
           { key: 'time', label: 'TIME', sort: (r) => r.destroyed_at, cell: (r) => html`<span>${r.time}</span>` },

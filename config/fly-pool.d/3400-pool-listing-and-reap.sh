@@ -449,11 +449,16 @@ for MF in "$POOL"/*.json; do
           say "pool rereview RESULT reaped for $KEY from $MID: $(head -1 "$LOCAL/RESULT" | head -c 80) — job file written"
           "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -1 "$LOCAL/RESULT" | head -c 120)" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_rereview",detail:$r}')" >/dev/null 2>&1 || true
         else
-          # Left CLAIMED: nothing re-materialises a claimed row (the orphan-row
-          # release keeps RR- rows), so the read is not bought twice while
-          # someone looks.
-          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rereview RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rereview_apply answered rc=$RRRC — the queue row stays CLAIMED, no hub re-review job file was written, and nothing retries this on its own. The RESULT is at $LOCAL/RESULT"
-          say "rereview $KEY: apply refused rc=$RRRC — row left claimed, RESULT at $LOCAL/RESULT"
+          # FAILED, as a refused rebase apply is (BH-8734). A row left claimed
+          # was not safe: the orphan release keeps RR- rows, but the
+          # jobs-watchdog stale-claim release has no key filter and put it
+          # back to `queued` after 360 min. A failed row is not re-claimed (only
+          # a POST leaves `failed`), and neither release reads a failed row.
+          # The reason never says "refused": the watchdog's reason_deferred
+          # sweep would requeue it.
+          QROW failed "$KEY" "re-review apply failed rc=$RRRC; RESULT at $LOCAL/RESULT"
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool rereview RESULT reaped ($(head -c 80 "$LOCAL/RESULT" | tr '\n' ' ')) but mc_pool_rereview_apply answered rc=$RRRC — the queue row is FAILED and not requeued, and no hub re-review job file was written. The RESULT is at $LOCAL/RESULT"
+          say "rereview $KEY: apply failed rc=$RRRC — row failed, RESULT at $LOCAL/RESULT"
         fi
       else
         RRREC="no hub job file was marked"

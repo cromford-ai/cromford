@@ -19,7 +19,9 @@
 #     L5  H = the restamp commit that also changes one byte
 #         of the fragment                                  -> not replay
 #     L6  H = the restamp of a rewritten G (G is not an
-#         ancestor of H)                                   -> not replay
+#         ancestor of H): restamp_same refuses it; since BH-9066 the
+#         same patch restamped is `replay restamp-rebase`  -> replay restamp-rebase
+#     L6b the same with one changed code line in G         -> not replay
 #   bin/lib/lead-gates.d/50-replay-delta.sh lg_gate_replay_delta (gate 50)
 #     E1  on L1: rc 12, one post of G's MERGE onto H with note
 #         `lead-replay:<G12> how:restamp` and `--review-mode full` (G has no
@@ -157,7 +159,18 @@ V=$(cls "$G" "$H"); notreplay "L5 a fragment byte change in the restamp commit" 
 # ── L6: G is not an ancestor of H (a force-push: G rewritten, then restamped) ──
 seed; og commit -q --amend -m "pr-change rewritten"; H=$(restamp); clone "$H"
 git -C "$O" merge-base --is-ancestor "$G" "$H" && bad "L6 setup: G is an ancestor of H" || ok
-V=$(cls "$G" "$H"); notreplay "L6 G not an ancestor of H" "$V"
+# BH-9066: the rewrite changed only the commit message, so H is G's patch
+# restamped. restamp_same (the descendant proof) still refuses it; the
+# restamp-rebase rung of bin/lib/patch-same.sh proves it from the diffs.
+V=$( ( . "$Q/bin/lib/schema-restamp.sh" || exit 9; restamp_same "$C" origin/main "$G" "$H" >/dev/null 2>&1; echo "rc=$?" ) 2>/dev/null)
+[ "$V" = rc=1 ] && ok || bad "L6 restamp_same must still refuse a head G is not an ancestor of, got '$V'"
+V=$(cls "$G" "$H")
+[ "$V" = "replay restamp-rebase" ] && ok || bad "L6 G rewritten (same patch) then restamped: want 'replay restamp-rebase', got '$V'"
+# L6b: the rewrite also changed a line of code: not the reviewed patch.
+seed; sed -i 's/^echo base$/echo rewritten/' "$O/bin/x.sh"; og add -A; og commit -q --amend -m "pr-change rewritten"
+H=$(restamp); clone "$H"
+git -C "$O" merge-base --is-ancestor "$G" "$H" && bad "L6b setup: G is an ancestor of H" || ok
+V=$(cls "$G" "$H"); notreplay "L6b G rewritten with a code change, then restamped" "$V"
 
 # ── E1/E2: gate 50 on the worklist (the production entry point) ──
 # gate <G> <H> — lg_gate_replay_delta for $SLUG#31 at H, the lead MERGEd G (row #7)

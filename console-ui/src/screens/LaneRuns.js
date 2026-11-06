@@ -3,7 +3,7 @@ import { PageHeadline } from '../ui/line.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { whenLabel, fmtDuration } from '../lib/format.js';
+import { whenLabel, fmtDuration, fmtNum } from '../lib/format.js';
 import { laneRunMetrics, laneRunList, laneRun } from '../lib/lane-runs-api.js';
 
 // LANES (BH-6127): where each lane's runs ran once a lane can run on Fly. The
@@ -38,7 +38,7 @@ const minCell = (s, why) => (minutes(s) === null ? na(why) : minutes(s));
 const usd = (n) => {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return na('no cost recorded');
   const v = Number(n);
-  return v > 0 && v < 0.01 ? '<0.01' : v.toFixed(2);
+  return v > 0 && v < 0.01 ? '<0.01' : fmtNum(v, { decimals: 2 });
 };
 
 // The minutes and cost columns draw a rounded number and sort on the raw

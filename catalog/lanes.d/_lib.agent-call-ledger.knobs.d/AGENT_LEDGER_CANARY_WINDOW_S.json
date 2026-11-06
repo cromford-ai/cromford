@@ -1,0 +1,12 @@
+{
+  "env": "AGENT_LEDGER_CANARY_WINDOW_S",
+  "read_in": "bin/lib/agent-call-ledger.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 60,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9125. The replay and attempt window of a stage-canary call whose caller named a day fp (canary:<runner>:<account>:<UTC day>, from bin/claude-auth-check.sh and bin/lane-probe.sh --endpoint). The fp itself ends the day, so the window only has to cover it. Every other call keeps AGENT_LEDGER_WINDOW_S. Read as ${AGENT_LEDGER_CANARY_WINDOW_S:-86400}; code fallback ACL_DEF_CANARY_WINDOW_S."
+}

@@ -398,7 +398,7 @@ check "tick cap: one sw_act" '[ "$(lines "$T/acts")" = 1 ]'
 check "tick cap: deferred=1 ($(summary))" 'summary | grep -q " acted=1 skipped=0 deferred=1$"'
 reset
 printf 'enqueue\tGP-502\tpredecessor merged' > "$T/decide/GP-501"
-printf 'close-parent\tT-12\tall merged' > "$T/decide/T-11"
+printf 'close-parent\TK-12\tall merged' > "$T/decide/T-11"
 SPLIT_WATCHDOG_PROJECTS="ghp iap" SPLIT_WATCHDOG_TICK_CAP=1 runfx
 check "tick cap spans projects: one sw_act" '[ "$(lines "$T/acts")" = 1 ]'
 

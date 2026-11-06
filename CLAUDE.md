@@ -50,7 +50,7 @@ So the union check is the source validation, the six render `--check`s and
 the three suites that pin this lane, not the whole corpus:
 
 ```bash
-HARNESS_TEST_SANDBOX=1 bin/verification-map-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/lanes-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-cron.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-env-example.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-rules.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-doc-sections.sh --check && HARNESS_TEST_SANDBOX=1 bin/schema-build.sh --check && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-build-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-no-commit-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/generated-files-train-test.sh
+HARNESS_TEST_SANDBOX=1 bin/verification-map-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/lanes-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-cron.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-env-example.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-rules.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-doc-sections.sh --check && HARNESS_TEST_SANDBOX=1 bin/schema-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/state-paths-build.sh --check && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-build-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-no-commit-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/generated-files-train-test.sh
 ```
 
 `bin/verification-map-build.sh --check` is no longer a drift check.
@@ -86,6 +86,10 @@ two files instead of conflicting on one.
 `worker/jobs/schema.d/` and refuses the git-ignored render
 `worker/jobs/schema.sql` back in git: schema.sql is not in git, so add or edit a
 fragment, and every reader (the deploy, CI, the tests) composes its own.
+
+`bin/state-paths-build.sh --check` (BH-8986) validates `catalog/state-paths.d/`
+and refuses the git-ignored render `catalog/state-paths.json` back in git. A
+new state/ path class is a new `catalog/state-paths.d/NNNN-<name>.json`.
 
 `HARNESS_TEST_SANDBOX=1` is on each command on purpose: the hub runs this lane as
 root next to a live `/root/harness`, and `tests/lib/scratch.sh` refuses to build a

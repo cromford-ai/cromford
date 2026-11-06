@@ -335,9 +335,10 @@ test('route: /history/commands is in ROUTES and maps to CommandHistoryScreen', (
   const hit = ROUTES.find(([p]) => p === '/history/commands');
   assert.ok(hit, 'route registered');
   assert.equal(hit[1], CommandHistoryScreen);
-  const now = NAV.find((n) => n.label === 'NOW');
-  assert.equal(now.match('/history/commands'), true);
-  assert.equal(now.match('/history'), true);
+  // BH-9118: HISTORY and COMMAND LOG are their own side-menu entries; NOW no longer claims them.
+  const lit = (p) => NAV.filter((n) => n.match(p)).map((n) => n.label);
+  assert.deepEqual(lit('/history/commands'), ['COMMAND LOG']);
+  assert.deepEqual(lit('/history'), ['HISTORY']);
 });
 
 test('wiring: CommandHistoryScreen reads api.commands', async () => {

@@ -12,8 +12,9 @@
 # catalog/state-paths.json (read in the repo under test, so a PR's own catalog
 # edit counts on both sides of the delta) classes `cache` or `box-local`, plus
 # the names in ALLOW_EXTRA below. A segment also covers its dot siblings
-# (`settings-cache.json.tmp`). To allow a new path, class it in the catalog in
-# the same PR; a reviewer sees that diff. A catalog that is missing, is not
+# (`settings-cache.json.tmp`). To allow a new path, class it in a NEW fragment
+# file catalog/state-paths.d/NNNN-<name>.json in the same PR (BH-8986: the
+# catalog is composed from those fragments); a reviewer sees that diff. A catalog that is missing, is not
 # JSON, or has no .paths list is RED ("cannot read the allowlist"), never an
 # empty allowlist.
 #
@@ -61,7 +62,7 @@ SELF="$DIR/tests/no-state-files.bh-4159-test.sh"
 # The pure caches #4141 names that the catalog does not class:
 # bin/lib/gh-policy-cache.sh keeps a file per (repo, name) under it.
 ALLOW_EXTRA=(gh-policy-cache)
-FIX="new state must be a DB row (bin/lib/jobs/*), a settings row, or a path classed cache/box-local in catalog/state-paths.json; see docs/STATE-STORES.md"
+FIX="new state must be a DB row (bin/lib/jobs/*), a settings row, or a path classed cache/box-local in a NEW fragment file catalog/state-paths.d/NNNN-<name>.json (one new file per PR, never an edit of a shared one); see docs/STATE-STORES.md"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }

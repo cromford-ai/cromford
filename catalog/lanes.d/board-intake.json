@@ -1,0 +1,23 @@
+{
+  "id": "board-intake",
+  "name": "Hosted board intake (seam)",
+  "scope": "hub",
+  "script": "bin/hosted-board-intake.sh",
+  "cadence": "on demand (via nothing yet: wave 5 of BH-7913 schedules it; no cron line)",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-board-intake",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/board-intake.log"
+  }
+}

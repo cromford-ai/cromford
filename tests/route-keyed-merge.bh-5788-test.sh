@@ -59,14 +59,18 @@ git -C "$R" merge -q --no-edit y >"$T/my.out" 2>&1 && ok || bad "M1 merge y conf
 FAM=$(sed -n 's/^export const FAMILIES = \[\(.*\)\];$/\1/p' "$T/gen.js")
 # Key-named fragments sort after every numbered one and among themselves by
 # file name, so the tail of FAMILIES is exactly the tree's key-named families.
-KEYED=$(cd "$J/test/route-table.d" && ls | LC_ALL=C sort | grep -E '^[a-z]+-[0-9]+([.-][0-9]+)?-[a-z]' | sed -E 's/^[a-z]+-[0-9]+([.-][0-9]+)?-//; s/\.txt$//')
+# TEST-CHANGE (BH-8918): a key-named fragment can be an OPEN family
+# (bh-8918-hosted-board), and an open family is never in FAMILIES, so KEYED
+# drops the families in OPEN_FAMILIES. The tail and whole-order checks stay exact.
+OPEN=$(cd "$J" && node --input-type=module -e 'import { OPEN_FAMILIES } from "./src/lib/route-families.js"; console.log([...OPEN_FAMILIES].join("\n"))')
+[ -n "$OPEN" ] && ok || bad "M1 OPEN_FAMILIES read empty"
+KEYED=$(cd "$J/test/route-table.d" && ls | LC_ALL=C sort | grep -E '^[a-z]+-[0-9]+([.-][0-9]+)?-[a-z]' | sed -E 's/^[a-z]+-[0-9]+([.-][0-9]+)?-//; s/\.txt$//' | grep -vxF -f <(printf '%s\n' "$OPEN"))
 NK=$(grep -c . <<<"$KEYED")
 TAIL=$(tr -d ' "' <<<"$FAM" | tr ',' '\n' | tail -n "$NK")
 [ "$TAIL" = "$KEYED" ] && ok || bad "M1 the key-named families must close FAMILIES in file-name order ($(tr '\n' ' ' <<<"$KEYED")): [$FAM]"
 [ "$(grep -A1 -x zz-a <<<"$TAIL" | tail -1)" = zz-b ] && ok || bad "M1 zz-a must come just before zz-b: [$FAM]"
 # BH-5807: the whole order too, against the fragment names (the open families
 # are not in FAMILIES), so a family out of place anywhere is red, not only in the tail.
-OPEN=$(cd "$J" && node --input-type=module -e 'import { OPEN_FAMILIES } from "./src/lib/route-families.js"; console.log([...OPEN_FAMILIES].join("\n"))')
 WANT=$(cd "$J/test/route-table.d" && LC_ALL=C ls -1 -- *.txt | LC_ALL=C sort \
   | sed -E 's/^([0-9]{3}-|[a-z]+-[0-9]+([.-][0-9]+)?-)//; s/\.txt$//' | grep -vxF -f <(printf '%s\n' "$OPEN") \
   | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')

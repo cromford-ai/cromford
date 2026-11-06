@@ -17,8 +17,8 @@
 #      one line. tests/fly-pool-orphan-rows.bh-7382-test.sh drives it as a table.
 #   2. pool_orphan_rows_step: runs in bin/fly-pool.sh's own shell inside the
 #      dead-machine sweep, after the REAP. It reads the caller's P POOL HARNESS
-#      LISTING LIST_OK and say, and _jobs_req, queue_release and JOBS_BOX from
-#      the jobs client.
+#      LISTING LIST_OK and say, and _jobs_req, queue_release_counted (else
+#      queue_release) and JOBS_BOX from the jobs client.
 
 _por_int() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 
@@ -67,12 +67,17 @@ _por_knob() {
 }
 
 # pool_orphan_rows_step — one GET of this project's stale claimed fly rows,
-# one verdict per row, a queue_release per `release` (at most
+# one verdict per row, a counted release per `release` (at most
 # POOL_ORPHAN_ROW_RELEASE_MAX per tick). One say line per release, written only
 # after the PATCH returned 0, and one ALERTS line per tick that released any.
+# THE RELEASE COUNTS (BH-8734): BH-8841 was released 17 times with attempt
+# stuck at 2. The worker adds 1 to build_queue.attempt and ends the row
+# `failed` past queue.release_attempt_max; such a row goes to the `capped`
+# list, and one more ALERTS line per tick names every capped key. A box with
+# no queue_release_counted (half-synced) uses today's queue_release.
 pool_orphan_rows_step() {
   local root="${HARNESS:-}" thr max smin resp rc asof now rows k st tg by mid cat ep age ms qf pf af \
-        out why f released=() due=0 n=0 active="" pkeys=""
+        out why f released=() capped=() due=0 n=0 active="" pkeys="" ans a mx
   [ "${LIST_OK:-0}" = 1 ] && [ -s "${LISTING:-}" ] || return 0
   command -v _jobs_req >/dev/null 2>&1 && command -v queue_release >/dev/null 2>&1 || return 0
   [ -n "$root" ] && [ -n "${P:-}" ] || return 0
@@ -120,11 +125,25 @@ pool_orphan_rows_step() {
     due=$((due + 1))
     [ "$n" -ge "$max" ] && continue
     why="orphan release: claimed by $by ${age}s ago, machine ${mid:-none} ${ms}, no hub owner"
-    queue_release "$P" "$k" "$why" >/dev/null 2>&1; rc=$?
-    if [ "$rc" = 0 ]; then
+    ans=""
+    if command -v queue_release_counted >/dev/null 2>&1; then
+      ans=$(queue_release_counted "$P" "$k" "$why" 2>/dev/null); rc=$?
+    else
+      queue_release "$P" "$k" "$why" >/dev/null 2>&1; rc=$?
+    fi
+    if [ "$rc" = 0 ] && [ "${ans%% *}" = failed ]; then
+      n=$((n + 1))
+      read -r _ a mx <<<"$ans"
+      capped+=("$k (attempt $a of $mx)")
+      declare -F say >/dev/null 2>&1 \
+        && say "orphan-row-release $k: release cap reached (attempt $a of $mx, queue.release_attempt_max) — row failed, not requeued"
+    elif [ "$rc" = 0 ]; then
       n=$((n + 1)); released+=("$k")
       declare -F say >/dev/null 2>&1 \
         && say "orphan-row-release $k: claimed by $by ${age}s ago on machine ${mid:-none} ($ms), no hub owner — row back to queued"
+    elif [ "${ans%% *}" = stale ]; then
+      n=$((n + 1))
+      declare -F say >/dev/null 2>&1 && say "orphan-row-release $k: not released — the row is ${ans#stale } now, nothing written"
     else
       n=$((n + 1))
       declare -F say >/dev/null 2>&1 && say "orphan-row-release $k: release failed (rc $rc) — row stays claimed"
@@ -137,6 +156,11 @@ pool_orphan_rows_step() {
     out=$(printf '%s, ' "${released[@]}")
     HARNESS="$root" "$root/bin/alert-line.sh" \
       "[pool/$P] released ${#released[@]} claimed row(s) with no machine and no hub file: ${out%, } (orphan-row release, BH-7382)"
+  fi
+  if [ "${#capped[@]}" -gt 0 ]; then
+    out=$(printf '%s, ' "${capped[@]}")
+    HARNESS="$root" "$root/bin/alert-line.sh" \
+      "[pool/$P] ended ${#capped[@]} claimed row(s) failed at the release cap: ${out%, }. Each one was released by an orphan release more times than queue.release_attempt_max allows. Nothing requeues them (BH-8734)"
   fi
   return 0
 }

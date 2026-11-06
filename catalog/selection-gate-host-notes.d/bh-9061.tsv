@@ -1,0 +1,4 @@
+# catalog/selection-gate-host-notes.d/bh-9061.tsv — suites the pre-PR selection gate notes, not reds, on the test host (BH-9061).
+# <suite path>TAB<class>TAB<ERE every failure line must match>TAB<reason>. Classes: shallow-context, host-timing. Read by bin/selection-gate.sh step 5.
+# The merge-queue batch still runs and gates these suites; this list changes only the gate's gate.txt.
+tests/ci-durations-db.bh-5653-test.sh	shallow-context	no seed in git history \(0 rows\)	the host gets a shallow git context; the suite reads the deleted seed from git history, which a depth-limited checkout does not hold (CI checks out with fetch-depth 0)

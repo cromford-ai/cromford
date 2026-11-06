@@ -138,7 +138,8 @@ WANT_ROW=$(printf '%s\n' \
   "$(printf 'catalog/lanes.json\tbin/lanes-build.sh --write')" \
   "$(printf 'rules/CLAUDE.md\tbin/render-rules.sh --write')" \
   "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
-  "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')")
+  "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
+  "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')")
 #    …and of the last three rows two are still COMMITTED. rules/CLAUDE.md
 #    (BH-1336): five scripts copy it verbatim onto every box, so it cannot leave
 #    git yet, which is exactly why a train must regenerate it rather than hand

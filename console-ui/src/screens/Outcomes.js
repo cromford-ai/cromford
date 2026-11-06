@@ -5,7 +5,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
 import { UsdCell } from '../ui/UsdCell.js';
-import { fmtUsd, minutesSince, safeHttpsUrl } from '../lib/format.js';
+import { fmtUsd, fmtNum, minutesSince, safeHttpsUrl } from '../lib/format.js';
 import {
   perRepo, weeklyBurn, findingRows, costRows, summarise,
   outcomeLabel, outcomeTone, pct
@@ -207,7 +207,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
       cell: (r) => (r.deltaPct === null
         ? html`<span class="na" title="only compared when both weeks have all seven days measured — a missing day would read as a cheap week">—</span>`
         : html`<span class="num" style=${r.deltaPct > 0 ? 'color:var(--amber)' : ''}>
-            ${r.deltaPct > 0 ? '+' : ''}${(r.deltaPct * 100).toFixed(0)}%</span>`)
+            ${r.deltaPct > 0 ? '+' : ''}${fmtNum(r.deltaPct * 100, { decimals: 0 })}%</span>`)
     },
     {
       key: 'days', label: 'DAYS', sort: (r) => r.days, align: 'right',

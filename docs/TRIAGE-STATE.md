@@ -472,21 +472,76 @@ What each tick still paid for unchanged input (`paid_unchanged=N`, the cost-row 
   `TRIAGE_STARVE_WINDOW_S`, with no run since it was first listed, gets ONE
   `bin/launch-fastpath.sh <p> <label...>` attempt per listing episode (GitHub
   boards; at most `TRIAGE_STARVE_FASTPATH_MAX` keys per pass, oldest first,
-  under `timeout TRIAGE_STARVE_FASTPATH_TIMEOUT_S`). An in-app board records
-  `n/a: in-app board`. A live builds pause withholds the attempt to the next
-  pass.
+  under `timeout TRIAGE_STARVE_FASTPATH_TIMEOUT_S`). A live builds pause
+  withholds the attempt to the next pass, on both board kinds.
+- **The in-app attempt (BH-9113).** `bin/launch-fastpath.sh` is GitHub-only,
+  so before BH-9113 an in-app board recorded `n/a: in-app board` and nothing
+  acted (project-3, 2026-11-05: 15 ready team-turn tickets unbuilt for 6 h). Now
+  each eligible in-app key, in the same order and under the same
+  `TRIAGE_STARVE_FASTPATH_MAX` cap, gets ONE `_tsv_inapp_try`. The first check
+  that fails is the reason:
+  1. the ticket row in the tick's board snapshot (`world.json`): absent is
+     `declined: not on the board snapshot`, unreadable is
+     `declined: snapshot unreadable`;
+  2. `status` in the in-flight, finished or paused set that
+     `bin/preplan-candidates.sh` skips (`paused`, `review`, `in_progress`,
+     `done`, ...) is `declined: status=<s>`;
+  3. `triageVerdict` other than `ready` is `declined: triageVerdict=<v|none>`;
+  4. `waitingOn` other than `team` is `declined: waitingOn=<w|none>` (project-3
+     spells the client's turn `requester`);
+  5. the `ts_enqueue` launch guard `_ts_owned`: the `.enqueued` marker, a held
+     build-key lock, a build dir since first listed, an abandoned record, a
+     queue row, an open PR, `bin/triage-gate.sh --buildable-strict` (unmet
+     dependencies, holds), a builds pause, the overlap guard. Its answer is the
+     reason (`declined: owned:pr-412`, `declined: held:dependencies TK-12`).
+     The lib not loaded is `declined: launch guard unavailable`.
+  Then it writes `<key>.enqueued` (the verdict hash) and detaches
+  `bin/run-build.sh <p> <key> <label>` (`_ts_spawn_build`, output in
+  `logs/<p>.<label>-triage-starve.out`). `bin/run-build.sh` takes the
+  build-key dedupe and the cross-harness lock itself. A spawn that cannot run
+  is `declined: spawn failed` and removes the marker. The outcome is
+  `launched`. No model call. `TRIAGE_STARVE_INAPP_LAUNCH=0` restores the
+  `n/a: in-app board` record.
 - **The alert.** One warn `bin/lane-alert.sh` alert per project per pass
   (id `triage-starve-<p>`) names the keys tried and each outcome. A failed
   lane-alert writes one `bin/alert-line.sh` line instead.
 - **Knobs** (`catalog/lanes.d/_lib.triage-starve.json`, rows
   `lib.triage-starve[.<p>].<knob>`): `TRIAGE_STARVE_PASSES` (3, 0 = off),
   `TRIAGE_STARVE_WINDOW_S` (7200), `TRIAGE_STARVE_FASTPATH_MAX` (10),
-  `TRIAGE_STARVE_FASTPATH_TIMEOUT_S` (300), `TRIAGE_STARVE_LOCK_WAIT_S` (5).
+  `TRIAGE_STARVE_FASTPATH_TIMEOUT_S` (300), `TRIAGE_STARVE_LOCK_WAIT_S` (5),
+  `TRIAGE_STARVE_INAPP_LAUNCH` (1, 0 = the in-app record is `n/a`).
 - **Read it.** `grep TRIAGE-STARVE logs/<p>.log`:
   `TRIAGE-STARVE <label> listed <n> passes over <h>h with no triage run — fastpath launched`,
   `... — fastpath declined: <fastpath's own FASTPATH-DECLINED reason>`,
-  `... — fastpath declined: fastpath exit <rc>`, `... — n/a: in-app board`,
+  `... — fastpath declined: fastpath exit <rc>`, `... — inapp launched`,
+  `... — inapp declined: <reason>`, `... — n/a: in-app board` (switch off),
   `TRIAGE-STARVE withheld <labels>: builds pause`.
+
+## Shard skip for a running build (BH-9113)
+
+`bin/lib/shard-building.sh`, called by `rt_shards` (`bin/lib/rt/shards.sh`).
+project-3 TK-698 got a shard every 10 minutes while its build ran, and each one
+ended `claim refused: ticket :: ticket max 1 already running` in
+`bin/triage-shard.sh`. The slot was lost every tick.
+
+- **One read per tick.** Before the key loop, `shard_building_census` calls
+  `job_builds_running <p>` once and writes the rows to
+  `state/triage-shards/<p>/.building.tsv` (overwritten each tick).
+- **The skip.** In the key loop, after the fingerprint and no-signal checks
+  and before `TRIAGE_SHARDS_MAX` and the hour caps, `shard_building_why`
+  answers for the key: a running build row whose `ticket_key` or meta ticket
+  id is the key (on a GitHub board, also `<PFX>-<n>`), or a held
+  `locks/build-key-<p>-<key>.lock`. A skipped key gets no shard, no slot and
+  no fingerprint stamp. It is re-armed with the held and left keys, so the
+  next tick offers it again (a finished build's close-out runs then).
+- **Fail-open.** A census that cannot be read skips nothing and writes one
+  line; the claim in `bin/triage-shard.sh` stays the backstop. No lib or no
+  jobs client: the tick as before.
+- **Read it.** `grep 'skipped — build running' logs/<p>.log`:
+  `triage shards: <K> skipped — build running (jobs ledger: build <id> on <box>); no shard bought, no slot used, re-offered next tick`
+  (or `(local build-key lock held)`). The summary line gains
+  ` — building: <keys>`. A census outage:
+  `triage shards: running-build census unreadable — no key skipped for a running build this tick (the claim stays the backstop)`.
 
 ## Follow-ups (out of scope here)
 

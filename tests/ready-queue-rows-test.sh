@@ -140,7 +140,7 @@ bash -n "$DIR/bin/lib/ready-queue.sh" 2>/dev/null \
 
 # ══ 2. FLAG OFF IS TODAY, BYTE FOR BYTE ═════════════════════════════════════
 printf 'TK-1 t-1 — waiting project=x-os\n' > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 OUT=$(lib 0 up 'rq_lines "$HARNESS" x-os')
 [ "$OUT" = 'TK-1 t-1 — waiting project=x-os' ] \
   && ok || bad "flag off must yield exactly the file's lines, got: $OUT"
@@ -159,13 +159,13 @@ grep -q 'project=x-os' <<<"$(grep '^TK-9' <<<"$OUT")" \
   && ok || bad "a synthesized line must carry project=, or bin/project-of.sh cannot bucket it: $OUT"
 
 # A row for ANOTHER project is not this project's work.
-printf 'other-os\tZZ-4\tt-4\tready\tZZ-4 t-4 — owed project=other-os\n' >> "$ROWS"
+printf 'other-os\tZZ-4\TK-4\tready\tZZ-4 t-4 — owed project=other-os\n' >> "$ROWS"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 grep -q 'ZZ-4' <<<"$OUT" \
   && bad "a ready row for another project must not leak into x-os's set: $OUT" || ok
 
 # NO DOUBLE COUNTING: a key that is on the file AND in a row is one line.
-printf 'x-os\tAR-1\tt-1\tready\tAR-1 t-1 — owed project=x-os\n' >> "$ROWS"
+printf 'x-os\tAR-1\TK-1\tready\tAR-1 t-1 — owed project=x-os\n' >> "$ROWS"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 [ "$(grep -c '^TK-1' <<<"$OUT")" = 1 ] \
   && ok || bad "a key on the file AND in a row must be ONE line (the file wins), got: $OUT"
@@ -179,7 +179,7 @@ OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 # own RED), and bin/preplan-tick.sh — which reads rows FLEET-WIDE — pre-plans it
 # under whichever project the title happens to mention.
 : > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-77\tt-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-77\TK-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 [ "$OUT" = 'TK-77 OWED-STALE 27h [in_progress/-] Fix the widget project=x-os' ] \
   && ok || bad "RED CORE: a ready row whose line is the PRODUCTION stale-owed shape must carry project= from the row's own column, got: [$OUT]"
@@ -189,14 +189,14 @@ OUT=$(lib 1 up 'rq_lines "$HARNESS" ""')
 grep -q 'project=x-os' <<<"$OUT" \
   && ok || bad "the fleet-wide read must carry project= too (bin/preplan-tick.sh buckets on it), got: [$OUT]"
 # A line that ALREADY names its project is emitted character for character.
-: > "$ROWS"; printf 'x-os\tAR-78\tt-78\tready\tAR-78 t-78 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-78\TK-78\tready\tAR-78 t-78 — owed project=x-os\n' >> "$ROWS"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 [ "$OUT" = 'TK-78 t-78 — owed project=x-os' ] \
   && ok || bad "a line that already carries project= must be emitted verbatim, got: [$OUT]"
 
 # ══ 4. rq_any — the brake ═══════════════════════════════════════════════════
 : > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 lib 1 up 'rq_any "$HARNESS" x-os' \
   && ok || bad "RED CORE: an empty log file plus a ready ROW must still be 'there is work' — the triage brake reads this"
 lib 0 up 'rq_any "$HARNESS" x-os' \
@@ -207,7 +207,7 @@ lib 1 up 'rq_any "$HARNESS" x-os' \
 
 # ══ 5. AN OUTAGE IS NOT AN EMPTY QUEUE, AND IT SAYS SO ══════════════════════
 printf 'TK-1 t-1 — waiting project=x-os\n' > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 : > "$H/logs/ready-queue.log" 2>/dev/null
 # A worker that is down cannot even be asked whether the flag is on, and that
 # reads as OFF — a blinking worker must never switch a lane onto a new path.
@@ -226,13 +226,13 @@ grep -qi 'unreachable' "$H/logs/ready-queue.log" 2>/dev/null \
   && ok || bad "a reader that failed open must leave a log line (iron law), log: $(cat "$H/logs/ready-queue.log" 2>/dev/null)"
 
 # ══ 6. THE FINGERPRINT — a new row is new-world, a restamp is not ═══════════
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — last probe 2026-09-19T01:02:03Z project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — last probe 2026-09-19T01:02:03Z project=x-os\n' >> "$ROWS"
 A=$(lib 1 up 'rq_fp "$HARNESS" x-os')
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — last probe 2026-09-19T09:09:09Z project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — last probe 2026-09-19T09:09:09Z project=x-os\n' >> "$ROWS"
 B=$(lib 1 up 'rq_fp "$HARNESS" x-os')
 [ "$A" = "$B" ] && [ -n "$A" ] \
   && ok || bad "a RESTAMPED row must not change the fingerprint (the \$90/day project-1 loop): [$A] vs [$B]"
-printf 'x-os\tAR-10\tt-10\tready\tAR-10 t-10 — owed project=x-os\n' >> "$ROWS"
+printf 'x-os\tAR-10\TK-10\tready\tAR-10 t-10 — owed project=x-os\n' >> "$ROWS"
 C=$(lib 1 up 'rq_fp "$HARNESS" x-os')
 [ "$C" != "$B" ] \
   && ok || bad "a NEW ready row must change the fingerprint, or triage sleeps through it"
@@ -241,11 +241,11 @@ D=$(lib 0 up 'rq_fp "$HARNESS" x-os')
   && ok || bad "with the flag off the fingerprint contribution must be EMPTY (byte-identical ticks), got: [$D]"
 
 # ══ 7. rq_drop — consuming a line consumes the row ══════════════════════════
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 lib 1 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
 [ "$(awk -F'\t' '$2=="TK-9"{print $4}' "$ROWS")" = dropped ] \
   && ok || bad "rq_drop must patch the row out of ready, got: $(cat "$ROWS")"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tline\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tline\n' >> "$ROWS"
 lib 0 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
 [ "$(awk -F'\t' '$2=="TK-9"{print $4}' "$ROWS")" = ready ] \
   && ok || bad "with the flag off rq_drop must touch nothing"
@@ -256,7 +256,7 @@ lib 1 up 'rq_drop "$HARNESS" "" NOPE-1' >/dev/null && ok \
 # answers 409, which the client maps to rc 9. An operator reading
 # logs/ready-queue.log after a launch-then-drop race must not be told the
 # coordination worker was unreachable when it answered perfectly.
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tclaimed\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tclaimed\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 : > "$H/logs/ready-queue.log"
 lib 1 up 'rq_drop "$HARNESS" x-os TK-9' >/dev/null
 [ "$(awk -F'\t' '$2=="TK-9"{print $4}' "$ROWS")" = claimed ] \
@@ -266,7 +266,7 @@ grep -qi 'unreachable' "$H/logs/ready-queue.log" \
 grep -q 'TK-9' "$H/logs/ready-queue.log" \
   && ok || bad "a refused drop must still leave one line naming the key, log: $(cat "$H/logs/ready-queue.log")"
 # …and a real outage still says so.
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 : > "$H/logs/ready-queue.log"
 lib env down 'rq_drop "$HARNESS" x-os TK-9' >/dev/null
 grep -qi 'unreachable' "$H/logs/ready-queue.log" \
@@ -287,14 +287,14 @@ lib 0 up 'rq_put "$HARNESS" x-os TK-12 t-12 line' >/dev/null
 [ ! -s "$ROWS" ] && ok || bad "with the flag off rq_put must write nothing"
 
 # ══ 9. bin/queue-line-drop.sh — the file AND the row ════════════════════════
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 printf 'TK-9 t-9 — owed project=x-os\nAR-1 t-1 — waiting project=x-os\n' > "$Q"
 OUTPUT=$(run 1 up bash "$H/bin/queue-line-drop.sh" TK-9 2>&1)
 grep -q '^TK-1 ' "$Q" && ! grep -q '^TK-9 ' "$Q" \
   && ok || bad "queue-line-drop must still drop exactly its own file line: $(cat "$Q")"
 [ "$(awk -F'\t' '$2=="TK-9"{print $4}' "$ROWS")" = dropped ] \
   && ok || bad "queue-line-drop must patch the ready ROW too, or the row re-brakes triage forever: $(cat "$ROWS") / $OUTPUT"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tl\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tl\n' >> "$ROWS"
 printf 'TK-9 t-9 — owed project=x-os\n' > "$Q"
 # THE LOCKS ARE RELEASED BEFORE THE NETWORK CALL. A flock lives on the open
 # descriptor until the process exits, so a drop that ran with fds 8 and 9 still
@@ -322,7 +322,7 @@ else ok; fi
 # fingerprint never changes, and bin/triage-gate.sh's 4-hour ceiling buys a paid
 # tick per project for a ticket nobody will launch.
 rm -f "$Q"
-: > "$ROWS"; printf 'x-os\tAR-78\tt-78\tready\tAR-78 t-78 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-78\TK-78\tready\tAR-78 t-78 — owed project=x-os\n' >> "$ROWS"
 OUTPUT=$(run 1 up bash "$H/bin/queue-line-drop.sh" TK-78 2>&1)
 [ "$(awk -F'\t' '$2=="TK-78"{print $4}' "$ROWS")" = dropped ] \
   && ok || bad "RED CORE: with no READY-QUEUE.log at all the ready ROW must still be dropped, got: $(cat "$ROWS") / $OUTPUT"
@@ -330,7 +330,7 @@ grep -q 'dropped 0' <<<"$OUTPUT" \
   && ok || bad "the no-file path must still print today's 'dropped 0' line, got: $OUTPUT"
 # A key that is not a ticket key is refused on the no-file path too, rather than
 # being handed to the worker unvalidated (the loop that exits 2 never runs here).
-: > "$ROWS"; printf 'x-os\tAR-78\tt-78\tready\tl\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-78\TK-78\tready\tl\n' >> "$ROWS"
 run 1 up bash "$H/bin/queue-line-drop.sh" 'TK-78;rm -rf /' >/dev/null 2>&1
 [ "$(awk -F'\t' '$2=="TK-78"{print $4}' "$ROWS")" = ready ] \
   && ok || bad "a malformed key must never reach the row drop: $(cat "$ROWS")"
@@ -375,7 +375,7 @@ printf '#!/bin/bash\ncase "$2" in board_prefix) echo - ;; repo) echo o/r ;; *) e
   > "$H/bin/fleet-conf.sh"; chmod +x "$H/bin/fleet-conf.sh"
 printf '#!/bin/bash\nexit 0\n' > "$T/fakebin/gh"; chmod +x "$T/fakebin/gh"
 : > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 OUT=$(run 1 up bash "$H/bin/preplan-candidates.sh" x-os 2>/dev/null)
 grep -qE '^TK-9[[:space:]]+t-9[[:space:]]+queued' <<<"$OUT" \
   && ok || bad "RED CORE: a ready ROW with no log line must be a 'queued' pre-plan candidate, got: [$OUT]"
@@ -388,7 +388,7 @@ grep -q 'TK-9' <<<"$OUT" \
 # through to bin/project-of.sh mention-matching on the TITLE and dropped the
 # line — `[]`, the ticket's RED unmet for the only shape that ships.
 : > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-77\tt-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-77\TK-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
 OUT=$(run 1 up bash "$H/bin/preplan-candidates.sh" x-os 2>/dev/null)
 grep -qE '^TK-77[[:space:]].*[[:space:]]queued$' <<<"$OUT" \
   && ok || bad "RED CORE: a ready row carrying the PRODUCTION stale-owed line must be a 'queued' pre-plan candidate, got: [$OUT]"
@@ -569,18 +569,18 @@ awk '/^ *QLINES=\$\(/{print; exit}' "$DIR/bin/lib/rt/scope.sh" > "$T/qlines.sh"
 grep -qE 'QLINES=\$\(grep ' "$T/qlines.sh" \
   && bad "bin/lib/rt/scope.sh's QLINES must not be its own grep of READY-QUEUE.log: $(cat "$T/qlines.sh")" || ok
 : > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-77\tt-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-77\TK-77\tready\tAR-77 OWED-STALE 27h [in_progress/-] Fix the widget\n' >> "$ROWS"
 OUT=$(lib 1 up 'PROJECT=x-os; . '"$T"'/qlines.sh; printf "%s" "${QLINES:-}"')
 grep -q '^TK-77 OWED-STALE' <<<"$OUT" \
   && ok || bad "RED CORE: a row-only ticket must reach the SESSION's queue scope, or the tick is bought for a prompt that says the queue is empty, got: [$OUT]"
 # A row for another project must not reach this project's prompt.
-: > "$ROWS"; printf 'other-os\tZZ-4\tt-4\tready\tZZ-4 t-4 — owed project=other-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'other-os\tZZ-4\TK-4\tready\tZZ-4 t-4 — owed project=other-os\n' >> "$ROWS"
 OUT=$(lib 1 up 'PROJECT=x-os; . '"$T"'/qlines.sh; printf "%s" "${QLINES:-}"')
 grep -q 'ZZ-4' <<<"$OUT" \
   && bad "another project's ready row must not reach x-os's session prompt: [$OUT]" || ok
 # FLAG OFF IS TODAY, BYTE FOR BYTE: exactly the file's lines, no request.
 printf 'TK-1 t-1 — waiting project=x-os\n' > "$Q"
-: > "$ROWS"; printf 'x-os\tAR-77\tt-77\tready\tAR-77 OWED-STALE 27h [x/-] w\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-77\TK-77\tready\tAR-77 OWED-STALE 27h [x/-] w\n' >> "$ROWS"
 OUT=$(lib 0 up 'PROJECT=x-os; . '"$T"'/qlines.sh; printf "%s" "${QLINES:-}"')
 [ "$OUT" = 'TK-1 t-1 — waiting project=x-os' ] \
   && ok || bad "flag off, the session scope must be exactly the file's lines, got: [$OUT]"
@@ -643,7 +643,7 @@ grep -q 'printf .*"\$RQL" | grep -q' "$DIR/bin/preplan-tick.sh" && bad "the hous
 # already carried. Not a deletion like §15, but a queue that says a ticket is
 # owed twice is a queue two lanes disagree about, and the fix is the same shape.
 # The key to match sorts FIRST (the list is `sort -u`'d) so grep exits early.
-: > "$ROWS"; printf 'x-os\tAA-1\tt-1\tready\tAA-1 t-1 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAA-1\TK-1\tready\tAA-1 t-1 — owed project=x-os\n' >> "$ROWS"
 awk 'BEGIN{printf "AA-1 t-1 — waiting project=x-os\n"; for(i=1;i<=12000;i++) printf "ZZ-%d t-%d — pad project=x-os\n", i, i}' > "$Q"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 [ "$(grep -c '^AA-1 ' <<<"$OUT")" = 1 ] \
@@ -651,8 +651,8 @@ OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 # The small-set behaviour is unchanged, and a row whose key is NOT on the file
 # still comes out — the de-dupe must not become "drop every row".
 : > "$ROWS"
-printf 'x-os\tAA-1\tt-1\tready\tAA-1 t-1 — owed project=x-os\n' >> "$ROWS"
-printf 'x-os\tAR-5\tt-5\tready\tAR-5 t-5 — owed project=x-os\n' >> "$ROWS"
+printf 'x-os\tAA-1\TK-1\tready\tAA-1 t-1 — owed project=x-os\n' >> "$ROWS"
+printf 'x-os\tAR-5\TK-5\tready\tAR-5 t-5 — owed project=x-os\n' >> "$ROWS"
 printf 'AA-1 t-1 — waiting project=x-os\n' > "$Q"
 OUT=$(lib 1 up 'rq_lines "$HARNESS" x-os')
 [ "$(grep -c '^AA-1 ' <<<"$OUT")" = 1 ] \

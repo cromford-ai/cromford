@@ -469,7 +469,12 @@ grep -q 'machine destroy\|machine stop' "$T/pfly" 2>/dev/null && ok || bad "R1 t
 
 result "$T/r4" "REREVIEWED APPROVE" "ffffffff$(printf '%.32s' "$HEAD" | tr 'a-f' '0-5')"
 preap "$KEY" "$T/r4"
-grep -q "^done tproj $KEY" "$T/psink" 2>/dev/null && bad "R4 THE POINT: a refused apply leaves the row claimed: $(cat "$T/psink")" || ok
+# TEST-CHANGE (BH-8734): a refused apply used to leave the row claimed, and
+# the orphan release put a claimed row back to queued (BH-8841, 17 runs). It
+# now ends the row failed: exactly one failed close, never done.
+[ "$(grep -c "^done tproj $KEY" "$T/psink" 2>/dev/null)" = 1 ] \
+  && grep -q "^done tproj $KEY failed re-review apply failed rc=[0-9]*; RESULT at $PLOCAL/RESULT" "$T/psink" \
+  && ok || bad "R4 THE POINT: a refused apply ends the row failed, once: $(cat "$T/psink" 2>/dev/null)"
 [ -f "$PJF" ] && bad "R4 a refused apply writes no job file" || ok
 [ "$(grep -c "$PLOCAL/RESULT" "$H/logs/ALERTS.log" 2>/dev/null | head -1)" = 1 ] && ok || bad "R4 exactly one ALERTS line naming the RESULT path: $(cat "$H/logs/ALERTS.log" 2>/dev/null)"
 grep -q "pool rereview RESULT reaped" "$H/logs/fly-pool.log" && bad "R4 no reaped line when the apply refused" || ok

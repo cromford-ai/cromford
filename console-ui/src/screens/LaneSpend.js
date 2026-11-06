@@ -4,6 +4,7 @@ import { useApi } from '../lib/hooks.js';
 import { laneHref } from '../lib/settings.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { UsdCell } from '../ui/UsdCell.js';
+import { fmtUsd } from '../lib/format.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { laneSpendRows, ceilingText, switchBanner, laneSpendNote, p99Footnote } from '../lib/lane-spend.js';
 
@@ -43,7 +44,7 @@ export const laneSpendColumns = [
   },
   {
     key: 'p99', label: 'P99 · DAYS', sort: (r) => r.p99_usd,
-    cell: (r) => (r.p99_usd === null ? '—' : `$${r.p99_usd.toFixed(2)} · ${r.p99_days ?? '—'}d`), align: 'right'
+    cell: (r) => (r.p99_usd === null ? '—' : `${fmtUsd(r.p99_usd)} · ${r.p99_days ?? '—'}d`), align: 'right'
   },
   {
     key: 'state', label: 'STATE', sort: (r) => r.state.rank,

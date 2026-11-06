@@ -11,6 +11,7 @@ import {
   ageSeconds, QUEUE_TRANSITIONS, checkTransition, ensureColumns, intOrNull, isoPlusSeconds,
   str, laneName,
 } from "../lib/core.js";
+import { settingsRows } from "../lib/settings-cache.js";
 
 // A merge sha, NORMALISED ONCE, here (D17). `deploy_queue` is keyed on
 // (project, sha), so a value that differs only in case or whitespace is a
@@ -22,6 +23,25 @@ import {
 function deploySha(v) {
   const s = String(v === undefined || v === null ? "" : v).trim().toLowerCase();
   return /^[0-9a-f]{7,64}$/.test(s) ? s : "";
+}
+
+// The release cap (BH-8734). A COUNTED release (PATCH with count_attempt:true,
+// sent by the orphan release and the watchdog's stale-claim release) adds 1 to
+// build_queue.attempt, and the one that would pass this row's value ends the
+// row `failed` instead of `queued`. Whole number >= 1; anything else, a missing
+// row or a settings read that throws is the code fallback, so the cap never
+// costs the release.
+const RELEASE_ATTEMPT_MAX_KEY = "queue.release_attempt_max";
+const RELEASE_ATTEMPT_MAX_DEFAULT = 3; // fallback of settings row queue.release_attempt_max
+async function releaseAttemptMax(env) {
+  try {
+    const row = (await settingsRows(env)).byKey.get(RELEASE_ATTEMPT_MAX_KEY);
+    const v = row ? String(row.value).trim() : "";
+    const n = /^\d{1,4}$/.test(v) ? Number(v) : NaN;
+    return n >= 1 ? n : RELEASE_ATTEMPT_MAX_DEFAULT;
+  } catch {
+    return RELEASE_ATTEMPT_MAX_DEFAULT;
+  }
 }
 
 // queueWake <key> <event> — one `queue` wake for bin/wake-loop.sh (BH-4059),
@@ -378,6 +398,50 @@ export const routes = [
       // to done/failed is still today's exact statement.
       const releasing = status === "queued";
       if (releasing) await ensureColumns(env, "build_queue");
+      // BH-8734: A COUNTED RELEASE. Only `count_attempt: true` (the boolean)
+      // with `queued`; every other PATCH is today's exact statement below. The
+      // worker decides queued or failed, and the lanes only report what it
+      // answered. The UPDATE is a compare-and-set on status='claimed', so two
+      // releasers write it once, and a row that is not `claimed` any more (the
+      // reap ended it failed or done after the lane read it) is a 409 stale
+      // with nothing written: failed->queued is a legal transition, and an
+      // orphan release must never put a failed row back.
+      // A capped reason never contains "refused" or "BUILD_DEFERRED": the
+      // watchdog's reason_deferred sweep would re-queue it.
+      if (body.count_attempt === true && releasing) {
+        const max = await releaseAttemptMax(env);
+        const attempt = (Number(cur.attempt) || 0) + 1;
+        const capped = attempt > max;
+        const st = capped ? "failed" : "queued";
+        const reason = capped
+          ? str(`release cap: attempt ${attempt} of ${max} (${RELEASE_ATTEMPT_MAX_KEY}); ${body.reason || ""}`, 500)
+          : str(body.reason, 500);
+        const res = await env.DB.prepare(
+          `UPDATE build_queue SET status=?3, reason=?4, attempt=?5,
+             claimed_by=CASE WHEN ?3='queued' THEN NULL ELSE claimed_by END,
+             claimed_at=CASE WHEN ?3='queued' THEN NULL ELSE claimed_at END,
+             machine=CASE WHEN ?3='queued' THEN NULL ELSE machine END,
+             finished_at=CASE WHEN ?3='failed' THEN ?6 ELSE NULL END,
+             updated_at=?6
+           WHERE project=?1 AND ticket_key=?2 AND status='claimed'`
+        ).bind(project, key, st, reason, attempt, t).run();
+        if (!(res && res.meta && res.meta.changes > 0)) {
+          const now = await env.DB.prepare(
+            "SELECT * FROM build_queue WHERE project=?1 AND ticket_key=?2").bind(project, key).first();
+          return json(409, { error: "stale", current: now ? String(now.status) : null, project, key });
+        }
+        return json(200, {
+          queued: {
+            ...cur, status: st, reason, attempt,
+            claimed_by: capped ? cur.claimed_by : null,
+            claimed_at: capped ? cur.claimed_at : null,
+            machine: capped ? (cur.machine ?? null) : null,
+            finished_at: capped ? t : null, updated_at: t,
+          },
+          capped, attempt_max: max,
+          as_of: t,
+        });
+      }
       // sql-ident-ok: the machine reset is a literal picked by releasing
       await env.DB.prepare(
         `UPDATE build_queue SET status=?3, reason=?4,

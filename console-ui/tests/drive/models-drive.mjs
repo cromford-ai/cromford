@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
+import { navLink } from './nav.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
@@ -314,7 +315,7 @@ async function run() {
     check(await page.$('a[href="/models/greenfield?project=project-4"]') !== null,
       `${name}: each gapped scope links to its own role page on its own tab`);
     check(await page.$('a[href="/models/build.execute#history"]') !== null, `${name}: every row links its history`);
-    check(await page.$('.bottomnav a[href="/models"], .topbar__nav a[href="/models"]') !== null, `${name}: MODELS is in the nav`);
+    check(await page.$(navLink('/models')) !== null, `${name}: MODELS is in the nav`);
     // BH-2512: the unrouted stage, tagged, linked to the page that routes it;
     // the price table with its toggle; every header of both sorts but the button.
     check(/UNROUTED STAGES/.test(text) && /DEFAULTS TO CLAUDE/.test(text), `${name}: UNROUTED STAGES lists qux as DEFAULTS TO CLAUDE`);

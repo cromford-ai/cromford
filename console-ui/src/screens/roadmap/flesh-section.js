@@ -14,6 +14,7 @@ import { html } from '../../router.js';
 import { api } from '../../api.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../../ui/primitives.js';
 import { SortableTable } from '../../ui/SortableTable.js';
+import { fmtUsd } from '../../lib/format.js';
 import { useConfirm } from '../../ui/Modal.js';
 import { when } from '../../lib/roadmap.js';
 import { assetUrl } from '../../lib/ideas.js';
@@ -77,7 +78,7 @@ function BlockBody({ body }) {
     : html`<div key=${i} style=${WRAP}>${x.text.trim()}</div>`));
 }
 
-const cost = (v) => (typeof v === 'number' && Number.isFinite(v) ? `$${v.toFixed(2)}` : '—');
+const cost = (v) => (typeof v === 'number' && Number.isFinite(v) ? fmtUsd(v) : '—');
 
 // FLESH OUT and RELOAD. `busy` covers the dialog and the POST, so a double
 // click sends one command.

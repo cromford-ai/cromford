@@ -10,7 +10,7 @@
 #   X1  leak shapes are refused: a substring, prefix, suffix or glued form of a
 #       mapped name, a partial rewrite, a domain built on a mapped name
 #   X2  derived names the word analysis used to accept are refused when no row
-#       names them (project-4-2 -> project-4-2, box-project-4-1-2, project-4.com)
+#       names them (project-4-2 -> project-4-2, box-project-4-1-2, project-4.net)
 #   X3  every exact row is mapped, and the catch-all box rows are not rows
 #   X4  a new fleet.conf project with no row: rc 1, and stderr names the table
 #       and the row to add for each item
@@ -64,7 +64,9 @@ for kn in "${X1[@]}"; do
 done
 
 # ── X2 derived names need a row ─────────────────────────────────────────────
-X2=(project:project-4-2 project:project-5-labs domain:project-4.com domain:os.project-5.example box:box-project-4-1-2 box:box-project-5-1-2)
+# project-4.example was the domain example until 2026-11-06, when project-4-site (prod
+# https://project-4.example) entered the registry and project-4.example got its own DOMAINS row.
+X2=(project:project-4-2 project:project-5-labs domain:project-4.net domain:os.project-5.example box:box-project-4-1-2 box:box-project-5-1-2)
 verdicts "${X2[@]}" > "$T/x2.out" 2>&1
 for kn in "${X2[@]}"; do
   grep -qx "$kn unmapped" "$T/x2.out" && ok || bad "X2 a derived name with no row is mapped: $kn ($(grep "^$kn " "$T/x2.out"))"

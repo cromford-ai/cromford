@@ -171,8 +171,8 @@ expect "V4 comments unreadable" failed marker-unreadable; [ "$(writes)" = 0 ] &&
 newcase v5; run "$(mk file_ticket '{"title":"Archie: box-hung on box:orgo-7","lines":["the box hangs every hour"]}')"
 expect "V5 file_ticket" done "filed #9001"
 [ "$(writes)" = 1 ] && grep -q "^gh POST repos/$SLUG/issues$" "$CALLS" && ok || bad "V5 one issue POST: $(cat "$CALLS")"
-eq_in=$(tail -1 "$GHF/inputs.log" | jq -c --arg m "$(marker)" '{title, labels, marked: (.body | endswith($m))}')
-[ "$eq_in" = '{"title":"Archie: box-hung on box:orgo-7","labels":["ai-build"],"marked":true}' ] && ok || bad "V5 the issue body: $eq_in"
+eq_in=$(tail -1 "$GHF/inputs.log" | jq -c --arg m "$(marker)" '[.title, .labels, (.body | endswith($m))]')
+[ "$eq_in" = '["Archie: box-hung on box:orgo-7",["ai-build"],true]' ] && ok || bad "V5 the issue body: $eq_in"
 newcase v5b
 jq -nc --arg m "$(marker)" '[range(0; 100) | {body: "other"}] + [{body: ("filed " + $m)}]' > "$GHF/open-issues.json"
 run "$(mk file_ticket '{"title":"t","lines":["x"]}')"

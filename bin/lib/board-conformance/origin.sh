@@ -2,11 +2,14 @@
 # bin/lib/board-conformance/origin.sh — the production-origin probe (BH-3947,
 # BH-3960). Sourced, never executed.
 #
-#   bc_probe_origin <prod> <base> <token> <migration_token>
+#   bc_probe_origin <prod> <base> <token> <migration_token> [<prefix>]
 #     rc 0 always, one bc_item for each of origin.health, internal.version and
 #     internal.migrations. At most 3 GETs, through bc_get. <migration_token> may
 #     be empty: internal.migrations is then unverified and no request is made.
 #     A <prod> of "-" or empty makes origin.health unverified with no request.
+#     A <prefix> under /api/hosted-board/ (BH-8918, docs/HOSTED-BOARD.md) is a
+#     board the jobs worker serves: it has no app internals, so both internal
+#     items are unverified and no request is made for them.
 #   origin.health        GET <prod>/api/health, no token: 2xx ok; 5xx ok (note
 #                        "5xx: present, reporting unwell"); 404 missing; 000
 #                        unverified; other malformed.
@@ -21,7 +24,7 @@
 #   Notes carry HTTP codes and a sha prefix only, never a token.
 
 bc_probe_origin() {
-  local prod="${1:-}" base="${2:-}" tok="${3:-}" mt="${4:-}" body code sha
+  local prod="${1:-}" base="${2:-}" tok="${3:-}" mt="${4:-}" prefix="${5:-}" body code sha
   body=$(mktemp) || {
     bc_item origin.health unverified "mktemp failed"
     bc_item internal.version unverified "mktemp failed"
@@ -41,6 +44,14 @@ bc_probe_origin() {
       *)   bc_item origin.health malformed "HTTP $code" ;;
     esac
   fi
+
+  case "$prefix" in
+    /api/hosted-board/*)
+      bc_item internal.version unverified "hosted board: the jobs worker serves no app internals"
+      bc_item internal.migrations unverified "hosted board: the jobs worker serves no app internals"
+      rm -f "$body"
+      return 0 ;;
+  esac
 
   code=$(bc_get "${base%/}/api/internal/version" "$body" "$tok")
   case "$(bc_class "$code")" in

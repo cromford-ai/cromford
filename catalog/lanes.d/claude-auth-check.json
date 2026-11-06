@@ -30,13 +30,6 @@
       "note": "Empty by default since BH-1510.2: the model is a database row, model_routes role 'auth.fallback', read through bin/claude-auth-check.sh (resolved on the hub, written into the probe; a box env still wins there). Set this only to override that row on this box/lane; no reviewed min/max, nothing is clamped."
     },
     {
-      "env": "TRIAGE_MODEL",
-      "type": "string",
-      "default": "",
-      "zero_means": null,
-      "note": "Empty by default since BH-1510.2: the model is a database row, model_routes role 'triage', read through bin/claude-auth-check.sh (resolved on the hub, written into the probe; a box env still wins there). Set this only to override that row on this box/lane; no reviewed min/max, nothing is clamped."
-    },
-    {
       "env": "LANE_DOWN_TTL_S",
       "type": "int",
       "default": 7200,

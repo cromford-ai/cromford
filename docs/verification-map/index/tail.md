@@ -88,6 +88,15 @@ into its snapshot, before the D1 apply and `wrangler deploy`), CI and the lints
 `worker/jobs/test/lib/jobs-schema.js`). `bin/schema-build.sh --check` refuses it
 back in git. Its row below is unmarked, so a build's diff never carries it.
 
+**`catalog/state-paths.json` is NOT in git** (BH-8986). It is composed from
+`catalog/state-paths.d/` (`_head.json` and one `NNNN-<name>.json` per added
+row) by `bin/state-paths-build.sh` and is git-ignored: every S1 fix of the
+no-state-files ratchet appended a row to it, and two of them conflicted.
+`bin/state-paths-guard.sh`, `bin/pool-state-paths-lint.sh` and
+`bin/state-drain.sh` compose it with `--to` into their own temp file, and
+`tests/lib/scratch.sh` composes it at its path for the suites.
+`bin/state-paths-build.sh --check` refuses it back in git. Its row is unmarked.
+
 The third column says so. A row marked `committed` is a render this repo's CI
 checks, so a build commits it; an unmarked row is reset out of a build's diff
 by the `# >>> generated no-commit` block of `bin/run-build.sh` (unless the diff
@@ -113,3 +122,4 @@ column.
 | `rules/CLAUDE.md` | `bin/render-rules.sh --write` | committed |
 | `docs/PR-OWNERSHIP.md` | `bin/render-doc-sections.sh --write` | committed |
 | `worker/jobs/schema.sql` | `bin/schema-build.sh --write` |  |
+| `catalog/state-paths.json` | `bin/state-paths-build.sh --compose` |  |

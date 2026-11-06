@@ -74,6 +74,11 @@ catalog/llm-sites.json
 # bin/context-budgets-build.sh, and must never be committed (BH-6487).
 catalog/context-budgets.json
 
+# The state/ path catalog is COMPOSED from catalog/state-paths.d/ (_head.json,
+# one NNNN-<name>.json per added row) by bin/state-paths-build.sh, and must
+# never be committed (BH-8986): every S1 fix appended to one array.
+catalog/state-paths.json
+
 # The lane registry's RENDERS are GENERATED and must never be committed
 # (BH-1247, on BH-1175's rule): the ten cron/<box>.cron, catalog/lanes.json and
 # env-templates/global.env.example. BH-1178 split their sources into fragments

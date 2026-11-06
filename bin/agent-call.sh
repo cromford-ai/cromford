@@ -414,6 +414,17 @@ command -v call_guard_precall >/dev/null 2>&1 || call_guard_precall() { CG_STATE
 command -v call_guard_rung_ok >/dev/null 2>&1 || call_guard_rung_ok() { return 0; }
 command -v call_guard_finish  >/dev/null 2>&1 || call_guard_finish()  { return 0; }
 CG_STATE=""; CG_REASON=""
+# THE DEDUP LEDGER (BH-9064, bin/lib/agent-call-ledger.sh): a persisted check on
+# the call's fingerprint before the model call (replay an ok answer, stop on a
+# terminal state). Knobs are lib.agent-call-ledger.* settings rows. A box whose
+# sync has not landed the lib gets stubs that never engage.
+# shellcheck source=bin/lib/agent-call-ledger.sh
+if   [ -r "$(dirname "$0")/lib/agent-call-ledger.sh" ]; then . "$(dirname "$0")/lib/agent-call-ledger.sh"
+elif [ -r "$HARNESS/bin/lib/agent-call-ledger.sh" ];    then . "$HARNESS/bin/lib/agent-call-ledger.sh"; fi
+command -v acl_precall         >/dev/null 2>&1 || acl_precall()         { return 0; }
+command -v acl_agent_call_exit >/dev/null 2>&1 || acl_agent_call_exit() { return 0; }
+command -v acl_finish          >/dev/null 2>&1 || acl_finish()          { return 0; }
+ACL_STATE=""
 # THE LIVE-COST AND TRIPWIRE SEAMS (BH-3481.0). The tripwire alerts only and
 # never stops a call (BH-6705): tw_check_build always answers rc 1, so the live
 # meter never writes $OUT.tripwire and the lines that read it below are inert.
@@ -450,6 +461,7 @@ command -v cost_live_on            >/dev/null 2>&1 || cost_live_on()            
 command -v cost_live_meter         >/dev/null 2>&1 || cost_live_meter()         { return 0; }
 command -v cost_live_boundary_push >/dev/null 2>&1 || cost_live_boundary_push() { return 0; }
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply call-guard; } || true
+[ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply agent-call-ledger; } || true
 # THE KILLS AS SETTINGS ROWS (BH-2538): lib.context-kill.* rows become the
 # CONTEXT_KILL_TOKENS_<LANE> env _ctx_kill_row reads. No row exports nothing.
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply context-kill; } || true
@@ -4167,7 +4179,14 @@ cg_nothing_billed() {
   return 0
 }
 cg_finish() { # cg_finish <rc>
-  local nb=""
+  local nb="" ee=""
+  # BH-9064: the ledger row settles on every exit that settles K3, first.
+  if [ "${ACL_STATE:-}" = run ]; then
+    cg_nothing_billed "${1:-1}" && nb=1
+    choke_error_envelope && ee=1
+    acl_finish "${1:-1}" "${ANY_RAN:-}" "$OUT" "$nb" "$ee"
+    nb=""
+  fi
   [ "${CG_STATE:-}" = allowed ] || return 0
   cg_nothing_billed "${1:-1}" && nb=1
   call_guard_finish "${1:-1}" "${ANY_RAN:-}" "$OUT" "$nb"
@@ -4251,6 +4270,11 @@ if ! call_guard_precall "$STAGE" "$PROJECT" "$RUNNER" "$PROMPT_SHA"; then
   ac_refused_row "$CG_REASON"
   exit 74
 fi
+# THE DEDUP LEDGER (BH-9064), after every pre-call refusal above, so a refused
+# call never leaves a `running` row, and before the phase row, the account pick
+# and the first rung. A replay or a terminal state exits here with the stored
+# rc and frees the K3 slot it claimed (settled unbilled: nothing was bought).
+acl_precall "$STAGE" "$PROJECT" "$PROMPT_SHA" || acl_agent_call_exit "$OUT"
 # THE GUARD'S PER-CALL ENV STOPS HERE (K3 review, B1). AGENT_CALL_FP,
 # _GUARD_STAGE, _TICKET and _GUARD_FORCE describe THIS call to THIS script; the
 # guard has captured them (CG_STAGE / CG_FP) above. Left exported, every runner

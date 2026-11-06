@@ -9,7 +9,8 @@
 # on the hub. This lint fails on such a path.
 #
 # A state/<seg> token passes when:
-#   - catalog/state-paths.json has a row with path == <seg>, or
+#   - catalog/state-paths.json (composed from catalog/state-paths.d/) has a
+#     row with path == <seg>, or
 #   - catalog/lane-run-inputs.d/fly-pool.ro, .rw or .wo (the .wo when present)
 #     has a non-comment path line whose glob starts with state/<seg>/ or
 #     equals state/<seg>.
@@ -49,25 +50,39 @@ declare -F guardrail_escape_hatch >/dev/null \
 
 say() { echo "pool-state-paths: $*" >&2; }
 FILE="$REPO/bin/fly-pool.sh"
-CATALOG="$REPO/catalog/state-paths.json"
+CATALOG="$REPO/catalog/state-paths.json"; CATALOG_SET=0; CTMP=""
 MDIR="$REPO/catalog/lane-run-inputs.d"
 TRACE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --file)      FILE="${2:-}"; shift 2 || { say "--file needs a path"; exit 2; } ;;
-    --catalog)   CATALOG="${2:-}"; shift 2 || { say "--catalog needs a path"; exit 2; } ;;
+    --catalog)   CATALOG="${2:-}"; CATALOG_SET=1; shift 2 || { say "--catalog needs a path"; exit 2; } ;;
     --manifests) MDIR="${2:-}"; shift 2 || { say "--manifests needs a dir"; exit 2; } ;;
     --trace)     TRACE="${2:-}"; shift 2 || { say "--trace needs a path"; exit 2; } ;;
-    -h|--help)   sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,40p' "$0"; exit 0 ;;
     *)           say "unknown option '$1'"; exit 2 ;;
   esac
 done
 
 # --- what is classified -------------------------------------------------------
-command -v jq >/dev/null 2>&1 || { say "jq not found, cannot read $CATALOG"; exit 2; }
-[ -r "$CATALOG" ] || { say "catalog $CATALOG is missing or unreadable"; exit 2; }
-ROWS=$(jq -r 'if (.paths | type) == "array" then .paths[] | .path | strings else error("no .paths array") end' "$CATALOG" 2>/dev/null) \
-  || { say "catalog $CATALOG is not JSON with a .paths array"; exit 2; }
+# BH-8986: with no --catalog and a catalog/state-paths.d/ beside bin/, the
+# catalog is composed into a temp file (it is git-ignored); a tree with no
+# state-paths.d/ (a fixture) reads the committed file.
+CATNAME="$CATALOG"
+if [ "$CATALOG_SET" = 0 ] && [ -d "$REPO/catalog/state-paths.d" ]; then
+  CTMP=$(mktemp) || { say "mktemp failed, cannot compose catalog/state-paths.d/"; exit 2; }
+  if ! "$SELF/state-paths-build.sh" --repo "$REPO" --compose --to "$CTMP" >&2; then
+    rm -f "$CTMP"
+    say "catalog catalog/state-paths.d/ could not be composed (bin/state-paths-build.sh --check names the fragment)"; exit 2
+  fi
+  CATALOG="$CTMP"; CATNAME="catalog/state-paths.d/ (composed)"
+fi
+command -v jq >/dev/null 2>&1 || { say "jq not found, cannot read $CATNAME"; exit 2; }
+[ -r "$CATALOG" ] || { say "catalog $CATNAME is missing or unreadable"; exit 2; }
+ROWS=$(jq -r 'if (.paths | type) == "array" then .paths[] | .path | strings else error("no .paths array") end' "$CATALOG" 2>/dev/null)
+ROWS_RC=$?
+[ -z "$CTMP" ] || rm -f "$CTMP"
+[ "$ROWS_RC" = 0 ] || { say "catalog $CATNAME is not JSON with a .paths array"; exit 2; }
 [ -d "$MDIR" ] || { say "manifest dir $MDIR is not a directory"; exit 2; }
 declare -A OK=()
 while IFS= read -r p; do [ -n "$p" ] && OK[$p]=catalog; done <<<"$ROWS"

@@ -69,8 +69,8 @@ test('D3: the view shows the project link, the ceiling, the spend and sortable h
   const html = render(h(DailyCeilingsView, { settings, spend }));
   assert.match(html, /DAILY CEILINGS/);
   assert.match(html, /href="\/p\/acme-os"/);
-  assert.match(html, /\$5000/);
-  assert.match(html, /\$4100\.50/);
+  assert.match(html, /\$5,000\.00/);
+  assert.match(html, /\$4,100\.50/);
   assert.match(html, /82%/);
   assert.match(html, /warn/);
   assert.match(html, /aria-sort/);

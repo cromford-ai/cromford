@@ -31,6 +31,39 @@
 #   pairs a 644 -> 755 mode change and a file -> symlink swap as `=`. The two
 #   rungs above cover a main merge and a byte-exact rebase, which is #2310's goal.
 #
+#   patch_same_restamp <git-dir> <main-ref> <reviewed> <head>   (BH-9066)
+#     rc 0 and prints `restamp-rebase` when <head> is <reviewed>'s patch,
+#     carried to a newer main (a rebase), with its PR-added schema fragments
+#     restamped: each worker/<w>/schema.d/<12-digit stamp><suffix>.sql the PR
+#     adds since its merge-base renamed to a later stamp, every reference to the
+#     old basename rewritten, and not one other byte changed. restamp_same
+#     (bin/lib/schema-restamp.sh) needs <reviewed> to be an ancestor of <head>,
+#     so a restamp after the conductor land-rebase or a fix-round rebase bought
+#     a new review. This rung owns only that case: when <reviewed> IS an
+#     ancestor of <head> (or ancestry cannot be read) it is rc 1, and
+#     restamp_same's commit-by-commit proof decides. The rule, every step required:
+#       - both heads add the same stamp fragments per worker, in LC_ALL=C
+#         order: the same count, the same `-<key>-<name>.sql` suffix at each
+#         index, each head stamp >= the reviewed one at that index, and at
+#         least one stamp different (else the byte rungs own the answer);
+#       - each fragment basename becomes a placeholder `@PS_STAMP_<w>_<i>@<suffix>`
+#         (fixed strings, longest first) in the whole diff from the merge-base;
+#         in a .harness/specs/<KEY>/plan.md hunk only, a `<placeholder>` or
+#         12-digit stamp before a mapped suffix maps too (the BH-7120 rule);
+#       - the normalized `--raw` summaries (modes, status, paths) are equal and
+#         the normalized diffs have equal `git patch-id --verbatim` ids.
+#     A binary file, a text that already holds `@PS_STAMP_`, a basename two
+#     workers share, any git or python failure, or an empty diff is rc 1.
+#     NNNN fragments and any other path shape are never mapped: a rename of
+#     one stays a change. Whitespace and lockfile edits stay a change too.
+#
+#   patch_same_review <git-dir> <main-ref> <reviewed> <head>   (BH-9066)
+#     patch_same || restamp_same || patch_same_restamp; prints the rung name.
+#     FOR REVIEW CALLERS ONLY ("is this the same REVIEWED work"). A restamp
+#     moves the fragment in the composed schema order, so a caller that reuses a
+#     CI or test RESULT (merge-push, builder-carry, gate-record, ci-merge-reuse,
+#     rb/pr, gate 10, the failed-batch module) stays on byte patch_same.
+#
 #   patch_same_fetch <git-dir> <reviewed> <head> [<pr-number>]
 #     `git fetch origin main <head>` (and <reviewed> when the remote still has
 #     it), so that origin/main and both commits exist locally. rc 1 when <head>
@@ -117,6 +150,168 @@ patch_same() {
   if pr=$(_ps_patch_id "$g" "$m" "$rev") && ph=$(_ps_patch_id "$g" "$m" "$head") && [ "$pr" = "$ph" ]; then
     printf 'patch-id'; return 0
   fi
+  return 1
+}
+
+_ps_dir="${BASH_SOURCE[0]%/*}"
+PS_FRAG_RE='^worker/[a-z0-9_-]+/schema\.d/[0-9]{12}-[A-Za-z0-9._-]+\.sql$'
+
+# _ps_base <git-dir> <main> <sha> -> their merge-base, rc 1 unless 40-hex
+_ps_base() {
+  local b
+  b=$(git -C "$1" merge-base "$2" "$3" 2>/dev/null) || return 1
+  [[ "$b" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$b"
+}
+
+# _ps_frags <git-dir> <base> <sha> -> the stamp fragments <sha> adds since <base>, LC_ALL=C order
+_ps_frags() {
+  local out p
+  out=$(git -C "$1" -c core.quotepath=off diff --no-renames --name-only --diff-filter=A "$2" "$3" -- 'worker/*/schema.d/*' 2>/dev/null) || return 1
+  while IFS= read -r p; do
+    if [[ "$p" =~ $PS_FRAG_RE ]]; then printf '%s\n' "$p"; fi
+  done <<<"$out" | LC_ALL=C sort
+}
+
+# _ps_restamp_maps <reviewed-frags> <head-frags> <map-r> <map-h>
+#   Writes `<dir><TAB><basename><TAB><placeholder>` per fragment for each head.
+#   rc 1 unless the two lists pair up as a forward-only restamp (header).
+_ps_restamp_maps() {
+  local -a a=() b=()
+  local i pa pb ba bb w pw="" n=0 moved=0
+  [ -n "$1" ] && [ -n "$2" ] || return 1
+  mapfile -t a <<<"$1"; mapfile -t b <<<"$2"
+  [ "${#a[@]}" = "${#b[@]}" ] || return 1
+  : > "$3" && : > "$4" || return 1
+  for i in "${!a[@]}"; do
+    pa=${a[$i]}; pb=${b[$i]}
+    [ "${pa%/*}" = "${pb%/*}" ] || return 1
+    ba=${pa##*/}; bb=${pb##*/}
+    [ "${ba:12}" = "${bb:12}" ] || return 1
+    if [[ "${bb:0:12}" < "${ba:0:12}" ]]; then return 1; fi
+    [ "$ba" = "$bb" ] || moved=1
+    w=${pa#worker/}; w=${w%%/*}
+    [ "$w" = "$pw" ] || { pw=$w; n=0; }
+    printf '%s\t%s\t@PS_STAMP_%s_%s@%s\n' "${pa%/*}" "$ba" "$w" "$n" "${ba:12}" >> "$3"
+    printf '%s\t%s\t@PS_STAMP_%s_%s@%s\n' "${pb%/*}" "$bb" "$w" "$n" "${bb:12}" >> "$4"
+    n=$((n + 1))
+  done
+  [ "$moved" = 1 ] || return 1
+  # One basename, one placeholder: a basename two workers share is not mapped.
+  [ -z "$(cut -f2 "$3" | LC_ALL=C sort | uniq -d)" ] && [ -z "$(cut -f2 "$4" | LC_ALL=C sort | uniq -d)" ]
+}
+
+# _ps_restamp_norm <git-dir> <main> <sha> <map-file> — the normalized diff text
+#   of <sha> from its merge-base with <main>: `#raw <old-mode> <new-mode>
+#   <status><TAB><path>` lines, then the patch with its `index` lines dropped,
+#   every mapped basename (and the plan.md stamp rule) replaced. rc 1 on any
+#   failure, a binary file, or an empty diff.
+_ps_restamp_norm() {
+  local g="$1" sha="$3" map="$4" base td rc=0
+  base=$(_ps_base "$g" "$2" "$sha") || return 1
+  td=$(mktemp -d "${TMPDIR:-/tmp}/ps-norm.XXXXXX") || return 1
+  local -a gd=(git -C "$g" -c core.quotepath=off diff --no-renames --no-color --no-ext-diff --no-textconv)
+  if "${gd[@]}" --numstat "$base" "$sha" > "$td/num" 2>/dev/null && [ -s "$td/num" ] \
+     && ! grep -qE $'^-\t-\t' "$td/num" \
+     && "${gd[@]}" --raw --no-abbrev "$base" "$sha" > "$td/raw" 2>/dev/null \
+     && "${gd[@]}" --src-prefix=a/ --dst-prefix=b/ "$base" "$sha" > "$td/patch" 2>/dev/null; then
+    python3 -I -c '
+import re, sys
+mapf, rawf, patchf = sys.argv[1:4]
+m, tails = {}, []
+for ln in open(mapf, encoding="utf-8"):
+    ln = ln.rstrip("\n")
+    if ln:
+        d, o, p = ln.split("\t")
+        m[o.encode()] = p.encode()
+        tails.append((d.encode(), o[12:].encode(), p.encode()))
+if not m:
+    sys.exit(1)
+raw, patch = open(rawf, "rb").read(), open(patchf, "rb").read()
+if not patch or b"@PS_STAMP_" in raw or b"@PS_STAMP_" in patch:
+    sys.exit(1)
+rx = re.compile(b"|".join(re.escape(k) for k in sorted(m, key=len, reverse=True)))
+def sub(b):
+    return rx.sub(lambda x: m[x.group(0)], b)
+keys = [d + b"/" + sx for d, sx, _ in tails]
+pl = [(re.compile(rb"(?<![A-Za-z0-9_./-])" + re.escape(d + b"/") + rb"(?:[0-9]{12}|<[^<>\s/]+>)" + re.escape(sx) + rb"(?![A-Za-z0-9_-])"), d + b"/" + p)
+      for d, sx, p in tails if keys.count(d + b"/" + sx) == 1]
+out = []
+for ln in raw.split(b"\n"):
+    if not ln:
+        continue
+    meta, tab, path = ln.partition(b"\t")
+    f = meta.lstrip(b":").split(b" ")
+    if not tab or len(f) != 5:
+        sys.exit(1)
+    out.append(b"#raw " + f[0] + b" " + f[1] + b" " + f[4] + b"\t" + sub(path))
+planhdr = re.compile(rb"^diff --git a/\.harness/specs/[^/]+/plan\.md b/")
+chunks, cur = [], []
+for ln in patch.split(b"\n"):
+    if ln.startswith(b"diff --git ") and cur:
+        chunks.append(cur); cur = []
+    cur.append(ln)
+if cur:
+    chunks.append(cur)
+for c in chunks:
+    t = b"\n".join(l for l in c if not l.startswith(b"index "))
+    t = sub(t)
+    if planhdr.match(c[0]):
+        for prx, rep in pl:
+            t = prx.sub(lambda x: rep, t)
+    out.append(t)
+sys.stdout.buffer.write(b"\n".join(out) + b"\n")
+' "$map" "$td/raw" "$td/patch" 2>/dev/null || rc=1
+  else
+    rc=1
+  fi
+  rm -rf "$td"
+  return "$rc"
+}
+
+# _ps_norm_id <normalized-file> -> the verbatim patch-id of its patch part
+_ps_norm_id() {
+  local id
+  id=$(grep -av '^#raw ' "$1" | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1)
+  [[ "$id" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$id"
+}
+
+patch_same_restamp() {
+  local g="${1:-}" main rev head br bh fr fh td rc=1 ir ih anc
+  [ -n "$g" ] && [ -n "${2:-}" ] || return 1
+  rev=$(_ps_sha "$g" "${3:-}") || return 1
+  head=$(_ps_sha "$g" "${4:-}") || return 1
+  main=$(_ps_sha "$g" "$2") || return 1
+  [ "$rev" != "$head" ] || return 1
+  # A descendant head is restamp_same's (bin/lib/schema-restamp.sh); only a
+  # clear "not an ancestor" (rc 1, never a git error) is this rung's shape.
+  git -C "$g" merge-base --is-ancestor "$rev" "$head" >/dev/null 2>&1; anc=$?
+  [ "$anc" = 1 ] || return 1
+  br=$(_ps_base "$g" "$main" "$rev") || return 1
+  bh=$(_ps_base "$g" "$main" "$head") || return 1
+  fr=$(_ps_frags "$g" "$br" "$rev") || return 1
+  fh=$(_ps_frags "$g" "$bh" "$head") || return 1
+  td=$(mktemp -d "${TMPDIR:-/tmp}/ps-restamp.XXXXXX") || return 1
+  if _ps_restamp_maps "$fr" "$fh" "$td/map.r" "$td/map.h" \
+     && _ps_restamp_norm "$g" "$main" "$rev" "$td/map.r" > "$td/n.r" \
+     && _ps_restamp_norm "$g" "$main" "$head" "$td/map.h" > "$td/n.h" \
+     && grep -a '^#raw ' "$td/n.r" > "$td/raw.r" && grep -a '^#raw ' "$td/n.h" > "$td/raw.h" \
+     && cmp -s "$td/raw.r" "$td/raw.h" \
+     && ir=$(_ps_norm_id "$td/n.r") && ih=$(_ps_norm_id "$td/n.h") && [ "$ir" = "$ih" ]; then
+    rc=0
+  fi
+  rm -rf "$td"
+  [ "$rc" = 0 ] || return 1
+  printf 'restamp-rebase'
+}
+
+patch_same_review() {
+  local how
+  if how=$(patch_same "$@"); then printf '%s' "$how"; return 0; fi
+  command -v restamp_same >/dev/null 2>&1 || { [ -r "$_ps_dir/schema-restamp.sh" ] && . "$_ps_dir/schema-restamp.sh"; }
+  if command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$@"); then printf '%s' "$how"; return 0; fi
+  if how=$(patch_same_restamp "$@"); then printf '%s' "$how"; return 0; fi
   return 1
 }
 

@@ -183,8 +183,15 @@ python3 -c 'import importlib.util as u, sys; s=u.spec_from_file_location("m", sy
   "$DIR/bin/triage-state-pr.py" 2>/dev/null && ok || bad "(Y1) mergify_state([]) is None"
 
 # ── B1 / D1: what this slice must not touch ─────────────────────────────────
+# The fence is the BH-3418 slice's own (D57): it binds only a range that holds
+# a BH-3418 commit. A later ticket may edit shards.sh (BH-9113 did).
 if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null 2>&1; then
-  [ -z "$(git -C "$DIR" diff origin/main -- bin/lib/rt/shards.sh)" ] && ok || bad "(B1) bin/lib/rt/shards.sh is not edited"
+  B1_OWN=$(git -C "$DIR" log --format=%h -i -E --grep='^bh-3418([^0-9]|$)' origin/main..HEAD 2>/dev/null)
+  if [ -z "$B1_OWN" ]; then
+    echo "triage-state-pr-contract: (B1) no BH-3418 commit in origin/main..HEAD, the shards.sh fence is skipped"
+  else
+    [ -z "$(git -C "$DIR" diff origin/main -- bin/lib/rt/shards.sh)" ] && ok || bad "(B1) bin/lib/rt/shards.sh is not edited"
+  fi
 else
   echo "triage-state-pr-contract: (B1) no origin/main here, shards.sh diff check skipped"
 fi

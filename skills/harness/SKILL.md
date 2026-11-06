@@ -170,6 +170,11 @@ after: <title of an earlier wave>[, <title>]     (optional; omit for none)
 ...
 ```
 
+Inside a wave, write the section headings at level 4 (`#### Scope`, `#### Acceptance
+tests`, `#### QA screens`, `#### Out of scope`). A level 2 heading (`## Scope`) CLOSES the
+`## Rollout` section, so the parser sees one wave and refuses with "too few waves"
+(cromford-console #55, 2026-10-28).
+
 `### Wave: <title>` and `### Wave <n>: <title>` are both accepted. The prefix is
 case-insensitive and a space before the colon is fine, so `### wave 3 : a` is
 the wave `a`. An `after:` line names waves by the title left once that prefix

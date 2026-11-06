@@ -186,6 +186,11 @@ ld_classify() {
   if command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$g" "$main" "$gs" "$hs"); then
     echo "replay $how"; return 0
   fi
+  # BH-9066: the same restamp after a rebase (G is not an ancestor of H).
+  command -v patch_same_restamp >/dev/null 2>&1 || { [ -r "$_LD_LIB/patch-same.sh" ] && . "$_LD_LIB/patch-same.sh"; }
+  if command -v patch_same_restamp >/dev/null 2>&1 && how=$(patch_same_restamp "$g" "$main" "$gs" "$hs"); then
+    echo "replay $how"; return 0
+  fi
   # Every protected path of the own delta, in git's order; ld_protected names one at a time.
   while IFS= read -r p; do
     [ -n "$p" ] || continue

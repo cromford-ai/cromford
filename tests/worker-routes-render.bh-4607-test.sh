@@ -42,20 +42,33 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-# The number of gated fragments: every fragment minus the 4 open families.
+# The number of gated fragments: every fragment minus the open families.
 # A fragment is <NNN>-<family>.txt or, since BH-5788, <ticket-key>-<family>.txt.
+# TEST-CHANGE (BH-8918): a fifth open family, key-named (bh-8918-hosted-board),
+# so the open set is read from OPEN_FAMILIES and the open fragments are dropped
+# by family, not by number. A floor stays: at least 4 open, the 4 known ones in it.
+OPEN=$(node --input-type=module -e "import { OPEN_FAMILIES } from '$COMPOSER'; console.log([...OPEN_FAMILIES].join('\\n'))")
+nopen_fam=$(grep -c . <<<"$OPEN")
+[ "$nopen_fam" -ge 4 ] && ok "S1 $nopen_fam open families (>= 4)" || bad "S1 $nopen_fam open families, want >= 4"
+for f in webhooks ci-durations ci-test-tiers suite-results; do
+  grep -qxF "$f" <<<"$OPEN" && ok "S1 open: $f" || bad "S1 $f is not in OPEN_FAMILIES"
+done
+fam_of() { sed -E 's/^([0-9]{3}-|[a-z]+-[0-9]+([.-][0-9]+)?-)//; s/\.txt$//'; }
 nfrag=$(ls "$FRAGS" | grep -cE '^([0-9]{3}-[a-z0-9-]+|[a-z]+-[0-9]+([.-][0-9]+)?-[a-z][a-z0-9-]*)\.txt$')
-want=$((nfrag - 4))
+nopen=$(ls "$FRAGS" | grep -E '^([0-9]{3}-[a-z0-9-]+|[a-z]+-[0-9]+([.-][0-9]+)?-[a-z][a-z0-9-]*)\.txt$' | fam_of | grep -cxF -f <(printf '%s\n' "$OPEN"))
+[ "$nopen" -ge 4 ] && ok "S1 $nopen open fragments (>= 4)" || bad "S1 $nopen open fragments, want >= 4"
+want=$((nfrag - nopen))
 
 echo "S1: --print"
 out=$(node "$GEN" --print); rc=$?
 [ "$rc" = 0 ] && ok "S1 rc 0" || bad "S1 rc $rc"
 got=$(printf '%s\n' "$out" | grep -cE '^import \{ routes as f([0-9]{3}|_[a-z0-9_]+) \} from "\./routes/')
-[ "$got" = "$want" ] && ok "S1 $got imports = $nfrag fragments - 4 open" || bad "S1 $got imports, want $want"
+[ "$got" = "$want" ] && ok "S1 $got imports = $nfrag fragments - $nopen open" || bad "S1 $got imports, want $want"
 # A numbered fragment spreads as f<NNN>; a keyed one as f_<key>_<family>, after every numbered one.
 spreads=$(printf '%s\n' "$out" | sed -n 's/^  \.\.\.f\([0-9]\{3\}\|_[a-z0-9_]*\),$/\1/p' | paste -sd,)
-nums=$(ls "$FRAGS" | sed -E 's/^([0-9]{3})-.*/\1/; t; s/\.txt$//; s/[.-]/_/g; s/^/_/' \
-  | grep -vxE '000|001|002|005' | paste -sd,)
+nums=$(ls "$FRAGS" | while IFS= read -r f; do
+    grep -qxF "$(fam_of <<<"$f")" <<<"$OPEN" || printf '%s\n' "$f"
+  done | sed -E 's/^([0-9]{3})-.*/\1/; t; s/\.txt$//; s/[.-]/_/g; s/^/_/' | paste -sd,)
 [ -n "$spreads" ] && [ "$spreads" = "$nums" ] && ok "S1 spreads follow fragment order" || bad "S1 spread order: $spreads vs $nums"
 
 echo "S2: --out twice"

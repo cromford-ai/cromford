@@ -1,0 +1,7 @@
+# AGENT-CALL LEDGER (BH-9064): dedup before spend. bin/agent-call.sh asks
+# begin before the model call and settles finish after; GET reads one row and
+# DELETE is the operator's reset.
+POST /api/agent-call-ledger/begin
+POST /api/agent-call-ledger/finish
+GET /api/agent-call-ledger
+DELETE /api/agent-call-ledger

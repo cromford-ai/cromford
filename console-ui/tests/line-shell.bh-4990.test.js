@@ -2,7 +2,7 @@
 //
 // The top bar's theme switch (one button per built-in, pressed state from the
 // page, a click persists the pick and repaints :root), the identity pill and
-// nav it still carries, and the headline, stat grid and section head every
+// the menu button it carries (the section links moved to the side menu, BH-9118), and the headline, stat grid and section head every
 // redrawn screen will use.
 
 import test from 'node:test';
@@ -115,15 +115,15 @@ test('S2 a click on Paper persists the pick, paints Paper, and presses its butto
   mount(null, el);
 });
 
-test('S3 the bar keeps the identity pill, the snapshot age, and every NAV link inside .topbar__nav', () => {
+test('S3 the bar keeps the identity pill, the snapshot age and the menu button; the NAV links are not in it', () => {
   installDom('mill');
   const out = render(h(TopBar, BASE));
   assert.match(out, /<span class="pill"[^>]*>operator@cto\.com<\/span>/);
   assert.match(out, /WATCHDOG OK/);
-  const nav = between(out, /<nav class="topbar__nav"/);
-  for (const n of NAV) assert.match(nav, new RegExp(`<a href="${n.to.replace(/\//g, '\\/')}"[^>]*class="navlink[^"]*"`), n.label);
-  assert.match(nav, /<a href="\/jobs"[^>]*class="navlink navlink--on"/, 'the JOBS tab is lit on /jobs');
-  assert.match(nav, /class="navlink__badge">2</, 'the open-alert count rides the ALERTS link');
+  // BH-9118: the section links live in the side menu (tests/sidemenu.bh-9118.test.js C1, C2).
+  assert.doesNotMatch(out, /topbar__nav/);
+  assert.match(out, /<button[^>]*class="topbar__menu"[^>]*aria-controls="sidemenu"/);
+  for (const n of NAV.filter((x) => x.to !== '/')) assert.doesNotMatch(out, new RegExp(`<a href="${n.to.replace(/\//g, '\\/')}"`), n.label);
   assert.match(out, /<a href="\/"[^>]*class="topbar__brand"/);
   assert.match(out, /class="topbar__snap"/);
 });

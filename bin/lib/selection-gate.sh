@@ -15,6 +15,12 @@
 #   red  sg_notice posts one board comment that names the red suites, RESULT
 #       is `GATE_RED <n> red: <suites>; see <build>/gate.txt`, and it returns 6.
 #       The caller exits 6: nothing is pushed and no PR opens.
+#   unattributed (BH-9061)  red, but gate.txt's baseline: starts
+#       `could-not-run`: the base run never ran, so the gate cannot say the reds
+#       are this diff's. $BUILD/gate.txt gets `unattributed: <suites>`, one log
+#       line, the could-not-run alert, an rc=could-not-run marker plus one
+#       sentence that names the suites, and it returns 0: the PR opens and the
+#       merge queue is the gate of record. No RESULT, no notice.
 # A checkout with no executable bin/selection-gate.sh (every other project) is
 # not gated: one log line, rc 0, no marker. The knob SELECTION_GATE at 0 (in a
 # checkout that has the gate): the gate does not run; sg_off_gate writes an
@@ -27,7 +33,8 @@
 # fix turn through CC, then the gate runs again), SELECTION_GATE_CNR_ALERT and
 # SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4), SELECTION_GATE_WHY_MAX,
 # SELECTION_GATE_RUN_TAIL_LINES and, BH-8901, SELECTION_GATE_BASELINE_RUN,
-# SELECTION_GATE_BASELINE_TIMEOUT_S and SELECTION_GATE_BASELINE_KEEP_DAYS (_sg_run).
+# SELECTION_GATE_BASELINE_TIMEOUT_S and SELECTION_GATE_BASELINE_KEEP_DAYS and,
+# BH-9061, SELECTION_GATE_BASELINE_RESERVE_PAD_S and SELECTION_GATE_MAIN_TIMEOUT_MIN_S (_sg_run).
 # A suite red on the merge base too is gate.txt's baseline-red:, not red: the
 # log line gets baseline-red=<n> and SG_MARKER one sentence after the marker.
 #
@@ -53,12 +60,20 @@ _sg_log() { echo "$(STAMP) [${PROJECT:-}/${KEY:-}] $1" >> "$BUILD/pipeline.log";
 # _sg_field <gate.txt> <name> — one field of gate.txt.
 _sg_field() { sed -n "s/^$2: //p" "$1" 2>/dev/null | head -n 1; }
 
-# sg_marker <gate.txt> — the PR-body record for a non-red gate.txt, or nothing
-#   when its head or count is unreadable (the lead review then reads "missing").
+# sg_marker <gate.txt> [<unattributed list>] — the PR-body record for a
+#   non-red gate.txt, or nothing when its head or count is unreadable (the lead
+#   review then reads "missing"). An rc 1 gate.txt with an `unattributed:` list
+#   (BH-9061; the second argument stands in for a field that could not be
+#   written) is rc=could-not-run: the gate could not attribute its reds.
 sg_marker() {
-  local g="${1:-}" h n r
+  local g="${1:-}" h n r u
   h=$(_sg_field "$g" head); n=$(_sg_field "$g" suites); r=$(_sg_field "$g" rc)
   [[ "$h" =~ ^[0-9a-f]{40}$ ]] && [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  if [ "$r" = 1 ]; then
+    u=$(_sg_field "$g" unattributed); [ -n "$u" ] || u="${2:-}"
+    [ -n "$u" ] && [ "$u" != - ] || return 1
+    r=could-not-run
+  fi
   case "$r" in 0|could-not-run|no-selection|off) ;; *) return 1 ;; esac
   printf '<!-- selection-gate: head=%s suites=%s rc=%s -->' "$h" "$n" "$r"
 }
@@ -102,15 +117,33 @@ sg_marker_replace() {
 #   always (fail-open). A why that carries the runner's reason
 #   (`<token>: <remote-gate line>`) is the alert's cause, so the generic
 #   `Needed:` hint is left out; a bare token keeps it.
+#   BH-9061: a gate.txt with an `unattributed:` list writes its own line, once
+#   per box per UTC day, under its own marker cnr-unattributed-<yyyymmdd>, so a
+#   could-not-run line that day does not hide it (nor it the could-not-run line).
 sg_cnr_alert() {
-  local g="${1:-}" root="${HARNESS:-${H:-}}" why day dir host msg keep
+  local g="${1:-}" root="${HARNESS:-${H:-}}" why day dir host msg keep u bs n
   [ -n "$root" ] || return 0
-  [ "$(_sg_field "$g" rc)" = could-not-run ] || return 0
+  u=$(_sg_field "$g" unattributed); case "$u" in -) u="" ;; esac
+  [ "$(_sg_field "$g" rc)" = could-not-run ] || [ -n "$u" ] || return 0
   [ "$(_sg_knob SELECTION_GATE_CNR_ALERT 1)" = 1 ] || return 0   # lane.fly-pool.selection_gate_cnr_alert
   dir="$root/state/selection-gate"; mkdir -p "$dir" 2>/dev/null || return 0
   keep=$(_sg_knob SELECTION_GATE_CNR_KEEP_DAYS 14)   # lane.fly-pool.selection_gate_cnr_keep_days
   find "$dir" -maxdepth 1 -name 'cnr-*' -mtime "+$keep" -exec rm -rf {} + 2>/dev/null
   day=$(date -u +%Y%m%d)
+  if [ "$(_sg_field "$g" rc)" != could-not-run ]; then
+    mkdir "$dir/cnr-unattributed-$day" 2>/dev/null || return 0
+    bs=$(_sg_field "$g" baseline); host=$(hostname 2>/dev/null || echo unknown-host)
+    n=$(tr ',' '\n' <<<"$u" | grep -c .)
+    msg="SELECTION GATE COULD NOT ATTRIBUTE $n red suite(s) on $host: the base run ${bs:-could-not-run}. Builds open PRs; the merge queue is the gate of record."
+    if [ -x "$root/bin/alert-line.sh" ]; then
+      HARNESS="$root" "$root/bin/alert-line.sh" --id "selection-gate-unattributed-$host-$day" "$msg" >/dev/null 2>&1
+      _sg_log "SELECTION-GATE unattributed alert written ($bs)"
+    else
+      rmdir "$dir/cnr-unattributed-$day" 2>/dev/null
+      _sg_log "SELECTION-GATE unattributed, and no bin/alert-line.sh to say so"
+    fi
+    return 0
+  fi
   mkdir "$dir/cnr-$day" 2>/dev/null || return 0
   why=$(_sg_field "$g" why); host=$(hostname 2>/dev/null || echo unknown-host)
   msg="SELECTION GATE COULD NOT RUN on $host: ${why:-unknown}. Builds open PRs with no pre-PR selection run; the batch is the only check."
@@ -147,11 +180,14 @@ _sg_run() {
   local rc=0 n t
   rm -rf "$BUILD/selection-gate"
   # lane.fly-pool.selection_gate_baseline_run, lane.fly-pool.selection_gate_baseline_timeout_s,
-  # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901)
+  # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901),
+  # lane.fly-pool.selection_gate_baseline_reserve_pad_s, lane.fly-pool.selection_gate_main_timeout_min_s (BH-9061)
   SELECTION_GATE_WHY_MAX=$(_sg_knob SELECTION_GATE_WHY_MAX 160) \
     SELECTION_GATE_BASELINE_RUN=$(_sg_knob SELECTION_GATE_BASELINE_RUN 1) \
     SELECTION_GATE_BASELINE_TIMEOUT_S=$(_sg_knob SELECTION_GATE_BASELINE_TIMEOUT_S 900) \
     SELECTION_GATE_BASELINE_KEEP_DAYS=$(_sg_knob SELECTION_GATE_BASELINE_KEEP_DAYS 2) \
+    SELECTION_GATE_BASELINE_RESERVE_PAD_S=$(_sg_knob SELECTION_GATE_BASELINE_RESERVE_PAD_S 60) \
+    SELECTION_GATE_MAIN_TIMEOUT_MIN_S=$(_sg_knob SELECTION_GATE_MAIN_TIMEOUT_MIN_S 300) \
     bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
     > "$BUILD/selection-gate.txt" 2>&1 || rc=$?   # lane.fly-pool.selection_gate_why_max
   if [ -s "$BUILD/selection-gate/gate.txt" ]; then cp -f "$BUILD/selection-gate/gate.txt" "$BUILD/gate.txt"
@@ -206,9 +242,27 @@ sg_notice() {
   return 0
 }
 
+# sg_unattributed <red> <baseline> — the BH-9061 branch of sg_block: the reds
+#   stand, but the base run could not run, so the gate cannot attribute them.
+#   Appends `unattributed: <red>` to $BUILD/gate.txt (tmp + mv; a failed write
+#   is logged and the marker still names the suites), logs one line, fires the
+#   could-not-run alert and sets SG_MARKER. Writes no RESULT, posts no notice.
+sg_unattributed() {
+  local red="$1" bs="$2" n t g="$BUILD/gate.txt"
+  n=$(tr ',' '\n' <<<"$red" | grep -c .)
+  t="$g.tmp.$$"
+  { cat "$g" && printf 'unattributed: %s\n' "$red"; } > "$t" 2>/dev/null && mv -f "$t" "$g" 2>/dev/null \
+    || { rm -f "$t"; _sg_log "SELECTION-GATE could not write unattributed: to $g"; }
+  _sg_log "SELECTION-GATE unattributed=$n red=[$red] baseline=$bs: the base run could not run, so the PR opens and the merge queue is the gate of record"
+  sg_cnr_alert "$g"
+  SG_MARKER=$(sg_marker "$g" "$red") || SG_MARKER=""
+  [ -n "$SG_MARKER" ] || return 0
+  SG_MARKER+=$'\n'"Selection gate: $n suite(s) failed on the head and the base run could not run ($bs), so the gate could not attribute them (unattributed): $(tr ',' '\n' <<<"$red" | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g'). The merge queue is the gate of record."
+}
+
 # sg_block — see the header. rc 0 go on, 6 red (RESULT written).
 sg_block() {
-  local to par fr rc red n why hn br bn line note=""
+  local to par fr rc red n why hn br bn bs line note=""
   SG_MARKER=""
   if [ ! -x bin/selection-gate.sh ]; then
     _sg_log "SELECTION-GATE skipped (repo carries no bin/selection-gate.sh)"; return 0
@@ -240,6 +294,9 @@ sg_block() {
   case "$br" in ''|-) br="" ;; *) bn=$(tr ',' '\n' <<<"$br" | grep -c .) ;; esac
   _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn${br:+ baseline-red=$bn}"
   if [ "$rc" = 1 ] && [ -n "$red" ] && [ "$red" != - ]; then
+    # BH-9061: a red the base run could not check is unattributed, not GATE_RED.
+    bs=$(_sg_field "$BUILD/gate.txt" baseline)
+    case "$bs" in could-not-run*) sg_unattributed "$red" "$bs"; return 0 ;; esac
     if sg_notice; then
       command -v bd_note >/dev/null 2>&1 || . "${HARNESS:-${H:-}}/bin/lib/builder-direct.sh" 2>/dev/null
       command -v bd_note >/dev/null 2>&1 && note=$(bd_note "$SG_NOTED")

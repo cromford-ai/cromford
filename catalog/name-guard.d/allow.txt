@@ -1,0 +1,13 @@
+# catalog/name-guard.d/allow.txt (BH-8918). Paths the name guard
+# (bin/name-guard.py) does not judge. Format: `<glob> [<stem> ...]`.
+# A bare glob exempts the path from every deny file; with stems, only from the
+# deny files of those stems (the file name without .txt). Globs match the
+# repo-relative path: `**` is any depth (zero dirs included), `*` is one path
+# segment.
+catalog/name-guard.d/*
+.harness/specs/**
+docs/PRODUCT_BOARD_PLAN_*.html
+bin/lib/tracker.sh trackers
+bin/lib/tracker/** trackers
+docs/connecting-a-board.md trackers
+catalog/lanes.d/* trackers

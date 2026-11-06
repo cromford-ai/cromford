@@ -647,6 +647,28 @@ overlap rebind and then to the paid re-review. `bin/review-prs.sh` and
 `bin/review-autopilot.sh` replay their own verdict through the same lib: no agent call, no
 GitHub post, and a lead or human CHANGES_REQUESTED still stands (`bg_cr_standing`, BH-2199).
 
+**…and when the head is a schema restamp after a rebase (BH-9066).** The conductor's
+land-rebase or a fix-round rebase, followed by a restamp of the PR's schema fragment
+(`bin/lib/mc-prequeue.d/restamp.sh`), leaves a head the reviewed sha is not an ancestor of,
+so `restamp_same` (BH-6842) cannot see it. The `restamp-rebase` rung
+(`patch_same_restamp` in `bin/lib/patch-same.sh`) maps each PR-added
+`worker/<w>/schema.d/<stamp>-<key>-<name>.sql` basename of both heads to one placeholder per
+worker and index, and asks whether the two diffs are then byte-equal (`git patch-id
+--verbatim` plus the mode and path summary). The PR's fragments must pair up: same count,
+same suffix, every stamp moved forward, at least one moved. A binary file, an NNNN rename,
+a whitespace or lockfile edit, or any other byte is a change. `patch_same_review` chains
+`patch_same`, `restamp_same` and this rung. The review callers use it: the conductor rebind
+(`mc_patch_same … review`), `lead_carry` and `ld_classify` (gate 50's delta class), gate
+50's byte branch, `review-prs.sh` and `review-autopilot.sh`. The rebind log then reads
+`rebound: restamp-rebase (bin/lib/patch-same.sh; no reviewed content change)`, and the
+saving event carries `how=restamp-rebase`. The CI and test reuse callers (`merge-push`,
+`builder-carry`, `gate-record`, `ci-merge-reuse`, `rb/pr`, gate 10, the failed-batch module,
+gate 07's merge-only carry) stay on byte `patch_same`: a restamp moves the fragment in the
+composed schema order, so a CI result does not carry across it. `bin/patch-same-replay.sh
+--repo <owner/repo> --last <N> --clone <dir>` replays both answers over the last N merged PRs,
+each against main as it was before that PR landed. It calls no model and writes only
+`refs/psr/base/<pr>` in the clone it is given.
+
 **`HEAD_MOVED` → no review at all, when nothing that landed is a file this PR touches (the
 merge funnel, W2-D, 2026-09-14).** The patch-id rebind above is the strong test and it runs
 first; this is the second chance, on exactly the heads it could not vouch for — a reviewed

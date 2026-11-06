@@ -1359,8 +1359,8 @@ rp_one_pr() { for _rp_once in 1; do
   # THE HEAD MOVED BUT THE PATCH DID NOT. A fix round that only merged main, or a
   # rebase that carried every commit across unchanged, is the change a reviewer
   # already judged. bin/lib/patch-same.sh proves that from the commits themselves
-  # (only clean main merges since the reviewed head, or a byte-exact patch-id),
-  # with no model. The standing verdict is REPLAYED onto the new head: the
+  # (only clean main merges since the reviewed head, or a byte-exact patch-id,
+  # or a schema restamp: patch_same_review, BH-9066), with no model. The standing verdict is REPLAYED onto the new head: the
   # local row moves, the ledger verdict is rebound (job_verdict_rebind), and no
   # agent call is made. The verdict is replayed as it stood, REQUEST_CHANGES
   # included: an unchanged patch fixes nothing. Nothing is posted to, or dismissed
@@ -1372,7 +1372,8 @@ rp_one_pr() { for _rp_once in 1; do
   if [ -n "$DONE" ] && [ "$DONE" != "$SHA" ] && [ -n "$RP_PREV_V" ] \
      && command -v patch_same >/dev/null 2>&1 && [ -d "$REPO_DIR/.git" ] \
      && patch_same_fetch "$REPO_DIR" "$DONE" "$SHA" \
-     && RP_HOW=$(patch_same "$REPO_DIR" origin/main "$DONE" "$SHA"); then
+     && RP_HOW=$(if command -v patch_same_review >/dev/null 2>&1; then patch_same_review "$REPO_DIR" origin/main "$DONE" "$SHA"
+                 else patch_same "$REPO_DIR" origin/main "$DONE" "$SHA"; fi); then
     rp_state_write --arg n "$NUM" --arg s "$SHA" --arg d "$DONE" --arg h "$RP_HOW" \
       '.[$n] = ((.[$n] // {}) + {sha:$s, replayed_from:$d, replay_how:$h})' || true
     RP_RB="not rebound"

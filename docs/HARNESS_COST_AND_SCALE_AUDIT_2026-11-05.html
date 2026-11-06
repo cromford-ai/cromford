@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harness cost and scale audit, 2026-11-05</title>
+<style>
+:root{--bg:#FCFCFC;--ink:#1A1A1A;--muted:#5B6270;--accent:#2563EB;--line:#E5E7EB;--card:#FFFFFF;--soft:#F3F4F6;--ok:#15803D;--warn:#B45309;--bad:#B91C1C}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+nav{position:sticky;top:0;z-index:5;background:rgba(252,252,252,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:10px 24px;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+nav b{margin-right:8px}
+nav a{color:var(--accent);text-decoration:none;font-size:13.5px}
+main{max-width:1600px;margin:0 auto;padding:24px}
+h1{font-size:28px;margin:0 0 4px}
+h2{font-size:21px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:18px 0 8px}
+p{max-width:960px;margin:8px 0}
+.sub{color:var(--muted);margin-bottom:18px}
+.pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;background:var(--soft);color:var(--muted);margin-right:6px}
+.pill.ok{background:#DCFCE7;color:var(--ok)}.pill.warn{background:#FEF3C7;color:var(--warn)}.pill.bad{background:#FEE2E2;color:var(--bad)}.pill.acc{background:#DBEAFE;color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card h3{margin-top:0}
+.big{font-size:30px;font-weight:700;line-height:1.1;margin:4px 0}
+.tldr{columns:2;column-gap:36px;max-width:none}
+.tldr li{break-inside:avoid;margin-bottom:8px}
+table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--soft);font-weight:600}
+tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:13px}
+pre{background:#0F172A;color:#E2E8F0;padding:14px;border-radius:10px;overflow:auto;font-size:13px;line-height:1.5}
+pre code{background:none;color:inherit;padding:0}
+.callout{border-left:4px solid var(--accent);background:#EFF6FF;padding:10px 14px;border-radius:0 8px 8px 0;max-width:960px}
+.callout.bad{border-left-color:var(--bad);background:#FEF2F2}
+.callout.warn{border-left-color:var(--warn);background:#FFFBEB}
+.small{font-size:13px;color:var(--muted)}
+@media (max-width:900px){.two{grid-template-columns:1fr}.tldr{columns:1}main{padding:16px}table{display:block;overflow-x:auto;white-space:nowrap}td,th{white-space:normal;min-width:120px}}
+</style>
+</head>
+<body>
+<nav><b>Harness cost and scale audit</b>
+<a href="#tldr">TL;DR</a>
+<a href="#bill">The bill</a>
+<a href="#model">Model spend</a>
+<a href="#waste">Waste and duplication</a>
+<a href="#infra">Infrastructure</a>
+<a href="#ci">CI minutes</a>
+<a href="#leaks">Leaks ranked</a>
+<a href="#plan">The 1000x plan</a>
+<a href="#tickets">Tickets</a>
+<a href="#method">Method and blind spots</a>
+</nav>
+<main>
+<h1>Harness cost and scale audit</h1>
+<p class="sub">Measured 2026-11-05 00:20Z to 01:00Z over the 7 days 2026-10-29 to 2026-11-04. Sources: the jobs worker D1 cost rows (62,663 rows), the hub ledgers on bh-hub-2, Fly, Hetzner, Orgo, Cloudflare and GitHub APIs. All reads, no writes. Written for the operator. <span class="pill acc">cromford</span><span class="pill">project-6-os</span><span class="pill">project-3</span></p>
+
+<h2 id="tldr">TL;DR</h2>
+<div class="grid">
+<div class="card"><h3>Priced model spend, 7 days</h3><div class="big">$12,129</div><p class="small">62,658 calls. $1,228 cash (metered). $10,893 subscription-equivalent on the Claude Max accounts. 24 h: $1,080.</p></div>
+<div class="card"><h3>Infrastructure, per month</h3><div class="big">$8,470</div><p class="small">Fly $6,760 (80%), GitHub $660, Orgo $608, Hetzner $320, Cloudflare $117. Plus metered vendor APIs $1,520. MonkCI not included (October: $9,284).</p></div>
+<div class="card"><h3>cromford per merged PR</h3><div class="big">$59</div><p class="small">88 merged PRs, $5,225, 8.5 build jobs per merged PR. project-6-os: $25 and 1.9 jobs. project-3: $20 and 2.8 jobs.</p></div>
+<div class="card"><h3>Spend that merged nothing</h3><div class="big">52%</div><p class="small">$2,574 of $4,911 cromford ticket spend went to tickets with no merged PR: GATE_RED $746, PR not merged $655, REVIEW_BLOCKED $305, EXECUTE_EMPTY $245, PLAN_BLOCKED $201.</p></div>
+</div>
+<ul class="tldr">
+<li><b>The factory pays twice for most of its work.</b> $2,225 in 7 days went to a prompt fingerprint called again within one hour, $1,947 of it in the execute stage. 278 rows that ended rc≠0 still cost $1,322. 80 calls killed by the context ceiling cost $536.</li>
+<li><b>A cromford PR runs its test selection 4 to 6 times before merge</b>: the builder gate (cap 80, up to 3 phases), the selection gate (uncapped, 600 to 1,250 suites on the test host), the CI pre-queue gate (the builder gate again on MonkCI), and the merge-queue batch (the selection gate again). 931 prequeue starts in 7 days on cromford alone; PR #8910 had 81.</li>
+<li><b>The selection gate discards builds on reds it cannot attribute.</b> On 2026-11-04, 27 of 38 red gates had a baseline that could not run. The same 10 host-sensitive suites were red across unrelated tickets. Filed as #9061.</li>
+<li><b>Fly is 80% of infrastructure and half of it is idle.</b> The 4 performance-16x test hosts cost $2,112 per month and sit under 5% CPU in 58% of 5-minute windows, with 0 idle stops since 10-29. Pool machines spend 52% of their hours outside any model session, 59% on cromford.</li>
+<li><b>The pool machines are the wrong size for what they wait on.</b> Plan and review stages wait on the network, but run on performance-8x 16 GB machines. lane-run-mk burns $422 per month at 3 to 5% CPU. lane-run-ts burns $132 per month at 1.9% CPU.</li>
+<li><b>The reviews stack.</b> Each diff gets the in-build lenses, a fix round, a re-review, then the lead review with break-it, then a conductor re-review on each head move, then review-autopilot and review-rescue. Lead review cost $498 fleet-wide, 454 calls, once per head: 117 heads for 88 PRs.</li>
+<li><b>The fleet polls instead of listening.</b> 184 cron lane fragments plus 7 per-project lanes make about 123,800 ticks per day. 36 lanes can call a model; 97% of blocked-resolver ticks made no call but each read 894 candidates for 13 minutes. 66% of triage session calls had no new input and still cost $53.</li>
+<li><b>Two stages still run on Fable 5.1</b> at 2.5 times the Opus token price: stage.plan and stage.preplan. The route rows say Opus everywhere else. One row change each.</li>
+<li><b>The meters have holes.</b> Both Claude extra-usage probes answer no-login since 10-14 and 09-28, so overage is unknown. 43% of project-6-os pool machines have no cost row. 53 rows have no price. xAI spend is computed, not metered. Fireworks and Codex have no meter.</li>
+<li><b>1000x is a coordination problem, not a compute problem.</b> Compute per merged PR must fall about 10x (one test run per tree, right-sized machines, dedup before spend) and the serial waits must leave (event-driven wakes, no polling, no baseline timeouts). The plan in section 8 names each lever with its measured dollars.</li>
+</ul>
+
+<h2 id="bill">1. The bill, per month</h2>
+<p>Model spend is shown two ways. The priced number is what the calls would cost at API list price. The cash number is what left a bank account: the metered vendors plus the subscriptions. The subscriptions are 6 Claude Max accounts whose monthly price and overage this audit could not read (section 10).</p>
+<table>
+<tr><th>Cost center</th><th class="n">USD / month</th><th>Basis</th><th>Utilization evidence</th></tr>
+<tr><td>Claude model calls, priced (subscription-equivalent)</td><td class="n">≈46,700</td><td>$10,893 per 7 days × 4.29</td><td>62,658 calls per week. Not cash. The real cash is 6 Max subscriptions plus unknown overage.</td></tr>
+<tr><td>Metered model calls (cash)</td><td class="n">≈5,270</td><td>$1,228 per 7 days</td><td>OpenRouter $1,430 per month on the vendor ledger; xAI ≈$89 computed; canary $29.80 cash in 7 days.</td></tr>
+<tr><td>Fly: pool build machines</td><td class="n">4,010 to 4,510</td><td>2,366 machines in 7 days; list vs harness meter</td><td>1,760 h at 16 GB and 582 h at 32 GB per week. 503 machines ran over 2 h and cost 68% of the pool spend.</td></tr>
+<tr><td>Fly: 4 test hosts, performance-16x 32 GB</td><td class="n">2,112</td><td>671 of 672 possible hours in 7 days</td><td>Average CPU 30%. Under 5% CPU in 58% of 5-min windows. 0 idle stops since 10-29. Only cromford uses them.</td></tr>
+<tr><td>Fly: lane-run-mk (3× performance-8x)</td><td class="n">422</td><td>269 machine-hours per week</td><td>CPU 3.1 to 4.8%.</td></tr>
+<tr><td>Fly: lane-run-ts (performance-4x, 24/7)</td><td class="n">132</td><td>always started since 11-02</td><td>CPU 1.9%. 10,105 cost rows per week: real work that waits on the network.</td></tr>
+<tr><td>Fly: lane-run (6× shared-cpu-2x)</td><td class="n">28</td><td>355 machine-hours per week</td><td>CPU 6 to 14%.</td></tr>
+<tr><td>Fly: volumes and stopped rootfs</td><td class="n">58 to 78</td><td>250 GB volumes + 25 stopped machines</td><td>harness-hub 200 GB volume idle since 10-21. 13 CI runner machines stopped since 09-23.</td></tr>
+<tr><td>Hetzner hub bh-hub-2 (cpx51)</td><td class="n">≈320</td><td>€279.49 on the account API</td><td>Load 4.5 of 16 cores, 2 GB of 30 GB RAM in one sample.</td></tr>
+<tr><td>Orgo: 11 always-on desktops</td><td class="n">≈608</td><td>Scale plan $399 + add-ons ≈$209</td><td>48 vCPU and 184 GB RAM against a pool of 36 and 128. review-2 did 0 jobs in 7 days. project-1-orchestrator ran 126 $0 jobs.</td></tr>
+<tr><td>Cloudflare Workers + D1</td><td class="n">≈117</td><td>3.31B rows read per day, 2.82M written</td><td>harness-jobs reads 2.86B rows per day, 1,191 rows per query. 873 HTTP 500 on 11-04 (19 on 11-02). Storage 4.6 of 5 GB included.</td></tr>
+<tr><td>GitHub Actions (example-org org)</td><td class="n">660</td><td>October actual: 93,822 Linux minutes</td><td>Linux $539, storage $80 (240,581 GB-hours), macOS $19, GHAS $19.</td></tr>
+<tr><td>MonkCI self-hosted CI minutes</td><td class="n">not re-measured</td><td>October audit: $9,284</td><td>Runner-minutes per day now: bh ≈4,330, mk ≈4,900, project-3 ≈6,570 (section 5).</td></tr>
+</table>
+<div class="callout"><b>Reading the total.</b> Infrastructure plus metered vendors is about $15,300 per month with MonkCI at its October level, or about $10,000 without it. The priced model spend of about $46,700 per month is the number to cut for scale, because it is the work the fleet does, whatever the account that pays for it.</div>
+
+<h2 id="model">2. Model spend: who, where, what for</h2>
+<div class="two">
+<div>
+<h3>By project, 7 days</h3>
+<table>
+<tr><th>Project</th><th class="n">USD</th><th class="n">Share</th><th class="n">Calls</th><th class="n">24 h USD</th></tr>
+<tr><td>cromford</td><td class="n">5,224.64</td><td class="n">43.1%</td><td class="n">4,768</td><td class="n">580.09</td></tr>
+<tr><td>project-6-os</td><td class="n">4,165.11</td><td class="n">34.3%</td><td class="n">9,171</td><td class="n">75.13</td></tr>
+<tr><td>project-3</td><td class="n">1,734.46</td><td class="n">14.3%</td><td class="n">1,840</td><td class="n">250.22</td></tr>
+<tr><td>project-4</td><td class="n">193.45</td><td class="n">1.6%</td><td class="n">272</td><td class="n">70.07</td></tr>
+<tr><td>project-2</td><td class="n">172.85</td><td class="n">1.4%</td><td class="n">186</td><td class="n">3.35</td></tr>
+<tr><td>lane-run machines (no project)</td><td class="n">116.46</td><td class="n">1.0%</td><td class="n">35,257</td><td class="n">15.87</td></tr>
+<tr><td>project-6-desktop</td><td class="n">113.01</td><td class="n">0.9%</td><td class="n">1,499</td><td class="n">15.38</td></tr>
+<tr><td>project-9</td><td class="n">110.33</td><td class="n">0.9%</td><td class="n">233</td><td class="n">18.64</td></tr>
+<tr><td>fleet (Archie, canary, research)</td><td class="n">105.15</td><td class="n">0.9%</td><td class="n">405</td><td class="n">27.60</td></tr>
+<tr><td>project-5</td><td class="n">71.50</td><td class="n">0.6%</td><td class="n">1,537</td><td class="n">14.29</td></tr>
+</table>
+</div>
+<div>
+<h3>cromford by stage, 7 days</h3>
+<table>
+<tr><th>Stage</th><th class="n">USD</th><th class="n">Calls</th><th>Model / billing</th></tr>
+<tr><td>plan (fly-pool)</td><td class="n">1,684.43</td><td class="n">1,113</td><td>opus-5-5, subscription</td></tr>
+<tr><td>execute (fly-pool)</td><td class="n">1,532.98</td><td class="n">449</td><td>opus-5-5, subscription</td></tr>
+<tr><td>review (lenses: general, security, refute)</td><td class="n">760.77</td><td class="n">775</td><td>opus-5-5, subscription</td></tr>
+<tr><td>infra (Fly pool machines)</td><td class="n">668.24</td><td class="n">1,042</td><td>performance-8x 16 GB, cash</td></tr>
+<tr><td>triage</td><td class="n">155.53</td><td class="n">795</td><td>sonnet-5-5</td></tr>
+<tr><td>lead-review</td><td class="n">148.63</td><td class="n">141</td><td>opus-5-5</td></tr>
+<tr><td>fix rounds</td><td class="n">127.71</td><td class="n">173</td><td>opus-5-5</td></tr>
+<tr><td>blocked-resolver</td><td class="n">51.50</td><td class="n">38</td><td>opus-5-5</td></tr>
+<tr><td>conductor / prequeue review</td><td class="n">39.25</td><td class="n">41</td><td>opus-5-5</td></tr>
+<tr><td>review-autopilot</td><td class="n">29.17</td><td class="n">24</td><td>opus-5-5</td></tr>
+<tr><td>unblock</td><td class="n">21.44</td><td class="n">158</td><td>opus-5-5</td></tr>
+</table>
+</div>
+</div>
+<h3>Cost and work per merged PR</h3>
+<table>
+<tr><th>Project</th><th class="n">Merged PRs (bot)</th><th class="n">Model + Fly USD</th><th class="n">USD per merged PR</th><th class="n">Build jobs</th><th class="n">Jobs per merged PR</th><th class="n">Fly per merged PR</th></tr>
+<tr><td>cromford</td><td class="n">88</td><td class="n">5,224</td><td class="n">59.37</td><td class="n">745</td><td class="n">8.47</td><td class="n">7.08 + 5.10 test hosts</td></tr>
+<tr><td>project-6-os</td><td class="n">165</td><td class="n">4,166</td><td class="n">25.24</td><td class="n">319</td><td class="n">1.93</td><td class="n">1.40</td></tr>
+<tr><td>project-3</td><td class="n">87</td><td class="n">1,735</td><td class="n">19.94</td><td class="n">242</td><td class="n">2.78</td><td class="n">0.52</td></tr>
+<tr><td>project-4</td><td class="n">13</td><td class="n">193</td><td class="n">14.88</td><td class="n">16</td><td class="n">1.23</td><td class="n">0.24</td></tr>
+<tr><td>project-2</td><td class="n">10</td><td class="n">173</td><td class="n">17.28</td><td class="n">14</td><td class="n">1.40</td><td class="n">0.65</td></tr>
+<tr><td>project-5</td><td class="n">3</td><td class="n">72</td><td class="n">23.83</td><td class="n">36</td><td class="n">12.0</td><td class="n">1.53</td></tr>
+</table>
+<p class="small">Merged counts are PRs authored by the bots. project-3 also merges peer-built (partner) PRs that the pool never built, so its per-PR cost reads low.</p>
+<h3>Model routes</h3>
+<p>95 roles. 78 run on claude-opus-5-5. 12 run on claude-sonnet-5-5 (triage, triage.shard, replan, remediate, web-task, review-intent, review-break-it, staff-tick, sentry-triage, ci-test-value, product.synth, greenfield.synth). 6 run on Haiku (alert.triage, lesson.classify, review.trivial, bootstrap.smoke, component-watch, jev-pilot). stage.triage and archie-research.xsearch run on grok-4.7. <b>stage.plan and stage.preplan run on claude-fable-5-1</b>, at $10 per million prompt tokens against $4 for Opus and $2 for Sonnet.</p>
+
+<h2 id="waste">3. Waste and duplication</h2>
+<div class="grid">
+<div class="card"><h3>Tickets that merged nothing</h3><div class="big">$2,574</div><p class="small">52% of cromford ticket spend in 7 days. GATE_RED 19 tickets $746. PR created and not merged 12 tickets $655. REVIEW_BLOCKED 3 tickets $305. EXECUTE_EMPTY 5 tickets $245. PLAN_BLOCKED 16 tickets $201. BUILD_REFUSED 1 ticket $181.</p></div>
+<div class="card"><h3>Same prompt within 1 hour</h3><div class="big">$2,225</div><p class="small">3,021 calls whose guard fingerprint (ticket, plan hash, prompt hash) repeated inside 60 minutes. Execute 467 calls $1,947. Plan 133 calls $212. Canary 144 calls $33. Example: TK-1583 at 2026-10-31 06:32Z, $19.45.</p></div>
+<div class="card"><h3>Calls that ended rc≠0 and still cost</h3><div class="big">$1,322</div><p class="small">278 rows. Execute rc 124 (timeout) 67 rows $454. Execute rc 143 (killed) 36 rows $376. Execute rc 1 28 rows $192. Plan rc 143 41 rows $155. Plan rc 124 64 rows $112.</p></div>
+<div class="card"><h3>Killed by the context ceiling</h3><div class="big">$536</div><p class="small">80 rows. project-6-os execute 26 rows $328. cromford plan 29 rows $111. One kill read 54.7M tokens against a 53.6M ceiling. Only 15 of 52 budget rows have an armed kill, and those arm at 6.6M to 40.5M, not at the declared 400K to 500K.</p></div>
+</div>
+<h3>Churn per merged cromford PR (n = 88)</h3>
+<table>
+<tr><th>Metric per PR</th><th class="n">Median</th><th class="n">p90</th><th class="n">Max</th><th class="n">Sum over 88 PRs</th></tr>
+<tr><td>Branch round (-rN)</td><td class="n">2</td><td class="n">7</td><td class="n">16</td><td class="n">251</td></tr>
+<tr><td>Pool machines on the ticket key</td><td class="n">2</td><td class="n">12</td><td class="n">20</td><td class="n">342</td></tr>
+<tr><td>Lead-review heads</td><td class="n">1</td><td class="n">2</td><td class="n">6</td><td class="n">117</td></tr>
+<tr><td>Restamp commits by box</td><td class="n">0</td><td class="n">1</td><td class="n">3</td><td class="n">20</td></tr>
+<tr><td>Commits on the branch (head moves)</td><td class="n">3</td><td class="n">11</td><td class="n">23</td><td class="n">445</td></tr>
+<tr><td>Mergify queue drafts</td><td class="n">1</td><td class="n">4</td><td class="n">7</td><td class="n">162</td></tr>
+<tr><td>Prequeue starts</td><td class="n">6</td><td class="n">13</td><td class="n">29</td><td class="n">589</td></tr>
+<tr><td>USD per PR</td><td class="n">16.14</td><td class="n">88.42</td><td class="n">356.14</td><td class="n">2,775</td></tr>
+</table>
+<p>The worst PR was #9000 (BH-8817, the Tackler hotfix): round 16, 20 machines, 4 lead-review heads, 2 restamps, 12 prequeue runs, $356, of which $119 was review. Each restamp commit by the harness moves the head, which voids the head-bound verdict and buys a new lead review.</p>
+<h3>One tree, four to six test runs</h3>
+<table>
+<tr><th>#</th><th>Gate</th><th>Where</th><th>What it runs</th><th>What only it catches</th></tr>
+<tr><td>1</td><td>Builder impact gate (bin/test-impact-gate.sh)</td><td>Pool machine, as nobody</td><td>Cap 80 suites, 450 s, up to 3 phases per build (lenses, fix, head)</td><td>A red before any push</td></tr>
+<tr><td>2</td><td>Prepush gate</td><td>Pool machine</td><td>Migration restamp checks</td><td>Restamp drift</td></tr>
+<tr><td>3</td><td>Selection gate (bin/selection-gate.sh)</td><td>Fly test host</td><td>The batch's own uncapped selection, 600 to 1,250 suites, 2,400 s, then a 900 s baseline on the reds</td><td>What the capped gate skipped</td></tr>
+<tr><td>4</td><td>CI pre-queue gate (prequeue-gate.yml)</td><td>MonkCI runner</td><td>17 invariants plus the builder gate again at cap 80; 77 group runs in 3.7 days at 17 job-minutes</td><td>The head against the newest main tip</td></tr>
+<tr><td>5</td><td>PR CI (harness-ci.yml)</td><td>MonkCI runner</td><td>Lint, shellcheck, determinism, fast lints; 9.4 job-minutes</td><td>Lint</td></tr>
+<tr><td>6</td><td>Merge-queue batch</td><td>MonkCI runner</td><td>Union impact set, batch size 3; 195 job-minutes per batch</td><td>The other batch members</td></tr>
+<tr><td>7</td><td>Push to main</td><td>MonkCI runner</td><td>Fast checks, 3.9 job-minutes</td><td>Nothing new</td></tr>
+<tr><td>8</td><td>Nightly (harness-nightly.yml)</td><td>MonkCI runner</td><td>772 job-minutes; 3 of 3 runs red in the window</td><td>The full corpus</td></tr>
+</table>
+<p>Gates 1 and 4 run the same selection. Gates 3 and 6 run the same selection. The knob flip that turned gate 4 off on 10-29 rolled back, so both the builder selection gate and the CI pre-queue gate run today. No ledger shares a suite result between the four runs. The builder's own reuse ledger (BH-5354) is not trusted by CI by design.</p>
+<h3>The review stack on one diff</h3>
+<p>In-build lenses run in parallel on the diff (general, security on risky paths, refute on schema or money paths), then one fix round, then a re-review. Then the lead review reads the same head again with break-it on medium and high tiers, up to 3 attempts per head. The conductor re-reviews on each head move, with no daily cap. review-autopilot and review-rescue re-read aging heads. The blocked-resolver buys up to 2 fix rounds plus re-reviews per ticket and up to 3 fresh rebuilds, each with all lenses again. patch-same replay skips a repeat only when the patch is byte-equal. Median review cost per merged cromford PR is $3.62 and 5 calls; p90 is $16.89 and 15 calls; the sum is $691. Lead review alone cost $498 across the fleet in 7 days, 454 calls, and is 34% of project-6-os review spend.</p>
+<h3>Polling</h3>
+<p>The hub crontab has 190 active lines. 184 lane fragments plus 7 per-project lanes on 17 projects make about 123,800 ticks per day. 36 lane kinds can call a model; they tick about 33,000 times per day. Most lanes carry a change gate (a head sha, a fingerprint, a claim row), so a tick without new input makes no call. The exceptions: orc-monitor every 5 minutes with no dedup (its script lives outside the repo), and the calendar-keyed lanes (claude-auth-check canary, archie, archie-fm-watch, archie-research, rule-miner, lookback, pm-groom). The cost is not the calls but the reads: the blocked-resolver made 122 model calls in 7 days across 4,192 ticks, yet each cromford tick read 894 to 931 candidates for 13 minutes (fixed in part by #9036 on 11-04, candidates now 755 and the tick drains). Triage session mode made 265 of 401 calls with new=0, chg=0, due=0, for $53.</p>
+
+<h2 id="infra">4. Infrastructure</h2>
+<h3>Idle or always-on capacity</h3>
+<table>
+<tr><th>Capacity</th><th class="n">USD / month burned</th><th>Evidence</th></tr>
+<tr><td>4 test hosts, idle share</td><td class="n">≈1,225 of 2,112</td><td>5-min windows under 5% CPU: 41%, 56%, 71%, 62%. Median 5-min CPU on 3 hosts 0.02 to 0.03%. testhost-tick logged 1,691 "in use, left started" and 0 stops after 10-29 15:14Z. One gate run in 30 minutes keeps all 4 hosts on. Only cromford uses them (629 routes in 7 days).</td></tr>
+<tr><td>testhost-4 constant load</td><td class="n">inside the line above</td><td>Median 5-min CPU 37.6%, never idle, system CPU above user CPU. A background process, not gates.</td></tr>
+<tr><td>Pool machines over 2 hours</td><td class="n">≈3,080 of 4,510</td><td>503 of 2,366 machines ran over 2 h and cost $710 of $1,038 in 7 days. cromford machines averaged 1.79 h.</td></tr>
+<tr><td>Pool machine time outside any model session</td><td class="n">≈2,060</td><td>1,068 of 2,070 machine-hours in 7 days (52%). cromford 841 of 1,430 (59%). This includes gate and test time, so it is not pure idle, but it is CPU work on a machine sized for a model session.</td></tr>
+<tr><td>lane-run-mk, performance-8x</td><td class="n">422</td><td>CPU 3.1 to 4.8% over 269 machine-hours.</td></tr>
+<tr><td>lane-run-ts, performance-4x 24/7</td><td class="n">132</td><td>CPU 1.9%.</td></tr>
+<tr><td>Orgo add-ons over the plan pool</td><td class="n">≈209</td><td>48 vCPU and 184 GB RAM against 36 and 128 pooled. review-2 has no watchdog ping and 0 jobs. project-1-orchestrator is the old hub standby past its 10-30 end date.</td></tr>
+<tr><td>Fly harness-hub volume 200 GB</td><td class="n">30</td><td>Machine stopped since 10-21; the hub moved to Hetzner on 10-23.</td></tr>
+<tr><td>Builder volume + 25 stopped rootfs</td><td class="n">27 to 47</td><td>Stopped since 09-21 to 10-27.</td></tr>
+<tr><td>GitHub Actions storage</td><td class="n">80</td><td>240,581 GB-hours in October.</td></tr>
+</table>
+<h3>Fly per-build spend per day, 7 days</h3>
+<table>
+<tr><th>Day</th><th class="n">cromford</th><th class="n">project-6-os</th><th class="n">project-3</th><th class="n">others</th><th class="n">Total</th></tr>
+<tr><td>10-29</td><td class="n">43.20</td><td class="n">83.83</td><td class="n">14.76</td><td class="n">2.13</td><td class="n">143.92</td></tr>
+<tr><td>10-30</td><td class="n">94.12</td><td class="n">74.24</td><td class="n">2.79</td><td class="n">2.26</td><td class="n">173.40</td></tr>
+<tr><td>10-31</td><td class="n">129.86</td><td class="n">36.32</td><td class="n">0.95</td><td class="n">1.39</td><td class="n">168.51</td></tr>
+<tr><td>11-01</td><td class="n">89.94</td><td class="n">13.87</td><td class="n">0.59</td><td class="n">0</td><td class="n">104.40</td></tr>
+<tr><td>11-02</td><td class="n">134.25</td><td class="n">16.44</td><td class="n">10.40</td><td class="n">3.01</td><td class="n">164.10</td></tr>
+<tr><td>11-03</td><td class="n">104.47</td><td class="n">24.86</td><td class="n">44.48</td><td class="n">8.54</td><td class="n">182.35</td></tr>
+<tr><td>11-04</td><td class="n">76.90</td><td class="n">7.06</td><td class="n">12.29</td><td class="n">5.22</td><td class="n">101.48</td></tr>
+<tr><td><b>7 days</b></td><td class="n"><b>672.75</b></td><td class="n"><b>256.61</b></td><td class="n"><b>86.26</b></td><td class="n"><b>22.54</b></td><td class="n"><b>1,038.16</b></td></tr>
+</table>
+<p class="small">The harness meter prices a performance-8x 16 GB machine at $328 per month ($31 per core + $5 per GB). Fly's list is $264, so the meter reads 24% high on 16 GB machines and 8% low on the 32 GB project-6-os machines.</p>
+<h3>D1</h3>
+<p>harness-jobs reads 2.86 billion rows per day from 2.40 million queries, 1,191 rows per query, 86% of the account's reads. That is ≈$76 per month in read overage and ≈$36 in writes. On 11-04 the jobs client logged 873 HTTP 500 calls (19 on 11-02) and 37 "overloaded" answers. The fleet's own iron law on indexes and retention (BH-6730) applies to these tables.</p>
+
+<h2 id="ci">5. CI minutes</h2>
+<p>Runner-minutes per day, from job durations on a sample of 128 runs (each line can be off by ±30%). The runners are self-hosted on Fly and MonkCI, so GitHub bills no minutes for them; the cost is the machines.</p>
+<table>
+<tr><th>Repo</th><th>Lane</th><th class="n">Runs / day</th><th class="n">Job-min / run</th><th class="n">Min / day</th><th>Note</th></tr>
+<tr><td>cromford</td><td>merge-queue batch</td><td class="n">14.9</td><td class="n">195</td><td class="n">2,915</td><td>Batch reds 25% (14 of 55). 10-22: 50%.</td></tr>
+<tr><td>cromford</td><td>nightly</td><td class="n">0.8</td><td class="n">772</td><td class="n">630</td><td>3 of 3 red.</td></tr>
+<tr><td>cromford</td><td>pre-queue group gate</td><td class="n">20.9</td><td class="n">17</td><td class="n">356</td><td>Repeats the builder gate.</td></tr>
+<tr><td>cromford</td><td>PR + main + contracts</td><td class="n">99</td><td class="n">0.2 to 9.4</td><td class="n">433</td><td></td></tr>
+<tr><td><b>cromford</b></td><td><b>total</b></td><td></td><td></td><td class="n"><b>≈4,330</b></td><td>11-02 addendum: 7,856 (batches fell).</td></tr>
+<tr><td>project-6</td><td>ci on PR push</td><td class="n">23.8</td><td class="n">85.6</td><td class="n">2,037</td><td>Full ci on every push.</td></tr>
+<tr><td>project-6</td><td>ci batch</td><td class="n">9.3</td><td class="n">125</td><td class="n">1,172</td><td></td></tr>
+<tr><td>project-6</td><td>ci dispatch</td><td class="n">4.5</td><td class="n">121</td><td class="n">548</td><td>Fixed lane, runs whatever the merge count.</td></tr>
+<tr><td>project-6</td><td>unit-clock, e2e, deploy, main</td><td class="n">—</td><td class="n">—</td><td class="n">1,131</td><td>unit-clock 11 runs, 0 ok.</td></tr>
+<tr><td><b>project-6</b></td><td><b>total</b></td><td></td><td></td><td class="n"><b>≈4,900</b></td><td>11-02 addendum: 4,431.</td></tr>
+<tr><td>project-3</td><td>E2E on PR</td><td class="n">57.6</td><td class="n">30.9</td><td class="n">1,780</td><td>23% red, 12% cancelled.</td></tr>
+<tr><td>project-3</td><td>E2E on main (after the batch)</td><td class="n">32.8</td><td class="n">34.6</td><td class="n">1,135</td><td>The batch tested the same tree.</td></tr>
+<tr><td>project-3</td><td>E2E batch</td><td class="n">31.1</td><td class="n">33.5</td><td class="n">1,042</td><td></td></tr>
+<tr><td>project-3</td><td>CI PR + main + batch, Prod QA</td><td class="n">—</td><td class="n">—</td><td class="n">2,615</td><td>Prod QA 59 runs, 23 red.</td></tr>
+<tr><td><b>project-3</b></td><td><b>total</b></td><td></td><td></td><td class="n"><b>≈6,570</b></td><td>Not in the earlier addenda.</td></tr>
+</table>
+<p>The three repos use about 15,800 runner-minutes per day. project-3 is now the largest CI consumer, on a drain day, and it tests the same tree on main again after the batch (1,591 minutes per day). The October audit measured 37,000 minutes per day across the fleet at $9,284 for the month.</p>
+
+<h2 id="leaks">6. Leaks ranked by dollars per month</h2>
+<p>Priced model dollars are subscription-equivalent unless marked cash. Overlaps exist between lines 1 to 3. Each line names the lever that removes it.</p>
+<table>
+<tr><th>#</th><th>Leak</th><th class="n">USD / month</th><th>Evidence</th><th>Lever</th></tr>
+<tr><td>1</td><td>cromford spend on tickets that never merge</td><td class="n">≈11,000</td><td>$2,574 per 7 days, 52% of ticket spend; GATE_RED tickets $746</td><td>#9061 (unattributed red opens the PR), poison-suite dead-letter, PLAN_BLOCKED questions carry a default</td></tr>
+<tr><td>2</td><td>Same prompt fingerprint called again within 1 hour</td><td class="n">≈9,500</td><td>$2,225 per 7 days, execute $1,947</td><td>Dedup at the choke point in agent-call before the call, keyed on ticket + plan hash + prompt hash, terminal states for empty and failed</td></tr>
+<tr><td>3</td><td>Calls that time out or get killed and still bill</td><td class="n">≈5,700 + 2,300</td><td>rc≠0 $1,322; context kills $536; 80 kills read 6.6M to 54.7M tokens</td><td>Arm the context kill at the declared ceiling (400K to 500K), checkpoint the execute stage, resume instead of restart</td></tr>
+<tr><td>4</td><td>Pool machines sized for CPU while they wait on the network</td><td class="n">≈2,000 to 3,000</td><td>52% of machine-hours outside any model session; 503 machines over 2 h cost 68% of pool spend; lane-run-mk $422 at 4% CPU</td><td>Two machine classes: shared-cpu for plan, review and lead review; performance for execute and gates; a 2 h soft cap with checkpoint</td></tr>
+<tr><td>5</td><td>Four always-on test hosts</td><td class="n">1,225 idle of 2,112</td><td>58% of windows under 5% CPU, 0 idle stops since 10-29, one consumer</td><td>Scale to zero: start on a gate request, stop after 10 idle minutes; find the background load on testhost-4</td></tr>
+<tr><td>6</td><td>The same test selection run 4 to 6 times per PR</td><td class="n">≈1,500 Fly + about 3,300 CI min/day</td><td>Gates 1 and 4 equal; gates 3 and 6 equal; 931 prequeue starts per week on cromford</td><td>One content-addressed suite-result ledger keyed on tree hash + suite + runner image, read by all four gates; retire gate 4</td></tr>
+<tr><td>7</td><td>Lead review once per head, heads move for restamps and merges</td><td class="n">≈2,100 fleet</td><td>$498 per 7 days, 454 calls, 117 heads for 88 PRs; patch-same only on byte-equal patches</td><td>Rebind on semantic patch-same (ignore restamp files and clean main merges); one lead review per ticket unless the diff changes</td></tr>
+<tr><td>8</td><td>stage.plan and stage.preplan on Fable 5.1</td><td class="n">≈1,500 to 2,500</td><td>$10 per M prompt tokens vs $4 Opus; plan was $1,684 per 7 days on cromford alone</td><td>Two model-route rows: Opus for plan, Sonnet for preplan</td></tr>
+<tr><td>9</td><td>project-3 and project-6 CI re-test the tree main already tested</td><td class="n">≈2,700 CI min/day</td><td>project-3 main E2E + CI 1,591 min/day after the batch; mk ci on every push 2,037; mk dispatch 548</td><td>Skip main runs when the merge sha equals the batch's tested tree; run full ci on the queue, not on every push</td></tr>
+<tr><td>10</td><td>Orgo desktops with no work, old volumes, stopped machines</td><td class="n">≈330</td><td>review-2 0 jobs; project-1-orchestrator past its standby date; harness-hub 200 GB volume; 25 stopped rootfs; GitHub storage $80</td><td>Delete the two desktops and the volumes; set artifact retention to 7 days</td></tr>
+<tr><td>11</td><td>Polling reads with no new input</td><td class="n">≈250 + hub time</td><td>Triage sessions with new=0: $53 per week; canary 201 probes $34 ($30 cash); resolver 13-minute discovery per tick</td><td>Wake rows for every model lane; a canary on Haiku once per account per day</td></tr>
+<tr><td>12</td><td>D1 read volume</td><td class="n">112 + outages</td><td>2.86B rows per day, 1,191 rows per query, 873 HTTP 500 on 11-04</td><td>Indexes for the hot queries, summary tables for dashboards, retention on growing tables (BH-6730)</td></tr>
+</table>
+
+<h2 id="plan">7. The 1000x plan</h2>
+<p>1000x means two things at once: 1000 times more merged PRs per week at the same budget, and each PR merged in minutes instead of hours. Today the fleet merges about 370 bot PRs per week for about $12,100 in priced model spend plus about $2,300 in infrastructure and CI, with a median cromford PR at 2 rounds, 6 prequeue starts and several hours of wall time. The measured leaks say most of the cost and most of the wall time is coordination, not compute. The plan removes the coordination waste first, because that is where 10x lives, then changes the machine shape for the next 10x, and only then buys more boxes for the last 10x.</p>
+<h3>Lever 1: pay once per unit of work</h3>
+<ul>
+<li><b>One suite-result ledger for the whole pipeline.</b> Key: tree hash + suite path + runner image digest. Writers: the builder gate, the selection gate, the pre-queue gate, the batch, nightly. Readers: all of them. A green result on a tree is green for every gate that asks about that tree. Expected: the 4 to 6 runs become 1 to 2. Today's reuse ledger (BH-5354) exists but CI does not trust it; the trust rule changes to "trusted when the runner image digest matches".</li>
+<li><b>Dedup before spend at the agent-call choke point.</b> A persisted check on the guard fingerprint before the model call, with three terminal states (ok, empty, failed), an attempt cap of 3, and a replay of the stored answer on repeat. The metered-API rule already says this; the measurement says $2,225 per week ignores it.</li>
+<li><b>Checkpoint and resume the execute stage.</b> A timeout or a context kill resumes from the last commit on the branch with a short brief, instead of a fresh execute. Arm the kills at the declared ceilings.</li>
+<li><b>Semantic head-bound verdicts.</b> A restamp commit, a clean merge from main, or a lockfile-only change keeps the verdict. The lead review runs once per ticket per real diff.</li>
+</ul>
+<h3>Lever 2: event-driven, not clock-driven</h3>
+<ul>
+<li><b>Every model lane wakes on a row, never on a tick.</b> GitHub webhooks, the board's own events and the jobs worker already feed a wakes table; the remaining calendar lanes and orc-monitor move onto it. The hub crontab shrinks from 190 lines to the handful of true schedules (digests, retention, canaries).</li>
+<li><b>The resolver and the conductor read deltas.</b> A candidate list that costs 13 minutes to discover becomes a query on a state table with an index: "parks that changed since my last tick". #9029 landed the first cut; the next cut moves discovery into D1 with the retention rule.</li>
+<li><b>The pool spawns on queue depth, not on a 540-second tick.</b> Fly machines start in seconds; a build that waits 9 minutes for the next tick is wall time with no work.</li>
+</ul>
+<h3>Lever 3: right-size every machine to what it waits on</h3>
+<ul>
+<li><b>Two machine classes in the pool.</b> Plan, review, lead review and triage wait on the model: shared-cpu-2x at $13 per month-equivalent. Execute and the gates need CPU: performance-8x for the minutes they run tests, then hand back. Expected: half of pool spend.</li>
+<li><b>Test hosts scale to zero.</b> A gate request starts a host, a 10-minute idle timer stops it. Four hosts at 30% average CPU become two hosts most of the day. Expected: $1,200 to $1,800 per month.</li>
+<li><b>Lane machines on shared CPU.</b> lane-run-mk and lane-run-ts run network-bound lanes at 2 to 5% CPU on performance sizes.</li>
+<li><b>Model tiers by stage.</b> Opus for execute and review, Sonnet for plan drafts and triage, Haiku for canaries, classifiers and mechanical rungs. Fable nowhere in the pipeline.</li>
+</ul>
+<h3>Lever 4: stop the work that merges nothing</h3>
+<ul>
+<li><b>Poison suites get a dead letter.</b> A suite red on 3 unrelated tickets in 24 hours is quarantined with an alert and a ticket, and the gate notes it instead of discarding the build (#9061 does the unattributed half).</li>
+<li><b>Plan questions carry a default.</b> 16 PLAN_BLOCKED tickets cost $201 and produced nothing. The rule from 2026-11-03 (recommendation, reasons, default) applies to the planner too: a plan that has a default proceeds and records the assumption.</li>
+<li><b>A ticket budget stops the ladder.</b> BH-8817 bought 20 machines and $356. The resolver's ladder (2 fix rounds, 3 rebuilds, each with all lenses) is where the money goes; after the second rebuild the ticket goes to a person with the record, not to a third rebuild.</li>
+</ul>
+<h3>Lever 5: measure what you pay for</h3>
+<ul>
+<li><b>Cash first.</b> The extra-usage probes must log in; the 6 Max accounts and their overage become rows with a price. Until then the fleet steers on API-equivalent numbers and cannot see the bill.</li>
+<li><b>Every machine has a cost row.</b> 43% of project-6-os pool machines have none. A machine with no cost row is a machine the dash cannot see.</li>
+<li><b>Cost per merged PR is the SLO per project</b>, with a daily ceiling per lane already in place (BH-5526). The number to drive to: under $10 per merged PR and under 2 build jobs per merged PR on every project, which cromford's own peers already reach on half the stack.</li>
+</ul>
+<div class="callout"><b>What the levers add up to.</b> Levers 1 and 4 remove the duplicated and the dead work, about 55% of today's model spend. Lever 3 halves the Fly bill. Lever 2 removes most of the wall time between stages. Together they move the fleet from about $59 to under $10 per cromford PR and from hours to tens of minutes per PR, which is the first 10x. The next 10x is more projects and more boxes on the same hub, which the event-driven hub can carry because it no longer burns its own time on ticks. The last 10x is many hubs, one per account or region, which the hub-thinning plan already names.</div>
+
+<h2 id="tickets">8. Tickets to file</h2>
+<p>By the fewest-tickets rule: one ticket per area. Filed on 2026-11-05 at 01:50Z with the operator's go: <b>#9063</b> suite-result ledger, <b>#9064</b> dedup before spend (hotfix), <b>#9065</b> pool machine shape (hotfix), <b>#9066</b> review stack, <b>#9067</b> events not ticks, <b>#9068</b> cost visibility and routes. The client-repo CI tickets are <b>project-3 #942</b> and <b>project-6 #3641</b>. Already filed before this audit: #9061 (selection gate unattributed red), #9026 (conductor re-review on deferred=rereview).</p>
+<table>
+<tr><th>#</th><th>Area</th><th>Ticket</th><th class="n">USD / month it targets</th></tr>
+<tr><td>1</td><td>One test run per tree</td><td>Suite-result ledger keyed on tree hash + suite + runner image; all four gates read it; retire the CI pre-queue gate; batch and nightly write it</td><td class="n">≈1,500 Fly + 3,300 CI min/day</td></tr>
+<tr><td>2</td><td>Dedup before spend</td><td>agent-call persisted fingerprint check before the call, three terminal states, attempt cap; execute checkpoint and resume; armed kills at the declared ceilings</td><td class="n">≈17,000 priced</td></tr>
+<tr><td>3</td><td>Pool machine shape</td><td>Two machine classes, 2 h soft cap, test hosts scale to zero, lane machines on shared CPU, a cost row for every machine</td><td class="n">≈4,000 to 5,000</td></tr>
+<tr><td>4</td><td>Review stack</td><td>Semantic patch-same for lead review and conductor; one lead review per ticket per real diff; restamps never move the reviewed head</td><td class="n">≈2,100</td></tr>
+<tr><td>5</td><td>Events, not ticks</td><td>Wake rows for every model lane and orc-monitor; resolver and conductor read deltas from D1; pool spawns on queue depth; D1 indexes and retention on the hot tables</td><td class="n">≈250 + wall time + D1 outages</td></tr>
+<tr><td>6</td><td>Cost visibility and routes</td><td>Extra-usage login on both accounts; price rows for grok, Fireworks, Codex; stage.plan to Opus and stage.preplan to Sonnet (route rows, same day); delete review-2, project-1-orchestrator, the harness-hub volume; artifact retention 7 days</td><td class="n">≈2,000 to 3,000 + the bill becomes visible</td></tr>
+</table>
+<p>CI on the client repos: project-3 #942 and project-6 #3641.</p>
+
+<h2 id="method">9. Method and blind spots</h2>
+<ul>
+<li><b>Model spend</b>: 71,600 cost rows from the jobs worker (<code>/api/metrics/cost-rows</code>), 62,663 in the window, deduplicated on box + row hash; <code>/api/metrics/cost-breakdown</code> and <code>/api/metrics/lane-spend</code> for the roll-ups. The hub's <code>logs/cost.csv</code> holds 540 rows for the same window and is not a source.</li>
+<li><b>Fly</b>: <code>flyctl machine list --json</code> per app, Fly Prometheus for CPU, the hub's <code>fly-pool.log</code> cost rows for per-build spend. Prices from docs.fly.io read on 2026-11-05; performance-16x derived linearly from the 1x and 2x presets. The test hosts are in sjc, so their price is a lower bound.</li>
+<li><b>Hetzner</b>: hcloud API. <b>Orgo</b>: <code>GET /api/workspaces</code>; add-on prices from orgo.ai/pricing.md. <b>Cloudflare</b>: <code>wrangler d1 info</code> per database. <b>GitHub</b>: the organization billing usage API for October; <code>/actions/runs</code> and <code>/jobs</code> for a 128-run sample.</li>
+<li><b>Blind spots</b>: the 6 Claude Max subscriptions and their overage (probes answer no-login since 10-14 and 09-28; the project-6 account was at $7,173 used of an $80,000 limit on 10-14); MonkCI minutes (October $9,284, not re-measured); Fireworks and Codex spend (no meter); xAI (computed from our own rows); Cloudflare Workers request counts (GraphQL authentication error); 713 project-6-os pool machines with no cost row; 125 sessions with cumulative-looking rows that may overstate the ledger by $589.</li>
+<li><b>Earlier audits</b> and what shipped from them are in docs/COST.md, the 2026-09-19 spend audit, the 2026-10-22 CI cost audit (addenda to 11-02 on branch mergify/project-2) and the 2026-10-16 review severity audit. Their open items appear in this report where the numbers still show them: the pre-queue gate knob rollback, the box-file dedup state, the scale-envelope plan gate with no code, the unpriced vendor rows.</li>
+</ul>
+<p class="small">Scratch data and the scripts that produced each table are in the session scratchpad on the Mac: rows.json, a1.py, a2.py, a3.py, fp.py, q.sh. They are not committed.</p>
+</main>
+</body>
+</html>

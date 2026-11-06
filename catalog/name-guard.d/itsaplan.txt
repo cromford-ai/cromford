@@ -1,0 +1,21 @@
+# catalog/name-guard.d/itsaplan.txt (BH-8918). The first deny file of the
+# name guard (bin/name-guard.py). One term per line, matched case-insensitive
+# and word-bounded on the lines a diff adds. These terms are literal ONLY in
+# the files under catalog/name-guard.d/; every other file reads them from here.
+# No scope: line, so this file applies to every path.
+itsaplan
+it's a plan
+its a plan
+its-a-plan
+@itsaplan
+croffasia
+ship together
+people and ai agents
+agents as teammates
+agent teammate
+notes board
+quick action
+internal agent
+external agent
+agent-endpoint
+mcp-results

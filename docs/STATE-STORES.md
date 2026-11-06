@@ -27,7 +27,9 @@ for the live numbers.
 
 ## Paths in `catalog/state-paths.json`
 
-The catalog classes each path (BH-5005, BH-7431). `bin/state-paths-guard.sh`
+The catalog is composed from `catalog/state-paths.d/` by
+`bin/state-paths-build.sh` and is not in git (BH-8986). It classes each path
+(BH-5005, BH-7431). `bin/state-paths-guard.sh`
 refuses a NEW script that writes a `rows` path. The ratchet allowlists every
 `cache` and `box-local` path.
 
@@ -125,8 +127,10 @@ script ADDED by the diff that writes a `rows` path.
 
 To add a new allowed path:
 
-1. Add a row to `catalog/state-paths.json` with class `cache` or `box-local`,
-   and an `authority` that says what the file is.
+1. Add a fragment file `catalog/state-paths.d/NNNN-<name>.json` (NNNN = the
+   ticket number) that holds the row, with class `cache` or `box-local` and an
+   `authority` that says what the file is. Never edit a shared fragment or the
+   composed `catalog/state-paths.json`.
 2. Put the catalog row and the writer in the same PR. The reviewer reads the
    catalog diff.
 

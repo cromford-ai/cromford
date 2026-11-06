@@ -122,13 +122,13 @@ RDB
 # costs a process last.
 fresh
 mkbuild p1-T-9-x p1 bid9 T-9 60 >/dev/null
-export RESUME_ROWS_CMD='printf "build-p1-T-9\tp1\tbuild\texecute\tbox\tT-9\t60\t150\t3\t2026-09-19T11:59:00Z\t1\n"'
+export RESUME_ROWS_CMD='printf "build-p1-T-9\tp1\tbuild\texecute\tbox\TK-9\t60\t150\t3\t2026-09-19T11:59:00Z\t1\n"'
 RDB; sleep 1
 [ ! -s "$STUB_LOG" ] && ok || bad "a build whose claim is still beating was resumed"
 # ...and a row that NEVER beat is not evidence of life: that is the shape a box
 # running an older bin/ leaves behind, and reading it as alive would strand the
 # dir for ever.
-export RESUME_ROWS_CMD='printf "build-p1-T-9\tp1\tbuild\texecute\tbox\tT-9\t60\t150\t3\t-\t1\n"'
+export RESUME_ROWS_CMD='printf "build-p1-T-9\tp1\tbuild\texecute\tbox\TK-9\t60\t150\t3\t-\t1\n"'
 RDB; wait_for 10 grep -q "T-9" "$STUB_LOG"
 grep -q "T-9" "$STUB_LOG" 2>/dev/null && ok || bad "a claim that never beat must not read as alive"
 export RESUME_ROWS_CMD='true'
@@ -329,7 +329,7 @@ RDB; sleep 1
 # outcome is the terminal RESULT the sweep reports — never a relaunch on top.
 fresh
 D16=$(mkbuild p1-T-96-x p1 bid96 T-96 60)
-export RESUME_ROWS_CMD='printf "build-p1-T-96\tp1\tbuild\texecute\tbox\tT-96\t9000\t150\t3\t-\t3\n"'
+export RESUME_ROWS_CMD='printf "build-p1-T-96\tp1\tbuild\texecute\tbox\TK-96\t9000\t150\t3\t-\t3\n"'
 export RESUME_REQUEUE_CMD='printf "parked\t3\t3\tretries exhausted\n"'
 RDB; sleep 1
 head -1 "$D16/RESULT" 2>/dev/null | grep -q '^BUILD_DEAD' && [ ! -s "$STUB_LOG" ] && ok \
@@ -342,7 +342,7 @@ head -1 "$D16/RESULT" 2>/dev/null | grep -q '^BUILD_DEAD' && [ ! -s "$STUB_LOG" 
 # crons.
 fresh
 D16b=$(mkbuild p1-T-97-x p1 bid97 T-97 60)
-export RESUME_ROWS_CMD='printf "build-p1-T-97\tp1\tbuild\texecute\tbox\tT-97\t9000\t150\t3\t-\t1\n"'
+export RESUME_ROWS_CMD='printf "build-p1-T-97\tp1\tbuild\texecute\tbox\TK-97\t9000\t150\t3\t-\t1\n"'
 export RESUME_REQUEUE_CMD='printf "already\t1\t3\tthe row is no longer running\n"'
 RDB; sleep 1
 [ ! -s "$STUB_LOG" ] && ok || bad "a row somebody else already settled must not be relaunched"
@@ -356,7 +356,7 @@ export RESUME_ROWS_CMD='true'; export RESUME_REQUEUE_CMD='true'
 # requeue (and therefore the lane's retry policy) was never consulted at all.
 rows_by_status() { # rows_by_status <status> — the seam eval's this with the status
   case "${1:-}" in
-    orphaned) printf "build-p1-T-95\tp1\tbuild\texecute\tbox\tT-95\t9000\t150\t3\t-\t2\n" ;;
+    orphaned) printf "build-p1-T-95\tp1\tbuild\texecute\tbox\TK-95\t9000\t150\t3\t-\t2\n" ;;
     *) : ;;
   esac
 }
@@ -374,7 +374,7 @@ grep -q 'job build-p1-T-95' "$HARNESS/logs/resume-dead.log" 2>/dev/null && ok \
 # the honest outcome is the terminal RESULT, never another launch.
 rows_by_status() {
   case "${1:-}" in
-    parked) printf "build-p1-T-94\tp1\tbuild\texecute\tbox\tT-94\t9000\t150\t3\t-\t3\n" ;;
+    parked) printf "build-p1-T-94\tp1\tbuild\texecute\tbox\TK-94\t9000\t150\t3\t-\t3\n" ;;
     *) : ;;
   esac
 }
@@ -427,7 +427,7 @@ export RESUME_ROWS_CMD='true'; export RESUME_REQUEUE_CMD='true'
 # ticket that is being built right now. Treated exactly like `already`.
 fresh
 D16f=$(mkbuild p1-T-98-x p1 bid98 T-98 60)
-export RESUME_ROWS_CMD='printf "build-p1-T-98\tp1\tbuild\texecute\tbox\tT-98\t9000\t150\t3\t-\t1\n"'
+export RESUME_ROWS_CMD='printf "build-p1-T-98\tp1\tbuild\texecute\tbox\TK-98\t9000\t150\t3\t-\t1\n"'
 export RESUME_REQUEUE_CMD='printf "held\t1\t3\tp1/T-98 is already live as build-p1-T-98-b\n"'
 RDB; sleep 1
 [ ! -s "$STUB_LOG" ] && ok || bad "a held row must not be relaunched on top of its live owner: $(cat "$STUB_LOG")"

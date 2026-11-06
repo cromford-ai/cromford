@@ -69,18 +69,22 @@ done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null \
 # vendor. So the probe now reports its exit code, retries once on a kill, and
 # says INCONCLUSIVE rather than letting silence masquerade as evidence.
 # >>> model-route (BH-1510.2): the ladder the probe climbs is model_routes role
-# `triage` (M) then role `auth.fallback` (F), resolved HERE, once, and written
-# into the probe as its defaults — a box's own TRIAGE_MODEL / AUTH_FALLBACK_MODEL
-# still win there, exactly as before. No route = rc 75 with no probe run (a
-# probe of a guessed model would page on the guess); bin/lib/model-route.sh
-# alerted the role. The charset check keeps a DB value from becoming shell text.
+# `auth.canary` (M; seeded as a copy of bootstrap.smoke rung 0, a Haiku-class
+# model) then role `auth.fallback` (F), resolved HERE, once, and written into the
+# probe as its defaults — a box's own AUTH_CANARY_MODEL / AUTH_FALLBACK_MODEL
+# still win there. TRIAGE_MODEL does not steer the canary. When the auth.canary
+# route cannot be read (a hub synced before the worker schema applied), M falls
+# back to role `triage`: bin/lib/model-route.sh already wrote its ALERTS line
+# naming auth.canary, and the probe still runs. No route at all = rc 75 with no
+# probe run (a probe of a guessed model would page on the guess). The charset
+# check keeps a DB value from becoming shell text.
 # Library mode (AUTH_CHECK_LIB=1: tests source this file for its functions and
 # never run a probe) resolves nothing and leaves both empty.
 PROBE_M=""; PROBE_F=""
 if [ "${_AUTH_CHECK_LIB_ONLY:-0}" != 1 ]; then
   . "$H/bin/lib/lane-model.sh"
-  PROBE_M=$(lane_role_model triage) && PROBE_F=$(lane_role_model auth.fallback) \
-    || { HARNESS="$H" "$H/bin/alert-line.sh" "[auth] no model route for triage/auth.fallback — auth probe not run"; exit 75; }
+  { PROBE_M=$(lane_role_model auth.canary) || PROBE_M=$(lane_role_model triage); } && PROBE_F=$(lane_role_model auth.fallback) \
+    || { HARNESS="$H" "$H/bin/alert-line.sh" "[auth] no model route for auth.canary (or triage)/auth.fallback — auth probe not run"; exit 75; }
   case "$PROBE_M$PROBE_F" in *[!A-Za-z0-9._/:-]*)
     HARNESS="$H" "$H/bin/alert-line.sh" "[auth] refusing model route values with shell characters: '$PROBE_M' / '$PROBE_F'"; exit 75 ;; esac
 fi
@@ -113,14 +117,26 @@ fi
 # keeps it on the credential this env holds. The CLI's stderr is what agent-call
 # leaves in $PF.err; a refusal (rc 74..79, nothing billed) lands as PROBE_FAILED
 # with its AGENT_CALL_ marker, which names no credential: inconclusive.
+# ONCE PER ACCOUNT PER UTC DAY (BH-9125): local_claude_probe exports
+# AUTH_CANARY_FP=canary:claude:<account fp>:<UTC day> after the day claim, and
+# ask() passes it as AGENT_CALL_FP on the asked model M. A second probe of the
+# day is then a ledger replay (AGENT_LEDGER_CANARY_WINDOW_S), not a second
+# purchase. With that fp the nonce is 12 hex of its sha256, so a replayed answer
+# carries the sentinel this run asks for. The token is still never literal in
+# the prompt (the prompt names the word and the code apart). No fp = a random
+# nonce and no caller fp, as before.
 # llm-site: claude-auth-check
 PROBE_BODY='cd /tmp
 AC='"$H"'/bin/agent-call.sh
-M="${TRIAGE_MODEL:-'"$PROBE_M"'}"; F="${AUTH_FALLBACK_MODEL:-'"$PROBE_F"'}"
+M="${AUTH_CANARY_MODEL:-'"$PROBE_M"'}"; F="${AUTH_FALLBACK_MODEL:-'"$PROBE_F"'}"
 PF=$(mktemp)
-N=$(od -An -N6 -tx1 /dev/urandom 2>/dev/null | tr -dc 0-9a-f); [ -n "$N" ] || N=$(date +%s%N | tail -c 13)
+if [ -n "${AUTH_CANARY_FP:-}" ]; then N=$(printf "%s" "$AUTH_CANARY_FP" | sha256sum | cut -c1-12)
+else N=$(od -An -N6 -tx1 /dev/urandom 2>/dev/null | tr -dc 0-9a-f); [ -n "$N" ] || N=$(date +%s%N | tail -c 13); fi
 S="AUTHPROBE-$N"
-ask() { rm -f "$PF.model"; ACCOUNT_ROUTING=0 AGENT_CALL_RUNNERS=claude AGENT_CALL_LANE=claude-auth-check timeout 150 "$AC" canary fleet "$1" 90 "$PF" "Reply with the word AUTHPROBE and the code $N joined by a single hyphen, and nothing else." </dev/null >/dev/null 2>&1; RC=$?
+# Only the asked model M carries the day fp. The fallback rung F is a different
+# purchase: under the same fp the ledger would replay the answer of M to it.
+ask() { rm -f "$PF.model"; FPA=""; [ "$1" = "$M" ] && FPA="${AUTH_CANARY_FP:-}"
+  AGENT_CALL_FP="$FPA" ACCOUNT_ROUTING=0 AGENT_CALL_RUNNERS=claude AGENT_CALL_LANE=claude-auth-check timeout 150 "$AC" canary fleet "$1" 90 "$PF" "Reply with the word AUTHPROBE and the code $N joined by a single hyphen, and nothing else." </dev/null >/dev/null 2>&1; RC=$?
   cat "$PF.err" > "$PF.e" 2>/dev/null || : > "$PF.e"
   O=$(cat "$PF" "$PF.e" | tr "\n\t" "  " | cut -c1-300); SEEN=0; [ "$RC" = 0 ] && grep -qF "$S" "$PF" && SEEN=1
   # agent-call walks its own claude ladder on a failure (credits included) and
@@ -444,6 +460,9 @@ local_claude_probe() {
     echo "${EP:-INCONCLUSIVE cred_probe printed nothing}"
     FP=$(cred_account_fp claude 2>/dev/null) || FP=""
     cred_inference_claim claude "$FP" || exit 0
+    # The day fp (BH-9125) needs an account fp. A box without the lib (the stub
+    # claim answers 0 and there is no fp) keeps the computed fp.
+    [ -n "$FP" ] && export AUTH_CANARY_FP="canary:claude:$FP:$(date -u +%F)"
     echo INFERENCE
     ANS=$(bash -c "$PROBE_BODY")
     printf '%s\n' "$ANS"

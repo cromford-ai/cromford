@@ -30,12 +30,16 @@ esac
 # >>> model-route (BH-1510.2): probe the SAME model the lane runs — model_routes
 # role `<lane>.default` (codex.default, openrouter.default, fireworks.default,
 # grok.default), with the lane's own env var still winning when set. claude is
-# role `triage`, the rung bin/claude-auth-check.sh's own ladder starts on. No
-# route = rc 75 and no probe: a canary of a guessed model would report on the
-# guess. bin/lib/model-route.sh alerted the role.
+# role `auth.canary` (AUTH_CANARY_MODEL wins), the rung bin/claude-auth-check.sh's
+# own ladder starts on. When that route cannot be read (a box synced before the
+# worker schema applied), claude falls back to role `triage`, and
+# bin/lib/model-route.sh wrote its ALERTS line naming auth.canary. No route =
+# rc 75 and no probe: a canary of a guessed model would report on the guess.
+# bin/lib/model-route.sh alerted the role.
 . "${HARNESS:-/root/harness}/bin/lib/lane-model.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/lane-model.sh"
 case "$LANE" in
-  claude)     PROBE_MODEL=$(lane_model TRIAGE_MODEL triage) ;;
+  claude)     PROBE_MODEL=$(lane_model AUTH_CANARY_MODEL auth.canary) \
+                || PROBE_MODEL=$(lane_model AUTH_CANARY_MODEL triage) ;;
   codex)      PROBE_MODEL=$(lane_model CODEX_MODEL codex.default) ;;
   openrouter) PROBE_MODEL=$(lane_model OPENROUTER_MODEL openrouter.default) ;;
   fireworks)  PROBE_MODEL=$(lane_model FIREWORKS_MODEL fireworks.default) ;;
@@ -52,7 +56,11 @@ AC="$H/bin/agent-call.sh"
 # config, fireworks' web_search="disabled", grok's GROK_BILLING switch) are
 # agent-call's own, so the canary probes exactly the path a build takes.
 # ACCOUNT_ROUTING=0: the canary proves the credential in THIS env, not whichever
-# registered account account-pick would prefer.
+# registered account account-pick would prefer. CANARY_FP is set by --endpoint
+# only: the day fp canary:<lane>:<account fp>:<UTC day>, so a second probe of
+# the day is a ledger replay (BH-9125). Default mode (bin/lane-reprobe.sh) never
+# sets it: a reprobe needs fresh evidence, not the stored answer of the day.
+CANARY_FP=""
 infer() {
   local OUTF rc
   if [ "$LANE" = codex ]; then
@@ -64,7 +72,7 @@ infer() {
   fi
   OUTF=$(mktemp)
   # llm-site: lane-probe
-  AGENT_CALL_RUNNERS="$LANE" AGENT_CALL_LANE=claude-auth-check ACCOUNT_ROUTING=0 "$AC" canary fleet "$PROBE_MODEL" 120 "$OUTF" "Reply with exactly: ok" </dev/null >/dev/null 2>&1
+  AGENT_CALL_FP="$CANARY_FP" AGENT_CALL_RUNNERS="$LANE" AGENT_CALL_LANE=claude-auth-check ACCOUNT_ROUTING=0 "$AC" canary fleet "$PROBE_MODEL" 120 "$OUTF" "Reply with exactly: ok" </dev/null >/dev/null 2>&1
   rc=$?
   tail -5 "$OUTF"
   rm -f "$OUTF" "$OUTF".*
@@ -87,11 +95,14 @@ EP=$(cred_probe "$LANE" 2>/dev/null | head -1)
 echo "${EP:-INCONCLUSIVE cred_probe printed nothing}"
 FP=$(cred_account_fp "$LANE" 2>/dev/null) || FP=""
 cred_inference_claim "$LANE" "$FP" || exit 0
+[ -n "$FP" ] && CANARY_FP="canary:$LANE:$FP:$(date -u +%F)"
 echo INFERENCE
 ANS=$(infer); RC=$?
 [ -n "$ANS" ] && printf '%s\n' "$ANS"
-# A refusal bought nothing, so there is nothing to record.
+# A refusal bought nothing, so there is nothing to record. A terminal ledger
+# row (BH-9064) gives back its stored rc with the AGENT_CALL_REFUSED line.
 [ "$RC" -ge 74 ] && [ "$RC" -le 79 ] && exit 0
+grep -q '^AGENT_CALL_REFUSED' <<<"$ANS" && exit 0
 # codex's version line is not part of the answer.
 REPLY=$(grep -v '^codex-cli-version=' <<<"$ANS")
 if grep -qiE '\bok\b' <<<"$REPLY"; then V=ok

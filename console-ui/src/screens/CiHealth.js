@@ -7,7 +7,7 @@ import { useConfirm } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Stat } from '../ui/primitives.js';
 import { MainRedRevertsView } from '../ui/MainRedReverts.js';
-import { agoFromMinutes, minutesSince, fmtDuration, whenLabel } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, fmtDuration, whenLabel, fmtNum } from '../lib/format.js';
 import {
   ciHealthRows, flakeRows, quarantineFormState, makeQuarantineAction, sinceDay, FLAKE_WINDOW_DAYS, FLAKES_LIMIT
 } from '../lib/ci-health.js';
@@ -330,7 +330,7 @@ export function SuiteReuseView({ reuse, runs, openDay, onOpenDay, openRun, onOpe
     { key: 'runs', label: 'RUNS', align: 'right', sort: (r) => r.runs, cell: (r) => r.runs },
     { key: 'ran', label: 'RAN', align: 'right', sort: (r) => r.ran, cell: (r) => r.ran },
     { key: 'reused', label: 'REUSED', align: 'right', sort: (r) => r.reused, cell: (r) => r.reused },
-    { key: 'savedMin', label: 'SAVED', unit: 'min', align: 'right', sort: (r) => r.savedMin, cell: (r) => r.savedMin.toFixed(1) },
+    { key: 'savedMin', label: 'SAVED', unit: 'min', align: 'right', sort: (r) => r.savedMin, cell: (r) => fmtNum(r.savedMin, { decimals: 1 }) },
   ];
   const runColumns = [
     {
@@ -343,7 +343,7 @@ export function SuiteReuseView({ reuse, runs, openDay, onOpenDay, openRun, onOpe
     },
     { key: 'ran', label: 'RAN', align: 'right', sort: (r) => r.ran, cell: (r) => r.ran },
     { key: 'reused', label: 'REUSED', align: 'right', sort: (r) => r.reused, cell: (r) => r.reused },
-    { key: 'savedMin', label: 'SAVED', unit: 'min', align: 'right', sort: (r) => r.savedMin, cell: (r) => r.savedMin.toFixed(1) },
+    { key: 'savedMin', label: 'SAVED', unit: 'min', align: 'right', sort: (r) => r.savedMin, cell: (r) => fmtNum(r.savedMin, { decimals: 1 }) },
   ];
   const suiteColumns = [
     { key: 'suite', label: 'SUITE', sort: (s) => s.suite, cell: (s) => html`<span style="overflow-wrap:anywhere">${s.suite ?? '—'}</span>` },
@@ -383,10 +383,10 @@ export function SuiteReuseView({ reuse, runs, openDay, onOpenDay, openRun, onOpe
     const tiles = savedTiles(rows, nowMs);
     return html`
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        <div style="flex:1 1 160px;min-width:0"><${Stat} label="CI MIN SAVED TODAY" value=${tiles.todayMin.toFixed(1)} unit="min" tone="green"/></div>
-        <div style="flex:1 1 160px;min-width:0"><${Stat} label="CI MIN SAVED 7D" value=${tiles.weekMin.toFixed(1)} unit="min" tone="green"/></div>
+        <div style="flex:1 1 160px;min-width:0"><${Stat} label="CI MIN SAVED TODAY" value=${fmtNum(tiles.todayMin, { decimals: 1 })} unit="min" tone="green"/></div>
+        <div style="flex:1 1 160px;min-width:0"><${Stat} label="CI MIN SAVED 7D" value=${fmtNum(tiles.weekMin, { decimals: 1 })} unit="min" tone="green"/></div>
       </div>
-      ${note(`builder runs saved ${tiles.builderWeekMin.toFixed(1)} min in the last 7 days, counted apart from CI minutes`)}
+      ${note(`builder runs saved ${fmtNum(tiles.builderWeekMin, { decimals: 1 })} min in the last 7 days, counted apart from CI minutes`)}
       <${SortableTable} wide columns=${dayColumns} rows=${rows} rowKey=${(r) => r.key} defaultSort="day" defaultDir="desc"/>
       ${openDay ? html`<div class="section__note" style="margin:14px 0 6px;overflow-wrap:anywhere">RUNS · ${openDay.day} · ${openDay.repo} · ${openDay.class}</div>${runsBody()}` : null}`;
   };

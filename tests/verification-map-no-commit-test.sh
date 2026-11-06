@@ -209,7 +209,8 @@ if command -v mc_regen_table >/dev/null 2>&1; then
     "$(printf 'catalog/lanes.json\tbin/lanes-build.sh --write')" \
     "$(printf 'rules/CLAUDE.md\tbin/render-rules.sh --write')" \
     "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
-    "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')")
+    "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
+    "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')")
   # Of the last three rows two are still COMMITTED: rules/CLAUDE.md (BH-1336),
   # a render five box scripts copy verbatim, and docs/PR-OWNERSHIP.md
   # (BH-5235.2), linked by path. worker/jobs/schema.sql, the composition of

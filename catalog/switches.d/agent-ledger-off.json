@@ -1,0 +1,1 @@
+{"name":"agent-ledger-off","readers":["bin/lib/agent-call-ledger.sh"],"box_scoped":true,"what":"turns off the dedup ledger that agent-call.sh and claude-cost.sh ask before a model call (BH-9064)"}

@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "about": "BH-5005: classifies state/<path> for bin/state-paths-guard.sh. rows = a DB row is the record and a new script must not write the file; cache = a local copy of rows, rebuildable; box-local = belongs to this box only. A path not listed here is unclassified and passes."
+}

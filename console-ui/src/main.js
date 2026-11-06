@@ -5,6 +5,7 @@ import { api } from './api.js';
 import { syncFleetDefault } from './theme/apply.js';
 import { initSentry } from './lib/error-report.js';
 import './styles.css';
+import './sidemenu.css';
 import './phone-floor.css';
 import './ui/TrackerSheets.css';
 import './settings-shell.css';

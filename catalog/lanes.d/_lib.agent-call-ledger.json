@@ -1,0 +1,91 @@
+{
+  "libs": [
+    {
+      "id": "agent-call-ledger",
+      "file": "bin/lib/agent-call-ledger.sh",
+      "note": "BH-9064 dedup before spend, slice C0 (2026-11-05): before the model call, bin/agent-call.sh (and bin/claude-cost.sh) asks the harness-jobs agent_call_ledger table (POST /api/agent-call-ledger/begin) for the call's (project, guard stage, fingerprint). An ok answer of a replay stage inside the window is replayed with no vendor call; empty, failed at the attempt cap, running inside its TTL and parked are terminal (the stored rc comes back, one LEDGER TERMINAL line in logs/agent-call-ledger.log); anything else runs and settles the row after. A call with no AGENT_CALL_FP is keyed on K3's call_guard_fp (<ticket>:<HEAD>:p<prompt sha>), which is enforced but never replayed. The ledger never refuses on its own read failure. Applied by agent-call.sh right after lib_env_apply call-guard. Note: docs/notes/2026-11-05-BH-9064-agent-call-ledger.md.",
+      "knobs": [
+        {
+          "env": "AGENT_LEDGER",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "The switch. 0 (or the file flags/agent-ledger-off) = no ledger check and no settle; agent-call.sh runs as before BH-9064. Read as ${AGENT_LEDGER:-1}."
+        },
+        {
+          "env": "AGENT_LEDGER_STAGES",
+          "type": "string",
+          "default": "review triage-shard mc-rereview plan preplan execute fix triage prodqa lead-review orchestrator box-chat greenfield review-head lead-head canary",
+          "zero_means": null,
+          "required": false,
+          "note": "Guard stages the ledger keys (AGENT_CALL_GUARD_STAGE when the caller names its family, else the agent-call stage): a space/comma list, `all` or `none`. Default: K3's CALL_GUARD_STAGES_DEFAULT plus canary (bin/claude-auth-check.sh). Read as ${AGENT_LEDGER_STAGES:-$CALL_GUARD_STAGES_DEFAULT canary}."
+        },
+        {
+          "env": "AGENT_LEDGER_REPLAY_STAGES",
+          "type": "string",
+          "default": "review lead-review triage-shard canary mc-rereview",
+          "zero_means": null,
+          "required": false,
+          "note": "Guard stages whose ok answer is replayed, because their deliverable is the answer text. Only a caller-named AGENT_CALL_FP replays; a computed fp never does. execute and fix are never in it by default: a replayed transcript makes none of the edits. Read as ${AGENT_LEDGER_REPLAY_STAGES:-review lead-review triage-shard canary mc-rereview}."
+        },
+        {
+          "env": "AGENT_LEDGER_WINDOW_S",
+          "type": "int",
+          "default": 3600,
+          "min": 60,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The replay and attempt window: a row whose last write is older is fresh work (attempts restart at 1). 3600 matches the ticket's 60-minute repeat measure. Read as ${AGENT_LEDGER_WINDOW_S:-3600}."
+        },
+        {
+          "env": "AGENT_LEDGER_MAX_ATTEMPTS",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 100,
+          "zero_means": null,
+          "required": false,
+          "note": "Failed attempts of one fingerprint inside the window before the next call is terminal (the stored rc, no vendor call). A stage never gets a cap below its K3 ceiling (call_guard_max, e.g. orchestrator=6), so K3 refuses first. Read as ${AGENT_LEDGER_MAX_ATTEMPTS:-3}."
+        },
+        {
+          "env": "AGENT_LEDGER_RUNNING_TTL_S",
+          "type": "int",
+          "default": 7200,
+          "min": 60,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long a running row holds its work: inside it, another box asking for the same fingerprint is terminal (rc 74, nothing called), so two boxes never buy one piece of work at once. Past it, the crashed call counts as a paid attempt. 7200 is the execute stage timeout. Read as ${AGENT_LEDGER_RUNNING_TTL_S:-7200}."
+        },
+        {
+          "env": "AGENT_LEDGER_ANSWER_MAX_BYTES",
+          "type": "int",
+          "default": 262144,
+          "min": 1,
+          "max": 1048576,
+          "unit": "bytes",
+          "zero_means": null,
+          "required": false,
+          "note": "Answer bytes stored in the D1 row. A larger answer is settled ok with no body (answer_bytes records its size) and is never replayed: a miss costs one more purchase, never a wrong answer. The worker refuses a body over 1048576 (this knob's max) with 413. Read as ${AGENT_LEDGER_ANSWER_MAX_BYTES:-262144}."
+        },
+        {
+          "env": "AGENT_LEDGER_TIMEOUT_S",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 30,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The worker timeout of one ledger request (JOBS_TIMEOUT for that request). A timeout is unreadable: the call runs. Read as ${AGENT_LEDGER_TIMEOUT_S:-5}."
+        }
+      ]
+    }
+  ]
+}

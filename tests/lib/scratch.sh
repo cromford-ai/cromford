@@ -49,6 +49,21 @@ fi
 unset __scratch_repo
 # <<< context-budgets compose
 
+# >>> state-paths compose (BH-8986)
+# catalog/state-paths.json is composed from catalog/state-paths.d/ and
+# git-ignored. The no-state-files ratchet and the state-path suites read it at
+# "$DIR/catalog/state-paths.json". Same rules as the block above: it never
+# exits, an unchanged compose writes nothing, a tree with no state-paths.d/ is
+# skipped.
+__scratch_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
+if [ -n "$__scratch_repo" ] && [ -d "$__scratch_repo/catalog/state-paths.d" ] \
+   && [ -x "$__scratch_repo/bin/state-paths-build.sh" ]; then
+  "$__scratch_repo/bin/state-paths-build.sh" --compose --repo "$__scratch_repo" >/dev/null 2>&1 \
+    || echo "scratch.sh: catalog/state-paths.json could not be composed from catalog/state-paths.d (run bin/state-paths-build.sh --check)" >&2
+fi
+unset __scratch_repo
+# <<< state-paths compose
+
 # fly/entrypoint.sh exports HARNESS_ENV_DIR on pool machines; resolver rule 1
 # would otherwise send every scratch $T/h/env fixture to the live tmpfs.
 unset HARNESS H HARNESS_CHECKOUT HARNESS_ENV_DIR

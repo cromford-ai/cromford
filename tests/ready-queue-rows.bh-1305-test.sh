@@ -122,8 +122,8 @@ statuses() { awk -F'\t' -v k="$1" '$2==k{print $1"/"$4}' "$ROWS" | sort | tr '\n
 
 two_boards() { # two_boards [x-status] [y-status]
   : > "$ROWS"
-  printf 'x-os\tAR-9\tt-9\t%s\tAR-9 t-9 — owed project=x-os\n' "${1:-ready}" >> "$ROWS"
-  printf 'y-os\tAR-9\tt-9\t%s\tAR-9 t-9 — owed project=y-os\n' "${2:-ready}" >> "$ROWS"
+  printf 'x-os\tAR-9\TK-9\t%s\tAR-9 t-9 — owed project=x-os\n' "${1:-ready}" >> "$ROWS"
+  printf 'y-os\tAR-9\TK-9\t%s\tAR-9 t-9 — owed project=y-os\n' "${2:-ready}" >> "$ROWS"
 }
 
 # ══ A. THE RED: an empty project drops EVERY board's row for the key ════════
@@ -138,7 +138,7 @@ lib 1 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
 # N boards, not just two: the fan-out is over the row set, not a special case.
 : > "$ROWS"
 for P in x-os y-os z-os; do
-  printf '%s\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=%s\n' "$P" "$P" >> "$ROWS"
+  printf '%s\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=%s\n' "$P" "$P" >> "$ROWS"
 done
 lib 1 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
 [ "$(statuses TK-9)" = "x-os/dropped y-os/dropped z-os/dropped " ] \
@@ -147,7 +147,7 @@ lib 1 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
   && ok || bad "three boards holding the key must be exactly three PATCHes, got $(patches)"
 
 # One project, one row: the ordinary case must not have grown a second request.
-: > "$ROWS"; printf 'x-os\tAR-9\tt-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
+: > "$ROWS"; printf 'x-os\tAR-9\TK-9\tready\tAR-9 t-9 — owed project=x-os\n' >> "$ROWS"
 lib 1 up 'rq_drop "$HARNESS" "" TK-9' >/dev/null
 { [ "$(statuses TK-9)" = "x-os/dropped " ] && [ "$(patches)" = 1 ]; } \
   && ok || bad "the single-board case must stay one PATCH and one dropped row, got: $(statuses TK-9) / $(patches) PATCHes"
@@ -239,7 +239,7 @@ lib 1 up 'rq_drop "$HARNESS" "" NOPE-1' >/dev/null && ok \
 
 # Several keys in one call, each fanned out over its own boards.
 : > "$ROWS"
-printf 'x-os\tAR-9\tt-9\tready\tl\ny-os\tAR-9\tt-9\tready\tl\nx-os\tAR-8\tt-8\tready\tl\n' >> "$ROWS"
+printf 'x-os\tAR-9\TK-9\tready\tl\ny-os\tAR-9\TK-9\tready\tl\nx-os\tAR-8\TK-8\tready\tl\n' >> "$ROWS"
 lib 1 up 'rq_drop "$HARNESS" "" TK-9 TK-8' >/dev/null
 { [ "$(statuses TK-9)" = "x-os/dropped y-os/dropped " ] && [ "$(statuses TK-8)" = "x-os/dropped " ]; } \
   && ok || bad "a multi-key drop must fan each key out over its own boards, got: $(statuses TK-9)/ $(statuses TK-8)"

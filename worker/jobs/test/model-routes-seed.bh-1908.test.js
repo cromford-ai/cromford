@@ -161,6 +161,10 @@ const SEEDED_AS_COPY = {
   // TEST-CHANGE (BH-7722): unblock.judge, Tackler's bounded judge route, copies
   // stage.execute's claude rung 0 the same way stage.archie does.
   'unblock.judge': 'stage.execute',
+  // TEST-CHANGE (BH-9125): auth.canary, the auth canary's route
+  // (bin/claude-auth-check.sh, bin/lane-probe.sh), copies bootstrap.smoke's
+  // claude rung 0 (Haiku class) the same way.
+  'auth.canary': 'bootstrap.smoke',
 };
 // TEST-CHANGE (BH-4065): archie-research.xsearch copies grok.default's GROK
 // rung 0 (Archie's direct xAI X search runs on the grok runner), so it is

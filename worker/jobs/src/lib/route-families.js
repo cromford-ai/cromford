@@ -23,7 +23,7 @@ export const FRAG_RE = /^(?:(\d{3})-([a-z0-9-]+)|([a-z]+-\d+(?:[.-]\d+)?)-([a-z]
 // The families index.js imports itself into OPEN_ROUTES. They are matched
 // BEFORE the bearer check, so adding one is a reviewed edit to index.js, never
 // a fragment: a fragment can never put a route in front of the bearer.
-export const OPEN_FAMILIES = new Set(["webhooks", "ci-durations", "ci-test-tiers", "suite-results"]);
+export const OPEN_FAMILIES = new Set(["webhooks", "ci-durations", "ci-test-tiers", "suite-results", "hosted-board"]);
 
 // The fragments as [{ num, key, family, file, id }], sorted by file name. num is
 // the three digits or null, key the ticket key or null, and id the import alias

@@ -2,6 +2,7 @@ import { html, Link } from '../router.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
+import { fmtUsd } from '../lib/format.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { dailyCeilingRows, dailyWarnPct, withSpend } from '../lib/daily-ceilings.js';
 
@@ -27,7 +28,7 @@ export function DailyCeilingsSection({ settings }) {
   return html`<${DailyCeilingsView} settings=${settings} spend=${spend}/>`;
 }
 
-const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
+const money = (v) => (v === null || v === undefined ? '—' : fmtUsd(v));
 const STATE_COLOR = { over: 'var(--red)', warn: 'var(--amber)', unknown: 'var(--faint)', unreadable: 'var(--faint)' };
 
 export const ceilingColumns = [
@@ -38,7 +39,7 @@ export const ceilingColumns = [
   },
   {
     key: 'ceiling', label: 'CEILING', unit: '$', sort: (r) => r.ceiling,
-    cell: (r) => (r.ceiling === null ? html`<span title="the harness refuses this value">${r.raw} (refused)</span>` : `$${r.ceiling}`),
+    cell: (r) => (r.ceiling === null ? html`<span title="the harness refuses this value">${r.raw} (refused)</span>` : fmtUsd(r.ceiling)),
   },
   { key: 'spent', label: 'TODAY (UTC)', unit: '$', sort: (r) => r.spent, cell: (r) => money(r.spent) },
   { key: 'pct', label: 'USED', unit: '%', sort: (r) => r.pct, cell: (r) => (r.pct === null ? '—' : `${r.pct}%`) },

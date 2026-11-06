@@ -93,7 +93,8 @@ run_check "$R" STUB_EP="ALIVE 200"; rc=$?
 [ "$rc" = 0 ] && ok || bad "Run1 rc=$rc: $(cat "$R/out.txt")"
 # hub + project-1-lane share fp1 here, so the second probe finds the claim taken
 [ "$(lines "$R/ac.log")" = 1 ] && ok || bad "Run1 want exactly 1 agent-call: $(cat "$R/ac.log" 2>/dev/null)"
-grep -q '^canary fleet m-triage 90 ' "$R/ac.log" 2>/dev/null && ok || bad "Run1 argv: $(cat "$R/ac.log" 2>/dev/null)"
+# TEST-CHANGE (BH-9125): the canary runs on model_routes role auth.canary, not triage.
+grep -q '^canary fleet m-auth.canary 90 ' "$R/ac.log" 2>/dev/null && ok || bad "Run1 argv: $(cat "$R/ac.log" 2>/dev/null)"
 grep -qx 'AGENT_CALL_RUNNERS=claude AGENT_CALL_LANE=claude-auth-check ACCOUNT_ROUTING=0' "$R/ac.env" 2>/dev/null && ok || bad "Run1 env: $(cat "$R/ac.env" 2>/dev/null)"
 [ "$(lines "$R/claims")" = 1 ] && ok || bad "Run1 claims: $(cat "$R/claims" 2>/dev/null)"
 [ "$(cat "$R/records" 2>/dev/null)" = "claude fp1 ok" ] && ok || bad "Run1 record: $(cat "$R/records" 2>/dev/null)"

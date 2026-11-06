@@ -1,5 +1,6 @@
 import { html } from '../router.js';
 import { SortableTable } from '../ui/SortableTable.js';
+import { fmtNum } from '../lib/format.js';
 import { LEGACY_ALIASES } from '../theme/tokens.js';
 import {
   COLOR_KEYS, FONT_CHOICES, FONT_ROLES, RADIUS_KEYS, RADIUS_MAX, MIN_CONTRAST,
@@ -126,7 +127,7 @@ export function ThemeEditorView({ doc, saving = false, saveError = null, onChang
       ${contrast.length ? html`
         <div class="theme-editor__warn" data-contrast-warn="1" role="alert">
           <span>Text needs ${MIN_CONTRAST}:1 against every surface. These pairs are under it, so SAVE is off until they're fixed:</span>
-          <ul>${contrast.map((f) => html`<li key=${`${f.fg}${f.bg}`}>${f.fg} on ${f.bg}: ${f.ratio === null ? 'not an opaque colour' : `${f.ratio.toFixed(2)}:1`}</li>`)}</ul>
+          <ul>${contrast.map((f) => html`<li key=${`${f.fg}${f.bg}`}>${f.fg} on ${f.bg}: ${f.ratio === null ? 'not an opaque colour' : `${fmtNum(f.ratio, { decimals: 2 })}:1`}</li>`)}</ul>
         </div>` : null}
       ${other.length ? html`
         <div class="theme-editor__warn" data-theme-errors="1">

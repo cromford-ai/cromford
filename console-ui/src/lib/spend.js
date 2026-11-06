@@ -1,3 +1,5 @@
+import { fmtNum } from './format.js';
+
 // Real dollars. Every rule in here exists because the alternative is a money
 // screen that states something false — and a cost readout is believed.
 
@@ -22,7 +24,7 @@ export function fmtUsdExact(n) {
   if (v === 0) return '$0.00';
   const abs = Math.abs(v);
   if (abs < 0.005) return v < 0 ? '>-$0.01' : '<$0.01';
-  return `${v < 0 ? '-' : ''}$${abs.toFixed(2)}`;
+  return `${v < 0 ? '-' : ''}$${fmtNum(abs, { decimals: 2 })}`;
 }
 
 // A "share" is almost certainly a 0..1 fraction, but guessing wrong turns 42%

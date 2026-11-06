@@ -147,7 +147,9 @@ lead_carry() {
     # BH-6842: the conductor's restamp commit (renames + reference rewrites
     # only, bin/lib/schema-restamp.sh), alone or with clean main merges.
     command -v restamp_same >/dev/null 2>&1 || { [ -r "$_lc_dir/schema-restamp.sh" ] && . "$_lc_dir/schema-restamp.sh"; }
-    if ! { command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$repo" origin/main "$ph" "$head"); }; then
+    # BH-9066: the same restamp after a rebase (patch_same_restamp, bin/lib/patch-same.sh).
+    if ! { command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$repo" origin/main "$ph" "$head"); } \
+       && ! { command -v patch_same_restamp >/dev/null 2>&1 && how=$(patch_same_restamp "$repo" origin/main "$ph" "$head"); }; then
       _lc_done "$key" "$head" refused "$ph" "$pw" "$pid" - "$pold" "$pnew" "patch changed (a new commit or a resolved conflict)"; return 1
     fi
   fi

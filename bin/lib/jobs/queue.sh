@@ -231,6 +231,37 @@ queue_release() {
   queue_done "$project" "$key" queued "$reason"
 }
 
+# queue_release_counted <project> <key> <reason>
+#   A release that COUNTS (BH-8734): the orphan release and the watchdog's
+#   stale-claim release, the "the machine is gone" paths. The worker adds 1 to
+#   build_queue.attempt and owns the cap (settings row queue.release_attempt_max):
+#   the release past it ends the row `failed`, not `queued`.
+#   rc 0 -> prints `queued <attempt>` or `failed <attempt> <max>` (`?` for a
+#           value the answer does not carry)
+#   rc 1 -> the API is unusable, or answered `stale <current>` (the row was not
+#           claimed any more; nothing was written)
+#   An old worker ignores count_attempt and answers today's `queued` row, so the
+#   output is `queued <unchanged attempt>`: today's behaviour, never a failure.
+queue_release_counted() {
+  local project="${1:-}" key="${2:-}" reason="${3:-}" body resp rc
+  [ -n "$project" ] && [ -n "$key" ] || return 1
+  body=$(jq -nc --arg p "$project" --arg k "$key" --arg r "$reason" \
+    '{project:$p,key:$k,status:"queued",count_attempt:true} + (if $r == "" then {} else {reason:$r} end)' 2>/dev/null) || return 1
+  resp=$(_jobs_req PATCH /api/queue "$body"); rc=$?
+  if [ "$rc" = 9 ]; then
+    printf 'stale %s\n' "$(jq -r '.current // "?"' <<<"$resp" 2>/dev/null)"
+    return 1
+  fi
+  [ "$rc" = 0 ] || return 1
+  # A 2xx is a release, as it is for queue_release; only a `failed` status in
+  # the answer says the worker capped it. An answer with no attempt prints `?`.
+  if [ "$(jq -r '.queued.status // ""' <<<"$resp" 2>/dev/null)" = failed ]; then
+    jq -r '"failed \(.queued.attempt // "?") \(.attempt_max // "?")"' <<<"$resp" 2>/dev/null
+  else
+    printf 'queued %s\n' "$(jq -r '.queued.attempt // "?"' <<<"$resp" 2>/dev/null || echo '?')"
+  fi
+}
+
 # --- BH-1033 (state→DB slice 8): the two log-as-state stores -----------------
 # The READY queue and the age-out audit are files on ONE box that fleet-wide
 # decisions depend on. These helpers let a lane ask the DATABASE first. They are

@@ -38,6 +38,24 @@ probe, claimed and recorded on that box.
 buys its inference, now through agent-call with a cost row. A box without
 `bin/lib/cred-probe.sh` behaves the same way.
 
+### The model route and the day fp (BH-9125)
+
+The probe runs on the model_routes role `auth.canary`. The seed copies
+`bootstrap.smoke` rung 0 on the claude runner (a Haiku-class model), so no
+model id is in code. `AUTH_CANARY_MODEL` overrides the row on one box.
+`TRIAGE_MODEL` does not steer the canary. If the `auth.canary` route cannot be
+read, the probe uses role `triage`, and `bin/lib/model-route.sh` writes its
+ALERTS line for `auth.canary`. The day claim stays the first gate. After a
+claim rc 0 with an account fp, the inference carries
+`AGENT_CALL_FP=canary:<runner>:<account fp>:<UTC day>` (hub: `PROBE_BODY`;
+remote box: `lane-probe.sh --endpoint`). The ledger keeps the answer of a
+stage-canary call with a caller fp for `AGENT_LEDGER_CANARY_WINDOW_S` (86400 s).
+So a second probe on the same day is a ledger replay with no vendor call. On the
+hub the nonce is then 12 hex of sha256(fp), so a replayed answer carries the
+sentinel of the second run. Only the asked model carries the fp; the
+`auth.fallback` rung keeps a computed fp. `lane-probe.sh` default mode (from
+`bin/lane-reprobe.sh`) carries no fp, because a reprobe needs fresh evidence.
+
 ### What each answer does
 
 | endpoint | inference | branch |

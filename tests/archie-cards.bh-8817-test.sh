@@ -654,11 +654,11 @@ eq "L1 the next Tackler tick: 0 alerts" "$(alerts)" 0
 
 # L2: every lever maps to its writer action, from the row.
 lever l2key0000001 "$PRROW" '{"pick":"act","lever":"fix_round","reason":"r","brief":"fix the flaky wait in tests/x.sh"}'
-eq "L2 fix_round" "$(ubrec | jq -c .action)" '{"name":"fix_round","args":{"brief":"fix the flaky wait in tests/x.sh"}}'
+eq "L2 fix_round" "$(ubrec | jq -c '[.action.name, .action.args.brief]')" '["fix_round","fix the flaky wait in tests/x.sh"]'
 lever l2key0000002 "$PRROW" '{"pick":"act","lever":"fix_round","reason":"the reason is the brief"}'
 eq "L2 fix_round with no brief takes the reason" "$(ubrec | jq -c .action.args)" '{"brief":"the reason is the brief"}'
 lever l2key0000003 "$PRROW" '{"pick":"act","lever":"re_review","reason":"r","brief":"the old verdict was on an older head"}'
-eq "L2 re_review" "$(ubrec | jq -c .action)" '{"name":"lead_rerequest","args":{"request_id":"none","priority":5,"notes":"the old verdict was on an older head"}}'
+eq "L2 re_review" "$(ubrec | jq -c '[.action.name, .action.args.request_id, .action.args.priority, .action.args.notes]')" '["lead_rerequest","none",5,"the old verdict was on an older head"]'
 lever l2key0000004 "$PRROW" '{"pick":"act","lever":"re_review","reason":"r","brief":"'"$(printf 'n%.0s' $(seq 1 400))"'"}' "" ARCHIE_CARDS_REREVIEW_PRIORITY=3
 eq "L2 re_review: the knob priority, notes cut to 300" "$(ubrec | jq -c '[.action.args.priority, (.action.args.notes | length)]')" '[3,300]'
 lever l2key0000005 "$PRROW" '{"pick":"act","lever":"rebase","reason":"behind main"}'
@@ -666,7 +666,7 @@ eq "L2 rebase" "$(ubrec | jq -c .action)" '{"name":"update_branch","args":{}}'
 lever l2key0000006 "$TKROW" '{"pick":"act","lever":"rebuild","reason":"the last build died on the pool"}'
 eq "L2 rebuild: main's rebuild arm, the key from the subject" "$(ubrec | jq -c '[.action, .pr]')" '[{"name":"rebuild","args":{"key":"BH-8798"}},null]'
 lever l2key0000007 "$TKROW" '{"pick":"act","lever":"re_offer","reason":"r"}'
-eq "L2 re_offer" "$(ubrec | jq -c .action)" '{"name":"launch_fastpath","args":{"key":"BH-8798"}}'
+eq "L2 re_offer" "$(ubrec | jq -c '[.action.name, .action.args.key]')" '["launch_fastpath","BH-8798"]'
 lever l2key0000008 "$PRROW" '{"pick":"act","lever":"ticket_comment","reason":"the gate is red on main","brief":"see run 123"}'
 eq "L2 ticket_comment on a PR: the PR thread" "$(ubrec | jq -c '[.action.name, .action.args.issue, .action.args.lines[0:2]]')" '["ticket_comment",42,["the gate is red on main","see run 123"]]'
 lever l2key0000009 "$TKROW | .repo = \"example-org/cromford\"" '{"pick":"act","lever":"ticket_comment","reason":"r"}'

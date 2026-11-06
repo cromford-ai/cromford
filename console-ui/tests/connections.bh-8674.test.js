@@ -626,7 +626,10 @@ test('C9a the Settings menu row reaches the screen inside the shell', async () =
   fire(row, 'click');
   await flush();
   assert.equal(window.location.pathname, '/settings/fleet/connections');
-  const cur = all(el).find((n) => n.attrs && n.attrs['aria-current'] === 'page');
+  // Inside the settings menu: the app's side menu (BH-9118) lights SETTINGS too.
+  const menu = all(el).find((n) => n.localName === 'nav' && (n.attrs.class || '').split(' ').includes('settings-menu'));
+  assert.ok(menu, 'nav.settings-menu is in the DOM');
+  const cur = all(menu).find((n) => n.attrs && n.attrs['aria-current'] === 'page');
   assert.equal(cur && cur.textContent.trim(), 'Tracker connections');
   assert.deepEqual(order(el), PROJECTS, 'the table renders in the shell');
 });

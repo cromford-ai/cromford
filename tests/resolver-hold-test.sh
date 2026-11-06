@@ -239,7 +239,7 @@ for NEG in 'Do NOT RESUME this yet' 'still on HOLD' \
 done
 row 1 "held hold:comment" "$OPEN_ISSUE" \
   "$(CMTS "$(CMT 'HOLD — not yet' 7200)" "$(CMT RESUME 3600 Bot)")" \
-  "a BOT-authored RESUME must not lift a HOLD"
+  "a TK-authored RESUME must not lift a HOLD"
 # an unparseable created_at can never be the newest word
 row 1 "held hold:comment" "$OPEN_ISSUE" \
   "$(CMTS "$(CMT 'HOLD — not yet' 7200)" "$(CMT RESUME 0 User 'not-a-timestamp')")" \
@@ -257,7 +257,7 @@ for NOTHOLD in 'the holder of the lock' 'HOLDER' 'HOLDING the release' 'putting 
     "'$NOTHOLD' must not hold the ticket"
 done
 row 0 "clear no-hold" "$OPEN_ISSUE" "$(CMTS "$(CMT 'HOLD — not yet' 3600 Bot)")" \
-  "a BOT-authored HOLD must not hold the ticket"
+  "a TK-authored HOLD must not hold the ticket"
 # the title and the body decide only when no comment does
 row 1 "held hold:title" "$(ISSUE open ai-build 'Compliance P7 (HOLD): EU residency')" '[]' \
   "HOLD in the title holds (project-5 #14)"
@@ -328,7 +328,7 @@ for NOTAB in 'Do NOT ABANDON this yet' 'abandon' 'we should not abandon the appr
     "'$NOTAB' must not abandon the ticket"
 done
 row 0 "clear no-hold" "$OPEN_ISSUE" "$(CMTS "$(CMT ABANDON 3600 Bot)")" \
-  "a BOT-authored ABANDON must not abandon the ticket"
+  "a TK-authored ABANDON must not abandon the ticket"
 # THREAD ONLY. A body or a title that says ABANDON is prose about the word —
 # BH-1461's lesson, applied before the incident rather than after it.
 row 0 "clear no-hold" "$(ISSUE open ai-build 'TK-9: a thing' 'ABANDON: what the word does')" '[]' \

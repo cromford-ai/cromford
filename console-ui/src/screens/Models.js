@@ -104,7 +104,7 @@ export function ModelsScreen() {
 // ───────────────────────────────────────────────────────── render half
 
 const dash = html`<span class="na">—</span>`;
-const rate = (v) => (v === null || v === undefined ? '—' : v < 1 ? `$${v.toFixed(3)}` : fmtUsd(v));
+const rate = (v) => (v === null || v === undefined ? '—' : v < 1 ? fmtUsd(v, { decimals: 3 }) : fmtUsd(v));
 const fmtRate = (v) => (v === null || v === undefined ? dash : html`<span class="num" data-usd-basis="api">${rate(v)}</span>`);
 
 // BH-3570: what the column names mean, said under the table instead of in a title=.

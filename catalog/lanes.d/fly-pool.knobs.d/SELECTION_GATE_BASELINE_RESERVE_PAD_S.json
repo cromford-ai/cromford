@@ -1,0 +1,13 @@
+{
+  "env": "SELECTION_GATE_BASELINE_RESERVE_PAD_S",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9061. With the base run on, the selection gate's main run gets SELECTION_GATE_TIMEOUT_S - SELECTION_GATE_BASELINE_TIMEOUT_S - this pad, so the base run is not cut off by the gate's wall.",
+  "read_in": "bin/lib/selection-gate.sh",
+  "project_scoped": false
+}

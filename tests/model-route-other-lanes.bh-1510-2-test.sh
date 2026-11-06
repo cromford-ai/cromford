@@ -142,7 +142,9 @@ lane_case bin/remediate-agent.sh 1 remediate 75 "MODEL=m-remediate@proj-x"
 lane_case bin/rule-miner.sh 1 rule.miner 75 "MINER_MODEL=m-rule.miner"
 lane_case bin/lander.sh 1 lander 75 "LANDER_M=m-lander@proj-x"
 lane_case bin/runner-bench.sh 1 bench 75 "BENCH_MODEL=m-bench"
-lane_case bin/claude-auth-check.sh 1 triage 75 "PROBE_M=m-triage PROBE_F=m-auth.fallback"
+# TEST-CHANGE (BH-9125): the auth canary's first role is auth.canary (triage is
+# only its fallback when auth.canary cannot be read).
+lane_case bin/claude-auth-check.sh 1 auth.canary 75 "PROBE_M=m-auth.canary PROBE_F=m-auth.fallback"
 for l in codex openrouter fireworks grok; do
   lane_case bin/lane-probe.sh 1 "$l.default" 75 "PROBE_MODEL=m-$l.default" LANE="$l"
 done

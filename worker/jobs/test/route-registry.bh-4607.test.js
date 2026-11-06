@@ -43,8 +43,12 @@ test('N1 gatedFamilies/renderRoutesModule order by number, drop the open familie
 
   const live = renderRoutesModule(fragNames());
   const open = parseFragments(fragNames()).filter((f) => OPEN_FAMILIES.has(f.family));
-  assert.deepEqual(open.map((f) => f.family), ['webhooks', 'ci-durations', 'ci-test-tiers', 'suite-results']);
-  assert.equal(importLines(live).length, fragNames().length - 4, 'every fragment but the 4 open ones becomes one import');
+  // TEST-CHANGE (BH-8918): OPEN_FAMILIES gains hosted-board, the hosted Board
+  // API's open family (its own token check); the open count goes 4 -> 5.
+  assert.deepEqual(open.map((f) => f.family), ['webhooks', 'ci-durations', 'ci-test-tiers', 'suite-results', 'hosted-board']);
+  assert.equal(importLines(live).length, fragNames().length - 5, 'every fragment but the 5 open ones becomes one import');
+  assert.ok(!live.includes('./routes/hosted-board.js'), 'the open family hosted-board must never reach ROUTES');
+  assert.ok(live.includes('./routes/hosted-board-admin.js'), 'the gated family hosted-board-admin is in ROUTES');
 });
 
 test('N2 parseFragments refuses a stray file, a shared number and a shared family', () => {
@@ -88,7 +92,8 @@ test('N4 GUARDRAIL: src/index.js registers no gated route family', () => {
     + 'never in index.js; index.js reads ROUTES from "#routes" (BH-4607)';
   const got = registrationsIn(src);
   // Import order has no effect; N3 pins the OPEN_ROUTES order.
-  assert.deepEqual([...got.imported].sort(), ['ciDurations', 'ciTestTiers', 'suiteResults', 'webhooks'],
+  // TEST-CHANGE (BH-8918): index.js imports the open family hosted-board too.
+  assert.deepEqual([...got.imported].sort(), ['ciDurations', 'ciTestTiers', 'hostedBoard', 'suiteResults', 'webhooks'],
     `index.js imports gated route families: ${how}`);
   assert.deepEqual(got.spreads, [], `index.js spreads route families into a table: ${how}`);
   assert.ok(got.usesRoutes, `index.js does not import ROUTES from "#routes": ${how}`);
@@ -97,7 +102,7 @@ test('N4 GUARDRAIL: src/index.js registers no gated route family', () => {
   const negatives = [
     'import { routes as webhooks } from "./routes/webhooks.js";',
     'export { alertDecision } from "./routes/alerts.js";',
-    'export const OPEN_ROUTES = [...webhooks, ...ciDurations, ...ciTestTiers, ...suiteResults];',
+    'export const OPEN_ROUTES = [...webhooks, ...ciDurations, ...ciTestTiers, ...suiteResults, ...hostedBoard];',
     '  ROUTES,',
     '// a family lives in ./routes/<family>.js; see ./routes/cap-flags.js',
     'import { ROUTES } from "#routes";',

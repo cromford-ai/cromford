@@ -1,0 +1,10 @@
+{
+  "env": "TRIAGE_STARVE_INAPP_LAUNCH",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off: an in-app board records n/a: in-app board and launches nothing, as before BH-9113",
+  "required": false,
+  "note": "BH-9113 switch for the in-app launch attempt. 1 = an eligible in-app key gets one guarded bin/run-build.sh launch (cap TRIAGE_STARVE_FASTPATH_MAX per pass). Code fallback 1, read as ${TRIAGE_STARVE_INAPP_LAUNCH:-1}; settings row lib.triage-starve[.<project>].triage_starve_inapp_launch."
+}

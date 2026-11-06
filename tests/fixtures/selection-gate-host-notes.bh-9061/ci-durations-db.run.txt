@@ -1,0 +1,6 @@
+FAIL tests/ci-durations-db.bh-5653-test.sh (rc 1)
+
+===== tests/ci-durations-db.bh-5653-test.sh (rc 1) =====
+  FAIL no seed in git history (0 rows)
+PASS=0 FAIL=1
+remote-gate: 1 suites, 1 failing

@@ -759,6 +759,21 @@ ts_unit_skip() {
   return 0
 }
 
+# _ts_spawn_build <key> <label> <suffix> — detach bin/run-build.sh for one
+# ticket, its output in logs/<p>.<label>-<suffix>.out, with the tick's lock fds
+# closed. The one launch both ts_enqueue and the in-app starvation rescue
+# (bin/lib/triage-starve.sh, BH-9113) use.
+_ts_spawn_build() {
+  local h key="$1" label="$2" out
+  h=$(_ts_h)
+  out="$h/logs/$PROJECT.$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')-$3.out"
+  if command -v lock_spawn_unheld >/dev/null 2>&1; then
+    lock_spawn_unheld setsid "$h/bin/run-build.sh" "$PROJECT" "$key" "$label" > "$out" 2>&1
+  else
+    ( exec 8>&- 9>&-; exec setsid "$h/bin/run-build.sh" "$PROJECT" "$key" "$label" ) > "$out" 2>&1 &
+  fi
+}
+
 # ts_enqueue — enforce: hand each `enqueue` ticket to bin/run-build.sh, the
 # launch path bin/orphan-reconcile.sh uses (it holds the build-key dedupe, the
 # duplicate-work guard and the context gate). The marker is written BEFORE the
@@ -773,13 +788,7 @@ ts_enqueue() {
     [ -n "$key" ] || continue
     [ "$n" -lt "$max" ] || { _ts_log "triage-state: $label left for the next tick (TRIAGE_STATE_ENQUEUE_MAX=$max)"; continue; }
     ts_hash_of "$key" > "$d/$key.enqueued" 2>/dev/null
-    if command -v lock_spawn_unheld >/dev/null 2>&1; then
-      lock_spawn_unheld setsid "$h/bin/run-build.sh" "$PROJECT" "$key" "$label" \
-        > "$h/logs/$PROJECT.$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')-triage-state.out" 2>&1
-    else
-      ( exec 8>&- 9>&-; exec setsid "$h/bin/run-build.sh" "$PROJECT" "$key" "$label" ) \
-        > "$h/logs/$PROJECT.$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')-triage-state.out" 2>&1 &
-    fi
+    _ts_spawn_build "$key" "$label" triage-state
     n=$((n+1)); TS_LAUNCHED="$TS_LAUNCHED $label"
     _ts_log "triage-state: $label is buildable, unchanged since its verdict and unbuilt — launched run-build.sh with no model call"
   done <<<"$TS_ENQ"

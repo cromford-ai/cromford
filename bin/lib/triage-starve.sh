@@ -21,9 +21,12 @@
 #   tsv_pass <harness> <project>
 #     ts_tick, enforce only. Counts the pass; a key ELIGIBLE (passes >= N, listed
 #     >= the window, no triage run since first listed, no fastpath attempt yet)
-#     gets ONE bin/launch-fastpath.sh attempt (GitHub boards; an in-app board
-#     records `n/a: in-app board`), one TRIAGE-STARVE lane-log line and one warn
-#     alert per pass for all of them. A live builds pause withholds the attempt.
+#     gets ONE launch attempt, one TRIAGE-STARVE lane-log line and one warn
+#     alert per pass for all of them. A GitHub board calls bin/launch-fastpath.sh.
+#     An in-app board runs _tsv_inapp_try per key: the board snapshot's
+#     status, triageVerdict and waitingOn, then the triage-state launch guard
+#     (_ts_owned), then bin/run-build.sh. A live builds pause withholds the
+#     attempt on both kinds.
 #     A TRIAGE RUN is read from the shard's own files, so bin/lib/rt/shards.sh
 #     is not edited (BH-3418 B1): logs/<p>.triage-<KEY>.out written since the
 #     key was first listed (bin/triage-shard.sh writes it at launch), or a held
@@ -44,7 +47,7 @@
 # numbers below are the documented fallback only):
 #   TRIAGE_STARVE_PASSES (3, 0 = off)  TRIAGE_STARVE_WINDOW_S (7200)
 #   TRIAGE_STARVE_FASTPATH_MAX (10)    TRIAGE_STARVE_FASTPATH_TIMEOUT_S (300)
-#   TRIAGE_STARVE_LOCK_WAIT_S (5)
+#   TRIAGE_STARVE_LOCK_WAIT_S (5)      TRIAGE_STARVE_INAPP_LAUNCH (1, 0 = off)
 # shellcheck shell=bash
 if [ -n "${TRIAGE_STARVE_LIB:-}" ]; then return 0 2>/dev/null; fi
 TRIAGE_STARVE_LIB=1
@@ -77,6 +80,9 @@ _tsv_knobs() {
   _TSV_FPMAX=$(_tsv_int "${TRIAGE_STARVE_FASTPATH_MAX:-10}" 10 1 50)
   _TSV_FPTO=$(_tsv_int "${TRIAGE_STARVE_FASTPATH_TIMEOUT_S:-300}" 300 30 1800)
   _TSV_WAIT=$(_tsv_int "${TRIAGE_STARVE_LOCK_WAIT_S:-5}" 5 1 60)
+  # lib.triage-starve[.<p>].triage_starve_inapp_launch: 0 = an in-app board
+  # records `n/a: in-app board` and launches nothing (the pre-BH-9113 record).
+  _TSV_INAPP=$(_tsv_int "${TRIAGE_STARVE_INAPP_LAUNCH:-1}" 1 0 1)
   return 0
 }
 
@@ -147,7 +153,7 @@ _tsv_count() {
   [ -r "$old" ] || old=/dev/null
   [ -r "$runs" ] || runs=/dev/null
   tmp=$(mktemp "$d/starve.tsv.XXXXXX" 2>/dev/null) || return 1
-  awk -F'\t' -v OFS='\t' -v old="$old" -v runs="$runs" -v now="$now" -v N="$n" -v W="$w" -v out="$tmp" '
+  awk -F'\t' -v OFS='\t' -v old="$old" -v runs="$runs" -v now="$now" -v N="$n" -v W="$w" -v out="$tmp" -v IA="${_TSV_INAPP:-1}" '
     BEGIN { while ((getline l < runs) > 0) { split(l, a, "\t"); if (a[2] ~ /^[0-9]+$/ && a[2] + 0 > ran[a[1]] + 0) ran[a[1]] = a[2] } }
     FILENAME == old {
       if (NF != 8 || $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/ || $6 !~ /^[0-9]+$/ || $8 !~ /^[01]$/) { bad++; next }
@@ -155,7 +161,7 @@ _tsv_count() {
     }
     $3 == "llm" && $1 != "" && !seen[$1]++ {
       lab = $2; gsub(/[\t\r\n]/, "", lab)
-      if ($1 in row) { split(row[$1], r, "\t"); first = r[3]; p = r[4] + 1; run = r[5]; fe = r[6]; fo = r[7]; al = r[8] }
+      if ($1 in row) { split(row[$1], r, "\t"); first = r[3]; p = r[4] + 1; run = r[5]; fe = r[6]; fo = r[7]; al = r[8]; if (IA == 1 && fo == "n/a: in-app board") { fe = 0; fo = "-" } }
       else { first = now; p = 1; run = 0; fe = 0; fo = "-"; al = 0 }
       mt = ran[$1] + 0; if (ran[lab] + 0 > mt) mt = ran[lab] + 0
       if (mt >= first && mt > run) run = mt
@@ -176,6 +182,53 @@ _tsv_decline_reason() {
       key = substr(s, 1, j - 1); if (key == k || key == l) why = substr(s, j + 4) }
     END { print why }')
   printf '%s' "${r:-reason not logged}" | tr -d '\t\r'
+}
+
+# The board statuses of a ticket that is in flight, finished or paused: the
+# set bin/preplan-candidates.sh already skips. A vocabulary, not a limit.
+_TSV_BUSY=" paused done closed cancelled canceled archived review in_progress in-progress inprogress building shipped "
+
+# _tsv_inapp_try <harness> <project> <key> <label> <first_listed> — one in-app
+# launch attempt (BH-9113). Prints `launched` or `declined: <reason>`, the
+# first check that fails (or `n/a: in-app board` with the switch off). Every
+# read it cannot make declines: this launches a build.
+_tsv_inapp_try() {
+  local h="$1" p="$2" key="$3" lab="$4" first="$5" d t st v w hv why
+  [ "${_TSV_INAPP:-1}" = 1 ] || { printf 'n/a: in-app board'; return 0; }
+  if ! command -v _ts_owned >/dev/null 2>&1 || ! command -v _ts_prs_json >/dev/null 2>&1 \
+     || ! command -v _ts_spawn_build >/dev/null 2>&1; then
+    printf 'declined: launch guard unavailable'; return 0
+  fi
+  d=$(_tsv_dir "$h" "$p")
+  t=$(jq -er --arg k "$key" '[to_entries[] | select(.key != "meta") | .value | if type == "array" then .[] else empty end
+        | select(type == "object" and .id != null and (.id | tostring) == $k)][0]
+        | if . == null then "absent" else
+            [ (.status // "" | tostring), (.triageVerdict // "" | tostring), (.waitingOn // "" | tostring) ]
+            | map(gsub("[\t\r\n\u001f]"; " ")) | "row\u001f" + join("\u001f") end' "$d/world.json" 2>/dev/null) \
+    || { printf 'declined: snapshot unreadable'; return 0; }
+  [ "$t" = absent ] && { printf 'declined: not on the board snapshot'; return 0; }
+  # a unit separator, not a tab: IFS whitespace would fold an empty field away
+  IFS=$'\x1f' read -r _ st v w <<<"$t"
+  case "$_TSV_BUSY" in *" $(printf '%s' "$st" | tr '[:upper:]' '[:lower:]') "*)
+    printf 'declined: status=%s' "$st"; return 0 ;;
+  esac
+  [ "$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')" = ready ] || { printf 'declined: triageVerdict=%s' "${v:-none}"; return 0; }
+  [ "$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]')" = team ] || { printf 'declined: waitingOn=%s' "${w:-none}"; return 0; }
+  # The guard ts_enqueue launches behind: the .enqueued marker, a held
+  # build-key lock, a build dir since first listed, abandoned, a queue row, an
+  # open PR, triage-gate.sh --buildable-strict (deps, holds), a builds pause,
+  # the overlap guard. The cross-harness lock is run-build.sh's own.
+  hv=$(PROJECT="$p" HARNESS="$h" ts_hash_of "$key")
+  [ -n "$hv" ] || { printf 'declined: no input hash'; return 0; }
+  if why=$(PROJECT="$p" HARNESS="$h" _ts_owned "$key" "$lab" "$hv" "$(_ts_iso "$first")" 0); then
+    printf 'declined: %s' "$(printf '%s' "$why" | tr -d '\t\r\n')"; return 0
+  fi
+  # The marker BEFORE the launch: one verdict launches at most once.
+  printf '%s\n' "$hv" > "$d/$key.enqueued" 2>/dev/null || { printf 'declined: could not write the .enqueued marker'; return 0; }
+  if [ ! -x "$h/bin/run-build.sh" ] || ! PROJECT="$p" HARNESS="$h" _ts_spawn_build "$key" "$lab" triage-starve; then
+    rm -f "$d/$key.enqueued"; printf 'declined: spawn failed'; return 0
+  fi
+  printf 'launched'
 }
 
 tsv_pass() {
@@ -208,7 +261,7 @@ tsv_pass() {
   done <<<"$out"
   [ -n "$keys" ] || return 0
   jq -e 'has("issues")' "$d/world.json" >/dev/null 2>&1 && gh=1
-  if [ "$gh" = 1 ] && command -v pause_active >/dev/null 2>&1 && pause_active "$p" builds 2>/dev/null; then
+  if { [ "$gh" = 1 ] || [ "$_TSV_INAPP" = 1 ]; } && command -v pause_active >/dev/null 2>&1 && pause_active "$p" builds 2>/dev/null; then
     _tsv_log "$h" "$p" "TRIAGE-STARVE withheld$labels: builds pause"
     return 0
   fi
@@ -225,7 +278,7 @@ tsv_pass() {
   local marks=""
   while IFS=$'\t' read -r k lab n first; do
     [ -n "$k" ] || continue
-    if [ "$gh" != 1 ]; then outcome="n/a: in-app board"
+    if [ "$gh" != 1 ]; then outcome=$(_tsv_inapp_try "$h" "$p" "$k" "$lab" "$first")
     elif [ ! -x "$fp" ]; then outcome="n/a: fastpath not executable"
     elif [ "$rc" != 0 ] && [ "$rc" != 1 ]; then outcome="declined: fastpath exit $rc"
     elif grep -qxF -e "$k" ${lab:+-e "$lab"} <<<"$dec"; then
@@ -243,9 +296,10 @@ tsv_pass() {
     [ -n "$k" ] || continue
     outcome=$(printf '%s' "$marks" | awk -F'\t' -v k="$k" '$1==k{print $2; exit}')
     hrs=$(awk -v s="$(( now - first ))" 'BEGIN{printf "%.1f", s/3600}')
-    case "$outcome" in launched) outcome="fastpath launched" ;; declined:*) outcome="fastpath $outcome" ;; esac
+    alert_txt="$alert_txt $lab=$outcome"; alert_n=$((alert_n+1))
+    local via=fastpath; [ "$gh" = 1 ] || via=inapp
+    case "$outcome" in launched|declined:*) outcome="$via $outcome" ;; esac
     _tsv_log "$h" "$p" "TRIAGE-STARVE $lab listed $n passes over ${hrs}h with no triage run — $outcome"
-    alert_txt="$alert_txt $lab=${outcome#fastpath }"; alert_n=$((alert_n+1))
   done <<<"$rows"
   # ONE alert per project per pass, for the keys tried this pass (each key is
   # tried once per listing episode, so it is alerted once per episode).

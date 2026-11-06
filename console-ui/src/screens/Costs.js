@@ -10,7 +10,7 @@ import { Section, Stat, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitiv
 import {
   fmtUsdExact, fmtShare, spendRows, spendHeadline, stageBreakdown, stagesReconcile, billingHealth
 } from '../lib/spend.js';
-import { clockTime, minutesSince, agoFromMinutes } from '../lib/format.js';
+import { clockTime, minutesSince, agoFromMinutes, fmtNum } from '../lib/format.js';
 import {
   ANCHOR_WINDOWS, fmtFactor, isAnchored, anchorState, anchorHeadline,
   prLink, ticketLink, boxLink, stageLine
@@ -123,7 +123,7 @@ export function CostsScreen() {
             {
               key: 'ratio', label: 'RUNS / TICKET', sort: (r) => (r.tickets_built ? r.runs / r.tickets_built : null), align: 'right',
               cell: (r) => r.tickets_built
-                ? html`<span>${(r.runs / r.tickets_built).toFixed(1)}</span>`
+                ? html`<span>${fmtNum(r.runs / r.tickets_built, { decimals: 1 })}</span>`
                 : html`<span class="na">—</span>`
             }
           ]}
@@ -537,7 +537,7 @@ function AnchoredSection() {
       right=${html`<span style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${head.ready && head.uplift
           ? html`<span class="tag" title="the anchored fleet total divided by the raw one, for this window">
-              ×${head.uplift.toFixed(2)} vs LEDGER</span>`
+              ×${fmtNum(head.uplift, { decimals: 2 })} vs LEDGER</span>`
           : null}
         ${switcher}
       </span>`}>
@@ -582,7 +582,7 @@ export function AccountStrip({ accounts, head }) {
             </div>
             ${acc.weekly_pct !== null && acc.weekly_pct !== undefined ? html`
               <div style="margin-top:6px;font-size:var(--fs-2xs);color:var(--faint)">
-                weekly credits ${Number(acc.weekly_pct).toFixed(0)}% used${acc.weekly_resets_at ? `, resets ${acc.weekly_resets_at}` : ''}
+                weekly credits ${fmtNum(Number(acc.weekly_pct), { decimals: 0 })}% used${acc.weekly_resets_at ? `, resets ${acc.weekly_resets_at}` : ''}
                 ${acc.spend_limit_reached ? html` · <span class="tag tag--warn">SPEND LIMIT REACHED</span>` : null}
               </div>` : null}
             ${acc.factor_capped ? html`
@@ -668,7 +668,7 @@ const prColumns = [
   {
     key: 'factor', label: '×', sort: (r) => r.factor, align: 'right',
     cell: (r) => html`<span style=${isAnchored(r) ? 'color:var(--amber-lt)' : 'color:var(--fainter)'}>
-      ${isAnchored(r) ? `${Number(r.factor).toFixed(2)}x` : '—'}</span>`
+      ${isAnchored(r) ? `${fmtNum(Number(r.factor), { decimals: 2 })}x` : '—'}</span>`
   },
   rawCol,
   anchoredCol,

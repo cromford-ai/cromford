@@ -1014,7 +1014,8 @@ $SLUG#$NUM -> ${KVERDICT:-UNPARSED}" ;;
       AP_PREVSHA=$(sed -n 's/^sha=\([0-9a-f]\{40\}\)$/\1/p' <<<"$AP_PREVREC" 2>/dev/null | head -1)
       [ "${AP_PREVSHA:0:12}" = "$AP_PREV12" ] || AP_PREVSHA=""
       if patch_same_fetch "$AP_REPO" "$AP_PREVSHA" "$SHA" \
-         && AP_HOW=$(patch_same "$AP_REPO" origin/main "${AP_PREVSHA:-$AP_PREV12}" "$SHA"); then
+         && AP_HOW=$(if command -v patch_same_review >/dev/null 2>&1; then patch_same_review "$AP_REPO" origin/main "${AP_PREVSHA:-$AP_PREV12}" "$SHA"
+                     else patch_same "$AP_REPO" origin/main "${AP_PREVSHA:-$AP_PREV12}" "$SHA"; fi); then   # BH-9066: patch_same_review accepts a schema restamp
         AP_V="${AP_LINE##*verdict=}"
         # The replayed verdict gets its own box row on THIS head first (BH-1951).
         # A failed row writes no key: the next tick replays again, for free, and

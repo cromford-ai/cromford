@@ -9,7 +9,7 @@
 // machines is the last reaper pass's snapshot of STARTED machines; since
 // BH-6877 each row also has last_work_at (ISO or null) and no_claim. A stop or
 // destroy row is one the reaper requested (flyctl rc 0), not one it observed.
-import { clockTime, fmtDuration } from './format.js';
+import { clockTime, fmtDuration, fmtUsd } from './format.js';
 
 const APP_RE = /^[a-z0-9-]{1,63}$/;
 const MACHINE_RE = /^[0-9a-f]{6,32}$/;
@@ -26,7 +26,7 @@ export function fmtIdle(idleS, state) {
   return fmtDuration(idleS);
 }
 
-const usdLabel = (v) => (isNum(v) ? `$${v.toFixed(3)}` : 'unpriced');
+const usdLabel = (v) => (isNum(v) ? fmtUsd(v, { decimals: 3 }) : 'unpriced');
 const epochOf = (iso) => {
   if (typeof iso !== 'string') return null;
   const t = Date.parse(iso);

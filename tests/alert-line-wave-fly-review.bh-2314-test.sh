@@ -86,7 +86,9 @@ printf 'lane_role_model() { return 1; }\n' > "$H2/bin/lib/lane-model.sh"
 HARNESS="$H2" bash "$DIR/bin/claude-auth-check.sh" >/dev/null 2>&1
 RC=$?
 [ "$RC" = 75 ] && ok || bad "A2: rc $RC, want 75"
-WANT2="[auth] no model route for triage/auth.fallback — auth probe not run"
+# TEST-CHANGE (BH-9125): the canary resolves auth.canary first and falls back to
+# triage, so the no-route line names both roles. Same assertion, new text.
+WANT2="[auth] no model route for auth.canary (or triage)/auth.fallback — auth probe not run"
 L2=$(beat_line "$H2")
 if [ "$(nbeats "$H2")" = 1 ] && [ "$(printf %s "$L2" | cut -d' ' -f3-)" = "$WANT2" ]; then ok
 else bad "A2: stub received $(nbeats "$H2") beat(s), line '$L2', want text '$WANT2'"; fi

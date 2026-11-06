@@ -12,7 +12,8 @@
 #
 # WHAT. One pass over the TOP LEVEL of the state dir, in name order. Entry E is
 #   1. kept `allowlisted` when E is a cache or box-local path of
-#      catalog/state-paths.json or gh-policy-cache (or a dot sibling of one:
+#      catalog/state-paths.json (composed from catalog/state-paths.d/ when it
+#      exists, BH-8986) or gh-policy-cache (or a dot sibling of one:
 #      settings-cache.json.tmp);
 #   2. kept `catalog` when E is any other path of that catalog (class rows),
 #      or a dot sibling of one. A rows family drains only after a reviewed PR
@@ -163,7 +164,22 @@ if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -z "${STATE_DRAIN_STATE_DIR:-}" ]; t
   SKIP="STATE_DRAIN_STATE_DIR unset under HARNESS_TEST_SANDBOX"
 fi
 ALLOW=""; ROWS=""
-if [ -z "$SKIP" ]; then
+# BH-8986: the catalog is composed from $H/catalog/state-paths.d/. When that
+# dir exists it is the source, never the composed file beside it: the catalog
+# rsync has no --delete, so a box keeps a stale copy. A compose that fails
+# refuses the run; it never falls back to the stale copy.
+SPTMP=""
+if [ -z "$SKIP" ] && [ -d "$H/catalog/state-paths.d" ]; then
+  if ! SPTMP=$(mktemp "${TMPDIR:-/tmp}/state-drain-catalog.XXXXXX" 2>/dev/null); then
+    SPTMP=""; WHY="catalog $H/catalog/state-paths.d could not be composed (mktemp failed)"
+  elif [ ! -x "$H/bin/state-paths-build.sh" ] \
+       || ! "$H/bin/state-paths-build.sh" --repo "$H" --compose --to "$SPTMP" >/dev/null 2>&1; then
+    WHY="catalog $H/catalog/state-paths.d could not be composed"
+  else
+    CATALOG="$SPTMP"
+  fi
+fi
+if [ -z "$SKIP" ] && [ -z "$WHY" ]; then
   if [ ! -f "$CATALOG" ]; then
     WHY="catalog $CATALOG missing"
   elif ! jq -e '.paths | type == "array"' "$CATALOG" >/dev/null 2>&1; then
@@ -174,6 +190,7 @@ if [ -z "$SKIP" ]; then
     ROWS=$(jq -r '.paths[] | .path' "$CATALOG" 2>/dev/null)
   fi
 fi
+[ -z "$SPTMP" ] || rm -f "$SPTMP"
 if [ -z "$SKIP" ] && [ -z "$WHY" ] && [ "$MODE" != report ]; then
   if [ -z "$(find "$H/bin" -type f -print -quit 2>/dev/null)" ]; then
     WHY="bin $H/bin missing or empty"

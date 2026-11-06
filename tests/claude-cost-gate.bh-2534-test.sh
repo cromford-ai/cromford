@@ -246,10 +246,15 @@ scen k3-stdin
 with_jobs
 STDIN_TEXT="the prompt" cc AGENT_CALL_LANE=orc-monitor COST_STAGE=orchestrator JOBS_URL=http://fake \
    CALL_GUARD_STAGES=orchestrator FAKE_ECHO_STDIN=1 -- -p
+# BH-9064 reversed this case's premise: a stdin prompt is claimed too, on a fp
+# computed from the argv AND the stdin text ("K3 not claimed" no longer exists).
 eq  "8 rc 0"                  "$RC" 0
-eq  "8 no claim"              "$(grep -c . "$T/log/claim.log")" 0
+eq  "8 one claim"             "$(grep -c . "$T/log/claim.log")" 1
+read -r _p _s s_fp _rest < "$T/log/claim.log"
+SPSHA=$( { printf '%s\0' -p; printf '%s' "the prompt"; } | sha256sum | cut -c1-16)
+case "$s_fp" in *":p$SPSHA") ok ;; *) bad "8 stdin fp [$s_fp] must end with :p$SPSHA (argv + stdin)" ;; esac
 has "8 stdin reached claude"  "$(cat "$T/out")" "STDIN:the prompt"
-has "8 skip is logged"        "$(cat "$T/h/logs/claude-cost.log" 2>/dev/null)" "orchestrator/fleet: K3 not claimed"
+case "$(cat "$T/h/logs/claude-cost.log" 2>/dev/null)" in *"K3 not claimed"*) bad "8 a stdin call still logs K3 not claimed" ;; *) ok ;; esac
 
 # ---------------------------------------------------------------------------
 # 9. The production entry: bin/orchestrate.sh's run_turn + claude ladder

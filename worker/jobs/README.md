@@ -841,7 +841,20 @@ POST  /api/queue/claim  { project, box, target?, key? }
                         -> 404 { error:"nothing queued" }           (a REAL answer)
                         -> 409 { refused:true, scope:"queue" }      (lost the race)
 PATCH /api/queue        { project, key, status, reason }  -> { queued }   (404 on no such row)
+PATCH /api/queue        { project, key, status:"queued", reason, count_attempt:true }
+                        -> 200 { queued, capped, attempt_max }
+                        -> 409 { error:"stale", current }   (the row is not claimed; nothing written)
 ```
+
+**A counted release (BH-8734).** `count_attempt: true` (the boolean) with
+`status: "queued"` adds 1 to `attempt` on a `claimed` row. If that passes the
+settings row `queue.release_attempt_max` (seed 3, code fallback 3, a whole
+number >= 1), the row is written `failed` (finished_at set, reason
+`release cap: attempt <a> of <N> (queue.release_attempt_max); <reason>`) and
+the answer says `capped: true`. The UPDATE is a compare-and-set on
+`status='claimed'`. The orphan release and the jobs-watchdog stale-claim
+release send it through `queue_release_counted`. Every other PATCH is the
+same statement as before.
 
 Statuses: `queued | claimed | done | failed`, checked against `QUEUE_TRANSITIONS`
 the same way jobs and phases are — an unknown TARGET status is a 409, an unknown

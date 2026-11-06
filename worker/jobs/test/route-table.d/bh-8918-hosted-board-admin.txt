@@ -1,0 +1,4 @@
+# BH-8918 (BH-7913.1): hosted Board API admin. Board setup, token issue and
+# revoke. Bearer-gated (HARNESS_SECRET); a hosted-board token never reaches it.
+POST /api/hosted-board-admin/setup
+POST /api/hosted-board-admin/revoke

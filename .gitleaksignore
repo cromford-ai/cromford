@@ -23,6 +23,13 @@ locks-worker/tests/minter-test.sh:curl-auth-header:25
 mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:15
 mcp/test/board-actions.bh-5820.test.mjs:generic-api-key:76
 mcp/test/project-pause.bh-7708.test.mjs:generic-api-key:18
+tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
+tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
+tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
+tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
+tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
+tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
+tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:287
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
 tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:104
@@ -33,6 +40,8 @@ tests/br-pool-fixround-fetch.bh-8458-test.sh:github-pat:137
 tests/builds-retention-settled.bh-7931-test.sh:generic-api-key:286
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
 tests/ci-local.bh-6897-test.sh:generic-api-key:156
+tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
+tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
 tests/component-watch.bh-6972-test.sh:generic-api-key:186
 tests/conductor-enqueue-only.bh-6495-test.sh:curl-auth-header:141
 tests/conductor-fly-fallback.bh-6817-test.sh:curl-auth-header:128
@@ -170,6 +179,7 @@ tests/trk-cli.bh-8450-test.sh:generic-api-key:64
 tests/trk-prompt-render.bh-8450-test.sh:generic-api-key:67
 tests/unblock-card.bh-7725-test.sh:generic-api-key:141
 tests/webhook-to-triage-linear.bh-8449-test.sh:generic-api-key:44
+worker/jobs/test/agent-call-ledger.bh-9064.test.js:generic-api-key:21
 worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
@@ -215,9 +225,10 @@ worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98
 worker/jobs/test/prompt-history.bh-7972.test.js:generic-api-key:18
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
+worker/jobs/test/retention-agent-call-ledger.bh-9064.test.js:generic-api-key:13
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
-worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:156
+worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:161
 worker/jobs/test/routes/cost.test.js:generic-api-key:136
 worker/jobs/test/scheduler-ready.bh-6979.test.js:generic-api-key:19
 worker/jobs/test/scheduler.bh-6978.test.js:generic-api-key:19

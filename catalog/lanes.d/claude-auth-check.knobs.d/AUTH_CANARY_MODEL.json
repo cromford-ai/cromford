@@ -1,0 +1,7 @@
+{
+  "env": "AUTH_CANARY_MODEL",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-9125. Empty by default: the canary model is a database row, model_routes role 'auth.canary' (seeded as a copy of bootstrap.smoke rung 0), read through bin/claude-auth-check.sh and bin/lane-probe.sh (resolved on the hub, written into the probe; a box env still wins there). TRIAGE_MODEL does not steer the canary. Set this only to override that row on this box/lane; no reviewed min/max, nothing is clamped."
+}

@@ -22,7 +22,8 @@
     "drive:outcomes": "node tests/drive/outcomes-drive.mjs",
     "drive:models": "node tests/drive/models-drive.mjs",
     "drive:staff": "node tests/drive/staff-drive.mjs",
-    "drive:tap": "node tests/drive/tap-drive.mjs"
+    "drive:tap": "node tests/drive/tap-drive.mjs",
+    "drive:sidemenu": "node tests/drive/sidemenu-drive.mjs"
   },
   "dependencies": {
     "@sentry/browser": "^10.76.2",

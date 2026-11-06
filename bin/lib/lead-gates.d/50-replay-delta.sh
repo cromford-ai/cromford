@@ -188,7 +188,8 @@ lg_gate_replay_delta() {
       "replay "*|"delta "*|"full binary"|"full knob-off")
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$slug" "$n" "$ph" "$head" "$_LGR_LDMAX" "$cls" >> "$st/delta.tsv" ;;
     esac
-  elif how=$(patch_same "$repo" origin/main "$ph" "$head"); then cls="replay $how"
+  elif how=$(if command -v patch_same_review >/dev/null 2>&1; then patch_same_review "$repo" origin/main "$ph" "$head"
+              else patch_same "$repo" origin/main "$ph" "$head"; fi); then cls="replay $how"   # BH-9066: a restamp is the same reviewed work
   else _lgt_log "$slug#$n @$h12: patch changed since ${ph:0:12}; full review"; return 0
   fi
   case "$cls" in

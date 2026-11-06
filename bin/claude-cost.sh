@@ -45,7 +45,10 @@
 # lane the stage resolves to) and K3, bin/lib/call-guard.sh, when the guard
 # enforces $COST_STAGE. A refusal runs nothing, leaves a zero-cost
 # row_source=refused row, prints `AGENT_CALL_REFUSED ...` on stderr and exits
-# 74, agent-call's before-billing code. The one path still ungated is a box
+# 74, agent-call's before-billing code. Then the dedup ledger (BH-9064,
+# bin/lib/agent-call-ledger.sh): a terminal row (empty, failed at the attempt
+# cap, running elsewhere, parked) runs nothing and exits with the stored rc.
+# This path never replays an answer. The one path still ungated is a box
 # with no bin/lib/cost-row.sh, which execs claude below: without a ledger
 # writer a refusal could not leave its row.
 #
@@ -125,6 +128,14 @@ command -v call_guard_precall >/dev/null 2>&1 || call_guard_precall() { CG_STATE
 command -v call_guard_finish  >/dev/null 2>&1 || call_guard_finish()  { return 0; }
 CG_STATE=""; CG_REASON=""
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply call-guard; } || true
+# The dedup ledger (BH-9064), the same lib bin/agent-call.sh asks.
+# shellcheck source=bin/lib/agent-call-ledger.sh
+if   [ -r "$HERE/lib/agent-call-ledger.sh" ];        then . "$HERE/lib/agent-call-ledger.sh"
+elif [ -r "$HARNESS/bin/lib/agent-call-ledger.sh" ]; then . "$HARNESS/bin/lib/agent-call-ledger.sh"; fi
+command -v acl_precall >/dev/null 2>&1 || acl_precall() { return 0; }
+command -v acl_finish  >/dev/null 2>&1 || acl_finish()  { return 0; }
+ACL_STATE=""
+[ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply agent-call-ledger; } || true
 
 # ── read argv (never rewrite it beyond the one flag we may add) ──────────────
 SID=""; CONTINUES=0; ARGMODEL=""
@@ -165,23 +176,41 @@ if ! llm_gate_precall "$GSTAGE" "$GPROJ" || ! llm_gate_runner_ok "$GSTAGE" "$GPR
     "GATE REFUSED before the call: ${LLM_GATE_REASON:-gated} — nothing was called and nothing was billed. Change it with bin/harness-ctl.sh set <lane> LLM_LANE_ENABLED 1 (or LLM_USD_CAP_DAY <n> / LLM_RUNNER_ALLOWED <list>), or turn the gate off with LLM_GATE_DISABLE=1."
 fi
 # K3. The work is the caller's argv (not the --session-id added above), so a
-# retry of the same argv is the same work. A prompt on a stdin stream this
-# wrapper must not read says nothing about the work in argv, so without an
-# AGENT_CALL_FP that call is not claimed: one argv hash for every stdin prompt
-# would fold unrelated turns into one fingerprint.
-CC_PSHA=$(printf '%s\0' "$@" | sha256sum | cut -c1-64)
-if [ -z "${AGENT_CALL_FP:-}" ] && { [ -p /dev/stdin ] || [ -f /dev/stdin ]; }; then
-  CG_STATE=off
-  command -v call_guard_enabled >/dev/null 2>&1 && command -v call_guard_stage >/dev/null 2>&1 \
-    && call_guard_enabled "$(call_guard_stage "$GSTAGE")" \
-    && echo "$(_cc_stamp) [claude-cost] $GSTAGE/$GPROJ: K3 not claimed — the prompt is on stdin and no AGENT_CALL_FP names the work" >> "$LOG" 2>/dev/null
-elif ! call_guard_precall "$GSTAGE" "$GPROJ" claude "$CC_PSHA"; then
+# retry of the same argv is the same work. A prompt on a stdin stream is part
+# of the work too (BH-9064): it is saved to a file first, and the prompt sha is
+# of the argv AND that file, so two different stdin prompts are two pieces of
+# work and the same one twice is one. claude then reads the saved file. Every
+# call is claimed; with no AGENT_CALL_FP the fingerprint is K3's computed one
+# (call_guard_fp: <ticket>:<HEAD>:p<prompt sha>).
+CC_STDIN=""
+_cc_cleanup() { [ -z "$CC_STDIN" ] || rm -f "$CC_STDIN"; return 0; }
+if [ -p /dev/stdin ] || [ -f /dev/stdin ]; then
+  CC_STDIN=$(mktemp "${TMPDIR:-/tmp}/claude-cost-stdin.XXXXXX" 2>/dev/null) || CC_STDIN=""
+  # Every exit after this point removes the copy (a refusal, the end of the call).
+  trap _cc_cleanup EXIT
+  # Reads ALL of stdin before claude starts. A --input-format stream-json
+  # caller (none today) would hang here; give it a no-read path first.
+  [ -z "$CC_STDIN" ] || cat > "$CC_STDIN"
+fi
+CC_PSHA=$( { printf '%s\0' "$@"; [ -z "$CC_STDIN" ] || cat "$CC_STDIN"; } | sha256sum | cut -c1-64)
+if ! call_guard_precall "$GSTAGE" "$GPROJ" claude "$CC_PSHA"; then
   case "$CG_REASON" in
     call-guard:repeat) CC_M="call-guard repeat $CG_STAGE paid=${CG_COUNT:-?}/$CG_MAX fp=$CG_FP" ;;
     *)                 CC_M="call-guard counter-unreadable metered claude" ;;
   esac
   _cc_refuse "$CC_M" "$CG_REASON" \
     "CALL-GUARD REFUSED before the call ($CG_REASON, guard stage $CG_STAGE, fp $CG_FP) — nothing was called and nothing was billed. logs/call-guard.log has the detail; knobs are lib.call-guard.* (CALL_GUARD=0 turns it off)."
+fi
+# The dedup ledger, after K3. This wrapper streams claude's stdout to its
+# caller and keeps no copy, so it never replays (ACL_NO_REPLAY) and stores no
+# answer body: it enforces the terminal states and records the attempts.
+if ! ACL_NO_REPLAY=1 acl_precall "$GSTAGE" "$GPROJ" "$CC_PSHA"; then
+  command -v call_guard_finish >/dev/null 2>&1 && call_guard_finish 0 "" /dev/null
+  CC_LRC=$(acl_terminal_rc)
+  acl_refusal_line >&2
+  _acl_log "[$GPROJ] $ACL_STAGE: LEDGER TERMINAL $ACL_STATUS fp=$ACL_FP attempts=${ACL_ATTEMPTS:-?} rc=$CC_LRC (claude-cost) — nothing called, nothing billed"
+  llm_gate_refused_row "$GSTAGE" "$GPROJ" claude "${ARGMODEL:-unknown}" 74 "agent-call-ledger:terminal"
+  exit "$CC_LRC"
 fi
 # The guard has read its per-call env; it describes THIS call, not the session.
 export -n AGENT_CALL_FP AGENT_CALL_GUARD_STAGE AGENT_CALL_TICKET AGENT_CALL_GUARD_FORCE 2>/dev/null || true
@@ -204,7 +233,9 @@ CC_CWD=$(pwd -P 2>/dev/null || pwd)
 CHILD=""
 _cc_forward() { [ -n "$CHILD" ] && kill -TERM "$CHILD" 2>/dev/null; return 0; }
 trap _cc_forward TERM INT HUP
-claude "${ARGS[@]}" <&0 &
+if [ -n "$CC_STDIN" ]; then claude "${ARGS[@]}" < "$CC_STDIN" &
+else claude "${ARGS[@]}" <&0 &
+fi
 CHILD=$!
 # `wait` returns 128+signo when a trap interrupts it and the child is still
 # running, so wait again until it is genuinely reaped; RC is then claude's own.
@@ -267,6 +298,25 @@ fi
 
 ROW="$(date -u '+%Y-%m-%dT%H:%M:%SZ'),$(hostname),$(cost_csv_field "${COST_PROJECT:-fleet}"),$(cost_csv_field "${COST_STAGE:-raw}"),claude,$(cost_csv_field "$MODEL"),$RC,$((T1-T0)),$IN,$OUTT,$CR,$CW,$USD,$BMODE,$AUTH_FP,$AUTH_ACCT,$(cost_csv_field "$SID"),$SRC,,$(cost_row_tags),$(cost_csv_field "$CC_NOTE"),$(cost_csv_field "${AGENT_CALL_LANE:-}")"
 cost_append "$ROW" 2>/dev/null || true
+
+# ── the ledger settle (BH-9064): the status only, never a body (see above) ──
+if [ "$ACL_STATE" = run ]; then
+  CC_ACLOUT=$(mktemp 2>/dev/null) || CC_ACLOUT=""
+  if [ -n "$CC_ACLOUT" ]; then
+    { [ "$SRC" = transcript ] && [ "${OUTT:-}" = 0 ]; } || printf 'x' > "$CC_ACLOUT"
+    # A failed call whose transcript shows no token in or out bought nothing (a
+    # quota, auth or 429 answer before any model turn): it settles `unbilled`
+    # and gives the attempt back, as agent-call.sh's cg_nothing_billed does. A
+    # call with no transcript stays `failed` (counted as paid: over, never under).
+    CC_NOBILL=""
+    if [ "$RC" != 0 ] && [ "$SRC" = transcript ] \
+       && [ "${IN:-x}" = 0 ] && [ "${OUTT:-x}" = 0 ] && [ "${CR:-0}" = 0 ] && [ "${CW:-0}" = 0 ]; then
+      CC_NOBILL=1
+    fi
+    ACL_NO_BODY=1 acl_finish "$RC" 1 "$CC_ACLOUT" "$CC_NOBILL"
+    rm -f "$CC_ACLOUT"
+  fi
+fi
 
 # ── K3 settle ───────────────────────────────────────────────────────────────
 # ok and empty are both paid and terminal, so the label never changes a count:

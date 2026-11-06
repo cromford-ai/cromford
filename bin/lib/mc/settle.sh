@@ -524,7 +524,9 @@ mc_patch_id_rebind() {
   # main merges since the reviewed head"
   # from the commits themselves (a clean-main-merge proof, or a byte-exact
   # patch-id). It prints `same:<how>` on rc 0.
-  mc_patch_same "$slug" "$project" "$rev" "$head" || return 1
+  # BH-9066: `review` asks patch_same_review, which also accepts a schema
+  # restamp (bin/lib/patch-same.sh): the question here is "the same REVIEWED work".
+  mc_patch_same "$slug" "$project" "$rev" "$head" review || return 1
 }
 
 # mc_patch_same <owner/repo> <project> <reviewed> <head> -> `same:<how>` and rc 0
@@ -534,8 +536,12 @@ mc_patch_id_rebind() {
 #   judge (no lib, an empty sha, a worktree or fetch failure, a sha the fetch
 #   did not bring) it also sets MC_PATCH_SAME_UNJUDGED=1, so a caller that must
 #   not store "different" for an answer it never had (BH-8186) can tell.
+#   An optional 5th argument `review` asks patch_same_review (BH-9066: a schema
+#   restamp after a rebase is the same reviewed work). Without it the answer is
+#   byte patch_same: the failed-batch module asks about a CI result, and a
+#   restamp moves the fragment in the composed schema order.
 mc_patch_same() {
-  local slug="$1" project="$2" rev="$3" head="$4" wt how
+  local slug="$1" project="$2" rev="$3" head="$4" mode="${5:-}" wt how fn=patch_same
   MC_PATCH_SAME_UNJUDGED=1
   # Sourced here, at call time and off this module's directory, not at module
   # load: the lib's functions are bin/lib/patch-same.sh's, and a module that
@@ -556,7 +562,8 @@ mc_patch_same() {
     mc_git_auth_clear; return 1
   fi
   MC_PATCH_SAME_UNJUDGED=0
-  how=$(patch_same "$wt" origin/main "$rev" "$head"); local rc=$?
+  [ "$mode" = review ] && command -v patch_same_review >/dev/null 2>&1 && fn=patch_same_review
+  how=$("$fn" "$wt" origin/main "$rev" "$head"); local rc=$?
   mc_git_auth_clear
   [ "$rc" = 0 ] && [ -n "$how" ] || return 1
   printf 'same:%s' "$how"
@@ -1011,6 +1018,7 @@ rebind_patch_id() {
   id=$(mc_patch_id_rebind "$slug" "$proj" "$num" "$rec" "$rev" "$head") || return 1
   local why
   case "$id" in
+    same:restamp|same:restamp-rebase) why="rebound: ${id#same:} (bin/lib/patch-same.sh; no reviewed content change)" ;;
     same:*) why="own commits unchanged (${id#same:}, bin/lib/patch-same.sh; no content change)" ;;
     *)      why="patch-id $id unchanged (rebase only, no content change)" ;;
   esac

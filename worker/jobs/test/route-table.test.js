@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ROUTES, OPEN_ROUTES } from '../src/index.js';
 import { matchRoute, matcherSignature } from '../src/lib/router.js';
+import { OPEN_FAMILIES } from '../src/lib/route-families.js';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 // THE TABLE ANSWERS EXACTLY WHAT THE CHAIN ANSWERED, IN THE SAME ORDER.
@@ -44,7 +45,14 @@ const familyOf = (f) => { const m = f.match(FRAG_RE); return m[2] ?? m[4]; };
 const fragFiles = () => (existsSync(FRAG_DIR) ? readdirSync(FRAG_DIR) : []).sort();
 const fragLines = (f) => readFileSync(new URL(f, FRAG_DIR), 'utf8')
   .split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#'));
-const CHAIN = fragFiles().filter((f) => FRAG_RE.test(f)).flatMap(fragLines);
+// TEST-CHANGE (BH-8918): the open families' fragments come first, each set in
+// file name order, because table() is OPEN_ROUTES then ROUTES. Until BH-8918
+// every open fragment was numbered below every gated one, so name order was
+// that order already; the key-named open fragment bh-8918-hosted-board.txt
+// sorts after the numbered gated ones. Every route is still compared in order.
+const FRAGS = fragFiles().filter((f) => FRAG_RE.test(f));
+const CHAIN = [...FRAGS.filter((f) => OPEN_FAMILIES.has(familyOf(f))), ...FRAGS.filter((f) => !OPEN_FAMILIES.has(familyOf(f)))]
+  .flatMap(fragLines);
 
 const table = () => [...OPEN_ROUTES, ...ROUTES];
 const sigOf = ([method, matcher]) => `${method} ${matcherSignature(matcher)}`;
@@ -175,7 +183,7 @@ test('an unknown path matches nothing, so the entry point can 404 it', () => {
 
 // The bearer is checked between the open table and the gated one, so a route in
 // the wrong table is a route with the wrong credential.
-test('only the three tracker webhooks, the two ci-durations routes, the two ci-test-tiers routes and the three suite-ledger routes are open; each webhook is open to every method', () => {
+test('only the three tracker webhooks, the two ci-durations routes, the two ci-test-tiers routes, the three suite-ledger routes and the ten hosted-board routes are open; each webhook is open to every method', () => {
   // BH-4079 added Jira and Linear beside GitHub; each carries its own HMAC.
   // Sentry/PagerDuty intake is out of scope, so no other /webhooks/* opens.
   // BH-5653: the ci-durations pair carries its own scoped bearer
@@ -186,10 +194,25 @@ test('only the three tracker webhooks, the two ci-durations routes, the two ci-t
   // BH-5366 added the suite ledger (CI has no bearer); each route checks its
   // own credential with credentialClass(), and only on its exact method.
   // TEST-CHANGE (merge of main into BH-5366): OPEN_ROUTES carries all three sets; every assertion of each side stays.
+  // TEST-CHANGE (BH-8918): the hosted Board API's ten rows follow; each route
+  // checks its own hosted_board_tokens bearer. Every earlier assertion stays.
+  const HB = '^\\/api\\/hosted-board\\/([a-z0-9][a-z0-9-]{0,62})';
   assert.deepEqual(OPEN_ROUTES.map(sigOf), ['* /webhooks/github', '* /webhooks/jira', '* /webhooks/linear',
     'POST /api/ci/suite-durations', 'GET /api/ci/suite-durations',
     'GET /api/ci/test-tiers', 'PUT /api/ci/test-tiers',
-    'POST /api/suite-results/lookup', 'PUT /api/suite-results', 'PUT /api/suite-results/runs']);
+    'POST /api/suite-results/lookup', 'PUT /api/suite-results', 'PUT /api/suite-results/runs',
+    `GET re:/${HB}\\/health$/`, `GET re:/${HB}\\/boards$/`,
+    `GET re:/${HB}\\/boards\\/([^/]+)\\/tickets$/`, `POST re:/${HB}\\/boards\\/([^/]+)\\/tickets$/`,
+    `GET re:/${HB}\\/tickets\\/([^/]+)$/`, `POST re:/${HB}\\/tickets\\/([^/]+)\\/comments$/`,
+    `POST re:/${HB}\\/tickets\\/([^/]+)\\/move$/`, `POST re:/${HB}\\/tickets\\/([^/]+)\\/turn$/`,
+    `POST re:/${HB}\\/tickets\\/([^/]+)\\/assign$/`, '* re:/^\\/api\\/hosted-board\\//']);
+  // The hosted-board prefix row must not take a gated route: the admin family
+  // and every other /api/* path stay behind the bearer.
+  for (const path of ['/api/hosted-board-admin/setup', '/api/hosted-board-admin/revoke', '/api/hosted-board', '/api/jobs']) {
+    assert.equal(matchRoute(OPEN_ROUTES, 'POST', path), null, path);
+    assert.ok(matchRoute(ROUTES, 'POST', path) || path === '/api/hosted-board', `${path} must stay a gated route`);
+  }
+  assert.ok(matchRoute(OPEN_ROUTES, 'GET', '/api/hosted-board/p1/boards'));
   assert.equal(matchRoute(OPEN_ROUTES, 'GET', '/api/suite-results'), null);
   assert.equal(matchRoute(OPEN_ROUTES, 'GET', '/api/suite-results/runs'), null);
   for (const v of ['github', 'jira', 'linear']) {

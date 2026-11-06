@@ -1,0 +1,18 @@
+# catalog/name-guard.d/trackers.txt (BH-8918). The tracker deny file of the
+# name guard (bin/name-guard.py): other tracker products must not become a
+# product noun in our own hosted board identifiers and UI strings. One term per
+# line; `scope: <glob>` lines limit this file to the paths they match (the
+# files the hosted board rollout creates). The adapter files, settings keys and
+# docs/connecting-a-board.md are exempt through catalog/name-guard.d/allow.txt.
+scope: worker/jobs/src/routes/hosted-board*
+scope: worker/jobs/src/lib/hosted-board*
+scope: worker/jobs/schema.d/*hosted-board*
+scope: console-ui/src/screens/Board.js
+scope: console-ui/src/screens/board/**
+scope: bin/hosted-board-*
+scope: docs/HOSTED-BOARD.md
+docket
+order book
+plane
+jira
+linear

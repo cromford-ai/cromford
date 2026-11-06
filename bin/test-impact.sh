@@ -346,14 +346,16 @@ TI_TMP=$(mktemp -d "${TMPDIR:-/tmp}/test-impact.XXXXXX") || {
 # THE UNIVERSE IS WHAT GIT TRACKS: a diff is made of tracked paths, so the
 # universe has to be tracked paths. Since BH-5518 C2 no tracked file sits under
 # an ignore rule, and tests/generated-not-tracked.bh-5518-test.sh G1 holds that.
-# THE THREE GENERATED-PATH ALIASES (BH-6005, BH-4987, BH-6487):
+# THE FOUR GENERATED-PATH ALIASES (BH-6005, BH-4987, BH-6487, BH-8986):
 # worker/<w>/schema.sql is composed from worker/<w>/schema.d/,
-# catalog/llm-sites.json from catalog/llm-sites.d/ and
-# catalog/context-budgets.json from catalog/context-budgets.d/; suites name the
+# catalog/llm-sites.json from catalog/llm-sites.d/,
+# catalog/context-budgets.json from catalog/context-budgets.d/ and
+# catalog/state-paths.json from catalog/state-paths.d/; suites name the
 # composed file. When a tracked source directory has no tracked composed file,
 # the universe still carries the path, so a suite that names
-# "$DIR/worker/<w>/schema.sql", "$DIR/catalog/llm-sites.json" or
-# "$DIR/catalog/context-budgets.json" keeps its row.
+# "$DIR/worker/<w>/schema.sql", "$DIR/catalog/llm-sites.json",
+# "$DIR/catalog/context-budgets.json" or "$DIR/catalog/state-paths.json" keeps
+# its row.
 ti_files() {
   if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git -C "$ROOT" ls-files | awk '
@@ -361,10 +363,12 @@ ti_files() {
       /^worker\/[^\/]+\/schema\.d\// { split($0, p, "/"); w[p[2]] = 1 }
       /^catalog\/llm-sites\.d\// { sites = 1 }
       /^catalog\/context-budgets\.d\// { budgets = 1 }
+      /^catalog\/state-paths\.d\// { spaths = 1 }
       END {
         for (k in w) if (!(("worker/" k "/schema.sql") in seen)) print "worker/" k "/schema.sql"
         if (sites && !("catalog/llm-sites.json" in seen)) print "catalog/llm-sites.json"
         if (budgets && !("catalog/context-budgets.json" in seen)) print "catalog/context-budgets.json"
+        if (spaths && !("catalog/state-paths.json" in seen)) print "catalog/state-paths.json"
       }'
   else
     ( cd "$ROOT" && find . \
@@ -1713,13 +1717,14 @@ ti_changed() { # <range> -> the changed paths, one per line
   git -C "$ROOT" diff --name-only "$base" "$head"
 }
 
-# ti_schema_alias <changed-file> — THE THREE GENERATED-PATH ALIASES (BH-6005,
-# BH-4987, BH-6487), on the diff side: a changed worker/<w>/schema.d/<x>.sql
-# also changes the composed worker/<w>/schema.sql, a changed
-# catalog/llm-sites.d/<x>.json the composed catalog/llm-sites.json, and a
-# changed catalog/context-budgets.d/<x>.json the composed
-# catalog/context-budgets.json, so that path is appended once. The original
-# lines stay.
+# ti_schema_alias <changed-file> — THE FOUR GENERATED-PATH ALIASES (BH-6005,
+# BH-4987, BH-6487, BH-8986), on the diff side: a changed
+# worker/<w>/schema.d/<x>.sql also changes the composed worker/<w>/schema.sql,
+# a changed catalog/llm-sites.d/<x>.json the composed catalog/llm-sites.json,
+# a changed catalog/context-budgets.d/<x>.json the composed
+# catalog/context-budgets.json, and a changed catalog/state-paths.d/<x>.json
+# the composed catalog/state-paths.json, so that path is appended once. The
+# original lines stay.
 ti_schema_alias() {
   awk '
     { print; have[$0] = 1 }
@@ -1733,6 +1738,10 @@ ti_schema_alias() {
     }
     /^catalog\/context-budgets\.d\/[^\/]+\.json$/ {
       a = "catalog/context-budgets.json"
+      if (!(a in want)) { want[a] = 1; order[++n] = a }
+    }
+    /^catalog\/state-paths\.d\/[^\/]+\.json$/ {
+      a = "catalog/state-paths.json"
       if (!(a in want)) { want[a] = 1; order[++n] = a }
     }
     END { for (i = 1; i <= n; i++) if (!(order[i] in have)) print order[i] }

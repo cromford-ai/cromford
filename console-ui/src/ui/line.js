@@ -6,6 +6,7 @@
 
 import { html, Link } from '../router.js';
 import { STATIONS } from '../lib/line.js';
+import { fmtNum } from '../lib/format.js';
 
 export { STATIONS };
 
@@ -33,7 +34,7 @@ export function StatGrid({ items = [] }) {
         const cls = `statgrid__cell${it.tone ? ` statgrid__cell--${it.tone}` : ''}`;
         const inner = html`
           <span class="statgrid__label">${it.label}</span>
-          <span class="statgrid__value">${it.value}</span>
+          <span class="statgrid__value">${typeof it.value === 'number' ? fmtNum(it.value) : it.value}</span>
           ${it.sub ? html`<span class="statgrid__sub">${it.sub}</span>` : null}`;
         return it.to
           ? html`<${Link} key=${it.label} to=${it.to} class=${cls}>${inner}<//>`

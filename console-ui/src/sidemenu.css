@@ -1,0 +1,87 @@
+/* The side menu (BH-9118, src/ui/SideMenu.js). Theme tokens only: no colour
+   literal. It scrolls up and down inside itself and never sideways. The
+   widths and the 50px top bar offset are layout, not settings. Sticky needs
+   body overflow-x: clip (styles.css). */
+
+.sidemenu {
+  flex: 0 0 200px; width: 200px;
+  position: sticky; top: 0; align-self: flex-start;
+  height: calc(100vh - 50px);
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 8px 16px;
+  border-right: 1px solid var(--line);
+  background: var(--surface-nav);
+}
+
+.sidemenu__collapse {
+  align-self: flex-end; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 32px; min-height: 32px; border-radius: var(--r);
+  color: var(--muted); font-size: var(--fs-lg);
+}
+.sidemenu__collapse:hover { color: var(--text); }
+
+.sidemenu__group { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; }
+
+.sidemenu__grouphead {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  padding: 6px 6px 4px; min-height: 28px;
+  font-family: var(--font-mono); text-transform: var(--label-case);
+  font-size: var(--fs-2xs); letter-spacing: 2px; color: var(--faint);
+}
+.sidemenu__grouphead:hover { color: var(--text); }
+.sidemenu__chev { width: 10px; display: inline-block; }
+
+.sidemenu__item { width: 100%; min-width: 0; padding: 6px 8px; font-size: var(--fs-sm); }
+.sidemenu__item svg { flex-shrink: 0; }
+.sidemenu__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidemenu__item .navlink__badge { margin-left: auto; }
+.sidemenu__agent { padding-left: 26px; letter-spacing: 0.5px; }
+.sidemenu__dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: var(--radius-pill); background: currentColor; }
+.sidemenu__note { padding: 4px 8px 4px 26px; font-size: var(--fs-xs); color: var(--note); }
+
+.sidemenu a:focus-visible, .sidemenu button:focus-visible, .topbar__menu:focus-visible {
+  outline: 2px solid var(--green); outline-offset: 1px;
+}
+
+/* The hamburger only shows where the menu is a drawer. */
+.topbar__menu { display: none; }
+
+/* The rail: one icon per screen, a rule between groups. Group heads, labels
+   and the per-agent links hide; STAFF stands for them. */
+@media (min-width: 769px) {
+  .sidemenu--rail { flex-basis: 56px; width: 56px; padding-inline: 6px; }
+  .sidemenu--rail .sidemenu__collapse { align-self: center; }
+  .sidemenu--rail .sidemenu__grouphead,
+  .sidemenu--rail .sidemenu__label,
+  .sidemenu--rail .sidemenu__agent,
+  .sidemenu--rail .sidemenu__note { display: none; }
+  .sidemenu--rail .sidemenu__item { justify-content: center; padding: 8px 0; position: relative; }
+  .sidemenu--rail .sidemenu__item .navlink__badge { position: absolute; top: 2px; right: 2px; margin: 0; }
+  .sidemenu--rail .sidemenu__group + .sidemenu__group { border-top: 1px solid var(--line); padding-top: 6px; }
+}
+
+/* A phone: the menu is a drawer over the page, opened by the hamburger. */
+@media (max-width: 768px) {
+  .app__main { display: block; }
+  .topbar__menu {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    min-width: 44px; min-height: 44px; margin-left: -8px; color: var(--text); border-radius: var(--r);
+  }
+  .sidemenu {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 48;
+    width: min(280px, 85vw); height: auto;
+    border-right: 1px solid var(--line-active);
+    transform: translateX(-100%); visibility: hidden;
+    transition: transform 0.16s ease-out, visibility 0s linear 0.16s;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .sidemenu--open { transform: none; visibility: visible; transition: transform 0.16s ease-out; }
+  .sidemenu__collapse { display: none; }
+  .sidemenu__item, .sidemenu__grouphead { min-height: 44px; }
+  .sidemenu__scrim { position: fixed; inset: 0; z-index: 47; background: var(--scrim); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidemenu, .sidemenu--open { transition: none; }
+}

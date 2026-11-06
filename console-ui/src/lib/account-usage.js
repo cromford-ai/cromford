@@ -1,4 +1,4 @@
-import { fmtUsd } from './format.js';
+import { fmtNum, fmtUsd } from './format.js';
 
 // BH-167.3: display rows for the ACCOUNT USAGE section. The payload is the
 // worker's (GET /api/metrics/account-usage, `AccountUsageEntry` JSDoc in
@@ -15,7 +15,7 @@ export function fmtTokens(n) {
   const v = Number(n);
   if (Math.abs(v) < 1000) return String(Math.round(v));
   if (Math.abs(v) < 1e6) return `${(v / 1000).toFixed(1)}k`;
-  return `${(v / 1e6).toFixed(2)}M`;
+  return `${fmtNum(v / 1e6, { decimals: 2 })}M`;
 }
 
 const pct = (n) => (n === null || n === undefined || !Number.isFinite(Number(n)) ? null : Number(n));

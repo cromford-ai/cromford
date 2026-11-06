@@ -1,6 +1,6 @@
 import { html, Link } from '../router.js';
 import { Dot } from './icons.js';
-import { agoFromMinutes, healthFromAge } from '../lib/format.js';
+import { agoFromMinutes, healthFromAge, fmtNum } from '../lib/format.js';
 
 const HEALTH_COLOR = { ok: 'var(--green)', warn: 'var(--amber)', dead: 'var(--red)', unknown: 'var(--faint)' };
 export const healthColor = (h) => HEALTH_COLOR[h] || HEALTH_COLOR.unknown;
@@ -15,13 +15,14 @@ export const Section = ({ title, note, right, children }) => html`
     ${children}
   </div>`;
 
+// A number `value` is grouped (4,823, BH-9119); a string or vnode shows as given.
 // `to` makes a tile a real link — an aggregate a user would click should go
 // somewhere rather than just sit there.
 export const Stat = ({ label, value, unit, tone, to }) => {
   const inner = html`
     <span class="stat__label">${label}</span>
     <span class=${`stat__value${tone === 'green' ? ' stat__value--green' : ''}${tone === 'amber' ? ' stat__value--amber' : ''}${tone === 'sm' ? ' stat__value--sm' : ''}`}>
-      ${value}${unit ? html`<span class="stat__unit">${unit}</span>` : null}
+      ${typeof value === 'number' ? fmtNum(value) : value}${unit ? html`<span class="stat__unit">${unit}</span>` : null}
     </span>`;
   const cls = `stat${tone === 'warn' ? ' stat--warn' : ''}${to ? ' stat--link' : ''}`;
   return to

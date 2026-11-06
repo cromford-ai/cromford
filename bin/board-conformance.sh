@@ -105,7 +105,7 @@ run_project() {
     if [ "$rc" -ne 0 ]; then
       probe=failed; note="${BC_PROBE_NOTE:-bc_probe_board rc $rc}"
     else
-      bc_probe_origin "$prod" "$base" "$tok" "$mt"
+      bc_probe_origin "$prod" "$base" "$tok" "$mt" "$bp"
       bc_write_routes "$p"
     fi
   fi

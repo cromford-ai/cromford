@@ -198,6 +198,16 @@ if [ "$SHARD_ON" = 1 ]; then
     SHARD_HUSD=$(triage_hour_usd "$HARNESS" "$PROJECT")
   fi
   SHARD_LAUNCHED=""; SHARD_HELD=""; SHARD_LEFT=""; SHARD_SAME=""; SHARD_NOSIG=""; SHARD_TSS=""; SHARD_N=0; SHARD_HELD_N=0
+  # BH-9113: the running builds, read ONCE per tick (bin/lib/shard-building.sh).
+  # A key with a running build gets no shard below: its claim would refuse it.
+  # No lib = today; an unreadable census skips nothing.
+  SHARD_BUILD=""; SHARD_BCENSUS=""
+  if [ -r "$HARNESS/bin/lib/shard-building.sh" ] && . "$HARNESS/bin/lib/shard-building.sh"; then
+    SHARD_BCENSUS="$SHARD_DIR/.building.tsv"
+    shard_building_census "$HARNESS" "$PROJECT" "$SHARD_BCENSUS"
+    grep -qx '#unreadable' "$SHARD_BCENSUS" 2>/dev/null \
+      && echo "$STAMP [$PROJECT] triage shards: running-build census unreadable — no key skipped for a running build this tick (the claim stays the backstop)" >> "$LOG"
+  fi
   # BH-2542: the no-signal settle (bin/lib/triage-signal.sh). No lib = today.
   [ -r "$HARNESS/bin/lib/triage-signal.sh" ] && . "$HARNESS/bin/lib/triage-signal.sh"
   SHARD_FPTTL=0
@@ -284,6 +294,12 @@ if [ "$SHARD_ON" = 1 ]; then
       fi
     fi
     # <<< per-ticket fingerprint
+    # BH-9113: a running build owns the ticket. Before any slot or cap, and
+    # before the fingerprint is stamped: re-armed below, offered again next tick.
+    if [ -n "$SHARD_BCENSUS" ] && SHARD_BWHY=$(shard_building_why "$HARNESS" "$PROJECT" "$SHARD_GH" "$SHARD_BCENSUS" "$K"); then
+      echo "$STAMP [$PROJECT] triage shards: $K skipped — build running ($SHARD_BWHY); no shard bought, no slot used, re-offered next tick" >> "$LOG"
+      SHARD_BUILD="$SHARD_BUILD $K"; continue
+    fi
     if [ "$SHARD_MAX" -gt 0 ] && [ "$SHARD_INFLIGHT" -ge "$SHARD_MAX" ]; then
       SHARD_LEFT="$SHARD_LEFT $K"; continue
     fi
@@ -411,7 +427,7 @@ $SHARD_SOP"
   # SHARD_SAME is deliberately absent from this list: those keys were CONSUMED
   # just above, not re-armed — see the note at the skip for why fp-fresh means
   # there is nothing to put back.
-  for K in $SHARD_HELD $SHARD_LEFT; do
+  for K in $SHARD_HELD $SHARD_LEFT $SHARD_BUILD; do
     triage_shard_rearm "$HARNESS" "$PROJECT" "$K" "$SHARD_GH" || true
   done
   # A unit the CAP withheld is work this box chose not to start, so the gate's
@@ -434,7 +450,7 @@ $SHARD_SOP"
     elif [ "$SHARD_MAX" -gt 0 ]; then SHARD_LEFT_TXT=" — left in scope (cap $SHARD_MAX):$SHARD_LEFT"
     else SHARD_LEFT_TXT=" — left in scope:$SHARD_LEFT"; fi
   fi
-  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
+  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_BUILD:+ — building:$SHARD_BUILD}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
   # ONE ALERT PER PROJECT PER CLOCK HOUR, and it is an ALERT rather than a log
   # line on purpose (the 08-13 lesson: "stopping is an alert, not a whisper").
   # A lane that has stopped triaging its board because it hit a money ceiling is

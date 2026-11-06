@@ -54,9 +54,37 @@ export function clockTime(iso) {
   return `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}Z`;
 }
 
-export function fmtUsd(n) {
+// BH-9119: the one number formatter. A fixed en-US locale with grouping, so
+// 12224.73 reads 12,224.73 whatever the browser's locale. Strict like isNum in
+// lib/spend.js: only a finite number or a non-blank numeric string formats;
+// null, '', a boolean or NaN reads '—', never 0. With no `decimals` the Intl
+// default applies (up to 3 fraction digits, no padding). A rounded zero never
+// shows a minus sign.
+const isNum = (n) => {
+  if (typeof n === 'number') return Number.isFinite(n);
+  if (typeof n === 'string' && n.trim() !== '') return Number.isFinite(Number(n));
+  return false;
+};
+const NUM_FORMATS = new Map();
+const numFormat = (decimals) => {
+  let f = NUM_FORMATS.get(decimals);
+  if (!f) {
+    const digits = decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
+    f = new Intl.NumberFormat('en-US', { useGrouping: true, signDisplay: 'negative', ...digits });
+    NUM_FORMATS.set(decimals, f);
+  }
+  return f;
+};
+export function fmtNum(n, { decimals } = {}) {
+  if (!isNum(n)) return '—';
+  return numFormat(decimals).format(Number(n));
+}
+
+export function fmtUsd(n, { decimals = 2 } = {}) {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—';
-  return `$${Number(n).toFixed(2)}`;
+  const v = Number(n);
+  const text = fmtNum(Math.abs(v), { decimals });
+  return `${v < 0 && /[1-9]/.test(text) ? '-' : ''}$${text}`;
 }
 
 export function fmtDuration(seconds) {
@@ -131,7 +159,7 @@ export function whenLabel(iso, nowMs = Date.now()) {
 export function countOrNull(v, { uncapped = false } = {}) {
   if (v === null || v === undefined || v === '') return uncapped ? 'no cap' : 'no data';
   const n = Number(v);
-  return Number.isFinite(n) ? String(n) : 'no data';
+  return Number.isFinite(n) ? fmtNum(n) : 'no data';
 }
 
 // Every $ in the console is either API-equivalent (list price x tokens, what the
@@ -142,5 +170,5 @@ export const USD_BASIS_LABEL = Object.freeze({ api: 'API-eq', cash: 'cash' });
 export function usdBasis(n, basis = 'api') {
   const b = basis === 'cash' ? 'cash' : 'api';
   const ok = n !== null && n !== undefined && n !== '' && Number.isFinite(Number(n));
-  return { text: ok ? `$${Number(n).toFixed(2)}` : 'no data', basis: b, label: USD_BASIS_LABEL[b] };
+  return { text: ok ? fmtUsd(n) : 'no data', basis: b, label: USD_BASIS_LABEL[b] };
 }

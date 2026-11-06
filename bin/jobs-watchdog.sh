@@ -684,10 +684,26 @@ command -v rcw_check >/dev/null 2>&1 && rcw_check
 # the work can be re-offered. Nothing is launched, and the release cannot cause
 # a double build — job_open's fleet-wide ticket rule refuses a second CONCURRENT
 # claim regardless of what this queue says.
+#
+# THE RELEASE COUNTS (BH-8734): queue_release_counted adds 1 to
+# build_queue.attempt, and the worker ends the row `failed` instead of `queued`
+# past queue.release_attempt_max. That row gets one RELEASE CAP line and is not
+# counted in QRELEASED. A box without the counted release uses today's call.
 if command -v queue_stale >/dev/null 2>&1; then
   while IFS="$(printf '\t')" read -r QP QK QBY QAT _QTG _QATT; do
     [ -n "${QP:-}" ] && [ -n "${QK:-}" ] || continue
-    queue_release "$QP" "$QK" "claimed by ${QBY:-?} at ${QAT:-?} and never closed — released after ${QUEUE_CLAIM_MIN}m so the ticket can be built again" >/dev/null 2>&1 || continue
+    QWHY="claimed by ${QBY:-?} at ${QAT:-?} and never closed — released after ${QUEUE_CLAIM_MIN}m so the ticket can be built again"
+    if command -v queue_release_counted >/dev/null 2>&1; then
+      QANS=$(queue_release_counted "$QP" "$QK" "$QWHY" 2>/dev/null) || continue
+      if [ "${QANS%% *}" = failed ]; then
+        read -r _ QCA QCM <<<"$QANS"
+        HARNESS="$H" "$H/bin/alert-line.sh" --project "$QP" "[jobs-watchdog] QUEUE CLAIM RELEASE CAP: $QP/$QK was claimed by ${QBY:-?} at ${QAT:-?} and never closed (over ${QUEUE_CLAIM_MIN}m). This release is attempt $QCA of $QCM (queue.release_attempt_max); the row is failed, not requeued. No build was started (BH-8734)." >/dev/null 2>&1 || true
+        echo "$(STAMP) queue-release-cap $QP/$QK by=${QBY:-?} at=${QAT:-?} attempt=$QCA max=$QCM" >> "$LOG"
+        continue
+      fi
+    else
+      queue_release "$QP" "$QK" "$QWHY" >/dev/null 2>&1 || continue
+    fi
     QRELEASED=$((QRELEASED+1))
     echo "$(STAMP) [jobs-watchdog] QUEUE CLAIM RELEASED: $QP/$QK was claimed by ${QBY:-?} at ${QAT:-?} and never closed (over ${QUEUE_CLAIM_MIN}m). The machine that took it is gone; the row is back on the queue so the ticket can build. No build was started by this release." >> "$ALERTS"
     echo "$(STAMP) queue-release $QP/$QK by=${QBY:-?} at=${QAT:-?}" >> "$LOG"

@@ -26,7 +26,7 @@ test('a tiny non-zero cost never rounds down to free', () => {
 
 test('dollars render at cent precision, unrounded beyond it', () => {
   assert.equal(fmtUsdExact(41.2), '$41.20');
-  assert.equal(fmtUsdExact(1678), '$1678.00');
+  assert.equal(fmtUsdExact(1678), '$1,678.00');
   assert.equal(fmtUsdExact(2.87), '$2.87');
 });
 
@@ -235,7 +235,7 @@ test('cash and attributed are TWO numbers, and cash is the one that hit a card',
     fleet_notional_7d: 6338.87, fleet_cash_7d: 0.78,
     cash_overage_7d: 4.33, fleet_cash_7d_total: 5.11
   });
-  assert.equal(h.attributed7d, '$6338.87');
+  assert.equal(h.attributed7d, '$6,338.87');
   assert.equal(h.cash7d, '$5.11');
 });
 
@@ -253,9 +253,9 @@ test('an absent cash total does not fall back to adding the parts', () => {
 });
 
 test('attributed falls back to fleet_cost_7d when notional is not sent', () => {
-  assert.equal(spendHeadline({ fleet_cost_7d: 5669.23 }).attributed7d, '$5669.23');
+  assert.equal(spendHeadline({ fleet_cost_7d: 5669.23 }).attributed7d, '$5,669.23');
   assert.equal(spendHeadline({ fleet_notional_7d: 6338.87, fleet_cost_7d: 5669.23 }).attributed7d,
-    '$6338.87', 'the explicit notional field wins when present');
+    '$6,338.87', 'the explicit notional field wins when present');
 });
 
 test('BOTH lines carry the SAME floor marker when the total is incomplete', () => {
@@ -266,7 +266,7 @@ test('BOTH lines carry the SAME floor marker when the total is incomplete', () =
     fleet_notional_7d: 6338.87, fleet_cash_7d_total: 5.11,
     fleet_cost_incomplete: true, fleet_cost_missing: ['a', 'b']
   });
-  assert.equal(h.attributed7d, '≥ $6338.87');
+  assert.equal(h.attributed7d, '≥ $6,338.87');
   assert.equal(h.cash7d, '≥ $5.11');
 });
 
@@ -358,7 +358,7 @@ test('once the meter is absolute, cash renders from the SERVER total', () => {
     fleet_cash_7d: 0.78, cash_overage_7d: 18867.75
   });
   assert.equal(h.cashReady, true);
-  assert.equal(h.cash7d, '$18868.53', 'the server total, never summed here');
+  assert.equal(h.cash7d, '$18,868.53', 'the server total, never summed here');
   assert.equal(h.cashPending, null);
 });
 
@@ -367,8 +367,8 @@ test('a ready cash line still takes the shared incomplete floor', () => {
     overage_meter_usd: 18863.42, fleet_cash_7d_total: 18868.53,
     fleet_notional_7d: 6338.87, fleet_cost_incomplete: true
   });
-  assert.equal(h.cash7d, '≥ $18868.53');
-  assert.equal(h.attributed7d, '≥ $6338.87', 'both lines, one rule');
+  assert.equal(h.cash7d, '≥ $18,868.53');
+  assert.equal(h.attributed7d, '≥ $6,338.87', 'both lines, one rule');
 });
 
 test('a ready meter with a MISSING total is still not a number', () => {

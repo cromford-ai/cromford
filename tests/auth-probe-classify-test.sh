@@ -153,7 +153,8 @@ esac
 SH
   chmod +x "$STUB/claude"
   printf '#!/bin/bash\n# BH-2560: the probe now calls agent-call.sh; forward it to the stub claude on PATH\nclaude -p "$6" --model "$3" >"$5" 2>"$5.err"; rc=$?; echo "${SERVED_MODEL:-$3}" > "$5.model"; exit $rc\n' > "$T/bin/agent-call.sh"; chmod +x "$T/bin/agent-call.sh"
-  probe() { STUB_MODE="$1" TRIAGE_MODEL=m-primary AUTH_FALLBACK_MODEL=m-fallback PATH="$STUB:$PATH" bash -c "$PROBE_BODY" 2>/dev/null; }
+  # TEST-CHANGE (BH-9125): the canary model override is AUTH_CANARY_MODEL (TRIAGE_MODEL no longer steers it).
+  probe() { STUB_MODE="$1" AUTH_CANARY_MODEL=m-primary AUTH_FALLBACK_MODEL=m-fallback PATH="$STUB:$PATH" bash -c "$PROBE_BODY" 2>/dev/null; }
 
   OUT=$(probe sentinel-note)
   [ "$(classify_probe "$OUT")" = ok ] && ok \

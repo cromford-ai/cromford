@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import { html, Link } from '../router.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
-import { fmtUsd } from '../lib/format.js';
+import { fmtUsd, fmtNum } from '../lib/format.js';
 import { prLink, boxLink } from '../lib/anchored.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
@@ -42,7 +42,7 @@ export function laneRows(data) {
 
 export function fmtRatio(v) {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return '—';
-  return Number(v).toFixed(2);
+  return fmtNum(Number(v), { decimals: 2 });
 }
 
 // Only a real GitHub URL becomes a link; anything else is shown as text.

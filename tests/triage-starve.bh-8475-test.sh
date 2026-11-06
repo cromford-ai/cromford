@@ -315,11 +315,20 @@ pass 0; pass $HR; pass $((2*HR)); pass $((3*HR))
 [ "$(col 47 7)" = "declined: fastpath exit 124" ] && ok || bad "(E7) outcome names the exit code: [$(col 47 7)]"
 [ "$(tail -1 "$T/calls/timeout" 2>/dev/null)" = 45 ] && ok || bad "(E7) the timeout knob is the bound: [$(tail -1 "$T/calls/timeout" 2>/dev/null)]"
 unset STUB_RC TRIAGE_STARVE_FASTPATH_TIMEOUT_S
-# I1: an in-app board gets the alert and no fastpath call
+# I1: an in-app board gets the alert and no fastpath call. BH-9113 gave it its
+# own launch attempt (tests/triage-starve-inapp.bh-9113-test.sh); with the
+# switch TRIAGE_STARVE_INAPP_LAUNCH=0 the record is the pre-BH-9113 one.
 newp i1 inapp; listed 48
+export TRIAGE_STARVE_INAPP_LAUNCH=0
 pass 0; pass $HR; pass $((2*HR))
+unset TRIAGE_STARVE_INAPP_LAUNCH
 [ "$(fpcalls)" = 0 ] && [ "$(alerts)" = 1 ] && ok || bad "(I1) in-app: no fastpath, one alert [$(fpcalls)/$(alerts)]"
-[ "$(col 48 7)" = "n/a: in-app board" ] && ok || bad "(I1) in-app: outcome n/a: [$(col 48 7)]"
+[ "$(col 48 7)" = "n/a: in-app board" ] && ok || bad "(I1) in-app, switch off: outcome n/a: [$(col 48 7)]"
+# I1 with the default: still no fastpath call and one alert, and no n/a record
+newp i1d inapp; listed 48
+pass 0; pass $HR; pass $((2*HR))
+[ "$(fpcalls)" = 0 ] && [ "$(alerts)" = 1 ] && ok || bad "(I1) in-app default: no fastpath, one alert [$(fpcalls)/$(alerts)]"
+case "$(col 48 7)" in "n/a: in-app board"|"-"|"") bad "(I1) in-app default: an attempt outcome, not n/a: [$(col 48 7)]" ;; *) ok ;; esac
 
 # ═══ R1: round-trip ══════════════════════════════════════════════════════════
 newp r1; listed 51 52

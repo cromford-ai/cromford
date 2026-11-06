@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { html, Link, navigate, useSearchParam } from '../router.js';
 import { useApi } from '../lib/hooks.js';
+import { fmtUsd } from '../lib/format.js';
 import { PageHeadline } from '../ui/line.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
@@ -31,7 +32,7 @@ export const shiftDay = (day, delta) => todayUtc(new Date(Date.parse(`${day}T00:
 const na = (why) => html`<span class="na" title=${why || ''}>n/a</span>`;
 const isNum = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
 const num = (v) => (isNum(v) ? String(Number(v)) : 'n/a');
-const usd = (v) => (isNum(v) ? `$${Number(v).toFixed(2)}` : 'unknown');
+const usd = (v) => (isNum(v) ? fmtUsd(v) : 'unknown');
 const isUrl = (v) => typeof v === 'string' && /^https?:\/\//.test(v);
 const notMeasured = (s) => `not measured: ${(s && s.error) || 'no answer'}`;
 const unread = (s) => !s || typeof s !== 'object' || s.ok === false;

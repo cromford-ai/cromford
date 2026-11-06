@@ -17,7 +17,7 @@ import { useApi } from '../lib/hooks.js';
 import { Modal } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { minutesSince, safeHttpsUrl } from '../lib/format.js';
+import { minutesSince, safeHttpsUrl, fmtUsd } from '../lib/format.js';
 import { configHref } from '../lib/config.js';
 import { clearFormState } from '../lib/flags.js';
 import {
@@ -298,11 +298,11 @@ const FINDING_COLUMNS = [
 ];
 
 const fmtDuration = (s) => (s === null || s === undefined ? 'n/a' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
-const fmtUsd = (v) => (v === null || v === undefined ? null : `$${Number(v).toFixed(4)}`);
+const usd4 = (v) => (v === null || v === undefined ? null : fmtUsd(v, { decimals: 4 }));
 const costCell = (r) => {
   if (r.kind !== 'tick') return html`<span class="na">—</span>`;
   if (r.cost === null) return html`<span class="na" title="no cost row for this tick">${r.unpriced ? `${r.unpriced} unpriced` : 'n/a'}</span>`;
-  return html`<span>${fmtUsd(r.cost)}${r.unpriced ? html` <span class="na">+${r.unpriced} unpriced</span>` : null}</span>`;
+  return html`<span>${usd4(r.cost)}${r.unpriced ? html` <span class="na">+${r.unpriced} unpriced</span>` : null}</span>`;
 };
 
 const ACTIVITY_COLUMNS = [
@@ -458,7 +458,7 @@ const COST_COLUMNS = [
   { key: 'duration_s', label: 'DURATION', unit: 's', align: 'right', cell: (c) => naCell(c.duration_s) },
   {
     key: 'cost_usd', label: 'COST', unit: '$', align: 'right',
-    cell: (c) => (c.cost_usd === null || c.cost_usd === undefined ? html`<span class="na">unpriced</span>` : fmtUsd(c.cost_usd))
+    cell: (c) => (c.cost_usd === null || c.cost_usd === undefined ? html`<span class="na">unpriced</span>` : usd4(c.cost_usd))
   },
   { key: 'session_id', label: 'SESSION', cell: (c) => html`<code style="overflow-wrap:anywhere">${na(c.session_id)}</code>` }
 ];

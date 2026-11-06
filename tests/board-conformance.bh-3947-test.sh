@@ -154,7 +154,10 @@ swap report 'bc_alert_on_change() { [ -s "$2" ] && printf "%s\n" "$*" > "$BCT/al
 bc_file_ticket() { return 2; }'
 run p1
 check "C-probefail ok path rc 0 (got $RC)" '[ "$RC" -eq 0 ]'
-check "C-probefail ok path origin args" '[ "$(cat "$T/origin.called")" = "https://p1.example https://p1.example tok-p1 mt-p1" ]'
+# TEST-CHANGE (BH-8918): the entry passes the board prefix (fleet.conf column 4)
+# as bc_probe_origin's 5th arg; the lib skips the app internals only under
+# /api/hosted-board/. The first four args are unchanged.
+check "C-probefail ok path origin args" '[ "$(cat "$T/origin.called")" = "https://p1.example https://p1.example tok-p1 mt-p1 /api/board" ]'
 check "C-probefail ok path writes called" '[ -e "$T/writes.called" ]'
 check "C-probefail ok path alert after state" '[ "$(cat "$T/alert.called")" = "p1 $(state p1)" ]'
 

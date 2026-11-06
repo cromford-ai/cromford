@@ -1,0 +1,14 @@
+# BH-8918 (BH-7913.1): the hosted Board API. An OPEN family (index.js
+# OPEN_ROUTES): each route but health checks its own hosted_board_tokens
+# bearer, never HARNESS_SECRET. The last row 404s any other path under the
+# prefix, so a typo is "unknown endpoint", not a 401.
+GET re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/health$/
+GET re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/boards$/
+GET re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/boards\/([^/]+)\/tickets$/
+POST re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/boards\/([^/]+)\/tickets$/
+GET re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/tickets\/([^/]+)$/
+POST re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/tickets\/([^/]+)\/comments$/
+POST re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/tickets\/([^/]+)\/move$/
+POST re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/tickets\/([^/]+)\/turn$/
+POST re:/^\/api\/hosted-board\/([a-z0-9][a-z0-9-]{0,62})\/tickets\/([^/]+)\/assign$/
+* re:/^\/api\/hosted-board\//

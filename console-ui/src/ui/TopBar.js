@@ -1,7 +1,7 @@
-// The top bar (BH-4990, wave 1 of BH-4947): brand, the section nav, the
-// snapshot age and refresh countdown, who this session writes as, the
-// watchdog, and a theme switch. The nav scrolls sideways inside itself on a
-// phone; the body never does.
+// The top bar (BH-4990, wave 1 of BH-4947): brand, the snapshot age and
+// refresh countdown, who this session writes as, the watchdog, and a theme
+// switch. The section links are in the side menu (src/ui/SideMenu.js,
+// BH-9118); on a phone the bar's hamburger opens that menu as a drawer.
 //
 // The switch is the same pick /settings/appearance makes (the viewer's own
 // ui.theme, then a repaint), for the three built-ins only. Custom themes stay
@@ -9,8 +9,8 @@
 // anywhere else (APPEARANCE, the fleet default arriving) re-reads data-theme
 // on THEME_CHANGE_EVENT.
 //
-// `nav` is the NAV table from src/app.js, handed in so this file does not
-// import the app that renders it.
+// `onMenu` toggles the drawer, `menuOpen` is whether it is open, and `menuRef`
+// is where the drawer hands focus back when it closes.
 
 import { useState, useEffect } from 'preact/hooks';
 import { html, Link } from '../router.js';
@@ -43,23 +43,22 @@ export function ThemeSwitch() {
     </div>`;
 }
 
-export function TopBar({ nav = [], path, snap, openAlerts, loading, secondsLeft, watchdogDown, identity }) {
+export function TopBar({ snap, loading, secondsLeft, watchdogDown, identity, menuOpen = false, onMenu, menuRef }) {
   const health = healthFromAge(snap.snapshot_age_min);
   const who = identityPill(identity ? identity.data : null, identity ? identity.error : null);
   return html`
     <div class="topbar">
+      <button type="button" class="topbar__menu" ref=${menuRef} aria-label="Open menu"
+        aria-expanded=${menuOpen ? 'true' : 'false'} aria-controls="sidemenu" onClick=${onMenu}>
+        <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden="true">
+          <path d="M1 1h16M1 7h16M1 13h16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </svg>
+      </button>
       <${Link} to="/" class="topbar__brand">
         <${Logo}/>
         <span class="topbar__title">MISSION CONTROL</span>
         <span class="topbar__sub hide-sm">cromford</span>
       <//>
-      <nav class="topbar__nav" aria-label="sections">
-        ${nav.map((n) => html`
-          <${Link} key=${n.to} to=${n.to} class=${n.match(path) ? 'navlink navlink--on' : 'navlink'}>
-            ${n.label}
-            ${n.badge && openAlerts > 0 ? html`<span class="navlink__badge">${openAlerts}</span>` : null}
-          <//>`)}
-      </nav>
       <div class="topbar__right">
         <span class="topbar__snap">
           ${loading && snap.snapshot_age_min === undefined

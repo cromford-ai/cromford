@@ -203,7 +203,10 @@ html, body {
   overflow-x: hidden;
 }
 
-body { min-height: 100vh; }
+/* clip, not hidden, where the browser has it (BH-9118): hidden makes body a
+   scroll container, and then the side menu's position: sticky never sticks.
+   A browser without clip keeps hidden from the rule above. */
+body { min-height: 100vh; overflow-x: clip; }
 ::selection { background: var(--green-dk); color: var(--bright); }
 
 a { color: var(--green); text-decoration: none; }
@@ -226,6 +229,9 @@ button {
 
 .app { display: flex; flex-direction: column; min-height: 100vh; }
 .app__body { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; }
+/* The side menu (src/sidemenu.css, BH-9118) and the page, side by side. */
+.app__main { display: flex; flex-grow: 1; min-height: 0; min-width: 0; }
+.app__main > .app__body { min-width: 0; }
 
 .topbar {
   display: flex;
@@ -245,14 +251,6 @@ button {
 }
 .topbar__sub { font-size: var(--fs-sm); color: var(--faint); letter-spacing: 1px; }
 .topbar__right { display: flex; align-items: center; gap: 14px; margin-left: auto; flex-shrink: 0; }
-/* The nav is the only part of the bar that can grow without limit (one link
-   per screen, and screens get added). It scrolls inside itself rather than
-   pushing the watchdog pill off the right edge of a 1280px window. */
-.topbar__nav {
-  display: flex; gap: 4px; min-width: 0;
-  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
-}
-.topbar__nav::-webkit-scrollbar { display: none; }
 
 .navlink {
   display: flex; align-items: center; gap: 7px; flex-shrink: 0;
@@ -795,9 +793,6 @@ table.tbl tr.row--hl td { box-shadow: inset 0 1px 0 var(--green), inset 0 -1px 0
   body { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px)); }
   .page { padding: 10px 12px 16px; gap: 10px; }
   .topbar { height: auto; min-height: 48px; padding: 8px 12px; gap: 10px; flex-wrap: wrap; }
-  /* BH-4990: the section nav stays on a phone, as its own row that scrolls
-     sideways inside itself; the body never does. */
-  .topbar__nav { order: 3; flex: 1 1 100%; }
   .topbar__right { gap: 10px; width: 100%; margin-left: 0; flex-wrap: wrap; flex-shrink: 1; min-width: 0; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .stats--6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -844,11 +839,9 @@ table.tbl tr.row--hl td { box-shadow: inset 0 1px 0 var(--green), inset 0 -1px 0
        padding, so a nav that wraps to a second row covers the bottom of the
        page. Auto columns keep it one row as tabs are added. */
     display: grid; grid-auto-flow: column; grid-auto-columns: minmax(36px, 1fr);
-    /* ...and when even 36px each no longer fits (a narrower phone than 375px, or the
-       next tab after this one), the row SCROLLS rather than wrapping: a second
-       row would sit under the page, because the body only reserves --nav-h. */
-    overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
-    scrollbar-width: none;
+    /* It holds the five `bottom` NAV entries only (BH-9118), which fit one row
+       at 320px. It never scrolls: every other screen is in the side menu. */
+    overflow: hidden;
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
     border-top: 1px solid var(--line); background: var(--surface-nav);
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -858,7 +851,6 @@ table.tbl tr.row--hl td { box-shadow: inset 0 1px 0 var(--green), inset 0 -1px 0
     padding: 11px 0 13px; font-size: var(--fs-2xs); letter-spacing: 1px; color: var(--faint);
     position: relative; min-height: 44px;
   }
-  .bottomnav::-webkit-scrollbar { display: none; }
   .bottomnav a.on { color: var(--green); }
   .bottomnav__badge {
     position: absolute; top: 6px; right: 22%;
@@ -870,8 +862,7 @@ table.tbl tr.row--hl td { box-shadow: inset 0 1px 0 var(--green), inset 0 -1px 0
 }
 
 @media (max-width: 420px) {
-  /* ten tabs on a 375px phone: the labels tighten before the row gives up and
-     scrolls, so the whole nav stays reachable without a swipe. */
+  /* five tabs on a 375px phone: the labels tighten so each keeps its width. */
   .bottomnav a { font-size: var(--fs-3xs); letter-spacing: 0.3px; padding: 11px 1px 13px; }
   .stats, .stats--6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .page { padding: 10px 10px 14px; }

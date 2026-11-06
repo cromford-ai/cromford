@@ -21,6 +21,11 @@
 #      An empty list: rc no-selection (never green).
 #   3  <runner> <tree> <every listed suite> under `timeout <S>`, with
 #      REMOTE_GATE_P=<n>; output in <out>/run.txt. The rc is read unpiped.
+#      With SELECTION_GATE_BASELINE_RUN=1 (BH-9061) the base run's time is
+#      reserved out of <S>: the main run gets S - SELECTION_GATE_BASELINE_TIMEOUT_S
+#      - SELECTION_GATE_BASELINE_RESERVE_PAD_S, never under
+#      SELECTION_GATE_MAIN_TIMEOUT_MIN_S and never over S. Step 4's timeout
+#      verdict uses that bound.
 #   4  0 green. 1-124: red, named by the `FAIL tests/<x>.sh (rc <n>)` lines of
 #      run.txt only. 125, any other rc or the timeout: could-not-run with the
 #      reason (remote-gate's bad-arguments 2 prints no FAIL line). A RUNNER-FAILURE line, or a red rc with no FAIL line, is
@@ -64,8 +69,10 @@
 #
 # KNOBS. --timeout and -P are the fly-pool lane knobs SELECTION_GATE_TIMEOUT_S
 # and SELECTION_GATE_P; bin/lib/selection-gate.sh reads them and passes them in,
-# and SELECTION_GATE_WHY_MAX (the reason's length cap) and the three
-# SELECTION_GATE_BASELINE* rows (step 6) in the env.
+# and SELECTION_GATE_WHY_MAX (the reason's length cap), the three
+# SELECTION_GATE_BASELINE* rows (step 6) and, BH-9061, the two rows of the
+# main-run reserve (step 3: SELECTION_GATE_BASELINE_RESERVE_PAD_S,
+# SELECTION_GATE_MAIN_TIMEOUT_MIN_S) in the env.
 # The fallbacks below name their rows. Test seams: SELECTION_GATE_PLAN (the
 # planner, default <tree>/bin/ci-plan.sh) and SELECTION_GATE_RUNNER (default
 # <tree>/bin/remote-gate.sh).
@@ -84,7 +91,7 @@ while [ $# -gt 0 ]; do
     --out)     [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
     --timeout) [ $# -ge 2 ] || usage; TO="$2"; shift ;;
     -P)        [ $# -ge 2 ] || usage; PAR="$2"; shift ;;
-    -h|--help) sed -n '2,71p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,78p' "$0"; exit 0 ;;
     *) echo "selection-gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -105,6 +112,18 @@ BL="${SELECTION_GATE_BASELINE_RUN:-0}"; [ "$BL" = 1 ] || BL=0
 BTO="${SELECTION_GATE_BASELINE_TIMEOUT_S:-900}"; [[ "$BTO" =~ ^[1-9][0-9]*$ ]] || BTO=900
 # lane.fly-pool.selection_gate_baseline_keep_days (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_BASELINE_KEEP_DAYS.json)
 BKEEP="${SELECTION_GATE_BASELINE_KEEP_DAYS:-2}"; [[ "$BKEEP" =~ ^[1-9][0-9]*$ ]] || BKEEP=2
+# lane.fly-pool.selection_gate_baseline_reserve_pad_s (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_BASELINE_RESERVE_PAD_S.json)
+BPAD="${SELECTION_GATE_BASELINE_RESERVE_PAD_S:-60}"; [[ "$BPAD" =~ ^(0|[1-9][0-9]*)$ ]] || BPAD=60
+# lane.fly-pool.selection_gate_main_timeout_min_s (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_MAIN_TIMEOUT_MIN_S.json)
+MMIN="${SELECTION_GATE_MAIN_TIMEOUT_MIN_S:-300}"; [[ "$MMIN" =~ ^[1-9][0-9]*$ ]] || MMIN=300
+# MTO — the main run's bound (step 3, BH-9061): with the base run on, its time
+# is reserved out of the gate's wall, so the base run is not cut off.
+MTO=$TO
+if [ "$BL" = 1 ]; then
+  MTO=$((TO - BTO - BPAD))
+  [ "$MTO" -ge "$MMIN" ] || MTO=$MMIN
+  [ "$MTO" -le "$TO" ] || MTO=$TO
+fi
 
 HEAD_SHA=$(git -C "$TREE" rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
 MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"; BRED="-"; BSTAT="-"
@@ -324,7 +343,7 @@ N=${#SUITES[@]}
 
 # ── 3. the run on the test host ──────────────────────────────────────────────
 rrc=0; t0=$SECONDS
-REMOTE_GATE_P="$PAR" timeout -k 30 "$TO" "$RUNNER" "$TREE" "${SUITES[@]}" > "$OUT/run.txt" 2>&1 || rrc=$?
+REMOTE_GATE_P="$PAR" timeout -k 30 "$MTO" "$RUNNER" "$TREE" "${SUITES[@]}" > "$OUT/run.txt" 2>&1 || rrc=$?
 el=$((SECONDS - t0))
 
 # ── 4. the verdict ───────────────────────────────────────────────────────────
@@ -332,8 +351,8 @@ case "$rrc" in
   0) RC=0 ;;
   # timeout's own 124 (137 after the -k kill) once the budget passed; a 124
   # inside it is 124 failing suites.
-  124) if [ "$el" -ge "$TO" ]; then cnr timeout; fi; RC=1 ;;
-  137) if [ "$el" -ge "$TO" ]; then cnr timeout; fi; cnr_why runner-rc-137 ;;
+  124) if [ "$el" -ge "$MTO" ]; then cnr timeout; fi; RC=1 ;;
+  137) if [ "$el" -ge "$MTO" ]; then cnr timeout; fi; cnr_why runner-rc-137 ;;
   # A failed host compose (bin/remote-gate.sh rg_compose_catalogs, BH-8725)
   # is could-not-run why=compose-<name>: the catalogs CI builds before the
   # suites could not be built, so nothing ran.

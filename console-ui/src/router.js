@@ -80,11 +80,13 @@ export function matchRoute(pattern, path) {
 
 // An in-app link: plain left clicks route, everything else (new tab, middle
 // click, modifier) stays a real anchor so the browser does its normal thing.
-export function Link({ to, class: cls, children, ...rest }) {
+// `onNavigate` runs after a routed click (the side menu's drawer closes on it).
+export function Link({ to, class: cls, children, onNavigate, ...rest }) {
   const onClick = useCallback((e) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
     navigate(to);
-  }, [to]);
+    if (onNavigate) onNavigate();
+  }, [to, onNavigate]);
   return html`<a href=${to} class=${cls} onClick=${onClick} ...${rest}>${children}</a>`;
 }
