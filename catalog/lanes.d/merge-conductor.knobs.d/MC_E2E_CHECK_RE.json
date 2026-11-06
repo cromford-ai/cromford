@@ -1,0 +1,11 @@
+{
+  "env": "MC_E2E_CHECK_RE",
+  "read_in": "bin/merge-conductor.d/bh-9071-e2e-red-hold.sh",
+  "type": "string",
+  "default": "",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9071: the check-name regex (jq test, case-insensitive) that makes a check run end-to-end class for the MC_E2E_RED_HOLD gate. Empty = the fallback E2E_CHECK_RE in bin/lib/e2e-paths.sh (e2e|playwright|production[ _-]?qa|prod[ _-]?qa|preview[ _-]?qa|browser). A regex that does not compile reads as the fallback, with one log line per project-hour. Per-project row: lane.merge-conductor.<project>.mc_e2e_check_re."
+}

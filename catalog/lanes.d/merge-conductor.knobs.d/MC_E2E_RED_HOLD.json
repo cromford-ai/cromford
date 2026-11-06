@@ -1,0 +1,11 @@
+{
+  "env": "MC_E2E_RED_HOLD",
+  "read_in": "bin/merge-conductor.d/bh-9071-e2e-red-hold.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9071: 1 = before the conductor adds merge-queue to a READY, not-yet-queued PR on a Mergify repo, it reads the check runs of the PR head. A latest end-to-end check (name matches MC_E2E_CHECK_RE) with conclusion failure holds the PR: one log line and one PR comment per (PR, head). A running one holds it silently until it finishes. A PR labelled fix-main-red is not read. A new commit clears the hold. 0 = off. Not a whole number reads as 1. Per-project row: lane.merge-conductor.<project>.mc_e2e_red_hold."
+}

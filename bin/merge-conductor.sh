@@ -2199,6 +2199,9 @@ pr_worker() {
       # PRODUCTION RED HOLDS THE MERGE (BH-8781): mc_prod_red_hold, fragment
       # bh-8781-prod-red-hold.sh. The row stays READY; no gh write, no budget.
       if command -v mc_prod_red_hold >/dev/null 2>&1 && mc_prod_red_hold; then return 0; fi
+      # END-TO-END RED HOLDS THE ENQUEUE (BH-9071): mc_e2e_red_hold, fragment
+      # bh-9071-e2e-red-hold.sh. A red or running E2E check on HEAD holds a Mergify row.
+      if command -v mc_e2e_red_hold >/dev/null 2>&1 && mc_e2e_red_hold; then return 0; fi
       mc_step dep-gate
       # >>> dep gate
       # AN OPEN DECLARED DEPENDENCY HOLDS THIS MERGE (BH-629). #615 merged with
