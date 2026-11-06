@@ -135,7 +135,8 @@ ok() if "!startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pu
 
 # ── S6. Mergify: queue on the fast checks, merge on everything, from a draft
 names = {str(b["name"]): (j, b) for j, b in jobs.items() if isinstance(b, dict) and b.get("name")}
-VERDICT = "lead-verdict"
+# TEST-CHANGE BH-9039: the verdict gate is one regex condition over lead-verdict and harness-verdict.
+VERDICT = "^(lead-verdict|harness-verdict)$"
 FAST = {"Syntax + shellcheck + config integrity", "Test determinism lint", "Prompt replay evals (prompts/** only)"}
 ALL7 = FAST | {"Pure-logic gate fixtures", "Tests cannot touch a real harness",
                "Mission Control SPA — unit tests + build", "Jobs worker — routes + schema"}

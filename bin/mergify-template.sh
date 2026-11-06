@@ -64,7 +64,7 @@ TEMPLATE = os.path.join(ROOT, "config/mergify/template.yml")
 DEFAULTS = {"merge_method": "squash", "batch_size": "4", "batch_max_wait_time": "3 min",
             "checks_timeout": "45 min", "max_parallel_checks": "3", "max_checks_retries": "0",
             "base": "main", "queue_mode": "serial", "scope_default_capacity": "1"}
-KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "default_status_check", "override", "batch_failure_attempts", "solo_label", "flake_fix_label"}
+KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "status_check_any", "default_status_check", "override", "batch_failure_attempts", "solo_label", "flake_fix_label"}
 # batch_failure_attempts (BH-4980): optional, no default. Set, it renders
 # `batch_max_failure_resolution_attempts: <n>` on the default queue only (the
 # hotfix queue's batch is 1, so there is nothing to split). 0 stops Mergify
@@ -100,6 +100,20 @@ KNOWN = set(DEFAULTS) | {"slug", "check", "queue_check", "status_check", "defaul
 # would stall every batch — and a name that is also a check= would land there,
 # so that is refused. cromford uses it for `lead-verdict`, which only a
 # head-bound verdict publishes (bin/lib/verdict-status.sh). A conf without it
+# renders byte-for-byte as before.
+# status_check_any (at most one line, BH-9039): 2 or more commit STATUS
+# contexts split on `|`, any one of which clears a PR for the queue. Rendered
+# in every queue's queue_conditions, after the status_check names, as ONE
+# string condition `check-success~=^(<a>|<b>)$` plus a veto
+# `-check-failure=<name>` per name, so a failed status (a lead BLOCK) holds the
+# PR out even when another name is success. cromford uses it for
+# `lead-verdict|harness-verdict`: a lead or human verdict publishes the first,
+# a builder-only clearance the second (bin/lib/lead-required.sh). The regex
+# string is not a `check-success=` line, so the check-run parsers
+# (ae_mergify_admit_checks, mc_mergify_required_checks, lr_ci_required) never
+# list it. Each name is [A-Za-z0-9_-]+ (no regex escaping); a single name, an
+# empty member, a second line or a name that is also a check=, queue_check=,
+# status_check= or default_status_check= line is refused. A conf without it
 # renders byte-for-byte as before.
 # default_status_check (repeatable, BH-5441): the same as status_check, but in
 # the DEFAULT queue's queue_conditions only, never the hotfix queue's. That keeps
@@ -183,6 +197,7 @@ def parse(path):
     except (OSError, UnicodeDecodeError) as e:
         raise Bad("%s: cannot read: %s" % (path, e))
     vals, seen, checks, qchecks, schecks, dschecks = {}, {}, [], [], [], []
+    anychecks, anyline = [], 0
     for n, raw in enumerate(lines, 1):
         line = raw.rstrip()
         if not line.strip() or line.lstrip().startswith("#"):
@@ -205,6 +220,19 @@ def parse(path):
             if val in schecks:
                 raise Bad(at + "duplicate status_check %s" % val)
             schecks.append(val)
+            continue
+        if key == "status_check_any":
+            if anyline:
+                raise Bad(at + "duplicate status_check_any (first at line %d)" % anyline)
+            names = val.split("|")
+            if len(names) < 2:
+                raise Bad(at + "status_check_any needs 2 or more names split on |, got %r" % val)
+            for x in names:
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", x):
+                    raise Bad(at + "status_check_any name %r is not [A-Za-z0-9_-]+" % x)
+            if len(set(names)) != len(names):
+                raise Bad(at + "status_check_any lists a name twice")
+            anychecks, anyline = names, n
             continue
         if key == "default_status_check":
             if re.search(r'["\\\x00-\x1f\x7f]', val):
@@ -230,9 +258,16 @@ def parse(path):
     both = [x for x in schecks if x in checks or x in qchecks]
     if both:
         raise Bad("%s: status_check %r is also a check= or queue_check= line — merge_conditions run on the batch draft, which never carries the status" % (path, both[0]))
+    aboth = [x for x in anychecks if x in checks or x in qchecks or x in schecks]
+    if aboth:
+        raise Bad("%s:%d: status_check_any %r is also a check=, queue_check= or status_check= line" % (
+            path, anyline, aboth[0]))
     dboth = [x for x in dschecks if x in checks or x in qchecks or x in schecks]
     if dboth:
         raise Bad("%s: default_status_check %r is also a check=, queue_check= or status_check= line" % (path, dboth[0]))
+    dany = [x for x in dschecks if x in anychecks]
+    if dany:
+        raise Bad("%s:%d: default_status_check %r is also a status_check_any= name" % (path, anyline, dany[0]))
     if "flake_fix_label" in vals and vals["flake_fix_label"] == vals.get("solo_label"):
         raise Bad("%s:%d: flake_fix_label %r equals solo_label — a PR would match two queue rules" % (
             path, seen["flake_fix_label"], vals["flake_fix_label"]))
@@ -242,6 +277,9 @@ def parse(path):
             path, seen.get("scope_default_capacity", 0), conf["scope_default_capacity"], conf["max_parallel_checks"]))
     conf["checks"] = checks
     conf["queue_checks"] = (qchecks or checks) + schecks
+    # BH-9039: the status_check_any conditions, rendered after queue_checks.
+    conf["queue_any"] = (["check-success~=^(%s)$" % "|".join(anychecks)]
+                         + ["-check-failure=" + x for x in anychecks]) if anychecks else []
     conf["default_status_checks"] = dschecks
     return conf
 
@@ -261,13 +299,14 @@ def render(path):
     solo = c.get("solo_label")
     flake = c.get("flake_fix_label")
     cond = lambda lst: ["    - " + json.dumps("check-success=" + x, ensure_ascii=False) for x in lst]
+    qcond = lambda: cond(c["queue_checks"]) + ["    - " + json.dumps(x, ensure_ascii=False) for x in c["queue_any"]]
     blocks = {"QUEUE_MODE_BLOCK": ["mode: parallel"] if par else [],
               # BH-5430: default's conditions plus the label, alone in its batch.
               "SOLO_QUEUE_BLOCK": ["- name: solo",
                                    "  # A high break-risk PR (bin/lib/queue-risk.sh) never shares a batch (BH-5430).",
                                    "  queue_conditions:", "    - base=" + c["base"], "    - label=" + solo,
                                    '    - "#changes-requested-reviews-by=0"',
-                                   "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + cond(c["queue_checks"])
+                                   "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + qcond()
                                   + ["  merge_conditions:", '    - "#changes-requested-reviews-by=0"'] + cond(c["checks"])
                                   + ["  merge_method: " + c["merge_method"], "  batch_size: 1", "  batch_max_wait_time: 0 s",
                                      "  max_checks_retries: 0", "  checks_timeout: " + c["checks_timeout"]] if solo else [],
@@ -285,7 +324,7 @@ def render(path):
                                     "  # A batch-fail suite fix (bin/lib/queue-flake-fix.sh) goes first after a hotfix (BH-7279).",
                                     "  queue_conditions:", "    - base=" + c["base"], "    - label=" + flake,
                                     '    - "#changes-requested-reviews-by=0"',
-                                    "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + cond(c["queue_checks"])
+                                    "    # A PR the main-red breaker paused leaves the queue (BH-8706).", "    - -label=" + PAUSE_LABEL] + qcond()
                                    + ["  merge_conditions:", '    - "#changes-requested-reviews-by=0"'] + cond(c["checks"])
                                    + ["  merge_method: " + c["merge_method"], "  batch_size: 1", "  batch_max_wait_time: 0 s",
                                       "  max_checks_retries: 0", "  checks_timeout: " + c["checks_timeout"]] if flake else [],
@@ -311,6 +350,8 @@ def render(path):
         if m:
             lst = {"QUEUE_": c["queue_checks"], "DEFAULT_STATUS_": c["default_status_checks"]}.get(m.group(2), c["checks"])
             out += [m.group(1) + "- " + json.dumps("check-success=" + x, ensure_ascii=False) for x in lst]
+            if m.group(2) == "QUEUE_":
+                out += [m.group(1) + "- " + json.dumps(x, ensure_ascii=False) for x in c["queue_any"]]
             continue
         for tok, val in subs.items():
             line = line.replace(tok, val)

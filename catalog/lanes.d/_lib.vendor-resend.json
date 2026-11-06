@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "vendor-resend",
+      "file": "bin/lib/vendor/resend.sh",
+      "note": "BH-8894: the Resend email seam. resend_send POSTs one plain-text email to https://api.resend.com/emails (or answers from the local fake in vendor fake mode). The API key is passed by variable name and reaches curl only on stdin. Its one knob is the curl wall-clock limit.",
+      "knobs": []
+    }
+  ]
+}

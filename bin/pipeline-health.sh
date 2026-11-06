@@ -1494,8 +1494,12 @@ else
       fi
       LUST=$(gh api "repos/$SLUG/commits/$LUHEAD/status" 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
       LUAT=$(printf '%s' "$LUST" | jq -r 'if type == "object" then . else error("not a status") end
-        | [.statuses[]? | select(.context == "lead-verdict")] | first
-        | if . != null and .state == "success" then (.updated_at // .created_at // "") else "" end' 2>/dev/null) \
+        | ([.statuses[]? | select(.context == "lead-verdict")] | first) as $l
+        | ([.statuses[]? | select(.context == "harness-verdict")] | first) as $b
+        | if $l != null and ($l.state == "failure" or $l.state == "error") then ""
+          elif $l != null and $l.state == "success" then ($l.updated_at // $l.created_at // "")
+          elif $b != null and $b.state == "success" then ($b.updated_at // $b.created_at // "")
+          else "" end' 2>/dev/null) \
         || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
       [ -n "$LUAT" ] || continue
       LUTS=$(date -u -d "$LUAT" +%s 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }

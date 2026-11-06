@@ -64,7 +64,8 @@
 #        unreadable. Always rc 0. MC_DISMISS_STALE_LEAD=0 turns it off.
 #   lsr_sweep <repo> [--dry-run]
 #        the one-time sweep: every open PR whose head carries a green
-#        lead-verdict status and a stale own lead review. Prints one line per
+#        lead-verdict status (BH-9039: or the queue clearance vs_clear_row
+#        reads, harness-verdict included) and a stale own lead review. Prints one line per
 #        PR it acted on (or would act on). rc 1 when any read or dismissal
 #        failed. Never touches a PR whose lead-verdict is not success.
 # Every GitHub call goes through gh_rest (bin/lib/gh-rest.sh, REST only).
@@ -179,6 +180,10 @@ lsr_sweep() { # lsr_sweep <repo> [--dry-run]
   local repo="$1" dry=0 f st page grc len num head ctx state desc verdict ref rc=0 n line
   [ "${2:-}" = --dry-run ] && dry=1
   ctx=$(command -v vs_context >/dev/null 2>&1 && vs_context || printf 'lead-verdict')
+  # BH-9039: the queue clearance (lead-verdict or harness-verdict), from
+  # vs_clear_row; without it, the lead-verdict context alone, as before.
+  command -v vs_clear_row >/dev/null 2>&1 \
+    || { [ -r "${BASH_SOURCE[0]%/*}/verdict-status.sh" ] && . "${BASH_SOURCE[0]%/*}/verdict-status.sh"; }
   f=$(mktemp "${TMPDIR:-/tmp}/lead-stale-review-s.XXXXXX") || return 1
   echo '[]' > "$f.prs"
   for page in 1 2 3 4 5 6 7 8 9 10; do
@@ -195,8 +200,13 @@ lsr_sweep() { # lsr_sweep <repo> [--dry-run]
     st="$f.st"
     grc=0; gh_rest GET "repos/$repo/commits/$head/status" > "$st" 2>/dev/null || grc=$?
     if [ "$grc" != 0 ]; then echo "sweep $repo#$num: status of ${head:0:12} unreadable (HTTP ${GH_REST_STATUS:-000}); skipped" >&2; rc=1; continue; fi
-    IFS=$'\t' read -r state desc < <(jq -r --arg c "$ctx" \
-      '[.statuses[]? | select(.context == $c)] | first // {} | [(.state // "none"), ((.description // "") | gsub("[\t\n]"; " "))] | @tsv' "$st" 2>/dev/null)
+    if command -v vs_clear_row >/dev/null 2>&1; then
+      state=none; desc=""
+      IFS=$'\t' read -r state _ desc < <(vs_clear_row "$st")
+    else
+      IFS=$'\t' read -r state desc < <(jq -r --arg c "$ctx" \
+        '[.statuses[]? | select(.context == $c)] | first // {} | [(.state // "none"), ((.description // "") | gsub("[\t\n]"; " "))] | @tsv' "$st" 2>/dev/null)
+    fi
     [ "$state" = success ] || continue
     verdict=$(printf '%s' "$desc" | grep -oE '^(MERGE-WITH-NOTES|MERGE)' || true)
     [ -n "$verdict" ] || verdict="lead-verdict success"

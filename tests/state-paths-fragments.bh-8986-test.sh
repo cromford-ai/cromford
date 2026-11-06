@@ -135,10 +135,16 @@ fi
 # F2 two branches each add a fragment: a clean merge, both rows composed.
 # =============================================================================
 fresh f2
-BASEROWS=$(jq -c '.' "$W/catalog/state-paths.d/0000-base.json" 2>/dev/null)
-gitc -C "$W" checkout -qb a; fragment "$(fpath 9001-a.json)" zz-a
+# The base is EVERY real fragment, composed: a ticket's own NNNN-<name>.json is
+# a real row too (BH-9072 added 9072-lane-wake-gate.json, and a base of
+# 0000-base.json alone turned F2 red). The fixture names sort after any 4-digit
+# ticket fragment ("99998-" > "9999-" in C order).
+"$W/bin/state-paths-build.sh" --repo "$W" --compose >/dev/null 2>&1
+BASEROWS=$(jq -c '.paths' "$W/catalog/state-paths.json" 2>/dev/null)
+rm -f "$W/catalog/state-paths.json"
+gitc -C "$W" checkout -qb a; fragment "$(fpath 99998-a.json)" zz-a
 gitc -C "$W" add -A >/dev/null; gitc -C "$W" commit -qm a
-gitc -C "$W" checkout -q main; gitc -C "$W" checkout -qb b; fragment "$(fpath 9002-b.json)" zz-b
+gitc -C "$W" checkout -q main; gitc -C "$W" checkout -qb b; fragment "$(fpath 99999-b.json)" zz-b
 gitc -C "$W" add -A >/dev/null; gitc -C "$W" commit -qm b
 gitc -C "$W" merge -q --no-edit a >"$T/f2.merge" 2>&1; MRC=$?
 [ "$MRC" = 0 ] && ok || bad "F2 git merge of two fragment branches must exit 0, got $MRC: $(cat "$T/f2.merge")"
@@ -259,7 +265,8 @@ run "$W" --compose
 ST0=$(git -C "$W" status --porcelain)
 run "$W" --check
 [ "$RC" = 0 ] && ok || bad "F4 --check must be rc 0 with an untracked, ignored catalog, got $RC: $(cat "$T/err")"
-grep -qE '^state-paths-build: [0-9]+ paths from 1 fragments; catalog/state-paths.json is composed, not committed$' "$T/out" && ok \
+NFRAG=$(find "$W/catalog/state-paths.d" -maxdepth 1 -name '[0-9]*.json' | wc -l | tr -d ' ')
+grep -qE "^state-paths-build: [0-9]+ paths from +$NFRAG fragments; catalog/state-paths.json is composed, not committed\$" "$T/out" && ok \
   || bad "F4 --check must print its status line: $(cat "$T/out")"
 [ "$(git -C "$W" status --porcelain)" = "$ST0" ] && ok || bad "F4 --check must write nothing in the repo"
 gitc -C "$W" add -f catalog/state-paths.json >/dev/null; gitc -C "$W" commit -qm 'commit the render'

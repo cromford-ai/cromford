@@ -50,8 +50,11 @@ S=$(tojson "$T/serial.yml"); P=$(tojson "$T/par.yml")
   || bad "C1 queue_rules must be identical between the serial and parallel renders"
 QC=$(jq -r '.queue_rules[] | select(.name == "default") | [.queue_conditions[] | select(startswith("check-success="))] | length' <<<"$P")
 MC=$(jq -r '.queue_rules[] | select(.name == "default") | [.merge_conditions[] | select(startswith("check-success="))] | length' <<<"$P")
-# 3 fast checks + the lead-verdict status to enter; 7 on the draft.
-[ "$QC" = 4 ] && [ "$MC" = 7 ] && ok || bad "C1 default enters on 3 checks + lead-verdict and merges on 7 (got $QC / $MC)"
+# TEST-CHANGE (BH-9039): the verdict status is now the status_check_any regex
+# `check-success~=^(lead-verdict|harness-verdict)$`, not a `check-success=` line.
+# 3 fast checks + that one regex to enter; 7 on the draft.
+RX=$(jq -r '.queue_rules[] | select(.name == "default") | [.queue_conditions[] | select(startswith("check-success~="))] | length' <<<"$P")
+[ "$QC" = 3 ] && [ "$RX" = 1 ] && [ "$MC" = 7 ] && ok || bad "C1 default enters on 3 checks + the verdict regex and merges on 7 (got $QC + $RX / $MC)"
 
 # C2: the speculative-check ceiling is unchanged.
 [ "$(jq -r .merge_queue.max_parallel_checks <<<"$S")" = "$(jq -r .merge_queue.max_parallel_checks <<<"$P")" ] \

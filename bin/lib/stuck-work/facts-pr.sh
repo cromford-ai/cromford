@@ -19,7 +19,8 @@
 # bin/lib/pr-snapshot.sh (BH-4660, below).
 #
 # Per PR, REST only (gh_rest), never GraphQL:
-#   6,7   lead_status(_at)  the head's combined status, context $(vs_context)
+#   6,7   lead_status(_at)  the head's combined status, context $(vs_context);
+#                           BH-9039: the queue clearance (vs_clear_row) when loaded
 #   8-10  verdict, verdict_sha, verdict_at   vd_standing on the head
 #   12    mergify  mc_mergify_check_live -> failed | checking | queued | merged | -
 #   13,14 cond_state, cond_since  ONE paged pr_state_page read per call (<= 5 pages)
@@ -174,8 +175,14 @@ swf_pr_facts() {
     # 6,7 — the lead-verdict commit status on the head.
     if [ -z "$hit" ] && _swf_fn vs_context && _swf_fn gh_rest && [ "$head" != - ] \
        && gh_rest GET "repos/$repo/commits/$head/status" -F per_page=100 > "$tmp/st"; then
-      row=$(jq -r --arg c "$(vs_context)" '.statuses | if type == "array" then . else error("no statuses") end
-            | map(select(.context == $c)) | if length == 0 then "-\t-" else (.[0] | "\(.state // "?")\t\(.updated_at // "?")") end' "$tmp/st" 2>/dev/null) \
+      # BH-9039: the queue clearance (lead-verdict or harness-verdict) when
+      # vs_clear_row is loaded; else the lead-verdict context alone.
+      if _swf_fn vs_clear_row; then
+        row=$(vs_clear_row "$tmp/st") && row=$(cut -f1,2 <<<"$row")
+      else
+        row=$(jq -r --arg c "$(vs_context)" '.statuses | if type == "array" then . else error("no statuses") end
+            | map(select(.context == $c)) | if length == 0 then "-\t-" else (.[0] | "\(.state // "?")\t\(.updated_at // "?")") end' "$tmp/st" 2>/dev/null)
+      fi \
         && [ -n "$row" ] && { ls=${row%%$'\t'*}; lsa=${row#*$'\t'}; [ "$lsa" = - ] || lsa=$(_swf_epoch "$lsa"); }
     fi
     # 8-10 — the standing verdict on THIS head.

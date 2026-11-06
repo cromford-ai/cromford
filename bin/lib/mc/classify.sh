@@ -1993,10 +1993,11 @@ mc_nhv_gate() {
 }
 
 # mc_vs_success_on <owner/repo> <head> -> rc 0 when the head's combined status
-#   carries the lead-verdict context in state success, 1 when it does not (no
-#   such status, or a failure/pending one), 2 when the read did not answer
-#   (gh_rest non-zero: any non-2xx; or a body with no statuses array). 2 is
-#   never read as "absent" (BH-3806).
+#   clears it for the queue (vs_clear_row, BH-9039: lead-verdict or
+#   harness-verdict success, and no lead-verdict failure/error), 1 when it does
+#   not, 2 when the read did not answer (gh_rest non-zero: any non-2xx; or a
+#   body with no statuses array). 2 is never read as "absent" (BH-3806).
+#   Without vs_clear_row loaded: the lead-verdict context alone, as before.
 mc_vs_success_on() {
   local f rc=0 ctx n
   command -v gh_rest >/dev/null 2>&1 || return 2
@@ -2004,15 +2005,23 @@ mc_vs_success_on() {
   f=$(mktemp "${TMPDIR:-/tmp}/mc-vs.XXXXXX") || return 2
   gh_rest GET "repos/$1/commits/$2/status" > "$f" 2>/dev/null || rc=$?
   [ "$rc" = 0 ] || { rm -f "$f"; return 2; }
+  if command -v vs_clear_row >/dev/null 2>&1; then
+    n=$(vs_clear_row "$f") || { rm -f "$f"; return 2; }
+    rm -f "$f"
+    [ "${n%%$'\t'*}" = success ] && return 0
+    return 1
+  fi
   n=$(jq -r --arg c "$ctx" 'if (.statuses | type) == "array" then [.statuses[] | select(.context == $c and .state == "success")] | length else "unparsed" end' "$f" 2>/dev/null) || n=""
   rm -f "$f"
   case "$n" in ''|*[!0-9]*) return 2 ;; 0) return 1 ;; *) return 0 ;; esac
 }
 
 # mc_vs_state_on <owner/repo> <head> [context] -> prints the head's state for
-#   <context> (default: the lead-verdict context in force, vs_context):
-#   success|failure|error|pending, or `absent` when no status carries the
-#   context; rc 0. rc 2 (nothing printed) when the read did not answer, the same
+#   <context>: success|failure|error|pending, or `absent` when no status
+#   carries the context; rc 0. With no <context> (BH-9039) it prints the queue
+#   clearance state (vs_clear_row: lead-verdict or harness-verdict, a lead
+#   failure/error first; `-` is `absent`); without vs_clear_row loaded, the
+#   lead-verdict context in force (vs_context), as before. rc 2 (nothing printed) when the read did not answer, the same
 #   read and context as mc_vs_success_on, which cannot tell absent from a
 #   failure (BH-4596 needs that difference: absent is republished, failure never).
 mc_vs_state_on() {
@@ -2022,6 +2031,12 @@ mc_vs_state_on() {
   f=$(mktemp "${TMPDIR:-/tmp}/mc-vs.XXXXXX") || return 2
   gh_rest GET "repos/$1/commits/$2/status" > "$f" 2>/dev/null || rc=$?
   [ "$rc" = 0 ] || { rm -f "$f"; return 2; }
+  if [ -z "${3:-}" ] && command -v vs_clear_row >/dev/null 2>&1; then
+    s=$(vs_clear_row "$f") || { rm -f "$f"; return 2; }
+    rm -f "$f"; s=${s%%$'\t'*}
+    case "$s" in -) printf absent; return 0 ;; success|failure|error|pending) printf '%s' "$s"; return 0 ;; esac
+    return 2
+  fi
   s=$(jq -r --arg c "$ctx" 'if (.statuses | type) == "array" then ([.statuses[] | select(.context == $c) | .state][0] // "absent") else "unparsed" end' "$f" 2>/dev/null) || s=""
   rm -f "$f"
   case "$s" in success|failure|error|pending|absent) printf '%s' "$s"; return 0 ;; esac

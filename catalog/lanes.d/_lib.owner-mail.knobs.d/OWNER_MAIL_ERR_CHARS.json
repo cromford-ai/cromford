@@ -1,0 +1,12 @@
+{
+  "env": "OWNER_MAIL_ERR_CHARS",
+  "read_in": "bin/lib/owner-mail.sh",
+  "type": "int",
+  "default": 200,
+  "min": 1,
+  "max": 2000,
+  "unit": "characters",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8894: a failed send records the Resend answer or curl error, cut to this many characters, in state/owner-mail.json and in the owner-mail alert line. A value that is not a positive integer is 200."
+}

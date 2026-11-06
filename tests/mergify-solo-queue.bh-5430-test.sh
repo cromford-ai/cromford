@@ -16,6 +16,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-status-any-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -87,11 +88,21 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
   git -C "$DIR" show origin/main:bin/mergify-template.sh > "$OLD/bin/mergify-template.sh"
   git -C "$DIR" show origin/main:config/mergify/template.yml > "$OLD/config/mergify/template.yml"
   # flake_fix_label= (BH-7279) is another queue's key; both sides leave it out.
-  grep -v -e '^solo_label=' -e '^flake_fix_label=' "$BH" > "$T/bh-nosolo.conf"
+  grep -v -e '^solo_label=' -e '^flake_fix_label=' "$BH" > "$T/bh-nosolo.raw"
+  # TEST-CHANGE (BH-9039): status_check_any= is another key; while the base
+  # renderer does not know it, both sides render its pre-BH-9039 shape
+  # (tests/lib/mergify-status-any-filter.sh).
+  mergify_status_any_conf "$OLD/bin/mergify-template.sh" "$T/bh-nosolo.raw" "$T/bh-nosolo.conf"
   bash "$OLD/bin/mergify-template.sh" render "$T/bh-nosolo.conf" > "$T/old-bh.yml" 2>"$T/old.err"
   tojson "$T/old-bh.yml" > "$T/old-bh.json" 2>/dev/null || : > "$T/old-bh.json"
+  # TEST-CHANGE (BH-9039): the head side is the cromford conf, solo_label=
+  # kept, with the same status_check_any filter, so the hotfix queue still
+  # differs only by what solo_label= does to it.
+  mergify_status_any_conf "$OLD/bin/mergify-template.sh" "$BH" "$T/bh-any.conf"
+  bash "$MT" render "$T/bh-any.conf" > "$T/bh-any.yml" 2>/dev/null
+  tojson "$T/bh-any.yml" > "$T/bh-any.json" 2>/dev/null || : > "$T/bh-any.json"
   for sel in '.queue_rules[] | select(.name == "hotfix")' '.pull_request_rules[] | select(.actions.queue.name == "hotfix")' '.priority_rules'; do
-    [ -s "$T/old-bh.json" ] && [ "$(jq -cS "$sel" "$T/old-bh.json")" = "$(jq -cS "$sel" "$T/bh.json")" ] && ok \
+    [ -s "$T/old-bh.json" ] && [ -s "$T/bh-any.json" ] && [ "$(jq -cS "$sel" "$T/old-bh.json")" = "$(jq -cS "$sel" "$T/bh-any.json")" ] && ok \
       || bad "M2 '$sel' is unchanged from main's render: $(cat "$T/old.err")"
   done
   # ── M3: no solo_label= renders byte-identically to main ───────────────────

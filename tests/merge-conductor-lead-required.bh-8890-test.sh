@@ -3,8 +3,9 @@
 # the settings row lead_required.<owner>.<name> = 1, a builder APPROVE alone
 # never makes a PR READY, and `lead-verdict` success comes only from a real
 # lead or human row. On such a repo a builder-only clearance publishes
-# `harness-verdict`. With no row (or 0) every context is `lead-verdict`, as
-# today (the row-0 rename is the child slice C1 of #8890).
+# `harness-verdict`. TEST-CHANGE BH-9039 (slice C1 of #8890): with no row (or
+# 0) a builder-only clearance publishes `harness-verdict` too, after one
+# verdict read; `lead-verdict` comes only from a lead or human row.
 #
 # Part A (unit) sources bin/lib/lead-required.sh, bin/lib/verdict-status.sh,
 # the fragment bin/merge-conductor.d/bh-8890-lead-required.sh and the conductor
@@ -26,7 +27,7 @@
 #       no label, no queue ask, no status; a second tick asks nothing more
 #   W2  lead_required=1 and a lead MERGE on HEAD: READY, enqueued,
 #       lead-verdict=success
-#   W3  no row (the default): READY, enqueued, lead-verdict=success as today
+#   W3  no row (the default): READY, enqueued, harness-verdict=success (BH-9039)
 #   W5  a row for another repo does not hold this one
 #   P5  the W1 fixture with the fragment absent (an enqueue that no gate held,
 #       as the console Merge button does): enqueued, and the status is
@@ -167,9 +168,10 @@ EOF
   reset; row "$RKEY" 1; stand_src "$H1" MERGE risk-tier; p harness-verdict "L19 lead_required=1 with a risk-tier MERGE"
   reset; row "$RKEY" 1; stand_src "$H1" APPROVE box; p harness-verdict "L19b lead_required=1 with a box row"
   reset; row "$RKEY" 1; stand "$H2" MERGE; p harness-verdict "L19c lead_required=1 with a lead MERGE on another head only"
-  reset; p lead-verdict "L20 no lead_required row: today's context"
-  [ "$(n "$FXD/vd-reads")" = 0 ] || no "L20b no row: no verdict read ($(n "$FXD/vd-reads"))"
-  reset; row "$RKEY" 0; p lead-verdict "L20c the row 0: today's context"
+  # TEST-CHANGE BH-9039: row 0 with no lead row gives harness-verdict, after one verdict read.
+  reset; p harness-verdict "L20 no lead_required row, no lead row: harness-verdict (BH-9039)"
+  [ "$(n "$FXD/vd-reads")" = 1 ] || no "L20b no row: one verdict read ($(n "$FXD/vd-reads"))"
+  reset; row "$RKEY" 0; p harness-verdict "L20c the row 0, no lead row: harness-verdict (BH-9039)"
   reset; : > "$FXD/set/.down"; p harness-verdict "L21 lead_required unreadable: never lead-verdict"
   reset; echo 2 > "$FXD/vd-rc"; row "$RKEY" 1; p harness-verdict "L21b an unreadable lead verdict never gives lead-verdict"
   # stdout stays empty, so a caller can run it in its own shell and keep the memo
@@ -194,7 +196,8 @@ EOF
   grep -q "VS_REPUBLISHED $H1 harness-verdict=success" "$FXD/log" || no "P3b the log names the context ($(cat "$FXD/log"))"
   reset
   mc_vs_ttl_republish "$SLUG#41" QUEUED "$SLUG" 41 "https://github.com/$SLUG/pull/41" "$H1" APPROVE "$H1" mergify
-  [ "$(posted_ctx)" = lead-verdict ] || no "P4 no lead_required row: the TTL republish posts lead-verdict as today (got '$(posted_ctx)')"
+  # TEST-CHANGE BH-9039: a builder-only TTL republish on row 0 posts harness-verdict.
+  [ "$(posted_ctx)" = harness-verdict ] || no "P4 no lead_required row: the TTL republish with no lead row posts harness-verdict (got '$(posted_ctx)')"
 
   # ---- G1-G9 mc_lead_req_hold ----
   run() { STATE="${ST_X:-READY}"; WHY="clean, approved, checks green"; P=mk; SLUG=example-org/mk-test; NUM=41
@@ -441,10 +444,11 @@ fresh; echo 1 > "$FX/set/$RKEY"; lead_merge; tick
 [ "$(ctx)" = "lead-verdict " ] && grep -q 'state=success' "$FX/status-posts.txt" && ok \
   || bad "W2 lead-verdict=success is published (contexts '$(ctx)'; posts $(cat "$FX/status-posts.txt" 2>/dev/null))"
 
-# W3 — no row (the default): READY, enqueued, lead-verdict=success, as today.
+# W3 — no row (the default): READY, enqueued, no request.
+# TEST-CHANGE BH-9039: the builder-only status is harness-verdict on row 0 too.
 fresh; tick
-[ "$(n "$FX/queue-posts.txt")" = 1 ] && [ "$(ctx)" = "lead-verdict " ] && [ "$(n "$FX/lead-requests.txt")" = 0 ] && ok \
-  || bad "W3 no row: enqueued with lead-verdict, no request (queue $(n "$FX/queue-posts.txt"), contexts '$(ctx)')"
+[ "$(n "$FX/queue-posts.txt")" = 1 ] && [ "$(ctx)" = "harness-verdict " ] && [ "$(n "$FX/lead-requests.txt")" = 0 ] && ok \
+  || bad "W3 no row: enqueued with harness-verdict, no request (queue $(n "$FX/queue-posts.txt"), contexts '$(ctx)')"
 ! grep -q 'WAIT_LEAD\|LEAD_REQUIRED_OK' "$CH/logs/merge-conductor.log" && ok || bad "W3 no row: the gate logs nothing (log: $(clog))"
 
 # W5 — a row for another repo does not hold this one.

@@ -15,6 +15,9 @@
 # queue_conditions admit the PR, and whether a priority_rules entry (the part
 # that interrupts running batches) fires. Checks are taken as green and `base=`
 # as satisfied; every other condition shape is an unknown and fails the case.
+# TEST-CHANGE (BH-9039): green also covers the status_check_any shapes, the
+# regex `check-success~=` (some name is success) and the `-check-failure=` veto
+# (no name failed); tests/verdict-builder-context.bh-9039-test.sh owns them.
 #
 # The four configs:
 #   committed   .mergify.yml (MERGIFY_BH2121_YAML=<file> parses that instead —
@@ -69,6 +72,8 @@ def holds($l):
     elif ($c|startswith("label="))  then (($l|index($c[6:])) != null)
     elif ($c|startswith("base="))   then true
     elif ($c|startswith("check-success=")) then true
+    elif ($c|startswith("check-success~=")) then true
+    elif ($c|startswith("-check-failure=")) then true
     elif ($c|startswith("#changes-requested-reviews-by=")) then ($crs == ($c[30:]|tonumber))
     else null end;
 def allhold($l): [.[] | holds($l)] | all(. == true);

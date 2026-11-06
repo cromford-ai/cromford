@@ -19,6 +19,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-status-any-filter.sh" || exit 1
 . "$(dirname "$0")/lib/lpp-stub.sh" || exit 1
 # E1's conductor parses review verdicts (vpf).
 # shellcheck source=tests/lib/verdict-fixture.sh
@@ -391,7 +392,11 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
     # byte-identical to main"; a key a later PR adds (the solo queue) is the
     # render's job to change, so both sides leave it out. BH-7279's
     # flake_fix_label (the flake-fix queue) is the same case.
-    grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/old-$c.conf"
+    grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/old-$c.raw"
+    # TEST-CHANGE (BH-9039): status_check_any= is another key; while the base
+    # renderer does not know it, both sides render its pre-BH-9039 shape
+    # (tests/lib/mergify-status-any-filter.sh).
+    mergify_status_any_conf "$OLD/bin/mergify-template.sh" "$T/old-$c.raw" "$T/old-$c.conf"
     bash "$OLD/bin/mergify-template.sh" render "$T/old-$c.conf" > "$T/old-$c.yml" 2>/dev/null
     bash "$MT" render "$T/old-$c.conf" > "$T/new-$c.yml"
     # TEST-CHANGE (BH-8706): drop the main-red breaker's pause lines from both

@@ -83,8 +83,11 @@ printf 'slug=o/r\ncheck=fast\nallow_inplace_checks=maybe\n' > "$T/bad2.conf"
 OUT=$("$MT" --check 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "K5: the repo's .mergify.yml must match its conf: $OUT"
 # BH-3348: plus the lead-verdict commit STATUS (status_check=), which is not a
-# CI check; tests/mergify-status-check.bh-3348-test.sh pins it.
-[ "$(q "$DIR/.mergify.yml" default queue_conditions | grep -vx '"lead-verdict"' | wc -l | tr -d ' ')" = 3 ] && ok \
+# CI check; tests/mergify-status-check.bh-3348-test.sh pins it. TEST-CHANGE
+# (BH-9039): that status is now the status_check_any regex
+# `check-success~=^(lead-verdict|harness-verdict)$`, which q() prints as the
+# regex; tests/verdict-builder-context.bh-9039-test.sh pins it.
+[ "$(q "$DIR/.mergify.yml" default queue_conditions | grep -vxF -e '"lead-verdict"' -e '^(lead-verdict|harness-verdict)$' | wc -l | tr -d ' ')" = 3 ] && ok \
   || bad "K5: cromford queues a PR on the three fast checks: $(q "$DIR/.mergify.yml" default queue_conditions | tr '\n' ',')"
 
 echo "mergify-queue-check: $PASS pass, $FAIL fail"

@@ -14,7 +14,8 @@
 # prod_red (BH-8781) is set while the newest production deploy is ERROR; the
 # merge conductor holds the project's READY PRs while it is set
 # (bin/merge-conductor.d/bh-8781-prod-red-hold.sh), and the transition to red
-# pages one person through page_critical.
+# pages one person through page_critical and emails the project owner through
+# owner_mail (BH-8894).
 # domain_behind=true means new READY production builds are NOT reaching the
 # domain (the paused-promotion state after an Instant Rollback / manual pin) —
 # a watcher seeing that should ALERT and park its deploy queue, never retry-loop.
@@ -40,6 +41,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    vercel-deploy-
 . "$HARNESS/bin/lib/page-critical.sh" 2>/dev/null || page_critical() { return 0; }
 # shellcheck source=bin/lib/deployment.sh
 . "$HARNESS/bin/lib/deployment.sh" 2>/dev/null || HARNESS_GIT_EMAIL=operator
+# The owner email on the same transition (BH-8894). Optional: a tree without
+# owner-mail.sh logs `owner-mail <p> absent` and sends nothing.
+# shellcheck source=bin/lib/owner-mail.sh
+. "$HARNESS/bin/lib/owner-mail.sh" 2>/dev/null || owner_mail() { echo absent; }
 CONF="$HARNESS/vercel.conf"
 OUT="$HARNESS/state/vercel-deploy-status.json"
 LOG="$HARNESS/logs/vercel-snapshot.log"
@@ -162,9 +167,15 @@ printf '%s\n' "$FINAL" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
 # prodred:<p> for REPAGE_S and stamps before it sends.
 for p in $REDNEW; do
   IFS=$'\t' read -r rsince rsha rid < <(jq -r --arg p "$p" '.projects[$p].prod_red | [.since, .sha, .id] | @tsv' <<<"$FINAL")
-  PAGE_LANE=prod-red page_critical "$REPAGE_S" "prodred:$p" \
-    "PROD RED $p: the newest production deploy failed (Vercel $rid, commit $rsha, since $rsince). The merge queue for $p holds every READY PR until a production deploy is READY. Owner: $HARNESS_GIT_EMAIL. To merge the fix through the hold, label its PR with the main-red label (fix-main-red by default) or hotfix." \
-    "$p" </dev/null >/dev/null 2>&1 || true
+  PAGE_TEXT="PROD RED $p: the newest production deploy failed (Vercel $rid, commit $rsha, since $rsince). The merge queue for $p holds every READY PR until a production deploy is READY. Owner: $HARNESS_GIT_EMAIL. To merge the fix through the hold, label its PR with the main-red label (fix-main-red by default) or hotfix."
+  PAGE_LANE=prod-red page_critical "$REPAGE_S" "prodred:$p" "$PAGE_TEXT" "$p" </dev/null >/dev/null 2>&1 || true
+  # The owner email, AFTER the page so a slow mail never delays it. The $( )
+  # is a subshell per project: the lib.owner-mail rows lib_env_apply exports
+  # for one project never reach the next. owner_mail dedupes on prodred:<p>
+  # for the same TTL and prints one status word.
+  st=$( { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply owner-mail "$p"; } >/dev/null 2>&1
+        owner_mail "$REPAGE_S" "prodred:$p" "$p" "Production deploy failed: $p" "$PAGE_TEXT" 2>/dev/null </dev/null )
+  echo "$(STAMP) owner-mail $p ${st:-absent}" >> "$LOG"
 done
 
 # Push to the watcher boxes (hub->watcher is the only allowed ssh direction).

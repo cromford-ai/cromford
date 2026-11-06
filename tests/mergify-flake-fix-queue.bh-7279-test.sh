@@ -18,6 +18,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-status-any-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -154,7 +155,11 @@ if [ -n "$BASE" ] && git -C "$DIR" cat-file -e "$BASE:bin/mergify-template.sh" 2
   OLD="$T/old"; mkdir -p "$OLD/bin" "$OLD/config/mergify"
   git -C "$DIR" show "$BASE:bin/mergify-template.sh" > "$OLD/bin/mergify-template.sh"
   git -C "$DIR" show "$BASE:config/mergify/template.yml" > "$OLD/config/mergify/template.yml"
-  grep -v '^flake_fix_label=' "$BH" > "$T/bh-noflake.conf"
+  grep -v '^flake_fix_label=' "$BH" > "$T/bh-noflake.raw"
+  # TEST-CHANGE (BH-9039): status_check_any= is another key; while the base
+  # renderer does not know it, both sides render its pre-BH-9039 shape
+  # (tests/lib/mergify-status-any-filter.sh).
+  mergify_status_any_conf "$OLD/bin/mergify-template.sh" "$T/bh-noflake.raw" "$T/bh-noflake.conf"
   for c in "$DIR/config/mergify/repos/project-5.conf" "$T/bh-noflake.conf"; do
     bash "$OLD/bin/mergify-template.sh" render "$c" > "$T/g7-old.yml" 2>/dev/null
     bash "$MT" render "$c" > "$T/g7-new.yml"

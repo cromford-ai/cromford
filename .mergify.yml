@@ -59,7 +59,11 @@ queue_rules:
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
       # BH-3348: the head-bound verdict gate (status_check= in the conf).
-      - check-success = "lead-verdict"
+      # BH-9039: lead-verdict (a lead or human verdict) or harness-verdict (a
+      # builder-only clearance) clears; a failure of either holds the PR out.
+      - "check-success~=^(lead-verdict|harness-verdict)$"
+      - -check-failure = lead-verdict
+      - -check-failure = harness-verdict
     merge_conditions:
       # ... and a batch holding one cannot merge (BH-2275).
       - "#changes-requested-reviews-by=0"
@@ -93,7 +97,11 @@ queue_rules:
       - check-success = "Syntax + shellcheck + config integrity"
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
-      - check-success = "lead-verdict"
+      # BH-9039: lead-verdict (a lead or human verdict) or harness-verdict (a
+      # builder-only clearance) clears; a failure of either holds the PR out.
+      - "check-success~=^(lead-verdict|harness-verdict)$"
+      - -check-failure = lead-verdict
+      - -check-failure = harness-verdict
     merge_conditions:
       - "#changes-requested-reviews-by=0"
       - check-success = "Syntax + shellcheck + config integrity"
@@ -123,7 +131,11 @@ queue_rules:
       - check-success = "Syntax + shellcheck + config integrity"
       - check-success = "Test determinism lint"
       - check-success = "Prompt replay evals (prompts/** only)"
-      - check-success = "lead-verdict"
+      # BH-9039: lead-verdict (a lead or human verdict) or harness-verdict (a
+      # builder-only clearance) clears; a failure of either holds the PR out.
+      - "check-success~=^(lead-verdict|harness-verdict)$"
+      - -check-failure = lead-verdict
+      - -check-failure = harness-verdict
     merge_conditions:
       - "#changes-requested-reviews-by=0"
       - check-success = "Syntax + shellcheck + config integrity"
@@ -154,7 +166,11 @@ queue_rules:
       # status only a head-bound verdict publishes (bin/lead-verdict.sh post,
       # or the conductor's own enqueue), so a hand `@Mergifyio queue` on a head
       # nobody reviewed never gets in, and a push leaves the new head without it.
-      - check-success = "lead-verdict"
+      # BH-9039: lead-verdict (a lead or human verdict) or harness-verdict (a
+      # builder-only clearance) clears; a failure of either holds the PR out.
+      - "check-success~=^(lead-verdict|harness-verdict)$"
+      - -check-failure = lead-verdict
+      - -check-failure = harness-verdict
     # ... and the batch draft, built on current main, must pass ALL SEVEN —
     # the test corpus, the SPA and the jobs worker run there and nowhere else.
     merge_conditions:

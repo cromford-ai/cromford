@@ -10,7 +10,8 @@
 #
 # THE ROW. lead_required.<owner>.<name> (lowercased; the settings key rule
 # allows nothing else). 1 = READY also needs a lead or human MERGE /
-# MERGE-WITH-NOTES standing on the live head. No row or 0 = today's behavior.
+# MERGE-WITH-NOTES standing on the live head. No row or 0 = no hold (the
+# publish context is the same on every repo, lr_clear_context below).
 # The seed (worker/jobs/schema.d/202611032342-bh-8890-lead-required-seed.sql)
 # sets example-org/project-6 to 1.
 #
@@ -36,11 +37,15 @@
 # lr_clear_context <owner/repo> <num> <head>
 #   Sets the global LR_CTX to the commit status context a conductor success
 #   publish uses, and prints nothing (so the memo survives in the caller's
-#   shell). `lead-verdict` when the repo is not lead-required (lr_required rc
-#   1: no verdict is read, byte-identical to before), or when a lead or human
-#   MERGE stands on <head> (lr_lead_stands rc 0). Else `harness-verdict`: a
-#   builder-only clearance on a lead-required repo never reads as a lead pass.
-#   No carry here: the callers carry before they publish.
+#   shell). `lead-verdict` only when a lead or human MERGE / MERGE-WITH-NOTES
+#   stands on <head> (lr_lead_stands rc 0), on EVERY repo. Else
+#   `harness-verdict` (vs_builder_context): a builder-only clearance never
+#   reads as a lead pass. BH-9039: this holds on a repo with no lead_required
+#   row (or 0) too, so lr_required is not read here, and each call makes ONE
+#   verdict read (vd_standing) on every repo. An unreadable or unloaded
+#   verdict reader gives harness-verdict. No carry here: the callers carry
+#   before they publish. cromford's queue accepts either context
+#   (config/mergify/repos/cromford.conf, status_check_any=).
 #
 # No root and no paths of its own: the readers load off this file's directory.
 
@@ -90,9 +95,7 @@ lr_lead_stands() {
 
 lr_clear_context() {
   LR_CTX=lead-verdict
-  lr_required "${1:-}"
-  [ "$?" = 1 ] && return 0
   lr_lead_stands - "${1:-}" "${2:-}" "${3:-}" >/dev/null 2>&1 && return 0
-  LR_CTX=harness-verdict
+  LR_CTX=$(command -v vs_builder_context >/dev/null 2>&1 && vs_builder_context || echo harness-verdict)
   return 0
 }

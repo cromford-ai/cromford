@@ -46,8 +46,9 @@ for r in d.get("pull_request_rules", []) + d.get("priority_rules", []):
 print(" ".join(hits))' <<<"$out" 2>&1)
 [ "$where" = "default.queue_conditions" ] && ok || bad "M1 only in default.queue_conditions (got '$where')"
 # It comes after the queue checks and the lead-verdict status_check.
+# TEST-CHANGE BH-9039: the verdict gate is status_check_any= now; its last rendered line is the harness-verdict veto.
 ql=$(grep -n 'check-success=prequeue-verdict' <<<"$out" | cut -d: -f1)
-ll=$(grep -n 'check-success=lead-verdict' <<<"$out" | tail -1 | cut -d: -f1)
+ll=$(grep -n '"-check-failure=harness-verdict"' <<<"$out" | tail -1 | cut -d: -f1)
 [ -n "$ql" ] && [ -n "$ll" ] && [ "$ql" = $((ll + 1)) ] && ok || bad "M1 right after the default queue's last queue check (lead-verdict line ${ll:-none}, prequeue-verdict line ${ql:-none})"
 # Repeatable: two keys, two lines, in conf order.
 { cat "$BH"; echo default_status_check=prequeue-verdict; echo default_status_check=other-status; } > "$T/m1b.conf"
@@ -107,7 +108,9 @@ refused control "default_status_check name holds a quote, backslash or control c
 refused duplicate "duplicate default_status_check prequeue-verdict" default_status_check=prequeue-verdict default_status_check=prequeue-verdict
 refused "same as check=" "default_status_check 'ci-a' is also a check=, queue_check= or status_check= line" check=ci-a default_status_check=ci-a
 refused "same as queue_check=" "default_status_check 'ci-q' is also a check=, queue_check= or status_check= line" check=ci-q queue_check=ci-q default_status_check=ci-q
-refused "same as status_check=" "default_status_check 'lead-verdict' is also a check=, queue_check= or status_check= line" default_status_check=lead-verdict
+# TEST-CHANGE BH-9039: cromford names lead-verdict in status_check_any= now, not status_check=; the refusal names that key.
+refused "same as status_check_any=" "default_status_check 'lead-verdict' is also a status_check_any= name" default_status_check=lead-verdict
+refused "same as status_check=" "default_status_check 'st-x' is also a check=, queue_check= or status_check= line" status_check=st-x default_status_check=st-x
 
 # ============================================================================
 # M4. No rendered output holds a stray token.

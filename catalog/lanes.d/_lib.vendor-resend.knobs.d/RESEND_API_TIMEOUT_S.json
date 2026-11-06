@@ -1,0 +1,12 @@
+{
+  "env": "RESEND_API_TIMEOUT_S",
+  "read_in": "bin/lib/vendor/resend.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8894: curl --max-time for each Resend send in resend_send. Read as ${RESEND_API_TIMEOUT_S:-20}; a value that is not an integer in 1..120 is 20."
+}

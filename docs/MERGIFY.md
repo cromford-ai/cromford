@@ -355,6 +355,20 @@ The renderer refuses the same values as `status_check`, and it refuses a name
 that is also a `check=`, `queue_check=` or `status_check=` line (rc 2). A conf
 without the key renders byte for byte as before. No conf sets it today.
 
+**`status_check_any` (BH-9039).** `status_check_any=<a>|<b>[|...]` (one line,
+2 or more `[A-Za-z0-9_-]+` names) renders in every queue's `queue_conditions`,
+after the `status_check` names: one `check-success~=^(<a>|<b>)$` condition and
+one `-check-failure=<name>` veto per name. Any one success clears the PR, and a
+failure of any name holds it out. cromford sets
+`status_check_any=lead-verdict|harness-verdict`: a lead or human verdict
+publishes `lead-verdict`, and a builder-only clearance publishes
+`harness-verdict` (`lr_clear_context`, `bin/lib/lead-required.sh`). The check-run
+parsers match only `check-success=`, so they never list the regex line. The
+renderer refuses a single name, a bad name, an empty member, a second line, and
+a name that is also a `check=`, `queue_check=`, `status_check=` or
+`default_status_check=` line (rc 2). See
+`docs/notes/2026-11-04-bh-9039-harness-verdict.md`.
+
 **The `fix-main-red` override.** The hotfix queue has no `prequeue-verdict`
 condition. A `fix-main-red` PR enters it with no pre-queue verdict. The hotfix
 queue interrupts running batches (section 2.1), so use `fix-main-red` for a

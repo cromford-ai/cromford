@@ -54,8 +54,11 @@ printf 'slug=o/r\ncheck=fast\nstatus_check=lead-verdict\n' > "$T/s2.conf"
   || bad "M3: with no queue_check the status is in queue_conditions only: $(cat "$T/s2.yml")"
 
 # M4 — the repo itself.
-grep -qx 'status_check=lead-verdict' "$DIR/config/mergify/repos/cromford.conf" && ok \
-  || bad "M4: config/mergify/repos/cromford.conf must carry status_check=lead-verdict"
+# TEST-CHANGE BH-9039: the gate is status_check_any=lead-verdict|harness-verdict, rendered as one
+# regex condition plus a -check-failure= veto per name.
+VRX='^(lead-verdict|harness-verdict)$'
+grep -qx 'status_check_any=lead-verdict|harness-verdict' "$DIR/config/mergify/repos/cromford.conf" && ok \
+  || bad "M4: config/mergify/repos/cromford.conf must carry status_check_any=lead-verdict|harness-verdict"
 OUT=$(HARNESS_TEST_SANDBOX=1 "$MT" --check 2>&1); RC=$?
 [ "$RC" -eq 0 ] && ok || bad "M4: --check must be green: $OUT"
 # BH-5430 added the solo queue (solo_label=); it takes the same queue gate.
@@ -63,10 +66,11 @@ QNS="hotfix default"; grep -q '^  - name: solo$' "$DIR/.mergify.yml" && QNS="hot
 # BH-7279 added the flake-fix queue (flake_fix_label=); it takes the same gate.
 grep -q '^  - name: flake-fix$' "$DIR/.mergify.yml" && QNS="flake-fix $QNS"
 for QN in $QNS; do
-  q "$DIR/.mergify.yml" "$QN" queue_conditions | grep -x lead-verdict >/dev/null && ok || bad "M4: .mergify.yml $QN.queue_conditions must require lead-verdict"
-  grep -qx lead-verdict <<<"$(q "$DIR/.mergify.yml" "$QN" merge_conditions)" && bad "M4: .mergify.yml $QN.merge_conditions must not require lead-verdict" || ok
+  q "$DIR/.mergify.yml" "$QN" queue_conditions | grep -xF "$VRX" >/dev/null && ok || bad "M4: .mergify.yml $QN.queue_conditions must require lead-verdict"
+  grep -qE 'lead-verdict|harness-verdict' <<<"$(q "$DIR/.mergify.yml" "$QN" merge_conditions)" && bad "M4: .mergify.yml $QN.merge_conditions must not require lead-verdict" || ok
 done
-[ "$(grep -c 'check-success = "lead-verdict"' "$DIR/.mergify.yml")" = "$(wc -w <<<"$QNS")" ] && ok || bad "M4: lead-verdict appears exactly once per queue ($QNS) in .mergify.yml"
+[ "$(grep -cF '"check-success~=^(lead-verdict|harness-verdict)$"' "$DIR/.mergify.yml")" = "$(wc -w <<<"$QNS")" ] && ok || bad "M4: lead-verdict appears exactly once per queue ($QNS) in .mergify.yml"
+[ "$(grep -c '^ *- -check-failure = lead-verdict$' "$DIR/.mergify.yml")" = "$(wc -w <<<"$QNS")" ] && ok || bad "M4: the lead-verdict veto appears once per queue ($QNS) in .mergify.yml"
 
 # M5 — project-5 does not move, and the refusals.
 "$MT" render "$DIR/config/mergify/repos/project-5.conf" > "$T/ts.yml" 2>"$T/err"; RC=$?

@@ -1,0 +1,9 @@
+{
+  "env": "OWNER_MAIL_TO",
+  "read_in": "bin/lib/owner-mail.sh",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8894: the project owner who gets the email. Empty = HARNESS_GIT_EMAIL (bin/lib/deployment.sh). A value with no @ sends nothing. Per-project row lib.owner-mail.<project>.owner_mail_to; fleet row lib.owner-mail.owner_mail_to."
+}

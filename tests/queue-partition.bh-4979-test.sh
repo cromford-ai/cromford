@@ -19,6 +19,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 . "$(dirname "$0")/lib/mergify-pause-filter.sh" || exit 1
+. "$(dirname "$0")/lib/mergify-status-any-filter.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -424,11 +425,15 @@ if git -C "$DIR" rev-parse --verify -q origin/main >/dev/null; then
     # side from the full conf compared a solo queue against none (main red).
     # flake_fix_label= (BH-7279) adds the flake-fix queue the same way, so it
     # is left out on both sides too.
-    grep -vE '^(solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/new-$c.conf"
+    grep -vE '^(solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/new-$c.raw"
+    # TEST-CHANGE (BH-9039): status_check_any= is another key; while the base
+    # renderer does not know it, both sides render its pre-BH-9039 shape
+    # (tests/lib/mergify-status-any-filter.sh).
+    mergify_status_any_conf "$OLD/bin/mergify-template.sh" "$T/new-$c.raw" "$T/new-$c.conf"
     bash "$OLD/bin/mergify-template.sh" render "$T/new-$c.conf" > "$T/old-$c.yml" 2>/dev/null
     if [ "$c" = cromford ] && ! [ -s "$T/old-$c.yml" ]; then
       # main's renderer refuses the new keys; render a copy without them
-      grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$DIR/config/mergify/repos/$c.conf" > "$T/bh-nokeys.conf"
+      grep -vE '^(queue_mode|scope_default_capacity|solo_label|flake_fix_label)=' "$T/new-$c.conf" > "$T/bh-nokeys.conf"
       bash "$OLD/bin/mergify-template.sh" render "$T/bh-nokeys.conf" > "$T/old-$c.yml"
     fi
     bash "$MT" render "$T/new-$c.conf" > "$T/new-$c.yml"

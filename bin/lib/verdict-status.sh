@@ -42,6 +42,11 @@
 # The context defaults to `lead-verdict` and LEAD_VERDICT_CONTEXT overrides it;
 # vs_context prints the one in force, for the readers that must skip it
 # (it is a status, not a check run: autoenqueue G4, the stuck-batch pass).
+# BH-9039: the conductor publishes `harness-verdict` (vs_builder_context) for a
+# builder-only clearance on every repo, and `lead-verdict` only after a lead or
+# human MERGE row (lr_clear_context). cromford's queue accepts either
+# (status_check_any=). vs_clear_row reads the clearance on a head by the same
+# rule as the queue.
 #
 # vs_lead_desc <verdict-row-json> <desc> (BH-5352) prefixes the description of a
 # row a participant machine wrote (auth=participant) with `lead review by <name>: `.
@@ -57,6 +62,36 @@ command -v gh_auth_for >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/gh-app-au
 command -v la_decide >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/lead-authority.sh" ] && . "${BASH_SOURCE[0]%/*}/lead-authority.sh"; }
 
 vs_context() { printf '%s\n' "${LEAD_VERDICT_CONTEXT:-lead-verdict}"; }
+
+# vs_builder_context (BH-9039) — the context a builder-only clearance publishes
+#   (lr_clear_context, bin/lib/lead-required.sh). A contract name shared with
+#   cromford's .mergify.yml (status_check_any=), so no env override.
+vs_builder_context() { printf '%s\n' harness-verdict; }
+
+# vs_clear_row <combined-status.json> (BH-9039) — the queue clearance on a
+#   head, the same rule as cromford's queue_conditions
+#   (`check-success~=^(lead-verdict|harness-verdict)$` plus a
+#   `-check-failure=` veto per name). L = the vs_context status, B = the
+#   vs_builder_context status. L failure or error: L (a lead BLOCK vetoes).
+#   Else L success: L. Else B success: B. Else L when present, else B.
+#   Prints `<state>\t<updated_at>\t<description>` of that status, or
+#   `-\t-\t` when neither is present. rc 2 (nothing printed) when the body
+#   has no statuses array or jq is missing: never read as "absent".
+vs_clear_row() {
+  command -v jq >/dev/null 2>&1 || return 2
+  jq -er --arg l "$(vs_context)" --arg b "$(vs_builder_context)" '
+    (.statuses | if type == "array" then . else error("statuses") end) as $s
+    | ([$s[] | select(.context == $l)][0]) as $L
+    | ([$s[] | select(.context == $b)][0]) as $B
+    | (if $L != null and ($L.state == "failure" or $L.state == "error") then $L
+       elif $L != null and $L.state == "success" then $L
+       elif $B != null and $B.state == "success" then $B
+       elif $L != null then $L
+       else $B end) as $w
+    | if $w == null then "-\t-\t"
+      else "\($w.state // "?")\t\($w.updated_at // $w.created_at // "?")\t\(($w.description // "") | gsub("[\t\n]"; " "))" end' \
+    "${1:-/nonexistent}" 2>/dev/null || return 2
+}
 
 # vs_lead_desc <verdict-row-json> <desc> — BH-5352: the description for the
 #   row the worker recorded. A row with auth=participant and a reviewer prints

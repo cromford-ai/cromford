@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "owner-mail",
+      "file": "bin/lib/owner-mail.sh",
+      "note": "BH-8894: owner_mail sends one email to the project owner through the Resend seam, deduped on a key in state/owner-mail.json. The caller (bin/vercel-deploy-snapshot.sh) resolves the rows per project with `lib_env_apply owner-mail <project>` in a subshell, so lib.owner-mail.<project>.<env> wins over lib.owner-mail.<env>.",
+      "knobs": []
+    }
+  ]
+}

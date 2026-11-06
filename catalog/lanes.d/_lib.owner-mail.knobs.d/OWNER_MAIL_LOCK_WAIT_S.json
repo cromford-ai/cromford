@@ -1,0 +1,12 @@
+{
+  "env": "OWNER_MAIL_LOCK_WAIT_S",
+  "read_in": "bin/lib/owner-mail.sh",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8894: flock -w on state/owner-mail.json.lock for the dedupe read-modify-write. A value that is not a positive integer is 10."
+}

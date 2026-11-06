@@ -1,0 +1,9 @@
+{
+  "env": "OWNER_MAIL_FROM",
+  "read_in": "bin/lib/owner-mail.sh",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8894: the sender address of the owner email. Empty = no email is sent (owner_mail prints not-configured). The address must be on a domain verified in the Resend account. Settings row lib.owner-mail.owner_mail_from, or lib.owner-mail.<project>.owner_mail_from for one project."
+}

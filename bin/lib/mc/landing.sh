@@ -34,7 +34,8 @@
 #     6 tier-high | tier-unknown | unreadable-tier   the risk_tiers row for
 #                    THIS head (GET /api/risk-tiers) must be low or medium
 #     7 lead-verdict | unreadable-status   the lead-verdict commit status on
-#                    the head must be success
+#                    the head must be success (BH-9039: or harness-verdict
+#                    success with no lead failure, vs_clear_row)
 #     8 fast-checks | unreadable-checks   every .mergify.yml admission check
 #                    that is a check run (qsc_list's status contexts removed)
 #                    is completed/success on the head, latest run per name
@@ -164,10 +165,16 @@ landing_eligible() {
   command -v gh_rest >/dev/null 2>&1 || { _landing_refuse unreadable-status; return 1; }
   t=$(mktemp "${TMPDIR:-/tmp}/landing.XXXXXX") || { _landing_refuse unreadable-status; return 1; }
   # 7 — the lead-verdict status on the head: ONE combined-status read.
+  # BH-9039: the queue clearance (vs_clear_row: lead-verdict or
+  # harness-verdict success, a lead failure vetoes) when it is loaded.
   rc=0; gh_rest GET "repos/$repo/commits/$head/status" > "$t" 2>/dev/null || rc=$?
   c=$(command -v vs_context >/dev/null 2>&1 && vs_context || echo "${LEAD_VERDICT_CONTEXT:-lead-verdict}")
-  if [ "$rc" != 0 ] || ! cw=$(jq -er --arg c "$c" '(.statuses | if type == "array" then . else error("statuses") end)
-         | map(select(.context == $c)) | if length == 0 then "absent" else .[0].state end' "$t" 2>/dev/null); then
+  if [ "$rc" = 0 ] && command -v vs_clear_row >/dev/null 2>&1; then
+    cw=$(vs_clear_row "$t") || rc=2
+    cw=${cw%%$'\t'*}
+  fi
+  if [ "$rc" != 0 ] || { ! command -v vs_clear_row >/dev/null 2>&1 && ! cw=$(jq -er --arg c "$c" '(.statuses | if type == "array" then . else error("statuses") end)
+         | map(select(.context == $c)) | if length == 0 then "absent" else .[0].state end' "$t" 2>/dev/null); }; then
     rm -f "$t"; _landing_refuse unreadable-status; return 1
   fi
   [ "$cw" = success ] || { rm -f "$t"; _landing_refuse lead-verdict; return 1; }

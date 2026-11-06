@@ -1,0 +1,3 @@
+[
+    {"path": "owner-mail.json", "class": "box-local", "authority": "the owner-mail send-once ledger (BH-8894)", "note": "state/owner-mail.json {<key>: {at, status, to|id|why}} plus its .lock and .tmp.<pid> siblings: bin/lib/owner-mail.sh owner_mail, a read-modify-write under flock that stamps a key BEFORE the send so a crash costs a lost repeat, never a second mail. Its one caller is bin/vercel-deploy-snapshot.sh (key prodred:<project>), a hub-only lane, so the ledger is the hub's own. A hub move or a lost file costs at most one repeated owner email per key. One key per project, no growth past the project count. Machine-local, never carried"}
+]

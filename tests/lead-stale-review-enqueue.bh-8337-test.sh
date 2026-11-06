@@ -138,7 +138,9 @@ OUT=$(enq 107); RC=$?
   || bad "A7 a refused publish, witnessed: rc 0, no reads, no PUT (rc $RC, reads $(reads), puts $(puts))"
 newcase a7b; fixture > "$GHD/reviews-1.json"; echo 422 > "$GHD/status-code"; rm -f "$GHD/witness"
 OUT=$(enq 117); RC=$?
-[ "$RC" = 3 ] && grep -q 'lead-verdict status could not be published' <<<"$OUT" && [ "$(reads)" = 0 ] && ok \
+# TEST-CHANGE (BH-9039): demo-os has no lead row, so this builder enqueue
+# publishes harness-verdict, and the refusal names that context.
+[ "$RC" = 3 ] && grep -q 'harness-verdict status could not be published' <<<"$OUT" && [ "$(reads)" = 0 ] && ok \
   || bad "A7 a refused publish, no witness: rc 3 as in bh-3348 E2, no reads (rc $RC, out $OUT, reads $(reads))"
 
 # ---- A8: r1 on page 2 ----
