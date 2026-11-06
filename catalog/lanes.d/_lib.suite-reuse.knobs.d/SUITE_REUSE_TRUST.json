@@ -1,0 +1,9 @@
+{
+  "env": "SUITE_REUSE_TRUST",
+  "read_in": "worker/jobs/src/lib/suite-trust.js",
+  "type": "string",
+  "default": "class",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9063. class|image. Read by the worker from the settings row lib.suite-reuse.suite_reuse_trust on every lookup. class = a lookup matches its own ctx and a ci caller sees ci rows only (BH-5354 I1). image = a lookup matches repo+suite+fingerprint in every class and ctx; the fingerprint carries the runner image id. Any other value turns reuse off."
+}

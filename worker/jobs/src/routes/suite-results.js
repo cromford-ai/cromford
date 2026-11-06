@@ -11,12 +11,23 @@
 //
 // The bearer-only READ routes (saved minutes, run history) are not here; the
 // Mission Control slice adds them in its own route file.
+//
+// TRUST (BH-9063). The lookup reads lib.suite-reuse.suite_reuse_trust
+// (lib/suite-trust.js). Under "class" (the default) the BH-5354 I1 rule holds:
+// a lookup matches its own ctx, and a token (ci) caller sees ci rows only.
+// Under "image" a lookup matches (repo, suite, fingerprint) in every class and
+// ctx, because the fingerprint carries the runner image id. The answer names
+// the mode in `trust` and carries `reds`: the fail rows at the asked keys
+// inside the same max_age_h window, so a caller can treat one as a red without
+// a run. The PUT's prior-status read keeps the class rule in both modes: it
+// only names a contradicted green.
 
 import { json, readBody, d1Guarded } from "../lib/http.js";
-import { ensureTable, isoPlusSeconds } from "../lib/core.js";
+import { ensureTable, ensureColumns, isoPlusSeconds } from "../lib/core.js";
 import {
   credentialClass, readReuseKnobs, validateItems, validateHead, mergeStatus,
 } from "../lib/suite-results.js";
+import { readTrustKnob } from "../lib/suite-trust.js";
 
 const PRUNE_AFTER_S = 30 * 86400;
 const PRUNE_CAP = 500;
@@ -25,9 +36,12 @@ const PRUNE_CAP = 500;
 // idx_suite_results_key over all four columns. A plain JOIN let SQLite scan
 // every (repo, ctx) row and rescan json_each per row: 74s for 1,500 items over
 // 20k rows (lead review of #5420). The NOT EXISTS probe seeks the same index.
-const JOIN = `FROM json_each(?1) j CROSS JOIN suite_results r
+// Under image trust the ctx filter goes, and the seek is idx_suite_results_fp
+// (repo, suite, fingerprint) (core.d/bh-9063-suite-results-fp.js).
+const joinOf = (trust) => `FROM json_each(?1) j CROSS JOIN suite_results r
   ON r.suite = json_extract(j.value, '$.suite') AND r.fingerprint = json_extract(j.value, '$.fingerprint')
-  WHERE r.repo = ?2 AND r.ctx = ?3`;
+  WHERE r.repo = ?2${trust === "image" ? "" : " AND r.ctx = ?3"}`;
+const JOIN = joinOf("class");
 
 // FAIL IS STICKY IN THE STATEMENT ITSELF (mergeStatus, in SQL), so two writers
 // racing on one key can never leave an ok over a fail. The green's run_id,
@@ -66,17 +80,26 @@ const RUN_UPSERT_SQL = `INSERT INTO suite_reuse_runs
   WHERE suite_reuse_runs.class = excluded.class`;
 
 // The rows a caller may see: a token (ci) caller sees ci rows only; the bearer
-// (builder) sees both classes.
-const visible = (alias, cls) => (cls === "ci" ? ` AND ${alias}.class = 'ci'` : "");
+// (builder) sees both classes. Under image trust every caller sees every class.
+const visible = (alias, cls, trust = "class") => (cls === "ci" && trust !== "image" ? ` AND ${alias}.class = 'ci'` : "");
 
-// Binds: ?1 items JSON ?2 repo ?3 ctx ?4 ok_at cutoff. Exported so the
-// query-plan test reads the SQL the route ships.
-export const lookupSql = (cls) =>
-  `SELECT r.suite, r.fingerprint, r.run_id, r.duration_s, r.class, r.ok_at ${JOIN}
-     AND r.status = 'ok' AND r.ok_at >= ?4${visible("r", cls)}
+// Binds: ?1 items JSON ?2 repo ?3 ctx ?4 ok_at cutoff (?3 is unused under
+// image trust). Exported so the query-plan test reads the SQL the route ships.
+// The default trust keeps the pre-BH-9063 SQL byte for byte.
+export const lookupSql = (cls, trust = "class") =>
+  `SELECT r.suite, r.fingerprint, r.run_id, r.duration_s, r.class, r.ok_at ${joinOf(trust)}
+     AND r.status = 'ok' AND r.ok_at >= ?4${visible("r", cls, trust)}
      AND NOT EXISTS (SELECT 1 FROM suite_results f
-       WHERE f.repo = r.repo AND f.ctx = r.ctx AND f.suite = r.suite
-         AND f.fingerprint = r.fingerprint AND f.status = 'fail'${visible("f", cls)})
+       WHERE f.repo = r.repo${trust === "image" ? "" : " AND f.ctx = r.ctx"} AND f.suite = r.suite
+         AND f.fingerprint = r.fingerprint AND f.status = 'fail'${visible("f", cls, trust)})
+   ORDER BY r.suite, r.class`;
+
+// The fail rows at the asked keys, in the same window and visibility as a hit.
+// run_id is last_run_id, the run that last wrote the row: a fail is sticky, so
+// a later ok run may be that run. Binds: as lookupSql, ?4 an updated_at cutoff.
+export const redsSql = (cls, trust = "class") =>
+  `SELECT r.suite, r.fingerprint, r.last_run_id AS run_id, r.class ${joinOf(trust)}
+     AND r.status = 'fail' AND r.updated_at >= ?4${visible("r", cls, trust)}
    ORDER BY r.suite, r.class`;
 
 // Binds: ?1 items JSON ?2 repo ?3 ctx.
@@ -98,16 +121,25 @@ export const routes = [
       if (bad) return json(400, { error: bad });
       const knobs = await readReuseKnobs(env.DB);
       if (knobs.reuse !== "on") {
-        return json(200, { reuse: "off", reason: knobs.reason || "settings row off", max_age_h: knobs.max_age_h, hits: [] });
+        return json(200, { reuse: "off", reason: knobs.reason || "settings row off", max_age_h: knobs.max_age_h, hits: [], reds: [] });
       }
+      const { trust, reason } = await readTrustKnob(env.DB);
+      if (!trust) return json(200, { reuse: "off", reason, max_age_h: knobs.max_age_h, hits: [], reds: [] });
       return d1Guarded("suite_results", async () => {
         await ensureTable(env, "suite_results");
+        // idx_suite_results_fp, the image-trust seek (cached per isolate).
+        await ensureColumns(env, "suite_results");
         const cutoff = isoPlusSeconds(t, -knobs.max_age_h * 3600);
         // FAIL IS STICKY ACROSS CLASSES TOO: the PK carries the class, so a red
         // in one class never touches the other's green row. A green is a hit
         // only when NO row this caller can see holds a fail at the same key.
-        const { results } = await env.DB.prepare(lookupSql(cls)).bind(JSON.stringify(body.items), body.repo, body.ctx, cutoff).all();
-        return json(200, { reuse: "on", max_age_h: knobs.max_age_h, hits: results || [] });
+        // Hits and reds go in one D1 round trip.
+        const binds = [JSON.stringify(body.items), body.repo, body.ctx, cutoff];
+        const [hits, reds] = await env.DB.batch([
+          env.DB.prepare(lookupSql(cls, trust)).bind(...binds),
+          env.DB.prepare(redsSql(cls, trust)).bind(...binds),
+        ]);
+        return json(200, { reuse: "on", trust, max_age_h: knobs.max_age_h, hits: hits.results || [], reds: reds.results || [] });
       });
     },
   ],
