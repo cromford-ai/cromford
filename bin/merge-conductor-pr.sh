@@ -31,8 +31,13 @@
 #               the run (NONE when the run wrote none), reason is the first
 #               four words of the row's reason joined by `-` (at most 40
 #               bytes of [A-Za-z0-9._:-]), and deferred is the spawns that
-#               deferred, comma-joined. The hub reads deferred= from the stored
-#               row and runs that PR on the hub on its next tick.
+#               deferred, comma-joined. The land step writes `land`. A row
+#               that is READY after the run with no word carries `hold`
+#               (BH-9202): an earlier exit of the READY arm (main red, a lead
+#               or block-gate hold, prequeue, queue hold, a moved state) held
+#               it, and the machine landed nothing. The hub reads deferred=
+#               from the stored row and runs that PR on the hub on its next
+#               tick.
 #
 # The exit code is the conductor's own. Contract:
 # docs/notes/2026-10-14-BH-6495-conductor-fly.md.
@@ -100,5 +105,9 @@ STATE=$(printf '%s' "$ROW" | cut -f2)
 REASON=$(printf '%s' "$ROW" | cut -f7 | awk '{ for (i = 1; i <= NF && i <= 4; i++) printf "%s%s", (i > 1 ? "-" : ""), $i }' \
   | tr -cd 'A-Za-z0-9._:-' | head -c 40)
 DEFW=$(sort -u "$DEF" 2>/dev/null | tr -cd 'a-z\n' | grep . | paste -sd, -)
+# BH-9202: a machine run never lands. A row that is READY after the run with no
+# word took an exit of the READY arm before the land step (which writes
+# `land`), so it says `hold` and the hub runs the PR itself.
+[ "$STATE" = READY ] && [ -z "$DEFW" ] && DEFW=hold
 prof "${STATE:-NONE}" "${REASON:--}" "${DEFW:--}"
 exit "$rc"

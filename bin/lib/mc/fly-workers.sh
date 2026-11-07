@@ -27,7 +27,9 @@
 #   mc_fly_deferred_for <rows-json> <key>
 #       rc 0 + the word(s) when the newest `done` row of <key> in a prefix-read
 #       answer carries a PROF line with deferred=<x>, x not `-`: the machine
-#       left that PR's work to the hub (bin/merge-conductor-pr.sh).
+#       left that PR's work to the hub (bin/merge-conductor-pr.sh). BH-9202:
+#       a newest done row with state=READY and deferred=- (or no deferred
+#       field) answers `hold`: a machine never lands, so the hub must.
 #   mc_fly_failed_for <rows-json> <key>
 #       rc 0 + a word (died | command-missing | rc=<n> | no-prof) when the
 #       NEWEST row of <key> is finished and failed: status died, status failed
@@ -54,7 +56,9 @@
 #       5 = the machine deferred this head (MC_FLY_DEFERRED), 6 = no valid key,
 #       7 = the machine run of this head failed (MC_FLY_FAILED), 8 = its row
 #       waits unclaimed past MC_FLY_QUEUE_STALE_S (MC_FLY_STALE), 1 = the read
-#       or the enqueue failed. Only rc 0 and 3 mean a row exists.
+#       or the enqueue failed. Only rc 0 and 3 mean a row exists. BH-9202:
+#       after the read, _mc_fly_ready_loop alerts once per (PR, head) when
+#       MC_FLY_READY_LOOP_ALERT_N (default 3) done rows of the key end READY.
 #   mc_fly_arm <project> <slug> <list-row>
 #       the launch-loop decision for one row. rc 0 = handled here (enqueued or
 #       skipped, accounted in fan-in): start no local worker. rc 1 = run the
@@ -156,9 +160,14 @@ mc_fly_run_key() {
 
 mc_fly_deferred_for() {
   local d
+  # BH-9202: a row that ends READY with no word is a landing the machine left
+  # to the hub (a machine never lands), so it reads as `hold`.
   d=$(printf '%s' "${1:-}" | jq -r --arg k "${2:-}" \
     'first(.rows[]? | select(.project == $k and .status == "done")) | .prof_line // ""
-     | capture("(^| )deferred=(?<d>[^ ]+)").d // ""' 2>/dev/null) || return 1
+     | ((capture("(^| )deferred=(?<d>[^ ]+)").d // "") as $w
+        | if $w != "" and $w != "-" then $w
+          elif test("(^| )state=READY( |$)") then "hold"
+          else "" end)' 2>/dev/null) || return 1
   [ -n "$d" ] && [ "$d" != - ] || return 1
   printf '%s' "$d"
 }
@@ -205,6 +214,7 @@ mc_fly_enqueue() {
   # A failed run first: its row is terminal, so lp_enqueue would add a new one
   # and the next machine fails the same way, tick after tick, with nobody told.
   if MC_FLY_FAILED=$(mc_fly_failed_for "$rows" "$MC_FLY_KEY"); then return 7; fi
+  _mc_fly_ready_loop "$p" "$slug" "$n" "$head" "$rows"
   if MC_FLY_DEFERRED=$(mc_fly_deferred_for "$rows" "$MC_FLY_KEY"); then return 5; fi
   # No machine took the row in time (no capacity, or no fleet at all): the hub
   # works the PR rather than leave it waiting. A machine that claims the row
@@ -359,6 +369,36 @@ mc_fly_rereview_request() {
     mc_alert "$slug#$n" BLOCKED_HUMAN "lead review request for ${head:0:12} failed (${why:-rc=$rc}); the next tick asks again. By hand: bin/lead-verdict.sh request $slug $n $head"
   fi
   echo failed; return 0
+}
+
+# _mc_fly_ready_loop <project> <slug> <pr> <head> <rows-json> — BH-9202: the
+# tripwire for a READY head that machine rows do not land. When the rows of
+# this head's key hold MC_FLY_READY_LOOP_ALERT_N or more `done` rows whose PROF
+# line says state=READY, one mc_alert per (PR, head); the attempt marker
+# `flyreadyloop <slug>#<pr> <head>` is written after the alert. Hub only, and
+# only where mc_alert and the attempts ledger are loaded. Always rc 0.
+_mc_fly_ready_loop() {
+  local p="$1" slug="$2" n="$3" head="$4" rows="$5" key lim c
+  [ "${MC_ON_MACHINE:-}" = 1 ] && return 0
+  command -v mc_alert >/dev/null 2>&1 && command -v mc_attempt_has >/dev/null 2>&1 \
+    && command -v mc_attempt_put >/dev/null 2>&1 || return 0
+  key=$(mc_fly_run_key "$p" "$n" "$head") || return 0
+  # Fallback of the settings row lane.merge-conductor.mc_fly_ready_loop_alert_n.
+  lim="${MC_FLY_READY_LOOP_ALERT_N:-3}"
+  if ! [[ $lim =~ ^[0-9]{1,3}$ ]] || [ "$((10#$lim))" -lt 2 ]; then
+    command -v mc_log >/dev/null 2>&1 \
+      && mc_log "$slug#$n MC_FLY_READY_LOOP_ALERT_N='$lim' is not an integer >= 2; using 3"
+    lim=3
+  fi
+  lim=$((10#$lim))
+  c=$(printf '%s' "$rows" | jq -r --arg k "$key" \
+    '[.rows[]? | select(.project == $k and .status == "done"
+       and ((.prof_line // "") | test("(^| )state=READY( |$)")))] | length' 2>/dev/null) || return 0
+  [[ $c =~ ^[0-9]+$ ]] && [ "$c" -ge "$lim" ] || return 0
+  mc_attempt_has "flyreadyloop $slug#$n $head" && return 0
+  mc_alert "$slug#$n" READY "$c machine rows of ${head:0:12} ended READY with no landing ($key); the hub runs this PR itself (fallback=machine-deferred). If it still does not land, the hub log names the gate."
+  mc_attempt_put "flyreadyloop $slug#$n $head"
+  return 0
 }
 
 # _mc_fly_stale_note — the fallback line's note for rc 8: the age of a queued

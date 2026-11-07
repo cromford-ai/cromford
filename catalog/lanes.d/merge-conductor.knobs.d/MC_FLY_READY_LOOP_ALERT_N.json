@@ -1,0 +1,11 @@
+{
+  "env": "MC_FLY_READY_LOOP_ALERT_N",
+  "type": "int",
+  "default": 3,
+  "min": 2,
+  "max": 50,
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/mc/fly-workers.sh",
+  "note": "BH-9202: the count of done merge-conductor-pr rows of one PR head that end state=READY at which the hub sends one alert per (PR, head) (_mc_fly_ready_loop, attempt marker flyreadyloop). A value that is not an integer >= 2 falls back to 3 with one merge-conductor.log line. Settings row: lane.merge-conductor.mc_fly_ready_loop_alert_n."
+}
