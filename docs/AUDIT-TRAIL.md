@@ -11,7 +11,7 @@ minutes and alerts on them. Two scripts:
 
 | script | what it does | cron |
 |---|---|---|
-| `bin/audit-install.sh` | writes the auditd rules (one watch per root, key `harness`) and keeps auditd running | daily, per box |
+| `bin/audit-install.sh` | writes the auditd rules (syscall rules per existing root, key `harness`), keeps auditd running and proves it records | daily, per box |
 | `bin/audit-tail.sh` | reads `ausearch -k harness`, collapses events into bursts, logs and alerts | `*/5` on every live box |
 
 This doc is about the whole trail. The installer half is a separate slice and
@@ -21,23 +21,61 @@ says so once a day (see "audit is BLIND" below) rather than going quiet.
 
 ## What is watched
 
-One watch rule per root, all writes and attribute changes, all tagged with the
-key `harness`:
+Syscall rules, not watches (BH-9173). The kernel records only the classes the
+tailer reads: delete (`unlink`, `unlinkat`, `rmdir`), rename (`rename`,
+`renameat`, `renameat2`) and truncate (`truncate`, `ftruncate`). One rule per
+root that exists, tagged with the key `harness`. For `/root/harness`
+(`HARNESS`) the rules file starts with `never` rules, which the kernel matches
+first:
 
 ```
--w /root/harness      -p wa -k harness
--w /root/orchestrator -p wa -k harness
--w /etc/harness       -p wa -k harness
--w /root/.ssh         -p wa -k harness
+-a never,exit -F arch=b64 -S rename,renameat,renameat2 -F dir=/root/harness/state
+-a never,exit -F arch=b64 -S rename,renameat,renameat2 -F dir=/root/harness/logs
+-a never,exit -F arch=b64 -S rename,renameat,renameat2 -F dir=/root/harness/locks
+-a never,exit -F arch=b64 -S rename,renameat,renameat2 -F dir=/root/harness/tmp
+-a never,exit -F arch=b64 -S unlink,unlinkat,rmdir -F dir=/root/harness/locks
+-a never,exit -F arch=b64 -S unlink,unlinkat,rmdir -F dir=/root/harness/tmp
+-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/root/harness -k harness
+-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/root/orchestrator -k harness
+-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/etc/harness -k harness
+-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/root/.ssh -k harness
 ```
+
+Why the `never` rules. The BH-443 rules were `-w <root> -p wa`: every write and
+attribute change. On 2026-11-06 the hub's 1G cap held only 2 hours. The top
+paths were atomic tmp+mv writes under `state/` and lock churn under `locks/` and
+`tmp/`. None of it was a wipe. So renames under `state/`, `logs/`, `locks/` and
+`tmp/`, and deletes under `locks/` and `tmp/`, are not recorded. Deletes under
+`state/`, `logs/`, `builds/`, `bin/`, `env/`, `prompts/` and `cron/` stay
+recorded: a wipe ends in the `rmdir` of each top-level dir. A `never` rule is
+rendered only for a subdir that exists.
+
+What is no longer recorded: an open with `O_TRUNC` (`> file`). The tailer still
+classes one as `truncate` if a record has one, but the rules do not ask for
+`open`/`openat`, which would bring back most of the noise. A rename from a
+`never` dir to another place (`mv /root/harness/state /tmp/x`) is not recorded.
 
 The roots are `AUDIT_ROOTS` (default `/root/harness /root/orchestrator
 /etc/harness /root/.ssh`). Both scripts read the same variable, so the reader
 watches what the writer installed. A trailing slash on a root is stripped before
 anything is matched, so `/root/harness/` and `/root/harness` mean the same thing.
+A root that does not exist is not rendered: the kernel refuses `-F dir=` on a
+missing path (`Error sending add rule data request (No such file or
+directory)`, project-3-2). With no root at all, the installer alerts once and writes
+no rules file.
 
-The watch covers everything under a root. The tailer is what makes that
-bearable: it keeps deletes, renames and truncates and drops the rest.
+auditd.conf bounds the log at `max_log_file = 50` x `num_logs = 5` (250M), and
+`admin_space_left_action`, `disk_full_action` and `max_log_file_action` are all
+`ROTATE`. The old `disk_full_action = SUSPEND` stopped project-3-2 from recording for
+2 days with no alert.
+
+A dead trail is never "healthy". The installer and `--check` read the age of
+`audit.log` first (STALE after `AUDIT_STALE_H`, default 6 hours, while rules are
+loaded). Then they write and remove one probe file (`.audit-probe.<pid>.<n>`)
+under the first root and ask `ausearch -k harness -f <probe> -ts recent` for its
+record. A miss sends `auditctl --signal resume` and probes once more. A second
+miss is `audit trail DEAD` and one alert a day. The probe's delete reaches the
+tailer as one `class=delete n=1 sev=info` line.
 
 ## Where the logs are
 
@@ -141,7 +179,10 @@ The pure `--parse` mode reads no env file.
 | `AUDIT_MAX_BURSTS_PER_TICK` | `5` | tailer | most `lane-alert.sh` calls in one tick |
 | `AUDIT_PAGE_MIN` | `25` | tailer | burst size that makes a burst critical on its own |
 | `AUDIT_PAGE_ALL` | unset | tailer | `1` makes every burst critical |
-| `AUDIT_LOG_MB`, `AUDIT_LOG_KEEP` | see the installer | installer | how much `/var/log/audit` keeps |
+| `AUDIT_LOG_MB`, `AUDIT_LOG_KEEP` | `50`, `5` | installer | how much `/var/log/audit` keeps (250M) |
+| `AUDIT_STALE_H` | `6` | installer | hours without a write before audit.log is STALE |
+| `AUDIT_PROBE_WAIT_S` | `5` | installer | seconds the probe waits for its record |
+| `AUDIT_LOG_PATH` | `log_file` of auditd.conf | installer | the audit log the stale check reads |
 | `TZ_CHECK` | see that slice | timezone check | not this lane |
 
 Over the cap, the extra bursts are still logged and one line says how many:

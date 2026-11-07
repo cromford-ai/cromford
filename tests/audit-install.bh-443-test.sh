@@ -7,13 +7,19 @@
 # WHY THE SCRIPT EXISTS (hub wipe #388, 2026-09-15). /root/harness/{env,bin,
 # prompts,logs,builds} vanished at 16:50Z and nothing on the box could say who
 # did it. bin/audit-install.sh is the leg that makes the kernel write that line:
-# auditd installed, one rules file watching the harness roots for `wa` under key
-# `harness`, rotation bounded, loaded and verified. The tailer that READS those
-# records is BH-444 and is deliberately not referenced from here.
+# auditd installed, one rules file of delete/rename/truncate syscall rules on the
+# harness roots under key `harness`, rotation bounded, loaded and verified. The
+# tailer that READS those records is BH-444 and is deliberately not referenced
+# from here.
+#
+# The roots are fixture dirs under $T: a root that does not exist is not
+# rendered. An ausearch stub answers the install path's live probe. The
+# rule-shape, conf and probe cases are in tests/audit-install.bh-9173-test.sh.
 #
 # What is proved here:
-#   1. `--render` is byte-stable and is exactly the 3-line header + one
-#      `-w <root> -p wa -k harness` per root — no -e 2, no -f 2, no chattr;
+#   1. `--render` is byte-stable and is exactly the 3-line header + the never
+#      rules + one `-a always,exit ... -k harness` per root — no `-p wa`, no
+#      -e 2, no -f 2, no chattr;
 #   2. `--check` on a box with no auditctl says `NOT installed`, answers rc 1,
 #      and writes NOTHING; a bogus argument is usage + rc 2, also writing
 #      nothing;
@@ -21,7 +27,8 @@
 #   4. a kernel that refuses the rules is ONE actionable ALERTS line per day,
 #      never a "loaded" claim, and the classifier does not call a plain
 #      "Rule exists" a permission problem;
-#   5. the happy path writes the rules file and the rotation knobs, says
+#   5. the happy path writes the rules file and the rotation knobs (ROTATE,
+#      never SUSPEND), says
 #      `rules loaded, n=4`, and the run after it says `no change`; a loaded
 #      count short of the roots is `rules NOT loaded`, never success;
 #   6. the two production call sites (update-runners, bootstrap-machine) and
@@ -34,7 +41,8 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-mkdir -p "$T/fakebin" "$T/fakectl" "$T/fakebin-empty" "$T/h/bin" "$T/h/env" "$T/etc"
+mkdir -p "$T/fakebin" "$T/fakectl" "$T/fakebin-empty" "$T/h/bin" "$T/h/env" "$T/etc" \
+         "$T/h/locks" "$T/h/tmp" "$T/orch" "$T/etch" "$T/ssh"
 if [ ! -f "$DIR/bin/audit-install.sh" ]; then
   bad "bin/audit-install.sh does not exist"
   echo "audit-install: $PASS passed, $FAIL failed"
@@ -70,12 +78,20 @@ stub "$T/fakebin" pkill  'echo "$*" >> "$T/pkill.calls"; exit 0'
 stub "$T/fakebin" apt-get 'echo "$*" >> "$T/apt.calls"; exit 0'
 stub "$T/fakebin" supervisorctl 'echo "$*" >> "$T/supervisorctl.calls"; exit 0'
 stub "$T/fakebin" systemctl 'echo "$*" >> "$T/systemctl.calls"; exit 0'
+# the BH-9173 probe: every probe file is recorded
+stub "$T/fakebin" ausearch 'echo "$*" >> "$T/ausearch.calls"; exit 0'
+ROOTS4="$T/h $T/orch $T/etch $T/ssh"
+# one rule as `auditctl -l` prints it back
+aline() { echo "-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=$1 -F key=${2:-harness}"; }
 
 REDIR=(HARNESS="$T/h"
        AUDIT_RULES_FILE="$T/etc/harness.rules"
        AUDITD_CONF="$T/etc/auditd.conf"
        AUDIT_SUPERVISOR_DIR="$T/nosup"
        AUDIT_SYSTEMD_DIR="$T/nosys"
+       AUDIT_ROOTS="$ROOTS4"
+       AUDIT_LOG_PATH="$T/audit.log"
+       AUDIT_PROBE_WAIT_S=1
        AUDIT_SBIN_PATH="")
 FULLPATH="$T/fakectl:$T/fakebin:/usr/bin:/bin"
 run()    { env PATH="$FULLPATH" "${REDIR[@]}" "$@" bash "$S"; }
@@ -90,6 +106,7 @@ reset() {
         "$T/augenrules.calls" "$T/supervisorctl.calls" "$T/auditd.calls"
   rm -rf "$T/sup"
   : > "$T/h/env/global.env"
+  touch "$T/audit.log"
 }
 lastlog() { tail -n 1 "$LOG" 2>/dev/null; }
 # grep -c on a file that does not exist prints nothing and exits 2, which turns
@@ -105,20 +122,22 @@ render > "$T/r1" 2>"$T/r1.err"; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "--render must exit 0 (rc=$RC, $(cat "$T/r1.err"))"
 render HOSTNAME=other TZ=America/Chicago > "$T/r2" 2>/dev/null
 cmp -s "$T/r1" "$T/r2" && ok || bad "--render must be byte-stable across runs: $(diff "$T/r1" "$T/r2")"
-[ "$(grep -c '^-w ' "$T/r1")" -eq 4 ] && ok || bad "--render must print 4 watch lines: $(cat "$T/r1")"
-[ "$(grep -c -- ' -p wa -k harness$' "$T/r1")" -eq 4 ] && ok \
-  || bad "every watch line must end ' -p wa -k harness': $(cat "$T/r1")"
-GOT=$(grep '^-w ' "$T/r1" | awk '{print $2}' | tr '\n' ' ')
-[ "$GOT" = "/root/harness /root/orchestrator /etc/harness /root/.ssh " ] && ok \
-  || bad "the four default roots, in order, are the watch set: got '$GOT'"
+[ "$(grep -c -- '^-a always,exit .* -k harness$' "$T/r1")" -eq 4 ] && ok || bad "--render must print 4 always rules: $(cat "$T/r1")"
+[ "$(grep -c -- '-p wa' "$T/r1")" -eq 0 ] && [ "$(grep -c '^-w ' "$T/r1")" -eq 0 ] && ok \
+  || bad "no '-w ... -p wa' watch is left: $(cat "$T/r1")"
+[ "$(grep -c '^-a never,exit ' "$T/r1")" -eq 6 ] && ok || bad "--render must print the 6 never rules for HARNESS: $(cat "$T/r1")"
+GOT=$(grep -- '-k harness$' "$T/r1" | sed 's/.* -F dir=\([^ ]*\) -k harness$/\1/' | tr '\n' ' ')
+[ "$GOT" = "$ROOTS4 " ] && ok \
+  || bad "the four roots, in order, are the always set: got '$GOT'"
 [ "$(grep -c -- '-e 2' "$T/r1")" -eq 0 ] && ok || bad "-e 2 is the immutability ticket, not this one"
 [ "$(grep -c -- '-f 2' "$T/r1")" -eq 0 ] && ok || bad "-f 2 is out of scope for this slice"
 [ "$(grep -c chattr "$T/r1")" -eq 0 ] && ok || bad "chattr has no business in the rules file"
 [ "$(head -n 3 "$T/r1" | grep -c '^#')" -eq 3 ] && ok || bad "the render opens with a 3-line comment header: $(head -n 3 "$T/r1")"
 [ "$(head -n 3 "$T/r1" | grep -c 'audit-install.sh')" -ge 1 ] && ok || bad "the header must name the script that wrote the file"
-render AUDIT_ROOTS="/a /b" > "$T/r3" 2>/dev/null
-[ "$(grep -c '^-w ' "$T/r3")" -eq 2 ] && ok || bad "AUDIT_ROOTS=\"/a /b\" must render 2 watch lines: $(cat "$T/r3")"
-[ "$(grep -c '^-w /a -p wa -k harness$' "$T/r3")" -eq 1 ] && ok || bad "AUDIT_ROOTS must drive the watch paths: $(cat "$T/r3")"
+mkdir -p "$T/a" "$T/b"
+render AUDIT_ROOTS="$T/a $T/b" > "$T/r3" 2>/dev/null
+[ "$(grep -c -- '-k harness$' "$T/r3")" -eq 2 ] && ok || bad "AUDIT_ROOTS=\"\$T/a \$T/b\" must render 2 always rules: $(cat "$T/r3")"
+[ "$(grep -c -- "-F dir=$T/a -k harness\$" "$T/r3")" -eq 1 ] && ok || bad "AUDIT_ROOTS must drive the rule paths: $(cat "$T/r3")"
 [ "$(grep -c audit-tail "$DIR/bin/audit-install.sh")" -eq 0 ] && ok \
   || bad "the tailer (BH-444) must not be referenced from the installer"
 
@@ -193,23 +212,18 @@ lastlog | grep -q 'rules load FAILED' && ok || bad "'Rule exists' must be logged
 # ── 5. the happy path (bare daemon), its idempotence, and a short count ─────
 reset
 touch "$T/running"
-# The fifth line is a watch on a harness path under ANOTHER key: counting by
+# The fifth line is a rule on a harness path under ANOTHER key: counting by
 # path instead of by key would read it as a harness rule and report 5.
-cat > "$T/loaded" <<'RULES'
--w /root/harness -p wa -k harness
--w /root/orchestrator -p wa -k harness
--w /etc/harness -p wa -k harness
--w /root/.ssh -p wa -k harness
--w /root/harness/builds -p wa -k someone-else
-RULES
+for r in $ROOTS4; do aline "$r"; done > "$T/loaded"
+aline "$T/h/builds" someone-else >> "$T/loaded"
 run >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "the happy path must exit 0 (rc=$RC): $(cat "$LOG" 2>/dev/null)"
 lastlog | grep -q 'rules loaded, n=4, daemon=bare' && ok || bad "the success line names the count and the daemon mode: $(lastlog)"
 render > "$T/expect-rules" 2>/dev/null
 cmp -s "$T/expect-rules" "$T/etc/harness.rules" && ok \
   || bad "the installed rules file must equal --render: $(diff "$T/expect-rules" "$T/etc/harness.rules" 2>&1)"
-for KV in "max_log_file = 100" "num_logs = 10" "max_log_file_action = ROTATE" \
-          "space_left_action = SYSLOG" "disk_full_action = SUSPEND"; do
+for KV in "max_log_file = 50" "num_logs = 5" "max_log_file_action = ROTATE" \
+          "space_left_action = SYSLOG" "admin_space_left_action = ROTATE" "disk_full_action = ROTATE"; do
   grep -qx "$KV" "$T/etc/auditd.conf" && ok || bad "auditd.conf must carry '$KV': $(cat "$T/etc/auditd.conf" 2>/dev/null)"
 done
 [ -f "$ALERTS" ] && bad "a working install is not an alert: $(cat "$ALERTS")" || ok
@@ -220,14 +234,14 @@ cmp -s "$T/expect-rules" "$T/etc/harness.rules" && ok || bad "the second run mus
 [ -f "$ALERTS" ] && bad "an unchanged box is not an alert" || ok
 # the knobs are knobs
 reset; touch "$T/running"; cp /dev/null "$T/loaded"
-printf -- '-w /a -p wa -k harness\n' > "$T/loaded"
-run AUDIT_ROOTS="/a" AUDIT_LOG_MB=25 AUDIT_LOG_KEEP=3 >/dev/null 2>&1
+aline "$T/a" > "$T/loaded"
+run AUDIT_ROOTS="$T/a" AUDIT_LOG_MB=25 AUDIT_LOG_KEEP=3 >/dev/null 2>&1
 lastlog | grep -q 'rules loaded, n=1, daemon=bare' && ok || bad "AUDIT_ROOTS must drive the expected count: $(lastlog)"
 grep -qx 'max_log_file = 25' "$T/etc/auditd.conf" && ok || bad "AUDIT_LOG_MB must reach auditd.conf: $(cat "$T/etc/auditd.conf")"
 grep -qx 'num_logs = 3' "$T/etc/auditd.conf" && ok || bad "AUDIT_LOG_KEEP must reach auditd.conf: $(cat "$T/etc/auditd.conf")"
 # a short load is never reported as installed
 reset; touch "$T/running"
-printf -- '-w /root/harness -p wa -k harness\n-w /root/orchestrator -p wa -k harness\n-w /etc/harness -p wa -k harness\n' > "$T/loaded"
+for r in "$T/h" "$T/orch" "$T/etch"; do aline "$r"; done > "$T/loaded"
 run >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "a short load must still exit 0 (rc=$RC)"
 lastlog | grep -q 'rules NOT loaded: expected=4 loaded=3' && ok || bad "a short load must say so: $(lastlog)"
@@ -236,7 +250,7 @@ lastlog | grep -q 'rules NOT loaded: expected=4 loaded=3' && ok || bad "a short 
 # 5b. supervisord mode registers the program the way the cron block does
 reset
 mkdir -p "$T/sup"; touch "$T/running"
-printf -- '-w /root/harness -p wa -k harness\n-w /root/orchestrator -p wa -k harness\n-w /etc/harness -p wa -k harness\n-w /root/.ssh -p wa -k harness\n' > "$T/loaded"
+for r in $ROOTS4; do aline "$r"; done > "$T/loaded"
 run AUDIT_SUPERVISOR_DIR="$T/sup" >/dev/null 2>&1; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "supervisord mode must exit 0 (rc=$RC): $(cat "$LOG" 2>/dev/null)"
 lastlog | grep -q 'daemon=supervisord' && ok || bad "supervisord mode must be named in the success line: $(lastlog)"

@@ -1,0 +1,29 @@
+----
+time->Fri Nov  6 18:00:01 2026
+type=PROCTITLE msg=audit(11/06/2026 18:00:01.100:9001) : proctitle=rm -rf /root/harness
+type=PATH msg=audit(11/06/2026 18:00:01.100:9001) : item=0 name=/root/harness/bin/ inode=1001 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=PARENT cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=PATH msg=audit(11/06/2026 18:00:01.100:9001) : item=1 name=/root/harness/bin/a.sh inode=2001 dev=fd:01 mode=file,755 ouid=root ogid=root rdev=00:00 nametype=DELETE cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=CWD msg=audit(11/06/2026 18:00:01.100:9001) : cwd=/root
+type=SYSCALL msg=audit(11/06/2026 18:00:01.100:9001) : arch=x86_64 syscall=unlinkat success=yes exit=0 a0=0xffffff9c a1=0x55d0c0a2 a2=0x0 a3=0x0 items=2 ppid=7100 pid=9173 auid=root uid=root gid=root euid=root suid=root fsuid=root egid=root sgid=root fsgid=root tty=(none) ses=5 comm=rm exe=/usr/bin/rm subj=unconfined key=harness
+----
+time->Fri Nov  6 18:00:01 2026
+type=PROCTITLE msg=audit(11/06/2026 18:00:01.100:9002) : proctitle=rm -rf /root/harness
+type=PATH msg=audit(11/06/2026 18:00:01.100:9002) : item=0 name=/root/harness/bin/lib/ inode=1002 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=PARENT cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=PATH msg=audit(11/06/2026 18:00:01.100:9002) : item=1 name=/root/harness/bin/lib/b.sh inode=2002 dev=fd:01 mode=file,644 ouid=root ogid=root rdev=00:00 nametype=DELETE cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=CWD msg=audit(11/06/2026 18:00:01.100:9002) : cwd=/root
+type=SYSCALL msg=audit(11/06/2026 18:00:01.100:9002) : arch=x86_64 syscall=unlinkat success=yes exit=0 a0=0xffffff9c a1=0x55d0c0a2 a2=0x0 a3=0x0 items=2 ppid=7100 pid=9173 auid=root uid=root gid=root euid=root suid=root fsuid=root egid=root sgid=root fsgid=root tty=(none) ses=5 comm=rm exe=/usr/bin/rm subj=unconfined key=harness
+----
+time->Fri Nov  6 18:00:02 2026
+type=PROCTITLE msg=audit(11/06/2026 18:00:02.100:9003) : proctitle=rm -rf /root/harness
+type=PATH msg=audit(11/06/2026 18:00:02.100:9003) : item=0 name=/root/harness/bin/ inode=1003 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=PARENT cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=PATH msg=audit(11/06/2026 18:00:02.100:9003) : item=1 name=/root/harness/bin/lib inode=2003 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=DELETE cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=CWD msg=audit(11/06/2026 18:00:02.100:9003) : cwd=/root
+type=SYSCALL msg=audit(11/06/2026 18:00:02.100:9003) : arch=x86_64 syscall=unlinkat success=yes exit=0 a0=0xffffff9c a1=0x55d0c0a2 a2=AT_REMOVEDIR a3=0x0 items=2 ppid=7100 pid=9173 auid=root uid=root gid=root euid=root suid=root fsuid=root egid=root sgid=root fsgid=root tty=(none) ses=5 comm=rm exe=/usr/bin/rm subj=unconfined key=harness
+----
+time->Fri Nov  6 18:00:03 2026
+type=PROCTITLE msg=audit(11/06/2026 18:00:03.100:9004) : proctitle=rm -rf /root/harness
+type=PATH msg=audit(11/06/2026 18:00:03.100:9004) : item=0 name=/root/harness/ inode=1004 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=PARENT cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=PATH msg=audit(11/06/2026 18:00:03.100:9004) : item=1 name=/root/harness/bin inode=2004 dev=fd:01 mode=dir,755 ouid=root ogid=root rdev=00:00 nametype=DELETE cap_fp=none cap_fi=none cap_fe=0 cap_fver=0 cap_frootid=0
+type=CWD msg=audit(11/06/2026 18:00:03.100:9004) : cwd=/root
+type=SYSCALL msg=audit(11/06/2026 18:00:03.100:9004) : arch=x86_64 syscall=rmdir success=yes exit=0 a0=0x55d0c0b0 a1=0x0 a2=0x0 a3=0x0 items=2 ppid=7100 pid=9173 auid=root uid=root gid=root euid=root suid=root fsuid=root egid=root sgid=root fsgid=root tty=(none) ses=5 comm=rm exe=/usr/bin/rm subj=unconfined key=harness
+----
