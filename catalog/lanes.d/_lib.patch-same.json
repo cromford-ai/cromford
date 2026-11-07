@@ -1,0 +1,35 @@
+{
+  "libs": [
+    {
+      "id": "patch-same",
+      "file": "bin/lib/patch-same.sh",
+      "note": "BH-9154 semantic rungs of patch_same_review (review callers only): patch_same_semantic answers `lockfile` when two heads differ only in named lockfiles that install the same code (package-lock.json only: the same packages, versions, resolved URLs and integrity on both heads, every resolved host in PATCH_SAME_LOCK_HOSTS; sibling package.json diff byte-equal; status M, never added or deleted; mode 100644; the commit author is never the permission) and `whitespace` when they differ only in trailing end-of-line whitespace outside PATCH_SAME_WS_SIGNIFICANT, never after a `\\`. Byte callers (CI and test result reuse) stay on patch_same. Note: docs/notes/2026-11-06-BH-9154-patch-same-rungs.md.",
+      "knobs": [
+        {
+          "env": "PATCH_SAME_LOCKFILES",
+          "type": "string",
+          "default": "package-lock.json",
+          "zero_means": "off",
+          "required": false,
+          "note": "Space list of lockfile basenames the lockfile rung may drop. Set and empty turns the rung off. Only package-lock.json has a parser: any other named lockfile that differs is rc 1. A lockfile-named path with a space or other unsafe byte is never dropped (rc 1). Read as ${PATCH_SAME_LOCKFILES-package-lock.json}."
+        },
+        {
+          "env": "PATCH_SAME_LOCK_HOSTS",
+          "type": "string",
+          "default": "registry.npmjs.org",
+          "zero_means": "off",
+          "required": false,
+          "note": "Space list of registry hosts. Every non-link `resolved` in the new head's lockfile must be an https URL on one of these hosts, or the lockfile rung is rc 1. Set and empty allows no host. Read as ${PATCH_SAME_LOCK_HOSTS-registry.npmjs.org}."
+        },
+        {
+          "env": "PATCH_SAME_WS_SIGNIFICANT",
+          "type": "string",
+          "default": ".py .yml .yaml .md .mk Makefile .patch .diff .tsv",
+          "zero_means": null,
+          "required": false,
+          "note": "Space list of extensions (leading dot) and exact basenames where trailing whitespace is content; those files are compared byte for byte by the whitespace rung. Read as ${PATCH_SAME_WS_SIGNIFICANT-.py .yml .yaml .md .mk Makefile .patch .diff .tsv}."
+        }
+      ]
+    }
+  ]
+}

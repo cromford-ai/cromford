@@ -285,6 +285,15 @@ export const api = {
   },
   // The projects table ({projects:[{project, repo, ...}]}): repo -> project.
   coordProjects: () => get('/api/coord/projects'),
+  // BH-9154: the daily review counter ({kinds, unmapped, days, max_days,
+  // rolled_at}), worker/jobs/src/routes/review-counts.js.
+  reviewCounts: ({ days, project } = {}) => {
+    const q = new URLSearchParams();
+    if (days) q.set('days', String(days));
+    if (project) q.set('project', project);
+    const qs = q.toString();
+    return get(`/api/coord/review-counts${qs ? `?${qs}` : ''}`);
+  },
   setProtectedPath: ({ repo, glob, op }) =>
     request('/api/coord/lead-protected-paths', {
       method: 'PUT',

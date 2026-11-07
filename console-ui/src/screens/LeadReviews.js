@@ -9,6 +9,7 @@ import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { fmtUsd, fmtDuration, whenLabel } from '../lib/format.js';
 import { BlockCategoriesSection } from './BlockCategories.js';
 import { LessonsSection } from './Lessons.js';
+import { ReviewCountsPanel } from './ReviewCountsPanel.js';
 import {
   SPEND_KEY, CONCURRENCY_KEY, AUTO_REPOS_ENV, DRIFT_LIMIT, WORKLIST_LIMIT, RUNNING_LIMIT, FAILED_LIMIT,
   autoReposFrom, projectByRepo, prHref, driftCount, failedRows, parseLimit, limitState, sinceIso,
@@ -283,6 +284,7 @@ export function LeadReviewsView({ registry, repos, projects, cap, conc, spend, r
       <${Section} title="FAILED" note="the review failed on the head the PR has now">
         ${failedBody}
       <//>
+      <${ReviewCountsPanel}/>
       <${BlockCategoriesSection}/>
       <${LessonsSection}/>
     </div>`;

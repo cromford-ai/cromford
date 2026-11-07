@@ -1,0 +1,2 @@
+# BH-9154: the land half of the schema restamp, called by mc_rebase; origin=lib because it is a new module function.
+rebase	mc_rebase_restamp	lib

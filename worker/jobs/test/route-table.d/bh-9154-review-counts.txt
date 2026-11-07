@@ -1,0 +1,5 @@
+# REVIEW COUNTS (BH-9154): the daily review counter behind the console's Lead
+# reviews screen. GET reads review_counts_daily (and rolls up when the last
+# rollup is stale); POST rolls up the last review_counts.rollup_days days.
+GET /api/review-counts
+POST /api/review-counts/rollup

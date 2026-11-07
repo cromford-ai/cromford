@@ -55,10 +55,18 @@
 #     A binary file, a text that already holds `@PS_STAMP_`, a basename two
 #     workers share, any git or python failure, or an empty diff is rc 1.
 #     NNNN fragments and any other path shape are never mapped: a rename of
-#     one stays a change. Whitespace and lockfile edits stay a change too.
+#     one stays a change. Whitespace and lockfile edits stay a change to this
+#     rung (patch_same_semantic owns them, and never combined with a restamp).
+#
+#   patch_same_semantic <git-dir> <main-ref> <reviewed> <head>   (BH-9154)
+#     rc 0 and prints `lockfile` or `whitespace` when the only bytes that differ
+#     are in named lockfiles or are trailing end-of-line whitespace in a file
+#     whose trailing whitespace is not content. The full rule is above the
+#     function. The knobs are catalog/lanes.d/_lib.patch-same.json.
 #
 #   patch_same_review <git-dir> <main-ref> <reviewed> <head>   (BH-9066)
-#     patch_same || restamp_same || patch_same_restamp; prints the rung name.
+#     patch_same || restamp_same || patch_same_restamp || patch_same_semantic;
+#     prints the rung name.
 #     FOR REVIEW CALLERS ONLY ("is this the same REVIEWED work"). A restamp
 #     moves the fragment in the composed schema order, so a caller that reuses a
 #     CI or test RESULT (merge-push, builder-carry, gate-record, ci-merge-reuse,
@@ -306,12 +314,209 @@ patch_same_restamp() {
   printf 'restamp-rebase'
 }
 
+# _ps_knob <name> — a semantic-rung knob, or its code fallback. The rows are
+#   catalog/lanes.d/_lib.patch-same.json; keep the fallbacks equal to their
+#   defaults. Set and empty means empty (PATCH_SAME_LOCKFILES= turns the
+#   lockfile rung off; PATCH_SAME_LOCK_HOSTS= allows no registry host).
+_ps_knob() {
+  case "$1" in
+    PATCH_SAME_LOCKFILES) printf '%s' "${PATCH_SAME_LOCKFILES-package-lock.json}" ;;
+    PATCH_SAME_LOCK_HOSTS) printf '%s' "${PATCH_SAME_LOCK_HOSTS-registry.npmjs.org}" ;;
+    PATCH_SAME_WS_SIGNIFICANT) printf '%s' "${PATCH_SAME_WS_SIGNIFICANT-.py .yml .yaml .md .mk Makefile .patch .diff .tsv}" ;;
+    *) return 1 ;;
+  esac
+}
+
+PS_SAFE_PATH_RE='^[A-Za-z0-9._@+/-]+$'
+
+# _ps_lock_paths <git-dir> <base> <sha> — one `<status><TAB><path>` line per
+#   changed path whose basename is in PATCH_SAME_LOCKFILES. Paths come from
+#   `git diff --name-status -z` (NUL split), never from diff header text. A
+#   lockfile-named path outside PS_SAFE_PATH_RE (a space, a quote, a tab) is
+#   rc 1: `x b/package-lock.json` is never read as a lockfile.
+_ps_lock_paths() {
+  local names st p b n
+  names=$(_ps_knob PATCH_SAME_LOCKFILES)
+  [ -n "$names" ] || return 0
+  local -a f=()
+  mapfile -d '' -t f < <(git -C "$1" -c core.quotepath=off diff --no-renames --name-status -z "$2" "$3" 2>/dev/null; printf 'END%s' "$?") || return 1
+  [ "${#f[@]}" -ge 1 ] && [ "${f[-1]}" = END0 ] || return 1
+  unset 'f[-1]'
+  [ $(( ${#f[@]} % 2 )) = 0 ] || return 1
+  for ((n = 0; n < ${#f[@]}; n += 2)); do
+    st=${f[$n]}; p=${f[$((n + 1))]}; b=${p##*/}
+    [[ " $names " == *" $b "* ]] || continue
+    [[ "$p" =~ $PS_SAFE_PATH_RE ]] || return 1
+    printf '%s\t%s\n' "$st" "$p"
+  done
+}
+
+# _ps_path_diff <git-dir> <base> <sha> <path> — the diff of one path, `index`
+#   lines dropped (they name blob shas, which differ across bases).
+_ps_path_diff() {
+  local out
+  out=$(git -C "$1" -c core.quotepath=off diff --no-renames --no-color --no-ext-diff --no-textconv \
+        --src-prefix=a/ --dst-prefix=b/ "$2" "$3" -- ":(literal)$4" 2>/dev/null) || return 1
+  grep -av '^index ' <<<"$out" || true
+}
+
+# _ps_lock_pkgs <git-dir> <sha> <path> — the install set of one npm lockfile:
+#   a sorted JSON array of {k, v: {version, resolved, integrity, link}}, one per
+#   `packages` entry (v2/v3) and per nested `dependencies` entry (v1). These are
+#   the fields that choose the code `npm ci` installs. rc 1 when the blob is
+#   missing, is not JSON, or is not a package-lock.json.
+_ps_lock_pkgs() {
+  [ "${3##*/}" = package-lock.json ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  git -C "$1" cat-file blob "$2:$3" 2>/dev/null | jq -cS '
+    def pick: {version, resolved, integrity, link};
+    def deps($pre): to_entries[] | ("d:" + $pre + .key) as $k
+      | {k: $k, v: (.value | pick)}, ((.value.dependencies // {}) | deps($k + "/"));
+    if type != "object" then error("not a lockfile") else . end
+    | [ ((.packages // {}) | to_entries[] | {k: ("p:" + .key), v: (.value | pick)}),
+        ((.dependencies // {}) | deps("")) ] | sort_by(.k)' 2>/dev/null
+}
+
+# _ps_lock_same <git-dir> <reviewed> <head> <path> — rc 0 when the lockfile at
+#   <path> installs the same code on both heads: the same entry keys, and the
+#   same version, resolved, integrity and link for every entry. Every `resolved`
+#   that is not a link must also be an https URL on a host in
+#   PATCH_SAME_LOCK_HOSTS. So only a reorder or a metadata-only rewrite passes.
+#   The commit author is never the permission.
+_ps_lock_same() {
+  local pr ph hosts r h ok
+  pr=$(_ps_lock_pkgs "$1" "$2" "$4") && [ -n "$pr" ] || return 1
+  ph=$(_ps_lock_pkgs "$1" "$3" "$4") && [ -n "$ph" ] || return 1
+  [ "$pr" = "$ph" ] || return 1
+  hosts=$(_ps_knob PATCH_SAME_LOCK_HOSTS)
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    ok=0
+    for h in $hosts; do
+      [[ "$r" == "https://$h/"* ]] && { ok=1; break; }
+    done
+    [ "$ok" = 1 ] || return 1
+  done < <(jq -r '.[] | select(.v.link != true) | .v.resolved // empty' <<<"$ph" 2>/dev/null; printf '\n')
+  # jq must read the array it just printed; a failure there is a refusal.
+  jq -e 'type == "array"' <<<"$ph" >/dev/null 2>&1
+}
+
+# _ps_sem_norm <git-dir> <base> <sha> <exclude-pathspec...> — the normalized
+#   diff text: every path outside PATCH_SAME_WS_SIGNIFICANT diffed with
+#   --ignore-space-at-eol, every significant path diffed exactly, the given
+#   pathspecs excluded, `index` lines dropped. rc 1 on any git failure, a
+#   binary file, a bad knob entry, or a changed line whose trailing whitespace
+#   follows a `\` (a line continuation: that space is code).
+_ps_sem_norm() {
+  local g="$1" base="$2" sha="$3" e full a b=""; shift 3
+  local -a gd=(git -C "$g" -c core.quotepath=off diff --no-renames --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/)
+  local -a sig_in=() sig_ex=()
+  for e in $(_ps_knob PATCH_SAME_WS_SIGNIFICANT); do
+    [[ "$e" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+    if [ "${e:0:1}" = . ]; then sig_in+=(":(glob)**/*$e"); sig_ex+=(":(exclude,glob)**/*$e")
+    else sig_in+=(":(glob)**/$e"); sig_ex+=(":(exclude,glob)**/$e"); fi
+  done
+  e=$("${gd[@]}" --numstat "$base" "$sha" -- . "$@" 2>/dev/null) || return 1
+  ! grep -qE $'^-\t-\t' <<<"$e" || return 1
+  full=$("${gd[@]}" "$base" "$sha" -- . "$@" "${sig_ex[@]}" 2>/dev/null) || return 1
+  ! grep -av -e '^+++ ' -e '^--- ' <<<"$full" | grep -aqE '^[-+].*\\[[:space:]]+$' || return 1
+  a=$("${gd[@]}" --ignore-space-at-eol "$base" "$sha" -- . "$@" "${sig_ex[@]}" 2>/dev/null) || return 1
+  if [ "${#sig_in[@]}" -gt 0 ]; then
+    b=$("${gd[@]}" "$base" "$sha" -- "${sig_in[@]}" "$@" 2>/dev/null) || return 1
+  fi
+  # Inside a hunk of the ignore-space-at-eol part, a line still prints its
+  # trailing whitespace; strip it there (never in a file header).
+  a=$(awk '/^diff --git /{h=0} /^@@ /{h=1; print; next} h{c = substr($0, 1, 1); r = substr($0, 2); sub(/[ \t\r]+$/, "", r); $0 = c r} {print}' <<<"$a") || return 1
+  printf '%s\n%s\n' "$a" "$b" | grep -av -e '^index ' -e '^$' || true
+}
+
+# _ps_cr_added <git-dir> <base> <sha> <exclude-pathspec...> — the count of
+#   added lines that end in a CR. --ignore-space-at-eol hides a CR, so a head
+#   that turns LF into CRLF (a shell script bash cannot run) would read as the
+#   same patch; the caller refuses a head that adds more of them. rc 1 on a
+#   git failure.
+_ps_cr_added() {
+  local g="$1" base="$2" sha="$3" d; shift 3
+  d=$(git -C "$g" -c core.quotepath=off diff --no-renames --no-color --no-ext-diff --no-textconv "$base" "$sha" -- . "$@" 2>/dev/null) || return 1
+  grep -av '^+++ ' <<<"$d" | grep -ac $'^+.*\r$' || [ "$?" = 1 ]
+}
+
+# _ps_sem_hdr <normalized-file> — its file and mode header lines (patch-id
+#   ignores them, so a mode or type change is compared here).
+_ps_sem_hdr() { grep -aE '^(diff --git |old mode |new mode |new file mode |deleted file mode )' "$1" || [ "$?" = 1 ]; }
+
+# _ps_sem_id <normalized-file> — the verbatim patch-id, or `empty` for no diff.
+_ps_sem_id() {
+  local id
+  [ -s "$1" ] || { printf 'empty'; return 0; }
+  id=$(git patch-id --verbatim < "$1" 2>/dev/null | cut -d' ' -f1)
+  [[ "$id" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$id"
+}
+
+# patch_same_semantic <git-dir> <main-ref> <reviewed> <head>   (BH-9154)
+#   rc 0 and prints `lockfile` or `whitespace` when the two heads' diffs from
+#   their merge-bases differ only in (a) lockfiles named in PATCH_SAME_LOCKFILES,
+#   each with a byte-equal sibling package.json diff, status M (never added or
+#   deleted), mode 100644, and the same install set on both heads
+#   (_ps_lock_same: same packages, versions, resolved URLs and integrity, every
+#   host in PATCH_SAME_LOCK_HOSTS); and/or (b) trailing
+#   whitespace at end of line (CR included) in a file outside
+#   PATCH_SAME_WS_SIGNIFICANT, never after a `\`, and never a head that adds
+#   more CR-ended lines than the reviewed one did. Indentation, blank lines,
+#   modes and types stay a change. `lockfile` when a lockfile differed, else
+#   `whitespace`. Every unknown is rc 1.
+patch_same_semantic() {
+  local g="${1:-}" main rev head br bh lr lh p st d td rc=1 ir ih label=whitespace
+  [ -n "$g" ] && [ -n "${2:-}" ] || return 1
+  rev=$(_ps_sha "$g" "${3:-}") || return 1
+  head=$(_ps_sha "$g" "${4:-}") || return 1
+  main=$(_ps_sha "$g" "$2") || return 1
+  [ "$rev" != "$head" ] || return 1
+  br=$(_ps_base "$g" "$main" "$rev") || return 1
+  bh=$(_ps_base "$g" "$main" "$head") || return 1
+  lr=$(_ps_lock_paths "$g" "$br" "$rev") || return 1
+  lh=$(_ps_lock_paths "$g" "$bh" "$head") || return 1
+  local -a ex=()
+  local -A seen=()
+  while IFS=$'\t' read -r st p; do
+    [ -n "$p" ] && [ -z "${seen[$p]:-}" ] || continue
+    seen[$p]=1
+    [ "$(_ps_path_diff "$g" "$br" "$rev" "$p")" != "$(_ps_path_diff "$g" "$bh" "$head" "$p")" ] || continue
+    # A lockfile that differs: only a modified regular file, on both sides. An
+    # added or deleted lockfile changes what `npm ci` installs.
+    for d in "$lr" "$lh"; do
+      st=$(awk -F'\t' -v p="$p" '$2 == p { print $1 }' <<<"$d")
+      case "$st" in ''|M) ;; *) return 1 ;; esac
+    done
+    [ -z "$(git -C "$g" diff --raw --no-abbrev --no-renames "$bh" "$head" -- ":(literal)$p" 2>/dev/null | awk '$2 != "100644"')" ] || return 1
+    d=${p%/*}; [ "$d" != "$p" ] && d="$d/package.json" || d=package.json
+    [ "$(_ps_path_diff "$g" "$br" "$rev" "$d")" = "$(_ps_path_diff "$g" "$bh" "$head" "$d")" ] || return 1
+    _ps_lock_same "$g" "$rev" "$head" "$p" || return 1
+    ex+=(":(exclude,literal)$p"); label=lockfile
+  done <<<"$lr"$'\n'"$lh"
+  ir=$(_ps_cr_added "$g" "$br" "$rev" "${ex[@]}") && ih=$(_ps_cr_added "$g" "$bh" "$head" "${ex[@]}") || return 1
+  [ "$ih" -le "$ir" ] || return 1
+  td=$(mktemp -d "${TMPDIR:-/tmp}/ps-sem.XXXXXX") || return 1
+  if _ps_sem_norm "$g" "$br" "$rev" "${ex[@]}" > "$td/n.r" \
+     && _ps_sem_norm "$g" "$bh" "$head" "${ex[@]}" > "$td/n.h" \
+     && _ps_sem_hdr "$td/n.r" > "$td/h.r" && _ps_sem_hdr "$td/n.h" > "$td/h.h" \
+     && cmp -s "$td/h.r" "$td/h.h" \
+     && ir=$(_ps_sem_id "$td/n.r") && ih=$(_ps_sem_id "$td/n.h") && [ "$ir" = "$ih" ]; then
+    rc=0
+  fi
+  rm -rf "$td"
+  [ "$rc" = 0 ] || return 1
+  printf '%s' "$label"
+}
+
 patch_same_review() {
   local how
   if how=$(patch_same "$@"); then printf '%s' "$how"; return 0; fi
   command -v restamp_same >/dev/null 2>&1 || { [ -r "$_ps_dir/schema-restamp.sh" ] && . "$_ps_dir/schema-restamp.sh"; }
   if command -v restamp_same >/dev/null 2>&1 && how=$(restamp_same "$@"); then printf '%s' "$how"; return 0; fi
   if how=$(patch_same_restamp "$@"); then printf '%s' "$how"; return 0; fi
+  if how=$(patch_same_semantic "$@"); then printf '%s' "$how"; return 0; fi
   return 1
 }
 

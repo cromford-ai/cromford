@@ -1,0 +1,5 @@
+# LEAD TICKET VERDICTS (BH-9154): one lead review per ticket per real diff.
+# bin/lib/lead-review/result.sh POSTs the lead's word under (repo, ticket key,
+# patch fp); gate 52 (bin/lib/lead-gates.d/52-ticket-replay.sh) GETs it.
+POST /api/lead-ticket-verdicts
+GET /api/lead-ticket-verdicts

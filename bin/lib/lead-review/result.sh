@@ -129,7 +129,46 @@ finish_done() {
     '{job_id:$j,head_sha:$s,outcome:"done",verdict:$v,report_ref:$p,reviewer_model:$m} + (if $d == "" then {} else {detail:$d} end)')" \
     || { log "$8 reviewed ($4) but the result post failed; job left open for the watchdog"; lr_fail_counted "$1" "$2" "$3" "result post failed" open; return; }
   LR_RING=1; LR_RING_REPORT="$5"
+  lr_ticket_verdict_put "$1" "$3" "$4" "$5" "$6" "$8"
   job_update "$2" status=done; log "done $8: VERDICT $4 ($7)"; R="done"
+}
+
+# lr_ticket_verdict_put <id> <sha> <verdict> <report> <model> <key> — BH-9154
+#   (Fix 3 of #9066): after the worker accepted a done result, store the word
+#   under (repo, ticket key, patch fp) in lead_ticket_verdicts, for gate 52
+#   (bin/lib/lead-gates.d/52-ticket-replay.sh) to replay onto another PR of the
+#   same ticket. A MERGE or MERGE-WITH-NOTES is stored only from a model (not a
+#   lead-replay or a none:* answer); every BLOCK is stored, so a later BLOCK on
+#   the same patch stops a replay of an earlier MERGE. The ticket key comes
+#   from the PR's head ref and title (review_one's pr_json), the fp from the
+#   clone at REPO_DIR (patch_review_fp, bin/lib/patch-fp.sh). Fail-open: a
+#   failed step logs one line and loses only a future saving. Off when
+#   LEAD_TICKET_REPLAY is not 1 (catalog/lanes.d/_lib.lead-ticket-replay.json).
+lr_ticket_verdict_put() {
+  local sha="$2" w="$3" model="$5" tkey fp mode body pj="${pr_json:-}"
+  case "$w" in
+    MERGE|MERGE-WITH-NOTES) case "$model" in ""|lead-replay|none:*) return 0 ;; esac ;;
+    BLOCK) ;;
+    *) return 0 ;;
+  esac
+  ( command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply lead-ticket-replay >/dev/null 2>&1
+    [ "${LEAD_TICKET_REPLAY:-1}" = 1 ] ) || return 0
+  command -v patch_review_fp >/dev/null 2>&1 || . "$H/bin/lib/patch-fp.sh" 2>/dev/null \
+    || { log "$6: bin/lib/patch-fp.sh not loaded; no ticket verdict stored"; return 0; }
+  tkey=$(patch_ticket_key "$(jq -r '.head.ref // ""' <<<"$pj" 2>/dev/null)" "$(jq -r '.title // ""' <<<"$pj" 2>/dev/null)") || return 0
+  fp=$(patch_review_fp "${REPO_DIR:-}" origin/main "$sha" 2>/dev/null) \
+    || { log "$6: no patch fingerprint for ${sha:0:12}; no ticket verdict stored for $tkey"; return 0; }
+  mode=full; grep -q '^- review mode: intent' "$4" 2>/dev/null && mode=intent
+  body=$(jq -nc --arg r "${LR_RING_REPO:-}" --arg k "$tkey" --arg f "$fp" --arg p "${LR_RING_PR:-}" --arg s "$sha" --arg v "$w" \
+    --arg m "$mode" --arg ref "$4" --arg i "$1" \
+    '{repo:$r, ticket_key:$k, patch_fp:$f, pr:($p|tonumber), head_sha:$s, verdict:$v, review_mode:$m, report_ref:$ref, request_id:$i}' 2>/dev/null) \
+    || { log "$6: ticket verdict body could not be built; none stored"; return 0; }
+  if JOBS_ALERT=0 _jobs_req POST /api/lead-ticket-verdicts "$body" >/dev/null 2>&1; then
+    log "$6: ticket verdict $w stored for $tkey (fp ${fp:3:12})"
+  else
+    log "$6: ticket verdict $w for $tkey not stored (POST /api/lead-ticket-verdicts failed)"
+  fi
+  return 0
 }
 
 # supersede_dead <request-json> <project> <why> — job, claim, outcome=superseded,

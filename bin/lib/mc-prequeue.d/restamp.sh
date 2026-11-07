@@ -16,6 +16,16 @@
 #                   the lead MERGE onto it through restamp_same)
 #   held <why>      the head is stale and was not restamped. pq_gate holds, so a
 #                   mis-ordered fragment is never queued
+#   deferred-land <n>  the head is stale but an approval is bound to it (the
+#                   READY arm's VERDICT=APPROVE with REVIEWED = <head>): nothing
+#                   is pushed, so the restamp never moves a reviewed head
+#                   (BH-9154). pq_gate answers `rebase`, so the READY arm
+#                   moves the row to NEEDS_REBASE and the conductor rebase
+#                   (mc_rebase, bin/lib/mc/rebase.sh) writes the restamp in its
+#                   one push. Pool mode (REBASE_ON_POOL) is held as before,
+#                   because the pool rebase does not restamp. One line a head:
+#   <key> SCHEMA_RESTAMP deferred-land head=<h12> new=- main=<m12> renames=<n>
+#     reason=<text>
 # The work is bin/lib/schema-restamp.sh's (sr_plan, sr_apply), on the conductor's
 # clone (mc_funnel_repo) under the project's git lock, in a temp worktree that
 # every path removes. The push is hold_push (bin/lib/hold-push.sh): it re-reads
@@ -103,6 +113,10 @@ _pq_rs_run() {
   if declare -F mc_pool_rebase_enabled >/dev/null && mc_pool_rebase_enabled "${P:-}"; then
     _PQ_RS="heldterm-$n REBASE_ON_POOL is on for ${P:-?}: the hub does not push PR branches (BH-486)"; return 0
   fi
+  # A reviewed head is never moved here (BH-9154): the conductor rebase
+  # (mc_rebase) restamps it. After the pool check, because the pool rebase
+  # (rebase_job_run) does not restamp.
+  if [ "${VERDICT:-}" = APPROVE ] && [ "${REVIEWED:-}" = "$head" ]; then _PQ_RS="deferred $n"; return 0; fi
   wt=$(mktemp -d "${TMPDIR:-/tmp}/pq-restamp.XXXXXX") || { _PQ_RS="transient cannot make a temp worktree"; return 0; }
   rmdir "$wt"
   if ! git -C "$repo" worktree add -q --detach "$wt" "$head" >/dev/null 2>&1; then
@@ -193,6 +207,11 @@ pq_restamp() {
       _pq_rs_line "$key" pushed "$head" "$new" "$main" "$n" "renamed $n stale schema fragment(s) past main's newest ${_PQ_RS_TOP:--}"
       _pq_rs_body "$slug" "$num" "$key" >/dev/null 2>&1
       printf 'pushed %s %s\n' "$new" "$n" ;;
+    deferred\ *)
+      n="${_PQ_RS#deferred }"
+      mc_attempt_has "restampdefer $key $head" 2>/dev/null || { mc_attempt_put "restampdefer $key $head"
+        _pq_rs_line "$key" deferred-land "$head" - "$main" "$n" "an approval is bound to this head; the land rebase writes the restamp in its one push"; }
+      printf 'deferred-land %s\n' "$n" ;;
     transient\ *) _pq_rs_held "$key" "$head" "$main" "${_PQ_RS#transient }" ;;
     refused-*|heldterm-*)
       why="${_PQ_RS#*-}"

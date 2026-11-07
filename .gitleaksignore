@@ -199,6 +199,7 @@ worker/jobs/test/ironlaw-accept.bh-4157.test.js:generic-api-key:25
 worker/jobs/test/landing-decisions-cursor.bh-6748.test.js:generic-api-key:17
 worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
+worker/jobs/test/lead-ticket-verdicts.bh-9154.test.js:generic-api-key:24
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
@@ -226,6 +227,7 @@ worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98
 worker/jobs/test/prompt-history.bh-7972.test.js:generic-api-key:18
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
 worker/jobs/test/retention-agent-call-ledger.bh-9064.test.js:generic-api-key:13
+worker/jobs/test/review-counts.bh-9154.test.js:generic-api-key:30
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25
 worker/jobs/test/route-keyed.bh-5788.test.js:generic-api-key:130
 worker/jobs/test/route-registry.bh-4607.test.js:generic-api-key:161

@@ -1,0 +1,26 @@
+{
+ "ticket": "BH-9154",
+ "note": "The two reads of the daily review counter's rollup (src/routes/review-counts.js). Each reads only the last review_counts.rollup_days days (seed 2, at most 14), far inside cost_rows' hot floor and stage_events' retention, so they stay on the hot store. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/review-counts.js",
+   "line_hint": 88,
+   "match": "lane_id AS lane, COUNT(*) AS n FROM cost_rows",
+   "table": "cost_rows",
+   "window": "the last review_counts.rollup_days days (seed 2, max 14)",
+   "window_days": 14,
+   "class": "narrow",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/review-counts.js",
+   "line_hint": 104,
+   "match": "FROM stage_events e JOIN jobs j ON j.id = e.job_id",
+   "table": "stage_events",
+   "window": "the last review_counts.rollup_days days (seed 2, max 14)",
+   "window_days": 14,
+   "class": "narrow",
+   "status": "hot-only"
+  }
+ ]
+}

@@ -256,6 +256,9 @@ pq_gate() {
     "pushed "*) read -r _ rw rn <<<"$rs"
       PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; _pq_end hold; return 0 ;;
     "held "*) PQ_WHY="schema restamp held: ${rs#held }"; _pq_end hold; return 0 ;;
+    # BH-9154: a reviewed head is not pushed by the hook. It goes to the
+    # conductor rebase (NEEDS_REBASE), whose one push carries the restamp.
+    "deferred-land "*) PQ_WHY="stale schema stamp on a reviewed head: the conductor rebase restamps it in its one push"; _pq_end rebase; return 0 ;;
   esac
   # BH-7671: a head whose added migration number main or a queued PR took is
   # renumbered before the queue (mc-prequeue.d/migration-numbers.sh). A push or

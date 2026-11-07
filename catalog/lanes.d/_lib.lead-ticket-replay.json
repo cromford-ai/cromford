@@ -1,0 +1,32 @@
+{
+  "libs": [
+    {
+      "id": "lead-ticket-replay",
+      "file": "bin/lib/lead-gates.d/52-ticket-replay.sh",
+      "note": "BH-9154 (Fix 3 of #9066): one lead review per ticket per real diff. bin/lib/lead-review/result.sh stores each done model lead verdict of a worklist head in the harness-jobs lead_ticket_verdicts table under (repo, ticket key, patch_review_fp of the head; bin/lib/patch-fp.sh). Gate 52 of the lead worklist asks it for a head of ANOTHER PR of the same ticket: a stored MERGE or MERGE-WITH-NOTES inside the window is posted on this head (bin/lead-verdict.sh post, note `lead-replay:<sha12> how:ticket-replay rebound: ticket-replay <pr>@<sha12>`) with no model call, and one review-saving event. A stored BLOCK, a miss, an unreadable read or a failed post is a full review. Both the writer and the gate read these knobs through lib_env_apply lead-ticket-replay.",
+      "knobs": [
+        {
+          "env": "LEAD_TICKET_REPLAY",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "The switch. 0 = gate 52 reads nothing and result.sh stores nothing; every head gets the review it got before BH-9154. Read as ${LEAD_TICKET_REPLAY:-1}."
+        },
+        {
+          "env": "LEAD_TICKET_REPLAY_WINDOW_S",
+          "type": "int",
+          "default": 86400,
+          "min": 60,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How old a stored lead word may be and still be replayed onto another PR of the ticket. 86400 is the ticket's 24 h. The route refuses a window over 604800 (retention keeps rows 7 days, retention.lead_ticket_verdicts.days). A value outside min..max turns the replay off for that head, logged. Read as ${LEAD_TICKET_REPLAY_WINDOW_S:-86400}."
+        }
+      ]
+    }
+  ]
+}

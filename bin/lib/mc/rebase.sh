@@ -1356,6 +1356,44 @@ mc_hold_push_load() {
   command -v hold_push >/dev/null 2>&1
 }
 
+# mc_rebase_restamp <slug> <project> <worktree> <main-ref> <url> <head>
+#   The land half of the schema restamp (BH-9154). sr_apply
+#   (bin/lib/schema-restamp.sh) on mc_rebase's merged worktree: it commits ONE
+#   restamp-only commit on top of the merge when a PR-added stamp fragment is
+#   not later than main's newest, so the one push carries it and restamp_same
+#   carries the lead verdict across it. rc 0 = restamped, or nothing to do (the
+#   knob MC_SCHEMA_RESTAMP=0, the lib not loadable, nothing stale). rc 1 =
+#   sr_apply refused: the caller pushes nothing. The refusal writes the attempts
+#   mark `restampfail <key> <head> <newest stamp at main>` (the pre-queue hook
+#   then holds the head too) and one log line a head:
+#   <url> rebase: SCHEMA_RESTAMP land refused head=<h12> reason=<text> — not pushed
+mc_rebase_restamp() {
+  local slug="$1" project="$2" wt="$3" mref="$4" url="$5" head="$6" v="" f new rc=0 n key top why
+  command -v lane_knob >/dev/null 2>&1 && v=$(lane_knob merge-conductor MC_SCHEMA_RESTAMP "$project" 2>/dev/null)
+  [ -n "$v" ] || v="${MC_SCHEMA_RESTAMP:-1}"
+  [ "$v" != 0 ] || return 0
+  if ! command -v sr_apply >/dev/null 2>&1; then
+    f="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/schema-restamp.sh"
+    # shellcheck source=bin/lib/schema-restamp.sh
+    [ -r "$f" ] && . "$f" 2>/dev/null
+    command -v sr_apply >/dev/null 2>&1 || return 0
+  fi
+  new=$(sr_apply "$wt" "$mref" 2>"$wt.sr-err") || rc=$?
+  why=$(head -n 1 "$wt.sr-err" 2>/dev/null); rm -f "$wt.sr-err"
+  case "$rc" in
+    0) n=$(git -C "$wt" log -1 --format=%b "$new" 2>/dev/null | grep -c '^Restamped: ')
+       mc_log "$url rebase: SCHEMA_RESTAMP land head=${head:0:12} new=${new:0:12} renames=$n — the restamp rides this push (BH-9154)"
+       return 0 ;;
+    1) return 0 ;;
+  esac
+  key="${KEY:-$slug#$(mc_num_of_url "$url")}"; top=$(sr_top "$wt" "$mref" 2>/dev/null)
+  if ! mc_attempt_has "restampfail $key $head ${top:--}" 2>/dev/null; then
+    mc_attempt_put "restampfail $key $head ${top:--}"
+    mc_log "$url rebase: SCHEMA_RESTAMP land refused head=${head:0:12} reason=sr_apply rc $rc: ${why:-no reason given} — not pushed"
+  fi
+  return 1
+}
+
 mc_rebase() {
   local slug="$1" project="$2" br="$3" head="$4" url="$5" base="${6:-main}"
   local repo="${MC_REPOS:-/root/repos}/$project" wt cloned="" rc=0 conf csz new remote ferr hv
@@ -1499,6 +1537,14 @@ mc_rebase() {
          mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 2 ;;
       *) mc_log "$url rebase: ${mnr:-migration renumber could not run} — going on unchanged" ;;
     esac
+  fi
+  # BH-9154: the schema restamp rides this push. The pre-queue hook defers a
+  # reviewed head (deferred-land), so the stale stamp is renamed here, over the
+  # merged tree and before the gates, and the head moves once. A refusal is the
+  # "gate red, not pushed" answer: a stale order is never pushed.
+  if [ "$base" = main ]; then
+    mc_rebase_restamp "$slug" "$project" "$wt" "origin/$base" "$url" "$head" \
+      || { mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 2; }
   fi
   # Gates the hub can run: typecheck + unit when node_modules is at hand (the
   # hub clones); otherwise CI is the gate and the PR goes WAIT_CI honestly.
