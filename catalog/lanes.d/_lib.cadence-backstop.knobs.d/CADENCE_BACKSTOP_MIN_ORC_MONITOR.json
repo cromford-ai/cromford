@@ -1,0 +1,12 @@
+{
+  "env": "CADENCE_BACKSTOP_MIN_ORC_MONITOR",
+  "read_in": "bin/lib/cadence-backstop.sh",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": "off: every */5 tick runs",
+  "required": false,
+  "note": "BH-9074. Minutes between orc-monitor backstop cron runs (the cron line stays */5). Default 0 keeps the alert-relaying monitor on every tick. The ticket's target is 30, set by the row lib.cadence-backstop.cadence_backstop_min_orc_monitor = 30, once calendar rings (catalog/lane-calendar.d/orc-monitor.tsv) and the wake gate wake it. Read as ${CADENCE_BACKSTOP_MIN_ORC_MONITOR:-0}."
+}

@@ -2,7 +2,7 @@
   "id": "orc-monitor",
   "name": "Orchestrator monitor",
   "scope": "hub",
-  "script": "/root/orchestrator/bin/orc-monitor.sh",
+  "script": "bin/orc-monitor.sh",
   "cadence": "*/5 * * * *",
   "boxes": [
     "hub"
@@ -17,7 +17,7 @@
       }
     ]
   },
-  "wired": false,
+  "wired": true,
   "knobs": [
     {
       "env": "LLM_LANE_ENABLED",
@@ -135,7 +135,5 @@
     "cost_project_filter": null,
     "lanes_row": false,
     "log": "logs/orc-monitor.log"
-  },
-  "external": true,
-  "external_reason": "the script lives in /root/orchestrator, a different repo; this registry can name the lane and carry its switch but cannot add the gate to a file it does not ship"
+  }
 }

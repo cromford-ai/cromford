@@ -21,6 +21,7 @@
 #
 #   lib.cadence-backstop.cadence_backstop_min_merge_conductor   default 60 (BH-5521: hourly sweep; webhooks drive keyed runs)
 #   lib.cadence-backstop.cadence_backstop_min_blocked_resolver  default 30
+#   lib.cadence-backstop.cadence_backstop_min_orc_monitor       default 0 (BH-9074; 30 once rings wake it)
 #   0 = off: every cron tick runs, exactly as before this file existed.
 #
 # A WAKE BEATS THE CLOCK. `--wake-dir <dir>`: any file in <dir> newer than the
@@ -72,6 +73,7 @@ MIN=$(
   case "$LANE" in
     merge-conductor)  printf '%s' "${CADENCE_BACKSTOP_MIN_MERGE_CONDUCTOR:-60}" ;;
     blocked-resolver) printf '%s' "${CADENCE_BACKSTOP_MIN_BLOCKED_RESOLVER:-30}" ;;
+    orc-monitor)      printf '%s' "${CADENCE_BACKSTOP_MIN_ORC_MONITOR:-0}" ;;
     *)                printf '0' ;;
   esac
 ) 2>/dev/null || MIN=0

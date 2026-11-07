@@ -1,7 +1,11 @@
 # @hub-lanes
 
 # orchestrator 5-min no-AI status monitor (operator line, outside managed blocks; the operator 2026-09-07
-# "loop to monitor this every 5 minutes"). Script lives in /root/orchestrator (hub-only, not repo-managed);
-# the 2026-09-07 10:17Z re-render dropped the hand-added live line, so it lives here now.
-# Kill: touch /root/orchestrator/flags/monitor-off
-*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/orchestrator/bin/orc-monitor.sh >/dev/null 2>&1
+# "loop to monitor this every 5 minutes"). BH-9074: the line runs the repo's gated wrapper
+# bin/orc-monitor.sh, which applies the lane switches and the lane wake gate, then execs the hub
+# script /root/orchestrator/bin/orc-monitor.sh (still hub-only, not repo-managed).
+# The */5 tick runs behind bin/lib/cadence-backstop.sh: row
+# lib.cadence-backstop.cadence_backstop_min_orc_monitor (default 0 = every tick, as before;
+# 30 = one backstop tick per half hour, for when calendar rings wake it).
+# Kill: touch /root/orchestrator/flags/monitor-off (or bin/harness-ctl.sh off orc-monitor)
+*/5 * * * * /root/harness/bin/hub-lease.sh check && { /root/harness/bin/lib/cadence-backstop.sh orc-monitor; [ $? -ne 3 ]; } && /root/harness/bin/orc-monitor.sh >/dev/null 2>&1

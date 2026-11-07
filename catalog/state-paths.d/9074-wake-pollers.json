@@ -1,0 +1,4 @@
+[
+    {"path": "pool-wake-poll", "class": "box-local", "authority": "the pool wake poll cursor (BH-9074)", "note": "state/pool-wake-poll/cursor: one integer, the largest wakes id bin/pool-wake-poll.sh has read for harness/build-queue (cursor.seed holds the progress of an unfinished seed). Written through a temp file and mv, read only by that lane. One file, no growth. A lost or junk cursor costs one seed run that launches nothing; the */10 fly crons cover a row that lands during it."},
+    {"path": "orc-monitor", "class": "box-local", "authority": "the orc-monitor missing-script throttle (BH-9074)", "note": "state/orc-monitor/missing.at: the epoch of the last 'hub script missing' line bin/orc-monitor.sh wrote, so the line comes at most once an hour. One file, no growth. Losing it costs one repeated log line."}
+]

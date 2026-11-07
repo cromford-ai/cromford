@@ -169,7 +169,7 @@ GATED=(
   '/root/harness/bin/fly-dispatch.sh'
   '/root/harness/bin/vendor-spend-pull.sh'
   '/root/harness/bin/doorbell-coverage-check.sh'
-  '/root/orchestrator/bin/orc-monitor.sh'
+  '/root/harness/bin/orc-monitor.sh'
   # P4: the daily route-shadow report is fleet-wide — one hub, lease-gated.
   '/root/harness/bin/route-shadow-report.sh'
 )

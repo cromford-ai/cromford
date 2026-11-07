@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── POOL WAKE POLL (BH-9074, BH-9067.2) ─────────────────────────────────────
+# Every minute, one run that polls GET /api/wakes?repo=harness%2Fbuild-queue
+# every POOL_WAKE_POLL_S seconds (default 10) for POOL_WAKE_POLL_WINDOW_S (55).
+# A new queue row starts bin/fly-dispatch.sh and bin/fly-pool-tick.sh at once,
+# detached, and only then moves the cursor (state/pool-wake-poll/cursor). So a
+# queued build starts in about 10 s, not at the next */10 tick. The */10 lines
+# in 190-fly-dispatch.cron and 240-fly-pool-tick.cron stay as the backstop.
+# Docs: docs/events-bh-9067/2-wake-pollers.bh-9074.md.
+# Off: flags/lane-off-pool-wake-poll (bin/harness-ctl.sh off pool-wake-poll).
+* * * * * /root/harness/bin/hub-lease.sh check && flock -n /root/harness/locks/pool-wake-poll.lock /root/harness/bin/pool-wake-poll.sh >/dev/null 2>&1

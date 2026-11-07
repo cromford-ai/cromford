@@ -1,0 +1,60 @@
+{
+  "id": "pool-wake-poll",
+  "name": "Pool wake poll",
+  "scope": "hub",
+  "script": "bin/pool-wake-poll.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-pool-wake-poll",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "POOL_WAKE_POLL_S",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 60,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/pool-wake-poll.sh",
+      "note": "BH-9074: seconds between two reads of GET /api/wakes?repo=harness%2Fbuild-queue inside one run, and the read timeout. A new queue row starts bin/fly-dispatch.sh and bin/fly-pool-tick.sh within about this many seconds. Read as ${POOL_WAKE_POLL_S:-10}; a value that is not 1..60 is one log line and 10.",
+      "settable": true
+    },
+    {
+      "env": "POOL_WAKE_POLL_WINDOW_S",
+      "type": "int",
+      "default": 55,
+      "min": 1,
+      "max": 58,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/pool-wake-poll.sh",
+      "note": "BH-9074: how long one run polls. A poll starts only while elapsed + POOL_WAKE_POLL_S <= this window, so the run ends before the next cron minute takes its flock. Read as ${POOL_WAKE_POLL_WINDOW_S:-55}; a value that is not 1..58 is one log line and 55.",
+      "settable": true
+    },
+    {
+      "env": "POOL_WAKE_POLL_LIMIT",
+      "type": "int",
+      "default": 100,
+      "min": 1,
+      "max": 500,
+      "unit": "rows",
+      "zero_means": null,
+      "read_in": "bin/pool-wake-poll.sh",
+      "note": "BH-9074: page size of one wakes read (the route clamps at 500). One poll folds every new queue row into one launch and moves the cursor to the last id read; with nothing new the read costs the same index seek as limit=1. Read as ${POOL_WAKE_POLL_LIMIT:-100}; a value that is not 1..500 is one log line and 100.",
+      "settable": true
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/pool-wake-poll.log"
+  }
+}

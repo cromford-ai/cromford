@@ -1,0 +1,1 @@
+{"lane": "claude-auth-check", "scope": "fleet", "kinds": [], "note": "BH-9074: inert until a mode row turns the gate on. Do NOT set lib.lane-wake-gate.mode_claude_auth_check to on: the lane checks the claude credential of every box, and a fleet ring is taken by ONE box, so mode on leaves every other box unchecked. shadow is safe (it only logs)."}

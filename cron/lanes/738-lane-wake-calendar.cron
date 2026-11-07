@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── LANE WAKE CALENDAR (BH-9074, BH-9067.2) ─────────────────────────────────
+# Every minute. For each catalog/lane-calendar.d/<lane>.tsv line that matches
+# one of the next LANE_WAKE_CALENDAR_LEAD_MIN minutes, one lwg_ring <lane>
+# <scope> cal:<key> (the contract's bin/lib/lane-wake-gate.sh, #9122). A lane in
+# wake mode off is not rung, and every mode is off until a settings row turns it
+# on, so the lanes' own cron lines are unchanged. Without the gate lib the lane
+# writes one line an hour and does nothing.
+# Docs: docs/events-bh-9067/2-wake-pollers.bh-9074.md.
+# Off: flags/lane-off-lane-wake-calendar (bin/harness-ctl.sh off lane-wake-calendar).
+* * * * * /root/harness/bin/hub-lease.sh check && flock -n /root/harness/locks/lane-wake-calendar.lock /root/harness/bin/lane-wake-calendar.sh >/dev/null 2>&1

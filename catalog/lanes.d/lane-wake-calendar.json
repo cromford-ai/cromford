@@ -1,0 +1,55 @@
+{
+  "id": "lane-wake-calendar",
+  "name": "Lane wake calendar",
+  "scope": "hub",
+  "script": "bin/lane-wake-calendar.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-lane-wake-calendar",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LANE_WAKE_CALENDAR_LEAD_MIN",
+      "type": "int",
+      "default": 2,
+      "min": 0,
+      "max": 4,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/lane-wake-calendar.sh",
+      "note": "BH-9074: at minute M the scheduler rings for the targets M+1..M+LEAD, so the ring is in D1 before the lane's own tick takes. 0 rings the matching minute itself, where the lane's tick can take before the ring lands. The dedupe comes from the target minute, so the second attempt is inserted=0. Keep it under the shortest gap between two ticks of a calendar lane (orc-monitor: 5 minutes). Read as ${LANE_WAKE_CALENDAR_LEAD_MIN:-2}; a value that is not 0..4 is one log line and 2.",
+      "settable": true
+    },
+    {
+      "env": "LANE_WAKE_CALENDAR_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/lane-wake-calendar.sh",
+      "note": "BH-9074 test seam: the scheduler clock in epoch seconds. Read only with HARNESS_TEST_SANDBOX=1; empty is the clock. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "settable": false,
+      "zero_means": null,
+      "read_in": "bin/lane-wake-calendar.sh",
+      "note": "BH-9074: test seam gate. bin/lane-wake-calendar.sh reads LANE_WAKE_CALENDAR_NOW only when this is 1. A box never sets it."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/lane-wake-calendar.log"
+  }
+}

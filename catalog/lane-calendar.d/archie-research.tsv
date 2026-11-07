@@ -1,0 +1,2 @@
+40 6 * * *	scan-%Y%m%d
+10 7 * * *	digest-%Y%m%d
