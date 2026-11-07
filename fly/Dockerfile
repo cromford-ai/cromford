@@ -17,7 +17,7 @@
 #   claude CLI + codex CLI (failover-runner parity with agent-call.sh);
 #   codegraph (telemetry off); semgrep in an isolated venv; rtk; playwright +
 #   chromium baked at PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers.
-# ENTRYPOINT is tini -> fly/entrypoint.sh.
+# ENTRYPOINT bootstraps secrets, then execs tini with the cleaned environment.
 #
 # EVERY BAKED TOOL IS PINNED (BH-1517 for claude/codex, BH-1528 for the rest).
 # Each tool is one `ARG <TOOL>_VERSION` declared directly above the one RUN that
@@ -91,7 +91,7 @@
 #     playwright into node_modules; the system chromium + OS deps satisfy
 #     `--with-deps`.
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -182,9 +182,15 @@ RUN --mount=type=secret,id=gh_token set -eux; \
     echo "warm bake: ${WARM_REPO_SLUG:-disabled} bust=${WARM_BUST:-none}"; \
     mkdir -p /opt/warm; \
     if [ -n "$WARM_REPO_SLUG" ]; then \
-      TOKEN="$(cat /run/secrets/gh_token)"; \
-      set +x; git clone --depth 50 "https://x-access-token:${TOKEN}@github.com/${WARM_REPO_SLUG}.git" /opt/warm/repo; set -x; \
+      set +x; TOKEN="$(cat /run/secrets/gh_token)"; \
+      AUTH="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"; \
+      git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" clone --depth 50 "https://github.com/${WARM_REPO_SLUG}.git" /opt/warm/repo; \
       git -C /opt/warm/repo remote set-url origin "https://github.com/${WARM_REPO_SLUG}.git"; \
+      unset TOKEN AUTH; \
+    fi
+# Repository lifecycle scripts run only after the BuildKit secret is unmounted.
+RUN set -eux; \
+    if [ -n "$WARM_REPO_SLUG" ]; then \
       bash /opt/fly-boot/warm-bake.sh /opt/warm/repo; \
       if [ -d /root/.local/share/pnpm ]; then \
         mv /root/.local/share/pnpm /opt/warm/pnpm-home; \
@@ -510,5 +516,5 @@ RUN chmod +x /opt/fly-boot/entrypoint.sh /opt/fly-boot/builder-runner.sh /opt/fl
 # before this line.
 ENV PATH="/data/harness/bin/gh-ledger:${PATH}"
 
-# tini as PID 1 reaps the background tailscaled/heartbeat processes cleanly.
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/fly-boot/entrypoint.sh"]
+# The boot shell consumes app secrets before replacing PID 1 with tini.
+ENTRYPOINT ["/opt/fly-boot/entrypoint.sh"]

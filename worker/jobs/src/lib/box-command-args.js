@@ -5,7 +5,9 @@
 // OWNER. The coord proxy stamps `actor` from a verified Cloudflare Access
 // email, else 'console'. An owner is an actor named in the worker secret
 // BOX_OPS_OWNERS (a comma list). Both sides are trimmed and lower-cased once,
-// here. An unset or blank secret means nobody is an owner (fail closed).
+// here. The caller must ALSO present the independent BOX_OPS_TOKEN held only
+// by the trusted Pages proxy/operator, never by fleet boxes. The email is
+// audit metadata; the shared fleet bearer cannot authenticate an owner.
 //
 // PRICE. A costing type (QUOTE_OF) names a finished quote row of its quote
 // type. The figure is read from that row's detail, which bin/box-ops.sh wrote
@@ -37,6 +39,16 @@ export function isOwner(env, actor) {
   if (!a) return false;
   const owners = String(env?.BOX_OPS_OWNERS ?? "").split(",").map(normActor).filter(Boolean);
   return owners.includes(a);
+}
+
+export function ownerCredentialOk(req, env) {
+  const want = String(env?.BOX_OPS_TOKEN ?? '').trim();
+  if (!want || want === String(env?.HARNESS_SECRET ?? '').trim()) return false;
+  const got = String(req.headers.get('x-box-ops-token') ?? '').trim();
+  const a = new TextEncoder().encode(want), b = new TextEncoder().encode(got);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
 }
 
 const posInt = (v) => Number.isInteger(v) && v > 0;

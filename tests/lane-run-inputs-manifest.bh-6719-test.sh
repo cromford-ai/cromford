@@ -280,7 +280,7 @@ pipeline-health demo builds/demo-BH-1-x/RESULT - ro accept
 pipeline-health demo builds/demo-BH-1-x d ro accept
 pipeline-health demo logs/fly-pool.log - ro accept
 pipeline-health demo state/health-active.txt - rw accept
-blocked-resolver project-4 builds/project-4-TK-1-x/RESULT - ro refuse
+blocked-resolver project-4 builds/project-4-TK-x/RESULT - ro refuse
 blocked-resolver p1 builds/p10-BH-1-x/RESULT - ro refuse
 blocked-resolver p1 plans/p1-x/y/planned-files.txt - ro refuse
 blocked-resolver p1 flags/x - rw refuse

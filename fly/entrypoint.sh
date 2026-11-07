@@ -1,7 +1,8 @@
 #!/bin/bash
 # fly/entrypoint.sh — builder machine boot (Phase 1 of the Fly builder trial).
 #
-# Runs as PID-1 child of tini. Order (per plan "Phase 1 > fly/entrypoint.sh"):
+# Runs as PID 1 until the seed environment is removed, then execs tini.
+# Boot order (per plan "Phase 1 > fly/entrypoint.sh"):
 #   1. tmpfs at /run/harness-env (mode 700) — secrets live in RAM only; a
 #      stopped/crashed machine's volume never holds a client token.
 #   2. tailscaled (state on the volume so node identity survives stop/start) +
@@ -25,6 +26,18 @@
 #     fresh by harness sync) but fall back to the image copy at /opt/fly-boot so
 #     a machine is bootable before its first sync.
 set -uo pipefail
+
+# Linux PID 1 ignores unhandled termination signals. Keep boot stoppable before
+# tini takes over, and stop the one persistent daemon boot may have started.
+TAILSCALED_PID=""
+boot_stop() {
+  trap '' TERM INT HUP
+  [ -z "${TAILSCALED_PID:-}" ] || kill -TERM "$TAILSCALED_PID" 2>/dev/null || true
+  exit "$1"
+}
+trap 'boot_stop 143' TERM
+trap 'boot_stop 130' INT
+trap 'boot_stop 129' HUP
 
 log() { echo "[entrypoint $(date -u '+%H:%M:%SZ')] $*"; }
 
@@ -97,7 +110,12 @@ fi
 mkdir -p /data
 # userspace-networking avoids needing a TUN device / NET_ADMIN on the Fly VM;
 # hub->builder ssh works over it. --state on the volume => stable node identity.
-tailscaled \
+# A persistent daemon must not retain app-wide seed bundles either.
+SEED_ENV_UNSET_ARGS=(-u TS_AUTHKEY)
+while IFS= read -r v; do
+  case "$v" in HBUNDLE_*|SEED_*) SEED_ENV_UNSET_ARGS+=(-u "$v") ;; esac
+done < <(compgen -e)
+env "${SEED_ENV_UNSET_ARGS[@]}" tailscaled \
   --state=/data/tailscaled.state \
   --socket=/var/run/tailscale/tailscaled.sock \
   --tun=userspace-networking \
@@ -343,4 +361,4 @@ fi
 
 # --- 5. hand off to the runner ------------------------------------------------
 log "exec builder-runner"
-exec "$RUNNER"
+exec /usr/bin/tini -- "$RUNNER"

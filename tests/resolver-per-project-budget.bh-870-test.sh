@@ -190,21 +190,21 @@ RROUT2=$(printf '%s' "$RRIN2" | br_round_robin | cut -f3 | tr '\n' ' ')
 [ -z "$(printf '' | br_round_robin)" ] && ok || bad "empty input must produce empty output"
 
 # br_per_tick_for: the env-var mangle, the fallback, and the bad value.
-[ "$(BR_PER_TICK_project-1_OS=2 br_per_tick_for project-1)" = 2 ] && ok \
-  || bad "project-1 must read BR_PER_TICK_project-1_OS (got '$(BR_PER_TICK_project-1_OS=2 br_per_tick_for project-1)')"
+[ "$(BR_PER_TICK_PROJECT_1=2 br_per_tick_for project-1)" = 2 ] && ok \
+  || bad "project-1 must read BR_PER_TICK_PROJECT_1 (got '$(BR_PER_TICK_PROJECT_1=2 br_per_tick_for project-1)')"
 # …and NOT a name with a stray trailing underscore, which is what a mangle that
 # folds the trailing newline produces.
-[ "$(BR_PER_TICK_project-1_OS_=2 br_per_tick_for project-1)" = 4 ] && ok \
-  || bad "BR_PER_TICK_project-1_OS_ (trailing underscore) must not be read"
+[ "$(BR_PER_TICK_PROJECT_1_=2 br_per_tick_for project-1)" = 4 ] && ok \
+  || bad "BR_PER_TICK_PROJECT_1_ (trailing underscore) must not be read"
 [ "$(br_per_tick_for project-1)" = 4 ] && ok \
   || bad "an unset override falls back to BR_PER_TICK (got '$(br_per_tick_for project-1)')"
 [ "$(BR_PER_TICK_TPROJ=1 br_per_tick_for tproj)" = 1 ] && ok || bad "BR_PER_TICK_TPROJ=1 must read 1"
 : > "$T/say.txt"
-BADV=$(BR_PER_TICK_project-1_OS=x br_per_tick_for project-1)
+BADV=$(BR_PER_TICK_PROJECT_1=x br_per_tick_for project-1)
 [ "$BADV" = 4 ] && ok || bad "a non-numeric override falls back to BR_PER_TICK (got '$BADV')"
 grep -q 'is not a number' "$T/say.txt" && ok \
   || bad "a non-numeric override must say so (say.txt: $(cat "$T/say.txt"))"
-grep -q 'BR_PER_TICK_project-1_OS' "$T/say.txt" && ok \
+grep -q 'BR_PER_TICK_PROJECT_1' "$T/say.txt" && ok \
   || bad "…and name the variable it could not read: $(cat "$T/say.txt")"
 
 # ============================================================================

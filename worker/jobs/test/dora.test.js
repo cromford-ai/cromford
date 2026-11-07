@@ -428,10 +428,10 @@ test('the route answers per project, and ?project= narrows it to one', async () 
   assert.equal(all.body.window.days, 14);
   assert.equal(all.body.projects.length, 2);
   assert.equal(all.body.totals.merged, 2);
-  const project-3 = all.body.projects.find((p) => p.project === 'project-3');
-  assert.equal(project-3.lead_time.p50_s, 2 * 86400);
-  assert.equal(project-3.merge_lane.p50_s, 2 * 3600);
-  assert.equal(project-3.change_failure.rate, 1);
+  const project_3 = all.body.projects.find((p) => p.project === 'project-3');
+  assert.equal(project_3.lead_time.p50_s, 2 * 86400);
+  assert.equal(project_3.merge_lane.p50_s, 2 * 3600);
+  assert.equal(project_3.change_failure.rate, 1);
   assert.ok(all.body.as_of);
 
   const one = await call('/api/metrics/dora?project=project-2', { state });

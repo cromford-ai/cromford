@@ -36,15 +36,15 @@ beforeEach((t) => {
     if (String(url).startsWith("https://api.telegram.org/")) posts.push(JSON.parse(init.body).text);
     return new Response("ok");
   };
-  env = { KV: fakeKV(), HARNESS_SECRET: SECRET, TELEGRAM_BOT_TOKEN: "fixture-token", TELEGRAM_CHAT_ID: "fixture-chat" };
+  env = { KV: fakeKV(), WATCHDOG_SECRET: SECRET, TELEGRAM_BOT_TOKEN: "fixture-token", TELEGRAM_CHAT_ID: "fixture-chat" };
 });
 
 // The snapshot as the hub pushes it: POST /api/status with the raw body.
 const pushStatus = (raw) =>
-  worker.fetch(new Request(`https://wd.invalid/api/status?s=${SECRET}`, { method: "POST", body: raw }), env);
+  worker.fetch(new Request(`https://wd.invalid/api/status`, { method: "POST", headers: { authorization: `Bearer ${SECRET}` }, body: raw }), env);
 const snapshot = (extra) => JSON.stringify({ projects: {}, ...extra });
 const ping = (box) =>
-  worker.fetch(new Request(`https://wd.invalid/api/ping/${box}?s=${SECRET}`, { method: "POST", body: "{}" }), env);
+  worker.fetch(new Request(`https://wd.invalid/api/ping/${box}`, { method: "POST", headers: { authorization: `Bearer ${SECRET}` }, body: "{}" }), env);
 const pingAt = (box, agoMin) => env.KV.put(`ping:${box}`, JSON.stringify({ ts: NOW_MS - agoMin * 60000 }));
 const silentPages = () => posts.filter((p) => /silent for/.test(p));
 const unknownPages = () => posts.filter((p) => /unknown box/.test(p));
@@ -80,7 +80,7 @@ test("X3: a ping from an expected_boxes box raises no unknown-box alert; with no
   assert.equal((await ping(REVIEW)).status, 200);
   assert.deepEqual(unknownPages(), []);
   // The /api/status pings view walks the same set.
-  const view = await (await worker.fetch(new Request(`https://wd.invalid/api/status?s=${SECRET}`), env)).json();
+  const view = await (await worker.fetch(new Request(`https://wd.invalid/api/status`, { headers: { authorization: `Bearer ${SECRET}` } }), env)).json();
   assert.ok(Object.hasOwn(view.pings, REVIEW), JSON.stringify(view.pings));
 
   env.KV = fakeKV();

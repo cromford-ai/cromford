@@ -88,7 +88,7 @@ RAW=$(mktemp "${TMPDIR:-/tmp}/archie-replay.XXXXXX") || exit 1
 # Archie runs this from inside an orchestrator turn, whose env names that turn's
 # own guard family and ticket; this call is its own work, so those are reset.
 env -u AGENT_CALL_TICKET -u AGENT_CALL_PR -u AGENT_CALL_GUARD_FORCE \
-  AGENT_CALL_LANE=archie-learn AGENT_CALL_FP="archie-replay:$SHA" AGENT_CALL_GUARD_STAGE=archie-replay \
+  AGENT_CALL_NO_TOOLS=1 AGENT_CALL_LANE=archie-learn AGENT_CALL_FP="archie-replay:$SHA" AGENT_CALL_GUARD_STAGE=archie-replay \
   AGENT_CALL_BUDGET_USD_ARCHIE_REPLAY="$USD" "$H/bin/agent-call.sh" archie-replay fleet "$MODEL" 180 "$RAW" "@$PF" >/dev/null 2>&1
 RC=$?
 TEXT=$(cat "$RAW" 2>/dev/null); rm -f "$RAW"

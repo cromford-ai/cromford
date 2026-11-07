@@ -20,6 +20,7 @@
 // different one is 409 (D16), and the class is normalised once, in classOf (D17).
 
 import { json, d1Guarded } from "../lib/http.js";
+import { humanTokenOk } from "./verdicts.js";
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const isIso = (v) => {
@@ -191,7 +192,7 @@ export const routes = [
   // a class into his own authority. ask_first sets ask_first and streak 0.
   [
     "POST", "/api/archie/classes/delegation",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const c = classOf(b.class);
       if (c === null) return bad("class");
@@ -202,6 +203,7 @@ export const routes = [
       const actor = typeof b.actor === "string" ? b.actor.trim() : "";
       if (actor.length < 1 || actor.length > 64) return bad("actor");
       if (b.decision === "delegate" && actor === "archie") return json(403, { error: "archie_cannot_delegate" });
+      if (b.decision === "delegate" && !humanTokenOk(req, env)) return json(403, { error: "human_token_required" });
 
       return d1Guarded("archie_classes", async () => {
         const row = await readClass(env, c);

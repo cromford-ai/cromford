@@ -24,12 +24,12 @@
 #   H3  a commit with no prompts/rules/fly: rc 10, the root's own copies of
 #       those paths are untouched
 #   H4  the lib's header names the six paths
-#   K1  fly/lane-run.toml names FLY_API_TOKEN_project-6_OS, the stdin
+#   K1  fly/lane-run.toml names FLY_API_TOKEN_PROJECT_6_OS, the stdin
 #       `secrets import -a lane-run-mk --stage` and the FLYCTL_VERSION build
 #       arg; bin/lane-fleet.sh's app-secrets alert names FLY_API_TOKEN_
-#   K2  the REAL entrypoint with FLY_API_TOKEN_project-6_OS and FLY_API_TOKEN
+#   K2  the REAL entrypoint with FLY_API_TOKEN_PROJECT_6_OS and FLY_API_TOKEN
 #       writes fly.env mode 600; sourced in a clean shell, fly_token_resolve
-#       project-6-os takes FLY_API_TOKEN_project-6_OS; a value with `=` is kept
+#       project-6-os takes FLY_API_TOKEN_PROJECT_6_OS; a value with `=` is kept
 #       whole; no value on stdout/stderr
 #   K3  FLY_ACCESS_TOKEN, FLY_API_TOKENX, XFLY_API_TOKEN_A, FLY_MACHINE_ID set,
 #       no real token: fly.env exists, mode 600, empty
@@ -178,8 +178,8 @@ grep -q 'swaps in its bin, catalog, fleet.conf,$' <<<"$HDR" && grep -q 'git arch
   && ok "H4 the header names the six paths" || bad "H4 header"
 
 echo "K1: the secret list and the operator command"
-grep -q 'FLY_API_TOKEN_project-6_OS' "$TOML" && ok "K1 the toml names FLY_API_TOKEN_project-6_OS" || bad "K1 toml lacks the token"
-grep -qF '. /etc/harness/env/fly.env' "$TOML" && grep -qF "printf 'FLY_API_TOKEN_project-6_OS=%s\\n' \"\$FLY_API_TOKEN_project-6_OS\"" "$TOML" \
+grep -q 'FLY_API_TOKEN_PROJECT_6_OS' "$TOML" && ok "K1 the toml names FLY_API_TOKEN_PROJECT_6_OS" || bad "K1 toml lacks the token"
+grep -qF '. /etc/harness/env/fly.env' "$TOML" && grep -qF "printf 'FLY_API_TOKEN_PROJECT_6_OS=%s\\n' \"\$FLY_API_TOKEN_PROJECT_6_OS\"" "$TOML" \
   && grep -q 'flyctl secrets import -a lane-run-mk --stage' "$TOML" \
   && ok "K1 the staging command reads stdin (no value in argv)" || bad "K1 no stdin secrets import"
 grep -qF -- '--build-arg FLYCTL_VERSION=$($JC setting-get bake.flyctl.version)' "$TOML" && ok "K1 FLYCTL_VERSION build arg" || bad "K1 no FLYCTL_VERSION arg"
@@ -196,13 +196,13 @@ boot() { # boot <out> [env...]
   ( env -i PATH="$PATH" HOME="$T/home" HARNESS="$E" ETC_HARNESS_ENV="$T/no-etc" HARNESS_SECRET=fixture-hs-7516 \
       JOBS_URL=http://192.0.2.1 FLY_MACHINE_ID=fixturemid75 "$@" bash "$E/fly/lane-run-entrypoint.sh" ) > "$o" 2>&1
 }
-boot "$T/k2.out" FLY_API_TOKEN_project-6_OS="$TOK" FLY_API_TOKEN="$ORG"; rc=$?
+boot "$T/k2.out" FLY_API_TOKEN_PROJECT_6_OS="$TOK" FLY_API_TOKEN="$ORG"; rc=$?
 [ "$rc" = 0 ] && [ -s "$T/w.env" ] && ok "K2 the entrypoint exec'd the worker" || bad "K2 rc=$rc: $(cat "$T/k2.out")"
 [ "$(stat -c %a "$E/env/fly.env" 2>/dev/null || stat -f %Lp "$E/env/fly.env" 2>/dev/null)" = 600 ] && ok "K2 fly.env mode 600" || bad "K2 fly.env mode/missing"
 [ "$(grep -c . "$E/env/fly.env")" = 2 ] && ok "K2 fly.env has the two token lines" || bad "K2 fly.env lines: $(grep -c . "$E/env/fly.env")"
 R=$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; set +a; . "$2"; fly_token_resolve project-6-os && printf "%s|%s" "$FLY_TOKEN_SRC" "$([ "$FLY_TOKEN_VAL" = "$3" ] && echo same)"' \
   _ "$E/env/fly.env" "$REPO/bin/lib/fly-token.sh" "$TOK")
-[ "$R" = 'FLY_API_TOKEN_project-6_OS|same' ] && ok "K2 fly_token_resolve on the sourced file: FLY_API_TOKEN_project-6_OS" || bad "K2 resolve: $R"
+[ "$R" = 'FLY_API_TOKEN_PROJECT_6_OS|same' ] && ok "K2 fly_token_resolve on the sourced file: FLY_API_TOKEN_PROJECT_6_OS" || bad "K2 resolve: $R"
 R=$(env -i PATH="$PATH" bash -c 'set -a; . "$1"; set +a; . "$2"; fly_token_resolve project-3 && printf "%s" "$FLY_TOKEN_SRC"' _ "$E/env/fly.env" "$REPO/bin/lib/fly-token.sh")
 [ "$R" = FLY_API_TOKEN ] && ok "K2 another project falls back to FLY_API_TOKEN" || bad "K2 org fallback: $R"
 grep -q -e 'fixture-TK-7516' -e "$ORG" "$T/k2.out" && bad "K2 a token reached stdout/stderr" || ok "K2 no token on stdout/stderr"
@@ -213,7 +213,7 @@ boot "$T/k3.out" FLY_ACCESS_TOKEN=fixture-access-7516 FLY_API_TOKENX=fixture-x-7
 bash -n "$E/env/fly.env" && ( set -u; . "$E/env/fly.env" ) && ok "K3 the empty fly.env sources clean" || bad "K3 source"
 
 scratch_rm "$E/env/fly.env"; mkdir "$E/env/fly.env"   # a directory: no write, even as root
-boot "$T/k4.out" FLY_API_TOKEN_project-6_OS="$TOK"; rc=$?
+boot "$T/k4.out" FLY_API_TOKEN_PROJECT_6_OS="$TOK"; rc=$?
 [ "$rc" = 78 ] && ok "K4 rc 78" || bad "K4 rc=$rc"
 grep -q 'lane-run-entrypoint: cannot write .*/fly.env' "$T/k4.out" && ok "K4 stderr names fly.env" || bad "K4 out: $(cat "$T/k4.out")"
 grep -q 'fixture-TK-7516' "$T/k4.out" && bad "K4 the token reached stderr" || ok "K4 no value in stderr"
@@ -229,7 +229,7 @@ while read -r src dst; do
 done < <(awk '$1 == "COPY" && $3 ~ "^/opt/harness/" {print $2, $3}' "$LDF")
 SRCDIR="$IMG${PHS:-/nonexistent}"
 mkdir -p "$T/flybin"; printf '#!/bin/bash\necho "flyctl v0.0.0-fixture"\n' > "$T/flybin/flyctl"; chmod +x "$T/flybin/flyctl"
-boot "$T/p1-boot.out" FLY_API_TOKEN_project-6_OS="$TOK"
+boot "$T/p1-boot.out" FLY_API_TOKEN_PROJECT_6_OS="$TOK"
 mkdir -p "$T/p1home"
 if [ -x "$SRCDIR/bin/fly-pool-project.sh" ]; then
   printf 'project-6-os example-org/project-6 https://os.example.com - 1 box-project-6-os-1 192.0.2.81\n' > "$SRCDIR/fleet.conf"
@@ -243,7 +243,7 @@ else
   [ -x "$T/flybin/flyctl" ] && ok "P1 fly-binary: \$FLY_BIN_DIR/flyctl" || bad "P1 fly-binary"
   R=$(env -i PATH="/usr/bin:/bin" bash -c 'set -a; . "$1"; set +a; . "$2/bin/lib/fly-token.sh" && fly_token_resolve project-6-os && printf "%s" "$FLY_TOKEN_SRC"' \
     _ "$E/env/fly.env" "$SRCDIR" 2>&1)
-  [ "$R" = FLY_API_TOKEN_project-6_OS ] && ok "P1 fly-token: FLY_API_TOKEN_project-6_OS from the image's fly-token.sh" || bad "P1 fly-token: $R"
+  [ "$R" = FLY_API_TOKEN_PROJECT_6_OS ] && ok "P1 fly-token: FLY_API_TOKEN_PROJECT_6_OS from the image's fly-token.sh" || bad "P1 fly-token: $R"
   miss=""
   for d in bin prompts rules catalog fly; do [ -d "$SRCDIR/$d" ] || miss+=" $d"; done
   [ -z "$miss" ] && ok "P1 harness-src: $PHS holds bin prompts rules catalog fly" || bad "P1 harness-src: missing$miss under ${PHS:-<unset>}"

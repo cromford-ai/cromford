@@ -31,18 +31,18 @@ function fakeKv(seed = {}) {
 function setup(t, seed) {
   t.mock.method(Date, "now", () => NOW);
   const KV = fakeKv(seed);
-  return { KV, env: { KV, HARNESS_SECRET: "sec" } };
+  return { KV, env: { KV, WATCHDOG_SECRET: "fixture-watchdog-secret" } };
 }
 
-const post = (env, path, body) =>
-  worker.fetch(new Request(BASE + path, { method: "POST", body }), env);
-const get = (env, path) => worker.fetch(new Request(BASE + path), env);
+const post = (env, path, body, token) =>
+  worker.fetch(new Request(BASE + path, { method: "POST", body, headers: token === undefined ? {} : { authorization: `Bearer ${token}` } }), env);
+const get = (env, path, token) => worker.fetch(new Request(BASE + path, { headers: token === undefined ? {} : { authorization: `Bearer ${token}` } }), env);
 
 const REPORT = JSON.stringify({ of: "box-hub", snapshot: "20260924T120000Z", ok: true });
 
 test("W10a: an authed report from a known box is stored with the watchdog's ts", async (t) => {
   const { KV, env } = setup(t);
-  const r = await post(env, "/api/standby/box-small?s=sec", REPORT);
+  const r = await post(env, "/api/standby/box-small", REPORT, env.WATCHDOG_SECRET);
   assert.equal(r.status, 200);
   assert.equal(await r.text(), "ok");
   assert.deepEqual(JSON.parse(KV.m.get("standby:box-small")),
@@ -52,7 +52,7 @@ test("W10a: an authed report from a known box is stored with the watchdog's ts",
 test("W10b: a box not in BOXES is 400 and writes nothing", async (t) => {
   const { KV, env } = setup(t);
   for (const box of ["box-nope", "box-project-10-1", "box-hubx"]) {
-    const r = await post(env, `/api/standby/${box}?s=sec`, REPORT);
+    const r = await post(env, `/api/standby/${box}`, REPORT, env.WATCHDOG_SECRET);
     assert.equal(r.status, 400, box);
   }
   assert.equal(KV.m.size, 0);
@@ -60,10 +60,10 @@ test("W10b: a box not in BOXES is 400 and writes nothing", async (t) => {
 
 test("W10c: a wrong or missing secret is 403 and writes nothing", async (t) => {
   const { KV, env } = setup(t);
-  assert.equal((await post(env, "/api/standby/box-small?s=wrong", REPORT)).status, 403);
+  assert.equal((await post(env, "/api/standby/box-small", REPORT, "fixture-wrong")).status, 403);
   assert.equal((await post(env, "/api/standby/box-small", REPORT)).status, 403);
   // Auth is checked before the box list, so a bad secret learns nothing about BOXES.
-  assert.equal((await post(env, "/api/standby/box-nope?s=wrong", REPORT)).status, 403);
+  assert.equal((await post(env, "/api/standby/box-nope", REPORT, "fixture-wrong")).status, 403);
   assert.equal(KV.m.size, 0);
 });
 
@@ -74,20 +74,20 @@ test("W10d: the 2 KB cap is 2048 bytes; bad JSON and non-objects are 400", async
     return s.replace('"pad":""', `"pad":"${"x".repeat(n - s.length)}"`);
   };
   assert.equal(sized(2049).length, 2049);
-  assert.equal((await post(env, "/api/standby/box-small?s=sec", sized(2049))).status, 400);
+  assert.equal((await post(env, "/api/standby/box-small", sized(2049), env.WATCHDOG_SECRET)).status, 400);
   assert.equal(KV.m.size, 0, "an oversized body must not be stored");
   for (const bad of ["{not json", "[1,2]", "null", "\"str\"", "7"]) {
-    assert.equal((await post(env, "/api/standby/box-small?s=sec", bad)).status, 400, bad);
+    assert.equal((await post(env, "/api/standby/box-small", bad, env.WATCHDOG_SECRET)).status, 400, bad);
   }
   assert.equal(KV.m.size, 0, "a rejected body must not be stored");
-  assert.equal((await post(env, "/api/standby/box-small?s=sec", sized(2048))).status, 200);
+  assert.equal((await post(env, "/api/standby/box-small", sized(2048), env.WATCHDOG_SECRET)).status, 200);
   assert.equal(JSON.parse(KV.m.get("standby:box-small")).snapshot, "20260924T120000Z");
 });
 
 test("W10e: ok must be boolean true, and a ts in the body is ignored", async (t) => {
   const { KV, env } = setup(t);
   const body = JSON.stringify({ of: "box-hub", snapshot: "20260924T120000Z", ok: "true", ts: 1 });
-  assert.equal((await post(env, "/api/standby/box-small?s=sec", body)).status, 200);
+  assert.equal((await post(env, "/api/standby/box-small", body, env.WATCHDOG_SECRET)).status, 200);
   const v = JSON.parse(KV.m.get("standby:box-small"));
   assert.equal(v.ok, false);
   assert.equal(v.ts, NOW);
@@ -96,7 +96,7 @@ test("W10e: ok must be boolean true, and a ts in the body is ignored", async (t)
 
 test("W10f: GET on /api/standby/<box> is not a route", async (t) => {
   const { env } = setup(t);
-  assert.equal((await get(env, "/api/standby/box-small?s=sec")).status, 404);
+  assert.equal((await get(env, "/api/standby/box-small", env.WATCHDOG_SECRET)).status, 404);
 });
 
 const SEED = {
@@ -108,7 +108,7 @@ const SEED = {
 
 test("W11a: GET /api/standby lists every row with stream_age_min from the snapshot id", async (t) => {
   const { env } = setup(t, SEED);
-  const r = await get(env, "/api/standby?s=sec");
+  const r = await get(env, "/api/standby", env.WATCHDOG_SECRET);
   assert.equal(r.status, 200);
   const rows = await r.json();
   assert.equal(rows.length, 2);
@@ -122,13 +122,13 @@ test("W11a: GET /api/standby lists every row with stream_age_min from the snapsh
 test("W11b: GET /api/standby without the secret is 403", async (t) => {
   const { env } = setup(t, SEED);
   assert.equal((await get(env, "/api/standby")).status, 403);
-  assert.equal((await get(env, "/api/standby?s=wrong")).status, 403);
+  assert.equal((await get(env, "/api/standby", "fixture-wrong")).status, 403);
 });
 
 test("W11c: /api/status carries the same list under standby, beside pings", async (t) => {
   const { env } = setup(t, SEED);
-  const list = await (await get(env, "/api/standby?s=sec")).json();
-  const r = await get(env, "/api/status?s=sec");
+  const list = await (await get(env, "/api/standby", env.WATCHDOG_SECRET)).json();
+  const r = await get(env, "/api/status", env.WATCHDOG_SECRET);
   assert.equal(r.status, 200);
   const s = await r.json();
   assert.deepEqual(s.standby, list);
@@ -138,14 +138,14 @@ test("W11c: /api/status carries the same list under standby, beside pings", asyn
 
 test("W11d: no standby rows is an empty list on both routes, not null", async (t) => {
   const { env } = setup(t);
-  assert.deepEqual(await (await get(env, "/api/standby?s=sec")).json(), []);
-  assert.deepEqual((await (await get(env, "/api/status?s=sec")).json()).standby, []);
+  assert.deepEqual(await (await get(env, "/api/standby", env.WATCHDOG_SECRET)).json(), []);
+  assert.deepEqual((await (await get(env, "/api/status", env.WATCHDOG_SECRET)).json()).standby, []);
 });
 
 test("W11e: a KV list failure gives standby:null on /api/status, never a 500", async (t) => {
   const { KV, env } = setup(t, SEED);
   KV.list = async () => { throw new Error("kv down"); };
-  const r = await get(env, "/api/status?s=sec");
+  const r = await get(env, "/api/status", env.WATCHDOG_SECRET);
   assert.equal(r.status, 200);
   const s = await r.json();
   assert.equal(s.standby, null);

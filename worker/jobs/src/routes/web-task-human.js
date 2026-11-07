@@ -66,7 +66,7 @@ export const INSERT_SQL = `INSERT INTO web_task_human_step (run_id, project, sit
 // uq_web_task_human_nonce.
 export const STEP_BY_NONCE_SQL = "SELECT id, run_id, kind, status, expires_at FROM web_task_human_step WHERE nonce_hash=?1";
 // The PRIMARY KEY.
-export const STEP_SQL = "SELECT id, run_id, kind, status, wait_until, expires_at, code_ct, code_iv, key_id FROM web_task_human_step WHERE id=?1";
+export const STEP_SQL = "SELECT id, run_id, site, kind, status, wait_until, expires_at, code_ct, code_iv, key_id FROM web_task_human_step WHERE id=?1";
 // ?1 id, ?2 status, ?3 t, ?4 via, ?5 ciphertext, ?6 iv, ?7 key id. The PRIMARY KEY.
 export const ANSWER_SQL = `UPDATE web_task_human_step SET status=?2, answered_at=?3, answer_via=?4, code_ct=?5, code_iv=?6, key_id=?7
  WHERE id=?1 AND status='open' AND expires_at > ?3`;
@@ -227,12 +227,14 @@ export const routes = [
       if (!machine || runId === null || stepId === null) return json(400, { error: "run_id, machine and step_id are required" });
       const tg = outcomeOf(b.tg_outcome), board = outcomeOf(b.board_outcome);
       if (tg.error || board.error) return json(400, { error: tg.error || board.error });
-      const { run, tokenOk, rest: [step] } = await runCheck(req, env, runId, machine, [env.DB.prepare(STEP_SQL).bind(stepId).first()]);
-      // The run checks of readRefusal; project and site were checked at the ask.
+      const { run, tokenOk, rest: [step, { byKey }] } = await runCheck(req, env, runId, machine, [env.DB.prepare(STEP_SQL).bind(stepId).first(), settingsRows(env)]);
+      // Re-check current site authorization before an outstanding answer is consumed.
       const why = readRefusal(run, { project: run ? run.project : "", site: "-", machine, t, allowed: ["-"], tokenOk });
       if (why) return refused(403, why);
       if (!step) return refused(404, "no_step");
       if (Number(step.run_id) !== runId) return refused(403, "other_run");
+      const siteRefusal = readRefusal(run, { project: run.project, site: step.site, machine, t, allowed: allowedSites(byKey, run.project), tokenOk });
+      if (siteRefusal) return refused(403, siteRefusal);
       if (tg.value !== null || board.value !== null) await env.DB.prepare(OUTCOME_SQL).bind(stepId, tg.value, board.value).run();
       if (step.status === "open") return json(200, { state: "pending", wait_until: step.wait_until, expires_at: step.expires_at });
       if (step.status === "cancelled") return json(200, { state: "cancelled" });

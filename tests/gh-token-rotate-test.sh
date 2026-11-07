@@ -134,7 +134,7 @@ machine() { # machine <expires-at-offset|-> [rotated-at-offset]
 tick() { # tick [VAR=VAL ...] — one bin/fly-pool.sh pass over the scratch tree
   : > "$H/logs/fly-pool.log"; : > "$T/ghtok.log"; rm -f "$T/rec"/*
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok PREC="$T/rec" GHTOK_LOG="$T/ghtok.log" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok PREC="$T/rec" GHTOK_LOG="$T/ghtok.log" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 rotated() { grep -c '^rotated App token' <(grep -o 'rotated App token.*' "$H/logs/fly-pool.log"); }

@@ -89,9 +89,9 @@ done
 echo "R1-R6: the reader"
 O="$T/o"; E="$T/e"
 rc=$(run "$O" "$E" fly-pool project-6-os)
-EXP='FLY_API_TOKEN_project-6_OS required fly.env:FLY_API_TOKEN_project-6_OS
+EXP='FLY_API_TOKEN_PROJECT_6_OS required fly.env:FLY_API_TOKEN_PROJECT_6_OS
 GH_APP_ID required github-app.env:GH_APP_ID
-GH_APP_INSTALLATION_example-org optional github-app.env:GH_APP_INSTALLATION_example-org
+GH_APP_INSTALLATION_EXAMPLE_ORG optional github-app.env:GH_APP_INSTALLATION_EXAMPLE_ORG
 GH_APP_PRIVATE_KEY required file:github-app.pem
 HARNESS_SECRET required global.env:HARNESS_SECRET
 JOBS_URL required global.env:JOBS_URL'
@@ -99,10 +99,10 @@ JOBS_URL required global.env:JOBS_URL'
   || { bad "R1 rc=$rc"; sed 's/^/       /' "$O" "$E"; }
 
 rc=$(run "$O" "$E" fly-pool project-6 project-6-os)
-[ "$rc" = 0 ] && [ "$(grep -c '^GH_APP_INSTALLATION_example-org ' "$O")" = 1 ] && [ "$(grep -c '^GH_APP_ID ' "$O")" = 1 ] \
+[ "$rc" = 0 ] && [ "$(grep -c '^GH_APP_INSTALLATION_EXAMPLE_ORG ' "$O")" = 1 ] && [ "$(grep -c '^GH_APP_ID ' "$O")" = 1 ] \
   && ok "R2 one owner, one installation line; shared names once" || { bad "R2 rc=$rc"; sed 's/^/       /' "$O"; }
-grep -qx 'FLY_API_TOKEN_project-6 required fly.env:FLY_API_TOKEN_project-6' "$O" \
-  && grep -qx 'FLY_API_TOKEN_project-6_OS required fly.env:FLY_API_TOKEN_project-6_OS' "$O" \
+grep -qx 'FLY_API_TOKEN_PROJECT_6 required fly.env:FLY_API_TOKEN_PROJECT_6' "$O" \
+  && grep -qx 'FLY_API_TOKEN_PROJECT_6_OS required fly.env:FLY_API_TOKEN_PROJECT_6_OS' "$O" \
   && [ "$(wc -l <"$O")" = 7 ] && ok "R2/R5 a token line for each project (7 lines)" || bad "R2/R5 token lines"
 
 rc=$(run "$O" "$E" fly-pool a.b-c)
@@ -111,8 +111,8 @@ rc=$(run "$O" "$E" fly-pool a.b-c)
   && ok "R3 a.b-c -> A_B_C, my-org -> MY_ORG" || { bad "R3 rc=$rc"; sed 's/^/       /' "$O" "$E"; }
 
 rc=$(run "$O" "$E" fly-pool project-6)
-grep -qx 'FLY_API_TOKEN_project-6 required fly.env:FLY_API_TOKEN_project-6' "$O" && ! grep -q PROJECT_6_OS "$O" \
-  && ok "R5 project-6 alone: FLY_API_TOKEN_project-6, no PROJECT_6_OS" || bad "R5 project-6 expands wrong"
+grep -qx 'FLY_API_TOKEN_PROJECT_6 required fly.env:FLY_API_TOKEN_PROJECT_6' "$O" && ! grep -q PROJECT_6_OS "$O" \
+  && ok "R5 project-6 alone: FLY_API_TOKEN_PROJECT_6, no PROJECT_6_OS" || bad "R5 project-6 expands wrong"
 
 refused() { # refused <label> <want-in-stderr> args...
   local lbl="$1" want="$2"; shift 2
@@ -146,7 +146,7 @@ rc=$(run "$O" "$E" fixture-lane project-6-os)
 
 # R6: the production reader in the repo over the repo's own list.
 out=$(bash "$REPO/bin/lane-run-secrets.sh" fly-pool project-6-os 2>&1); rc=$?
-[ "$rc" = 0 ] && grep -qx 'FLY_API_TOKEN_project-6_OS required fly.env:FLY_API_TOKEN_project-6_OS' <<<"$out" \
+[ "$rc" = 0 ] && grep -qx 'FLY_API_TOKEN_PROJECT_6_OS required fly.env:FLY_API_TOKEN_PROJECT_6_OS' <<<"$out" \
   && grep -qx 'GH_APP_PRIVATE_KEY required file:github-app.pem' <<<"$out" \
   && ok "R6 the real reader over the real list" || bad "R6 rc=$rc: $(head -c 300 <<<"$out")"
 mv "$R/catalog/lane-run-secrets.d/fly-pool.tsv" "$T/held.tsv" 2>/dev/null
@@ -156,13 +156,13 @@ mv "$T/held.tsv" "$R/catalog/lane-run-secrets.d/fly-pool.tsv" 2>/dev/null
 echo "S1-S3: --stage-cmd"
 VAL=fixture-secret-VALUE
 cat > "$R/env/fly.env" <<EOF
-FLY_API_TOKEN_project-6_OS=$VAL
+FLY_API_TOKEN_PROJECT_6_OS=$VAL
 FLY_API_TOKEN='FlyV1 fixture-org-token'
 EOF
 cat > "$R/env/github-app.env" <<'EOF'
 GH_APP_ID=fixture-app-id-1
 GH_APP_PRIVATE_KEY_FILE=/nonexistent/fixture.pem
-GH_APP_INSTALLATION_example-org=fixture-inst-1
+GH_APP_INSTALLATION_EXAMPLE_ORG=fixture-inst-1
 EOF
 cat > "$R/env/global.env" <<'EOF'
 JOBS_URL=https://jobs.example.invalid
@@ -185,11 +185,11 @@ cat > "$T/fly.stdin"
 EOF
 chmod +x "$FB/flyctl"
 rm -f "$T/fly.argv" "$T/fly.stdin"
-( unset FLY_API_TOKEN_project-6_OS GH_APP_ID GH_APP_INSTALLATION_example-org JOBS_URL HARNESS_SECRET FLY_API_TOKEN
+( unset FLY_API_TOKEN_PROJECT_6_OS GH_APP_ID GH_APP_INSTALLATION_EXAMPLE_ORG JOBS_URL HARNESS_SECRET FLY_API_TOKEN
   PATH="$FB:$PATH" bash "$T/stage.sh" ) >"$T/s2.out" 2>"$T/s2.err"; src=$?
-WANT_IN="FLY_API_TOKEN_project-6_OS=$VAL
+WANT_IN="FLY_API_TOKEN_PROJECT_6_OS=$VAL
 GH_APP_ID=fixture-app-id-1
-GH_APP_INSTALLATION_example-org=fixture-inst-1
+GH_APP_INSTALLATION_EXAMPLE_ORG=fixture-inst-1
 HARNESS_SECRET=fixture-harness-secret
 JOBS_URL=https://jobs.example.invalid"
 [ "$src" = 0 ] && [ "$(LC_ALL=C sort "$T/fly.stdin" 2>/dev/null)" = "$WANT_IN" ] \
@@ -201,8 +201,8 @@ LISTN=$(bash "$RD" fly-pool project-6-os | awk '$3 !~ /^file:/ {print $1}' | LC_
 [ "$(cat "$T/fly.argv" 2>/dev/null)" = "secrets import -a lane-run-mk --stage" ] && ! grep -q fixture "$T/fly.argv" "$T/s2.out" \
   && ok "S2 argv is exactly 'secrets import -a lane-run-mk --stage', no value" || bad "S2 argv: $(cat "$T/fly.argv" 2>/dev/null)"
 # An optional variable that is not set sends no line.
-sed -i '/^GH_APP_INSTALLATION_example-org=/d' "$R/env/github-app.env"
-( unset FLY_API_TOKEN_project-6_OS GH_APP_ID GH_APP_INSTALLATION_example-org JOBS_URL HARNESS_SECRET
+sed -i '/^GH_APP_INSTALLATION_EXAMPLE_ORG=/d' "$R/env/github-app.env"
+( unset FLY_API_TOKEN_PROJECT_6_OS GH_APP_ID GH_APP_INSTALLATION_EXAMPLE_ORG JOBS_URL HARNESS_SECRET
   PATH="$FB:$PATH" bash "$T/stage.sh" ) >/dev/null 2>&1
 ! grep -q '^GH_APP_INSTALLATION_' "$T/fly.stdin" && [ "$(wc -l <"$T/fly.stdin")" = 4 ] \
   && ok "S2 an unset optional variable sends no line" || bad "S2 optional: $(cat "$T/fly.stdin")"
@@ -211,7 +211,7 @@ cat > "$R/env/global.env" <<'EOF2'
 JOBS_URL=https://jobs.example.invalid
 HARNESS_SECRET=
 EOF2
-( unset FLY_API_TOKEN_project-6_OS GH_APP_ID GH_APP_INSTALLATION_example-org JOBS_URL HARNESS_SECRET
+( unset FLY_API_TOKEN_PROJECT_6_OS GH_APP_ID GH_APP_INSTALLATION_EXAMPLE_ORG JOBS_URL HARNESS_SECRET
   PATH="$FB:$PATH" bash "$T/stage.sh" ) >/dev/null 2>"$T/s2.err"
 [ ! -s "$T/fly.stdin" ] && grep -q 'HARNESS_SECRET' "$T/s2.err" && ! grep -q "$VAL" "$T/s2.err" \
   && ok "S2 an empty required variable stops it before any line" || bad "S2 empty required: stdin=$(cat "$T/fly.stdin") err=$(cat "$T/s2.err")"
@@ -222,7 +222,7 @@ for args in "fly-pool project-6-os" "fly-pool project-6 project-6-os" "--stage-c
   # The values are in the reader's own environment: a reader that expanded one
   # would print it.
   # shellcheck disable=SC2086
-  FLY_API_TOKEN_project-6_OS="$VAL" GH_APP_ID=fixture-app-id-1 HARNESS_SECRET=fixture-harness-secret \
+  FLY_API_TOKEN_PROJECT_6_OS="$VAL" GH_APP_ID=fixture-app-id-1 HARNESS_SECRET=fixture-harness-secret \
     bash "$RD" $args >>"$ALL" 2>&1
 done
 ! grep -qE "$VAL|fixture-app-id-1|fixture-harness-secret|FIXTURE KEY" "$ALL" && ok "S3 no fixture value in any output" \

@@ -219,7 +219,7 @@ esac
 SH
   chmod +x "$T/g/fakebin/curl"
   TOKM=$(env PATH="$T/g/fakebin:$PATH" HARNESS="$T/g" GH_APP_API_BASE="http://api.test" \
-          GH_APP_INSTALLATION_example-org="$BOARD_INST" GH_TOKEN=pattok \
+          GH_APP_INSTALLATION_EXAMPLE_ORG="$BOARD_INST" GH_TOKEN=pattok \
           "$T/g/bin/gh-token.sh" example-org/cromford 2>/dev/null)
   [ "$TOKM" = ghs_minted_1 ] && ok || bad "h1: the fixture mint must print its token, got '$TOKM'"
   CF="$T/g/state/gh-app-tokens/example-org-cromford.json"

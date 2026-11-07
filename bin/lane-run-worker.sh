@@ -12,8 +12,8 @@
 #                line goes to the log and to stderr; after a swap (rc 10) the
 #                loop re-execs itself with its own argv. No run is in flight:
 #                BH-7716, with N loops on one machine each loop holds
-#                locks/lane-run-code.lock SHARED for the length of a run
-#                (lw_run), and the sync takes it EXCLUSIVE with flock -n
+#                locks/lane-run-code.lock EXCLUSIVE for the length of a run
+#                (before claim through lw_run), and sync uses the same EXCLUSIVE lock
 #                first. When another loop has a run in flight the sync is
 #                skipped (one `code sync skipped` log line) and tried again
 #                before the next claim. A loop whose HARNESS_COMMIT changed
@@ -469,11 +469,13 @@ lw_run() {
   return 0
 }
 
-# The code lock (BH-7716): shared while a run is in flight, exclusive for a
-# code sync, so N loops on one machine never swap bin/ under a run.
+# Runs overlay project-filtered inputs onto the same harness root. Hold the
+# code lock exclusively from before claim through checkpoint and eviction:
+# another project must never replace those shared files during a run.
 mkdir -p "$H/locks" 2>/dev/null
 # The braces keep the 2>/dev/null off the shell's own stderr.
 LW_CFD=""; { exec {LW_CFD}>>"$H/locks/lane-run-code.lock"; } 2>/dev/null || LW_CFD=""
+[ -n "$LW_CFD" ] || { lw_log "shared-root lock could not be opened; nothing claimed"; exit 1; }
 LW_COMMIT0=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null)
 # lw_reexec — the loop starts again on the current code, with its own argv.
 # The code lock fd is closed first: an exec keeps it open, and the new
@@ -529,6 +531,18 @@ while :; do
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   LW_NOGROUP_N=0
+  # Acquire before claiming, so waiting never consumes a run lease or needs
+  # an unbounded pre-run heartbeat. A timeout claims nothing and retries.
+  flock -x -w 300 "$LW_CFD" & wait "$!"; LW_LRC=$?
+  if [ "$LW_LRC" != 0 ]; then
+    lw_log "shared-root lock unavailable; nothing claimed"
+    [ "$ONCE" = 1 ] && exit 1
+    sleep "$(lw_poll_s)" & wait "$!"; continue
+  fi
+  if [ "$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null)" != "$LW_COMMIT0" ]; then
+    flock -u "$LW_CFD"
+    lw_reexec
+  fi
   # The sha the claimed run executes: the code sync above ran first, and a
   # changed HARNESS_COMMIT re-execs this loop before it gets here.
   LW_SHA=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null | tr -d '[:space:]')
@@ -541,11 +555,13 @@ while :; do
      + (if $o == [] then {} else {only_prefixes:$o} end)
      + (if $b == "" then {} else {box:$b} end)')" > "$RESP"; crc=$?
   if [ "$crc" != 0 ]; then
+    flock -u "$LW_CFD"
     lw_log "claim failed (rc $crc, http ${JOBS_HTTP:-none})"
     [ "$ONCE" = 1 ] && exit 1
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   if [ "$JOBS_HTTP" = 204 ] || [ ! -s "$RESP" ]; then
+    flock -u "$LW_CFD"
     [ "$ONCE" = 1 ] && exit 0
     # In the background and waited for, so a TERM during the sleep runs the
     # trap at once rather than after the sleep.
@@ -559,12 +575,7 @@ while :; do
     lw_log "claim answer for --box $LW_BOX does not name the box (the jobs worker does not route box rows yet); row ${LW_RID:-?} not run, $LW_REL"
     exit 1
   fi
-  # In the background and waited for, so a TERM during the wait runs the trap
-  # at once. The lock is on this process's open file, so it outlives flock.
-  if [ -n "$LW_CFD" ]; then
-    flock -s -w 300 "$LW_CFD" & wait "$!" || lw_log "code lock: no shared hold after 300 s; the run goes on"
-  fi
   lw_run "$RESP"
-  [ -n "$LW_CFD" ] && flock -u "$LW_CFD"
   lw_cache_trim "$(jq -r '.project // empty' "$RESP" 2>/dev/null)"
+  flock -u "$LW_CFD"
 done

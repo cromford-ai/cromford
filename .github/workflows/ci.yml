@@ -7,20 +7,102 @@
 #   - every shell script parses (bash -n)
 #   - shellcheck at error severity, over the same files upstream lints
 #   - the shipped leak guard, tests/no-client-identifiers-test.sh
+#   - the dashboard build, JavaScript syntax and Node behavior/security suites
+#   - dependency audits and focused shell regressions on every PR
 #   - gitleaks over the tree, against the .gitleaksignore the publisher wrote
 # CONTRIBUTING.md says how to run the full suite yourself.
 name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 7 * * 1'
 permissions:
   contents: read
 jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: console-ui/package-lock.json
+      - run: npm ci --prefix console-ui
+      - name: JavaScript syntax
+        run: node bin/check-javascript-syntax.mjs
+      - name: Fresh-checkout bootstrap and shell identifier regressions
+        run: node --test tests/audit-build-bootstrap.test.mjs tests/audit-shell-identifiers.test.mjs
+      - name: Prepare worker inputs and run the security regression matrix
+        run: |
+          bash bin/test-worker-bootstrap.sh
+          node --test tests/audit-authorization.test.mjs tests/locks-worker-security-audit.test.mjs
+          node --test tests/audit-followup-*.test.mjs
+      - name: Dashboard production build
+        run: npm run build --prefix console-ui
+      - name: Dashboard dependency audit
+        run: npm audit --prefix console-ui --audit-level=moderate
+
+  node-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [console-ui, worker/jobs, worker/otp-inbox, worker/watchdog, mcp, agent-core]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - name: Install locked dependencies when present
+        run: |
+          if [ -f '${{ matrix.package }}/package-lock.json' ]; then
+            npm ci --prefix '${{ matrix.package }}'
+          fi
+      - name: Behavior tests (including authorization regressions)
+        run: npm test --prefix '${{ matrix.package }}'
+      - name: Audit installed dependencies
+        if: ${{ always() && (matrix.package == 'console-ui' || matrix.package == 'worker/jobs') }}
+        run: npm audit --prefix '${{ matrix.package }}' --audit-level=moderate
+
+  shell-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - name: Shell security and runner behavior
+        run: |
+          set -euo pipefail
+          bash tests/run-tests-in-docker-node-test.sh
+          bash tests/registry-no-commit-test.sh
+          bash tests/credential-isolation.bh-6672-test.sh
+          bash tests/locks-worker-mint-cap.bh-5202-test.sh
+
+  shell-corpus:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Full shell corpus on Linux
+        run: bin/run-tests-in-docker.sh --shard '${{ matrix.shard }}/4'
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Syntax (bash -n on every script)
         run: |
@@ -53,3 +135,29 @@ jobs:
 
       - name: gitleaks scan
         run: gitleaks detect --source . --no-git --redact
+
+  audit-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            console-ui/package-lock.json
+            tests/e2e-audit/package-lock.json
+      - run: npm ci --prefix console-ui
+      - run: npm ci --prefix tests/e2e-audit
+      - name: Install matching Chromium and OS libraries
+        run: tests/e2e-audit/node_modules/.bin/playwright-core install --with-deps chromium --only-shell
+      - name: Tester Army browser and HTTP regression suite
+        run: npm test --prefix tests/e2e-audit
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: audit-e2e-results
+          path: tests/e2e-audit/.e2e/
+          include-hidden-files: true
+          if-no-files-found: warn

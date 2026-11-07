@@ -90,7 +90,7 @@ test('S4 qaOnly tells a QA session from the operator', () => {
   assert.equal(qaOnly(''), false);
 });
 
-const ENV = { HARNESS_SECRET: 'fixture-pages-secret' };
+const ENV = { HARNESS_SECRET: 'fixture-pages-secret', QA_READ_TOKEN: 'fixture-qa-read-token' };
 
 test('S5 /api/coord refuses a QA session write before the jobs worker', async (t) => {
   const seen = fakeFetch(t);

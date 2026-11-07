@@ -55,6 +55,9 @@ function httpError(cfg, status, text) {
 
 async function send(cfg, method, path, body, auth) {
   const headers = { ...auth, accept: 'application/json' };
+  if (auth.cookie && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
+    headers.origin = new URL(cfg.url).origin;
+  }
   const init = { method, headers };
   if (body !== undefined) {
     headers['content-type'] = 'application/json';

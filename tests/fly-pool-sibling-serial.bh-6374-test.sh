@@ -36,7 +36,7 @@ SD="$H/state/sibling-serial/project-5"
 mkdir -p "$H/bin" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" "$H/plans" \
          "$H/state/fly" "$MD" "$QD" "$H/state/remote-results/project-5" \
          "$PD" "$SD" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-1\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-1\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 - - - 0 local\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -104,7 +104,7 @@ FLY
 run_pool() {
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok-fixture-1 FLY_BIN_DIR="$T/fakebin" \
+           FLY_API_TOKEN_PROJECT_5=tok-fixture-1 FLY_BIN_DIR="$T/fakebin" \
            SIBLING_SERIAL_NOW="$NOW" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

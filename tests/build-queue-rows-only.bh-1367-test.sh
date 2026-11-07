@@ -50,7 +50,7 @@ cp "$DIR"/bin/lib/queue-row-job.sh "$H/bin/lib/" 2>/dev/null
 # runs for a project the registry can address, and a made-up name would make
 # every "no ssh happened" assertion pass by never reaching the hop.
 cp "$DIR/fleet.conf" "$H/fleet.conf"
-printf 'FLY_API_TOKEN_project-3_OS=tok\nFLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_3_OS=tok\nFLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 touch "$H/flags/builder-fly-project-3"
 printf '{"app":"builder-project-3","machine_id":"aa11bb22cc33dd"}\n' > "$H/state/fly/project-3.json"
@@ -215,7 +215,7 @@ pool() { # pool  — one fly-pool tick for project-5
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 JOBS_TIMEOUT=5 \
            REQ_SINK="$T/req.txt" FLY_SINK="$T/fly.txt" ROWS="$ROWS" \
            FLEET_CONF="$H/fleet.conf" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_project-5=tok FLY_NOMID="${FLY_NOMID:-0}" \
+           FLY_API_TOKEN_PROJECT_5=tok FLY_NOMID="${FLY_NOMID:-0}" \
            CURL_MODE="${CURL_MODE:-up}" FLAG_BQ="${FLAG_BQ:-0}"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

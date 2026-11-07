@@ -90,7 +90,7 @@ test('BH-7434 lane-run fleet groups', async (t) => {
       ids[p] = (await enqueue(DB, lane, p)).body.id;
       at(db, ids[p], FRESH);
     }
-    assert.deepEqual(await drain(DB, {}), ['project-6-os-x', 'project-3']);
+    assert.deepEqual(await drain(DB, {}), ['project-3', 'project-6-os-x']);
     for (const p of ['project-6-os', 'project-6-os.5.aaaabbbbcccc', 'project-5']) {
       assert.equal(row(db, ids[p]).status, 'queued', `${p} waits for its group fleet`);
     }
@@ -182,8 +182,8 @@ test('BH-7434 lane-run fleet groups', async (t) => {
     setting(db, 'lane_fleet.group.zeromax', JSON.stringify({ app: 'lane-run-zm', max_machines: 0, projects: ['project-3'] }));
     const r = await call(DB, 'GET', '/api/lane-fleet/groups');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.groups.map((g) => g.name), ['project-6', 'project-5']);
-    assert.deepEqual(r.body.groups[0], {
+    assert.deepEqual(r.body.groups.map((g) => g.name), ['project-5', 'project-6']);
+    assert.deepEqual(r.body.groups.find((g) => g.name === 'project-6'), {
       name: 'project-6', app: 'lane-run-mk', vm_size: 'performance-4x', vm_memory: 8192, max_machines: 4,
       warm_floor: null, projects: ['project-6-os'],
     });

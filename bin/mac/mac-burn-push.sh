@@ -23,8 +23,8 @@
 #   via generated_at (the dashboard staleness rule), never overwritten with a
 #   plausible zero.
 #
-# Secrets: reads the watchdog secret from ~/.orgo/.harness-secret (the Mac's
-# existing copy). Price table: vendored path first, then the repo checkout.
+# Secrets: reads ~/.orgo/.watchdog-secret, then WATCHDOG_SECRET. The jobs
+# credential is separate. Price table: vendored path first, then the checkout.
 # Watchdog URL (BH-2091): $WATCHDOG_URL, else catalog/fleet-watchdog.json in
 # $MACBURN_CHECKOUT (default ~/cromford) when its origin is the catalog's
 # repo. Neither: one "not set" line per UTC day in the log, no scan, no push, rc 0.
@@ -33,18 +33,17 @@ LOG="$HOME/.mk-macburn.log"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 # Test seams (each defaults to the real thing): the test suite injects a
 # fixture ledger dir, price table, secret file, and a local URL + stubbed curl.
-SECRET_FILE="${MACBURN_SECRET_FILE:-$HOME/.orgo/.harness-secret}"
+WATCHDOG_SECRET_FILE="${MACBURN_SECRET_FILE:-$HOME/.orgo/.watchdog-secret}"
 LEDGER_DIR="${MACBURN_LEDGER_DIR:-$HOME/.claude/projects}"
+. "$(dirname "$0")/../lib/watchdog-url.sh" 2>/dev/null \
+  || { echo "$(STAMP) mac-burn: no bin/lib/watchdog-url.sh beside this script — not pushed" >> "$LOG"; exit 1; }
 WATCHDOG_URL="${WATCHDOG_URL-}"
 if [ -z "$WATCHDOG_URL" ]; then
-  . "$(dirname "$0")/../lib/watchdog-url.sh" 2>/dev/null \
-    || { echo "$(STAMP) mac-burn: no bin/lib/watchdog-url.sh beside this script — not pushed" >> "$LOG"; exit 1; }
   WATCHDOG_URL=$(watchdog_url_carry "${MACBURN_CHECKOUT:-$HOME/cromford}") || WATCHDOG_URL=""
   [ -n "$WATCHDOG_URL" ] || { watchdog_url mac-burn "$HOME" "$LOG" >/dev/null; exit 0; }
 fi
 WATCHDOG_URL="${WATCHDOG_URL%/}"
-[ -r "$SECRET_FILE" ] || { echo "$(STAMP) mac-burn: no secret file — not pushed" >> "$LOG"; exit 1; }
-SECRET=$(tr -d '\r\n' < "$SECRET_FILE")
+WATCHDOG_SECRET=$(watchdog_secret) || { echo "$(STAMP) mac-burn: no dedicated watchdog secret — not pushed" >> "$LOG"; exit 1; }
 
 # Price table: prefer a local checkout of cromford; fail loud if absent.
 PRICES=""
@@ -127,9 +126,9 @@ print(json.dumps(out))
 PY
 ) || { echo "$(STAMP) mac-burn: scan FAILED — nothing pushed (stale KV stays visible via generated_at)" >> "$LOG"; exit 1; }
 
-if curl -sf -m 30 -X POST -H 'Content-Type: application/json' \
+if watchdog_curl -sf -m 30 -X POST -H 'Content-Type: application/json' \
      --data-binary "$PAYLOAD" \
-     "$WATCHDOG_URL/api/mac-burn?s=$SECRET" >/dev/null; then
+     "$WATCHDOG_URL/api/mac-burn" >/dev/null; then
   echo "$(STAMP) mac-burn: pushed ($(printf '%s' "$PAYLOAD" | wc -c | tr -d ' ')b, 24h=$(printf '%s' "$PAYLOAD" | python3 -c 'import sys,json;print(json.load(sys.stdin)["cost_24h"])'))" >> "$LOG"
 else
   echo "$(STAMP) mac-burn: push FAILED — dashboard value will go stale" >> "$LOG"

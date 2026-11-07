@@ -109,7 +109,7 @@ mkdir -p "$T/home"
 rm -f "$T/hp/env/fly.env"
 grep -q '^  CANNOT: fly' <<<"$(render_h)" \
   && ok || bad "no env/fly.env must render CANNOT for fly"
-printf 'FLY_API_TOKEN_project-2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
 FLYOUT=$(render_h)
 grep -q '^  CAN: fly' <<<"$FLYOUT" \
   && ok || bad "env/fly.env with a per-app token must render CAN (got: $(grep -i ' fly ' <<<"$FLYOUT"))"
@@ -128,7 +128,7 @@ grep -q '^  CANNOT: fly' <<<"$(FLY_API_TOKEN=bare render_h)" \
 # reason. A `command -v` probe therefore said "no flyctl" on a host running a
 # live fly pool, and ANDing that with the token arm produced a blanket CANNOT:
 # a wrong dead end, which becomes a wrong escalation to the operator.
-printf 'FLY_API_TOKEN_project-2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
 mkdir -p "$T/home/.fly/bin"
 printf '#!/bin/sh\nexit 0\n' > "$T/home/.fly/bin/flyctl"; chmod +x "$T/home/.fly/bin/flyctl"
 OFFP=$(render_bare)
@@ -194,7 +194,7 @@ src = open(sys.argv[1]).read()
 open(sys.argv[2], "w").write(src[:src.index('case "${1:-render}"')])
 PY
 [ -s "$T/probes.sh" ] && ok || bad "could not extract the probe helpers from triage-map.sh"
-printf 'FLY_API_TOKEN_project-2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_2_OS=fm2_redacted\n' > "$T/hp/env/fly.env"
 probe_with() {  # probe_with <pattern> -> yes|no|unknown
   bash -c 'set -uo pipefail; . "$1"; run_probe have_env_file "$2" "$3"' _ \
     "$T/probes.sh" "$T/hp/env/fly.env" "$1" 2>/dev/null

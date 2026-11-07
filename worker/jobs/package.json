@@ -22,6 +22,7 @@
   },
   "description": "Coordination worker for the box fleet. One runtime dependency, @sentry/cloudflare (BH-5618), imported lazily and only when HARNESS_SENTRY_DSN is bound, so node --test still drives the worker directly without an install.",
   "scripts": {
+    "pretest": "bash ../../bin/test-worker-bootstrap.sh",
     "test": "node --test test/*.test.js test/routes/*.test.js"
   },
   "dependencies": {

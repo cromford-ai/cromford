@@ -63,6 +63,7 @@ function world({ throws = false } = {}) {
   const forwarded = [];
   const real = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
+    if (String(input).endsWith('/api/dash/fleet')) return new Response('{}', { status: 200 });
     const body = JSON.parse(String(init.body));
     forwarded.push(body);
     const ckey = `${body.project}:${body.ticket}:${body.type}`;

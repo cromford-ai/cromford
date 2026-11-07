@@ -63,7 +63,7 @@ printf '%s %s - - 9 box-fixture 192.0.2.10\n' "$P" "$SLUG" > "$H/fleet.conf"
 # A throwaway App key: the hub is armed for App tokens (fixture, never a real App).
 openssl genrsa -out "$H/env/github-app.pem" 2048 2>/dev/null || { echo "openssl genrsa failed"; exit 1; }
 cp "$H/env/github-app.pem" "$H/env/github-app-builders.pem"
-printf 'GH_APP_ID=1\nGH_APP_INSTALLATION_example-org=12345\n' > "$H/env/github-app.env"
+printf 'GH_APP_ID=1\nGH_APP_INSTALLATION_EXAMPLE_ORG=12345\n' > "$H/env/github-app.env"
 cp "$H/env/github-app.env" "$H/env/github-app-builders.env"
 : > "$H/flags/fly-pool-$P"
 printf 'pool-%s\n' "$P" > "$H/flags/fly-pool-app-$P"

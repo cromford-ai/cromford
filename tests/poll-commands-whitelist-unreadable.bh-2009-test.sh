@@ -29,8 +29,8 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL: jq is required"; exit 1; }
 
-PR_project-4="https://github.com/example-org/project-4/pull/1598"
-PR_project-3="https://github.com/example-org/project-3/pull/77"
+PR_PROJECT_4="https://github.com/example-org/project-4/pull/1598"
+PR_PROJECT_3="https://github.com/example-org/project-3/pull/77"
 
 # fleet-conf.sh stub, driven by env: FC_PROJECTS_RC (rc of --projects),
 # FC_EMPTY=1 (--projects prints nothing), FC_FAIL_REPO=<project> (that
@@ -98,22 +98,22 @@ retryable() { # retryable <case> <output>
 }
 
 # ── A. --projects exits 1 ────────────────────────────────────────────────────
-OUT_A=$(run "$PR_project-4" FC_PROJECTS_RC=1 FC_EMPTY=1)
+OUT_A=$(run "$PR_PROJECT_4" FC_PROJECTS_RC=1 FC_EMPTY=1)
 retryable A "$OUT_A"
 grep -q 'rc 1' <<<"$(resof "$OUT_A")" && ok || bad "A: RESULT must name what failed (rc 1), got '$(resof "$OUT_A")'"
 
 # ── B. --projects exits 0 but lists nothing ─────────────────────────────────
-retryable B "$(run "$PR_project-4" FC_EMPTY=1)"
+retryable B "$(run "$PR_PROJECT_4" FC_EMPTY=1)"
 
 # ── C. one project's repo read fails, and the url is that project's ─────────
-OUT_C=$(run "$PR_project-3" FC_FAIL_REPO=project-3)
+OUT_C=$(run "$PR_PROJECT_3" FC_FAIL_REPO=project-3)
 retryable C "$OUT_C"
 grep -q 'project-3' <<<"$(resof "$OUT_C")" && ok || bad "C: RESULT must name the project whose read failed, got '$(resof "$OUT_C")'"
 
 # ── D. the same partial read still merges a url whose slug WAS read ─────────
-OUT=$(run "$PR_project-4" FC_FAIL_REPO=project-3)
+OUT=$(run "$PR_PROJECT_4" FC_FAIL_REPO=project-3)
 [ "$(okof "$OUT")" = true ] && ok || bad "D: a url whose slug was read must merge despite another project's failed read, got '$OUT'"
-grep -q "^merged $PR_project-4" <<<"$(resof "$OUT")" && ok || bad "D: RESULT must be 'merged …', got '$(resof "$OUT")'"
+grep -q "^merged $PR_PROJECT_4" <<<"$(resof "$OUT")" && ok || bad "D: RESULT must be 'merged …', got '$(resof "$OUT")'"
 [ "$(nlines "$T/rest-calls.log")" = 1 ] && ok || bad "D: exactly one REST merge call, got $(nlines "$T/rest-calls.log")"
 grep -q '^example-org/project-4 1598 ' "$T/rest-calls.log" && ok || bad "D: the REST call must target example-org/project-4 1598, got: $(cat "$T/rest-calls.log")"
 

@@ -175,6 +175,15 @@ let page = null;
 // The step modules, loaded on the first sign_in or type_otp (steps()).
 let lib = null;
 let finished = false;
+let activeDecision = null;
+function stopDecision() {
+  if (!activeDecision) return;
+  try { process.kill(-activeDecision.pid, "SIGKILL"); } catch { /* already gone */ }
+  activeDecision = null;
+}
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+  process.once(signal, () => { stopDecision(); void finish("error", { reason: `cancelled (${signal})` }); });
+}
 
 function oneLine(s, n = 200) { return String(s ?? "").replace(/\s+/g, " ").replace(/"/g, "'").trim().slice(0, n); }
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -199,6 +208,7 @@ function scrub(x) {
 async function finish(status, extra = {}) {
   if (finished) return;
   finished = true;
+  stopDecision();
   let finalUrl = "";
   try { finalUrl = page ? page.url() : ""; } catch { /* the page is gone */ }
   const res = scrub({
@@ -397,6 +407,7 @@ function runDecide(obsPath, actPath, timeoutS) {
         stdio: ["ignore", "pipe", "pipe"], detached: true,
       });
     } catch (e) { resolve({ code: 127, killed, out: e.message }); return; }
+    activeDecision = child;
     const keep = (d) => { if (out.length < 4096) out += d; };
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
@@ -405,21 +416,31 @@ function runDecide(obsPath, actPath, timeoutS) {
       try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
     }, (timeoutS + DECIDE_GRACE_S) * 1000);
     child.on("error", (e) => { clearTimeout(timer); resolve({ code: 127, killed, out: e.message }); });
-    child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 137, killed, out }); });
+    child.on("close", (code) => { if (activeDecision === child) stopDecision(); clearTimeout(timer); resolve({ code: code ?? 137, killed, out }); });
   });
 }
 
 async function element(ref) {
   const loc = page.locator(`[data-wt-ref="${String(ref).replace(/[^0-9]/g, "")}"]`).first();
   if (!/^[0-9]+$/.test(String(ref ?? "")) || (await loc.count()) === 0) return null;
-  const desc = await loc.evaluate((e) => ({
+  const handle = loc.elementHandle ? await loc.elementHandle() : loc;
+  if (!handle) return null;
+  const desc = await handle.evaluate((e) => ({
     tag: e.tagName.toLowerCase(), type: (e.getAttribute("type") || "").toLowerCase(),
     role: e.getAttribute("role") || "",
     name: (e.getAttribute("aria-label") || e.innerText || e.value || e.getAttribute("title") || "").trim().replace(/\s+/g, " ").slice(0, 80),
     inForm: !!(e.form || e.closest("form")), href: e.tagName === "A" ? e.href : "",
     editable: e.isContentEditable || ["input", "textarea"].includes(e.tagName.toLowerCase()),
   })).catch(() => null);
-  return desc ? { loc, desc } : null;
+  const operation = async () => handle.evaluate((e) => {
+    if (!e.isConnected) return null;
+    const form = e.form || e.closest('form');
+    return JSON.stringify({ url: document.URL, control: e.outerHTML,
+      action: form?.action, method: form?.method,
+      fields: form ? Array.from(form.elements, (f) => [f.name, f.type, f.value, f.checked, f.disabled]) : [] });
+  });
+  const before = desc ? await operation().catch(() => null) : null;
+  return desc ? { loc: handle, desc, validate: async () => before !== null && await operation() === before } : null;
 }
 
 async function settle(remainingMs) {
@@ -552,10 +573,10 @@ function writeGate() {
 // gated(desc, run) — run() through the write gate; the outcome text. A
 // terminal gate outcome is put in st.stop (without its own `stopped: `), and
 // main() ends the run on it.
-async function gated(desc, run) {
+async function gated(desc, run, validate) {
   const g = writeGate();
   if (g.error) { st.stop = g.error; return g.error; }
-  const r = await g.gate.gate(page, desc, run);
+  const r = await g.gate.gate(page, desc, run, validate);
   if (r.outcome === READ_ONLY_REFUSAL) {
     refuse({ kind: "control", label: desc.label });
     return `refused: '${desc.label}' reads as a submit or write control (read-only run)`;
@@ -651,7 +672,7 @@ async function act(a, remainingMs, textTotal) {
         try { host = new URL(page.url()).hostname.toLowerCase().replace(/\.+$/, ""); } catch { host = ""; }
         if (host !== st.writeSite) return `refused: this run writes on ${st.writeSite} only`;
       }
-      return gated({ ...el.desc, label: a.label, action: `click '${a.label}'` }, () => (write ? writeClick(el, remainingMs) : click(el, a.label, remainingMs)));
+      return gated({ ...el.desc, label: a.label, action: `click '${a.label}'` }, () => (write ? writeClick(el, remainingMs) : click(el, a.label, remainingMs)), el.validate);
     }
     if (!el.desc.editable) return `invalid: '${a.label}' is not a text field`;
     const text = sanitizeTyped(a.text);

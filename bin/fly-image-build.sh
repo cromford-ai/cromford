@@ -298,14 +298,14 @@ echo "== building + pushing image to registry.fly.io/$APP =="
 # flyctl deploy requires a config even for --build-only; generate a minimal
 # one (2026-07-31 fix: without it, deploy aborts "could not create a fly.toml
 # from any machines" and nothing is pushed).
-TOML=$(mktemp /tmp/flybuild-XXXX.toml)
+TOML=$(mktemp "${TMPDIR:-/tmp}/flybuild-XXXX.toml")
 printf 'app = "%s"\n' "$APP" > "$TOML"
 # The build output is captured to a per-run file so the pushed ref is read
 # from THIS run (2026-09-14: the ref was grepped from the shared
 # logs/fly-image-build.log, which fleet-propagate.sh never writes — every
 # propagate bake recorded the last standalone bake's tag and all 8 pool
 # pointers sat on a 10:41Z image while the registry held the new one).
-OUT=$(mktemp /tmp/flybuild-XXXX.out)
+OUT=$(mktemp "${TMPDIR:-/tmp}/flybuild-XXXX.out")
 "$FLY" deploy \
   --app "$APP" \
   --config "$TOML" \

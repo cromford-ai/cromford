@@ -34,7 +34,7 @@ mkdir -p "$H/bin/lib" "$H/env" "$H/logs" "$H/state/fly" "$STUB" "$TOOLS" "$T/tmp
 for s in bin/fly-pool-secrets-sync.sh bin/fly-envbundle.sh bin/jobs-client.sh; do
   scratch_install_closure "$s" "$H" >/dev/null || { echo "closure install failed for $s"; exit 1; }
 done
-printf 'FLY_API_TOKEN_project-6_OS=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_6_OS=tok-fixture-fly\n' > "$H/env/fly.env"
 printf '{"app":"%s"}\n' "$POOL" > "$H/state/fly/$P.json"
 # The hub's own env: whitelisted keys, hub-only keys, and a project env that
 # must never leave in no-box mode.

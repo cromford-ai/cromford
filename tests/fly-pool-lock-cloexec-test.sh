@@ -68,7 +68,7 @@ jq -nc '{machine:"m1",key:"TK-268",ticket_id:"268",attempt:0,deferrals:0}' \
 ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=test-secret \
          JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
          FLEET_CONF="$T/h/fleet.conf" FD_SINK="$T/fd.txt" \
-         FLY_API_TOKEN_project-5=tok TMPDIR="$T" \
+         FLY_API_TOKEN_PROJECT_5=tok TMPDIR="$T" \
          FLY_BIN_DIR="$T/fakebin"
   bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 

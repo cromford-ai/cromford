@@ -139,7 +139,7 @@ reap() { # reap <FEED_HAS_KEY> [CLIENT_DOWN] [MQ_FAIL]
   ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
            FLEET_CONF="$T/h/fleet.conf" REQ_SINK="$T/req.txt" SSH_SINK="$T/ssh.txt" \
-           FEED_HAS_KEY="$1" CLIENT_DOWN="${2:-0}" MQ_FAIL="${3:-0}" FLY_API_TOKEN_project-3_OS=tok \
+           FEED_HAS_KEY="$1" CLIENT_DOWN="${2:-0}" MQ_FAIL="${3:-0}" FLY_API_TOKEN_PROJECT_3_OS=tok \
            FLY_BIN_DIR="$T/fakebin"
     bash "$DIR/bin/fly-pool.sh" project-3 >/dev/null 2>&1 )
 }

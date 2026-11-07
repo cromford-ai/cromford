@@ -27,6 +27,7 @@ import { importTheme, CUSTOM_KEY_RE, CUSTOM_PREFIX } from '../../../src/theme/cu
 import { isStr, isScalar, jsonError } from '../../_lib/coord-writes.js';
 import { checkWrites } from '../../_lib/coord-writes-compose.js';
 import { FRAGMENT_WRITES } from '#coord-writes';
+import { ORGO_TYPES, FLY_POOL_TYPES } from '../../../src/lib/box-commands.js';
 
 const JOBS = 'https://harness-jobs.operator.workers.dev';
 const CONSOLE = 'https://harness-console.operator.workers.dev';
@@ -41,13 +42,12 @@ const AUTH_PROBE = '/api/dash/fleet';
 // one shared operator login (DASH_SECRET) with no per-user identity in it, so
 // the identity it authenticates is the console itself: 'console', the same
 // actor every console write already names (lib/settings.js, lib/models.js).
-// BH-2515: the one lookup is writeActor below. When Cloudflare Access sits in
+// BH-2515: resolveIdentity provides the lookup. When Cloudflare Access sits in
 // front of this host and its signed assertion verifies, the actor is the
 // operator's Access email; otherwise it is SESSION_ACTOR. Never a header the
 // browser can set on its own. The alert row actions (BH-2324: POST
 // alerts/actions, audited per actor in alert_actions) are stamped the same way.
 const SESSION_ACTOR = FALLBACK_ACTOR;
-const writeActor = async (request, env) => (await resolveIdentity(request, env)).actor;
 // BH-2323: an operator RETRY / REQUEUE on one job. The id segment is one path
 // segment and never `.` or `..`.
 const JOB_ACTION = /^jobs\/([^/]+)\/(retry|requeue)$/;
@@ -198,11 +198,15 @@ export const ROUTES = checkWrites([...WRITES, ...FRAGMENT_WRITES]);
 // BH-5839: GETs that only a box makes. Every other GET passes as-is; these are
 // 405 from a browser, the same as a write that is not a ROUTES row.
 const BOX_ONLY_GETS = ['steer/outbox'];
+// Keep this deliberately small and in step with jobs lib/qa-read.js. Any QA
+// cookie constrains the request, even beside a browser-forged dash cookie.
+const QA_READS = new Set(['jobs', 'flags']);
+const OWNER_COMMANDS = new Set([...ORGO_TYPES, ...FLY_POOL_TYPES]);
 const writeRoute = (method, rest) => ROUTES.find((w) =>
   w.method === method && (typeof w.path === 'function' ? w.path(rest) : w.path === rest)) || null;
 
 // The forwarded body: the row's fields the browser sent, then the stamped
-// actor (writeActor's answer for this request). Own keys only, so a
+// actor (resolveIdentity's answer for this request). Own keys only, so a
 // `__proto__` key in the JSON is just an unlisted field and is dropped. A
 // plain row keeps the browser's key order with the actor where the browser put
 // it (the `{...sent, actor}` spread these routes always forwarded); a
@@ -340,11 +344,11 @@ function participantApproveBody(sent) {
 const seen = new Map();
 const TTL_MS = 60000;
 
-async function signedIn(cookie) {
+async function signedIn(cookie, fresh = false) {
   if (!cookie) return false;
   const now = Date.now();
   const hit = seen.get(cookie);
-  if (hit && now - hit.at < TTL_MS) return hit.ok;
+  if (!fresh && hit && now - hit.at < TTL_MS) return hit.ok;
   let ok = false;
   try {
     const res = await fetch(CONSOLE + AUTH_PROBE, { headers: { cookie }, redirect: 'manual' });
@@ -367,6 +371,14 @@ export async function onRequest(context) {
   const qaRefused = readOnlyRefusal(request);
   if (qaRefused) return qaRefused;
 
+  const rest = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');
+  const qa = /(?:^|;\s*)dashqa=/.test(request.headers.get('cookie') || '');
+  if (qa && (request.method !== 'GET' || !QA_READS.has(rest))) return jsonError(403, 'this read is not available to a QA session');
+  const bearer = qa ? String(env.QA_READ_TOKEN || '').trim() : env.HARNESS_SECRET;
+  if (qa && (!bearer || bearer === String(env.HARNESS_SECRET || '').trim())) {
+    return jsonError(503, 'a dedicated QA_READ_TOKEN is required on this Pages project');
+  }
+
   if (!env.HARNESS_SECRET) {
     return new Response(JSON.stringify({
       error: 'HARNESS_SECRET is not set on this Pages project — the coordination view cannot authenticate to harness-jobs'
@@ -374,7 +386,7 @@ export async function onRequest(context) {
   }
 
   const cookie = request.headers.get('cookie') || '';
-  if (!(await signedIn(cookie))) {
+  if (!(await signedIn(cookie, request.method !== 'GET'))) {
     // The same shape src/api.js already treats as "not signed in".
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 403, headers: { 'content-type': 'application/json' }
@@ -385,7 +397,6 @@ export async function onRequest(context) {
   // and all; a write passes only if it is a row of ROUTES, and a job cannot be
   // PATCHed from a browser (stage/status transitions belong to the box doing
   // the work).
-  const rest = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');
   // BH-2515: who this session writes as, answered here (the jobs worker has no
   // such route). Plain GETs skip the resolution so the polls pay no crypto.
   if (request.method === 'GET' && rest === 'whoami') {
@@ -422,7 +433,8 @@ export async function onRequest(context) {
 
   const target = new URL(`/api/${rest}`, JOBS);
   // The one actor every stamp below writes, resolved once per admitted write.
-  const actor = row ? await writeActor(request, env) : SESSION_ACTOR;
+  const identity = row ? await resolveIdentity(request, env) : null;
+  const actor = identity ? identity.actor : SESSION_ACTOR;
   if (!row) {
     target.search = url.search;
   } else {
@@ -436,11 +448,19 @@ export async function onRequest(context) {
   const init = {
     method: request.method,
     headers: {
-      authorization: `Bearer ${env.HARNESS_SECRET}`,
+      authorization: `Bearer ${bearer}`,
       'content-type': 'application/json'
     }
   };
   if (lead) init.headers['x-lead-verdict-token'] = lead;
+  const humanRoutes = new Set(['staff/agents/autonomy', 'staff/classes/delegation',
+    'staff/promotions/decide', 'staff/suppressions', 'staff/suppressions/decide', 'archie/classes/delegation']);
+  if (row && identity.access === 'on' && humanRoutes.has(rest)) {
+    const human = String(env.HUMAN_VERDICT_TOKEN || '').trim();
+    if (human && human !== String(env.HARNESS_SECRET || '').trim() && human !== String(env.LEAD_VERDICT_TOKEN || '').trim()) {
+      init.headers['x-human-verdict-token'] = human;
+    }
+  }
   // BH-7999: a row with `idempotencyKey` forwards the browser's Idempotency-Key
   // (the worker's own key rule) and the stamped actor as x-harness-actor. A
   // missing or bad key is refused before anything is forwarded.
@@ -459,6 +479,12 @@ export async function onRequest(context) {
       return new Response(JSON.stringify({ error: `a ${request.method} to /api/coord/${rest} must carry a JSON object body` }), {
         status: 400, headers: { 'content-type': 'application/json' }
       });
+    }
+    if (rest === 'box-commands' && OWNER_COMMANDS.has(sent.type)) {
+      if (identity.access !== 'on') return jsonError(403, 'owner operations require a verified Access identity');
+      const token = String(env.BOX_OPS_TOKEN || '').trim();
+      if (!token || token === String(env.HARNESS_SECRET || '').trim()) return jsonError(503, 'a dedicated BOX_OPS_TOKEN is required on this Pages project');
+      init.headers['x-box-ops-token'] = token;
     }
     if (row.reasonRequired && (typeof sent.reason !== 'string' || !sent.reason.trim())) return jsonError(400, 'reason required');
     if (row.needsReason && (typeof sent.reason !== 'string' || sent.reason.trim() === '')) {

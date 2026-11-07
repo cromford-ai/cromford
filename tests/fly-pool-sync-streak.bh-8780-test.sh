@@ -169,7 +169,7 @@ rig() {
            "$H/state/fly" "$H/state/fly-pool/project-5" \
            "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
            "$H/state/pool/project-5" "$H/builds" "$FB" "$RD"
-  printf 'FLY_API_TOKEN_project-5=tok-fixture-1\n' > "$H/env/fly.env"
+  printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-1\n' > "$H/env/fly.env"
   : > "$H/env/global.env"
   printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
   printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -335,7 +335,7 @@ run_pool() { # run_pool [VAR=val ...] — one tick
            HARNESS_SECRET=secret-fixture-1 JOBS_URL=https://jobs.invalid JOBS_BOX=hub \
            JOBS_RETRIES=0 JOBS_TIMEOUT=5 REQ_SINK="$H/req.txt" ROWS="$ROWS" \
            FLY_SINK="$FLYLOG" EV="$EV" RESDIR="$RD" \
-           FLY_API_TOKEN_project-5=tok-fixture-1 FLY_BIN_DIR="$FB" \
+           FLY_API_TOKEN_PROJECT_5=tok-fixture-1 FLY_BIN_DIR="$FB" \
            POOL_ON_MACHINE=1 POOL_LEASE_FENCE=1 POOL_LEASE_PROJECT=project-5 POOL_LEASE_HOLDER=h1 \
            POOL_STOP_FILE="$H/stop" FLAG_BQ=1 "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )

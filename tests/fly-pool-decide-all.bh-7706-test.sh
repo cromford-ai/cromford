@@ -48,7 +48,7 @@ QD="$H/state/build-queue/project-5"; MD="$H/state/fly-pool/project-5"; PD="$H/st
 mkdir -p "$H/bin" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" "$H/plans" \
          "$H/state/fly" "$MD" "$QD" "$PD" "$H/state/remote-results/project-5" \
          "$H/builds" "$T/fakebin" "$T/tmp"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-fly\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
 printf 'pool-project-5\n' > "$H/flags/fly-pool-app-project-5"
@@ -216,7 +216,7 @@ q() {
 run_pool() {
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" TMPDIR="$T/tmp" \
-           FLY_API_TOKEN_project-5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" \
+           FLY_API_TOKEN_PROJECT_5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" \
            JOBS_URL=http://jobs.fixture.test HARNESS_SECRET=fixture-secret JOBS_RETRIES=0 "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

@@ -154,6 +154,13 @@ for f in "$HENV"/*.env; do
   fi
 done
 # <<< preflight
+# Resolve every optional tool's immutable version before any package install.
+# Overrides are exact versions, otherwise the image builder's existing rows apply.
+# shellcheck source=bin/lib/bootstrap-tool-pins.sh
+. "$HERE/lib/bootstrap-tool-pins.sh"
+# shellcheck source=bin/jobs-client.sh
+. "$HERE/jobs-client.sh"
+bm_tool_pins_resolve || exit 1
 # THE BOX'S COMMIT IDENTITY, SET ONCE (BH-1134). Every lane commits as the global
 # git identity (bin/lib/git-identity.sh pins it for agent sessions and refuses to
 # push anything else), so a box with none would refuse every fix round. Only an
@@ -203,7 +210,7 @@ fi
 # register a supervisord program exactly the way the cron block above does.
 # HARNESS is pinned to the live tree because $HERE may be the checkout's bin/.
 HARNESS=/root/harness "$HERE/audit-install.sh" || true
-command -v bun >/dev/null || { curl -fsSL https://bun.sh/install | bash; export PATH="$HOME/.bun/bin:$PATH"; echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.bashrc; }
+bm_tool_pins_install
 # QA + security tooling (2026-07-27): playwright drives preview deployments in the
 # QA stage; semgrep feeds the review stage. Both fail-open in run-build.sh.
 # Debian pip is externally-managed — semgrep goes in its own venv (whisper pattern).
@@ -223,16 +230,10 @@ if . "$HERE/lib/gitleaks-pin.sh" 2>/dev/null; then
 else
   echo "WARN: bin/lib/gitleaks-pin.sh not found; gitleaks not installed"
 fi
-command -v playwright >/dev/null || npm install -g playwright >/dev/null 2>&1 || true
-npx playwright install --with-deps chromium >/dev/null 2>&1 || true
 
 # CodeGraph (2026-07-29, the operator): local semantic code index + MCP tools for every
 # Claude session. Telemetry stays off on fleet boxes (client code). Repos get
 # indexed after clone below; builds/triage use codegraph explore/query first.
-if ! command -v codegraph >/dev/null 2>&1; then
-  DO_NOT_TRACK=1 curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
-fi
 codegraph telemetry off >/dev/null 2>&1 || true
 codegraph install -t claude -l global -y >/dev/null 2>&1 || true
 grep -q VERCEL_PLUGIN_TELEMETRY ~/.bashrc || echo "export VERCEL_PLUGIN_TELEMETRY=off" >> ~/.bashrc

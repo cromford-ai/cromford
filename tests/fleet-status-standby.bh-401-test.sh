@@ -24,7 +24,7 @@ bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 mkdir -p "$T/bin" "$T/logs" "$T/state" "$T/flags" "$T/env" "$T/builds" "$T/fakebin"
 cp "$DIR/bin/fleet-conf.sh" "$DIR/bin/fleet-fly-block.sh" "$T/bin/"
 cp "$DIR/bin/alert_family.py" "$T/bin/"
-printf 'HARNESS_SECRET=test-secret\nWATCHDOG_URL=https://wd-fixture.example\n' > "$T/env/global.env"
+printf 'HARNESS_SECRET=test-secret\nWATCHDOG_SECRET=fixture-watchdog-secret\nWATCHDOG_URL=https://wd-fixture.example\n' > "$T/env/global.env"
 printf '#!/bin/bash\nprintf %%s "$1" > %s/BEAT.json\n' "$T" > "$T/bin/beat.sh"; chmod +x "$T/bin/beat.sh"
 # The standby GET is told apart by its URL; everything else is the status POST.
 cat > "$T/fakebin/curl" <<SH
@@ -63,7 +63,7 @@ jq -e . >/dev/null 2>&1 < "$T/PUSH.json" && ok || bad "F1: the push must be vali
   && ok || bad "F1: .hub keeps its nine keys (got: $(q '.hub|keys|tojson'))"
 GA=$(cat "$T/GET.args" 2>/dev/null)
 case "$GA" in *"-m 5"*) ok ;; *) bad "F1: the standby GET must be bounded by -m 5 (got: $GA)" ;; esac
-case "$GA" in *"https://wd-fixture.example/api/standby?s=test-secret"*) ok ;; *) bad "F1: the GET must go to WATCHDOG_URL with the secret (got: $GA)" ;; esac
+case "$GA" in *"https://wd-fixture.example/api/standby"*) ok ;; *) bad "F1: the GET must go to WATCHDOG_URL using a header (got: $GA)" ;; esac
 case "$GA" in *"-X POST"*) bad "F1: the standby read must be a GET (got: $GA)" ;; *) ok ;; esac
 
 # ── F2: unreachable watchdog ────────────────────────────────────────────────

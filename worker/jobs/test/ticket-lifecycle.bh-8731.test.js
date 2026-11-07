@@ -388,7 +388,7 @@ test('L7 /stuck: rows past their settings row only; a row change needs no deploy
     return r.body;
   };
   let b = await get();
-  assert.deepEqual(keys(b), ['A-1s', 'B-181', 'E-31', 'TK-1441', 'Q-121']);
+  assert.deepEqual(keys(b), ['A-1s', 'B-181', 'E-31', 'Q-121', 'TK-1441']);
   assert.deepEqual(b.thresholds, { plan_blocked: 1440, ejected: 30, abandoned: 0, building: 180, in_queue: 120, pr_open: 1440 });
   assert.equal(b.as_of, iso(NOW));
   const b181 = b.rows.find((r) => r.ticket_key === 'B-181');

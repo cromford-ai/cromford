@@ -109,7 +109,7 @@ test('V1 a PUT stores a good reviews object; each bad shape is 400 reviews and w
     { operator: { state: 'BOGUS', commit_id: A, at: ago(60) } },
     many,
     { 'a"b': { state: 'APPROVED', commit_id: A, at: ago(60) } },
-    { operator: { state: 'APPROVED', commit_id: A, at: ago(60) } },
+    { 'UPPERCASE-fixture': { state: 'APPROVED', commit_id: A, at: ago(60) } },
     { operator: { state: 'APPROVED', commit_id: 'abc', at: ago(60) } },
     { operator: { state: 'APPROVED', commit_id: A, at: '2026-10-26T11:00:00.5Z' } },
     { operator: { state: 'APPROVED', commit_id: A, at: ago(60), extra: 1 } },

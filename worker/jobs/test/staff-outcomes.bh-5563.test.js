@@ -28,10 +28,11 @@ import { openDb } from './lib/d1-sqlite.bh-1030.js';
 import { classSlug, familyFingerprint } from '../src/lib/staff-family.js';
 
 const SECRET = 'test-secret';
+const HUMAN = 'fixture-independent-human-token';
 const call = (DB, method, path, body) => {
-  const init = { method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' } };
+  const init = { method, headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'x-human-verdict-token': HUMAN } };
   if (body !== undefined) init.body = JSON.stringify(body);
-  return worker.fetch(new Request(`https://jobs.test${path}`, init), { DB, HARNESS_SECRET: SECRET })
+  return worker.fetch(new Request(`https://jobs.test${path}`, init), { DB, HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN })
     .then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
 };
 const post = (DB, path, body) => call(DB, 'POST', path, body);

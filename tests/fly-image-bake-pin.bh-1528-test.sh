@@ -105,7 +105,7 @@ new_h() {
 build_run() { # build_run <project> [env...]
   local proj="$1"; shift
   : > "$T/deploy-args"
-  OUT=$(env -i PATH="$FB:$PATH" HOME="$T" ROWS="$ROWS" HARNESS="$H" WARM_BAKE=0 FLY_ORG=stub-org \
+  OUT=$(env -i PATH="$FB:$PATH" HOME="$T" TMPDIR="$T" ROWS="$ROWS" HARNESS="$H" WARM_BAKE=0 FLY_ORG=stub-org \
         DEPLOY_ARGS_SINK="$T/deploy-args" STUB_APP="builder-$proj" \
         "$@" bash "$DIR/bin/fly-image-build.sh" "$proj" 2>&1); RC=$?
 }
@@ -250,10 +250,19 @@ else bad "B7: fly/bake-pin.sh missing"; fi
 # COPY. The store moves under /opt/warm in the SAME RUN as the install (a
 # rename keeps the hardlinks; a later layer would copy-up and break them), and
 # the final stage checks the links with bake_warm_links.
-INSTALL_RUN=$(awk '/^RUN --mount=type=secret,id=gh_token/{f=1} f{print} f && !/\\$/{exit}' "$DF")
+INSTALL_RUN=$(awk '
+  /^RUN / {run=""; active=1}
+  active {
+    run=run $0 "\n"
+    if ($0 !~ /\\$/) {
+      if (index(run, "warm-bake.sh /opt/warm/repo")) {printf "%s", run; exit}
+      active=0
+    }
+  }' "$DF")
 grep -q 'warm-bake.sh /opt/warm/repo' <<<"$INSTALL_RUN" && grep -q 'mv /root/.local/share/pnpm /opt/warm/pnpm-home' <<<"$INSTALL_RUN" \
   && grep -q 'ln -s /opt/warm/pnpm-home /root/.local/share/pnpm' <<<"$INSTALL_RUN" && ok \
   || bad "B8: the pnpm home must move under /opt/warm in the install RUN itself"
+grep -q -- '--mount=type=secret' <<<"$INSTALL_RUN" && bad "B8: repository lifecycle scripts must run without the clone secret mount" || ok
 FINAL=$(stage final)
 [ "$(grep -c '^COPY --from=warm /opt/warm' <<<"$FINAL")" = 1 ] && ok || bad "B8: exactly one COPY of /opt/warm"
 grep -q 'pnpm' <<<"$(grep '^COPY --from=warm' <<<"$FINAL")" && bad "B8: the store must not get a COPY of its own" || ok

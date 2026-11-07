@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.js";
 import BOXES from "../src/boxes.json" with { type: "json" };
 
-const SECRET = "sec";
+const SECRET = "fixture-watchdog-secret";
 let posts;
 let env;
 
@@ -30,11 +30,11 @@ beforeEach(() => {
     if (String(url).startsWith("https://api.telegram.org/")) posts.push(JSON.parse(init.body).text);
     return new Response("ok");
   };
-  env = { KV: fakeKV(), HARNESS_SECRET: SECRET, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_CHAT_ID: "c" };
+  env = { KV: fakeKV(), WATCHDOG_SECRET: SECRET, TELEGRAM_BOT_TOKEN: "t", TELEGRAM_CHAT_ID: "c" };
 });
 
 const ping = (box, s = SECRET) =>
-  worker.fetch(new Request(`https://wd.invalid/api/ping/${box}?s=${s}`, { method: "POST", body: "{}" }), env);
+  worker.fetch(new Request(`https://wd.invalid/api/ping/${box}`, { method: "POST", headers: { authorization: `Bearer ${s}` }, body: "{}" }), env);
 
 test("boxes.json is a non-empty list of names", () => {
   assert.ok(Array.isArray(BOXES) && BOXES.length > 0);
@@ -73,8 +73,8 @@ test("an unauthed ping from an unknown box is refused and never alerts", async (
 });
 
 test("non-ping routes raise no unknown-box alert", async () => {
-  await worker.fetch(new Request(`https://wd.invalid/api/status?s=${SECRET}`), env);
-  await worker.fetch(new Request(`https://wd.invalid/api/tickets-snapshot?s=${SECRET}`, { method: "POST", body: "{}" }), env);
+  await worker.fetch(new Request(`https://wd.invalid/api/status`, { headers: { authorization: `Bearer ${SECRET}` } }), env);
+  await worker.fetch(new Request(`https://wd.invalid/api/tickets-snapshot`, { method: "POST", headers: { authorization: `Bearer ${SECRET}` }, body: "{}" }), env);
   assert.deepEqual(posts, []);
 });
 
