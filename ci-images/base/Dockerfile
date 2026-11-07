@@ -20,7 +20,8 @@
 
 # The base of bin/run-tests-in-docker.sh's local test image. trixie for jq 1.7,
 # which prints a whole float the way CI's runners do (see that script).
-FROM debian:trixie-slim
+# Base pinned by digest (BH-9209); refresh: docs/CI-IMAGES.md "Base image digests".
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 LABEL org.opencontainers.image.source=https://github.com/example-org/cromford
 LABEL org.opencontainers.image.description="Shared CI base image: node, Playwright Chromium, GNU tools, shellcheck, gh, yq"

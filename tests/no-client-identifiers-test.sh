@@ -117,6 +117,10 @@ KNOWN_PUBLIC_CHECKSUMS = {
     # Postgres 16.14 for the pool suite run, the pin in bin/lib/pgtest-pin.sh —
     # the npm tarball @embedded-postgres/linux-x64 16.14.0-beta.17 (BH-5962).
     'dfe7ecd8365ab907786e5f3d69179399f9675ac800153219efb2590257c2d551',
+    # Public Docker Hub base images, pinned by index digest in the FROM lines
+    # (BH-9209): debian:trixie-slim and ubuntu:24.04.
+    'a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2',
+    'fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852',
 }
 
 # The second exemption: a credential-shaped literal whose own text says it is a

@@ -27,7 +27,8 @@
 #     bin/lib/bake-deps.sh `playwright PLAYWRIGHT_VERSION` pin)
 # The credentials are Fly secrets (CLAUDE_CODE_OAUTH_TOKEN, CODEX_AUTH_JSON),
 # written to files by fly/lane-run-entrypoint.sh at boot, never baked here.
-FROM ubuntu:24.04
+# Base pinned by digest (BH-9209); refresh: docs/CI-IMAGES.md "Base image digests".
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash ca-certificates curl git jq python3 util-linux tini gh openssl xz-utils procps \

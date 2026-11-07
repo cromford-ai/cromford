@@ -250,13 +250,66 @@ A repo that `plan` reports as `no-ci` gets no child; its row then says
 3. If `:latest` must move back too, retag the good digest:
    `docker buildx imagetools create -t ghcr.io/example-org/ci-base:latest ghcr.io/example-org/ci-base:<good sha12>`.
 
+## Base image digests
+
+A tag can point at a new image at any time. So every public base image in a
+committed Dockerfile is pinned by digest, and the tag stays on the line for
+the reader (BH-9209, Aikido 57216460). These 5 lines carry a pin:
+
+| File | FROM |
+|---|---|
+| `ci-images/base/Dockerfile` | `debian:trixie-slim@sha256:a72b4433de1c...` |
+| `ci-images/cromford/Dockerfile` | `debian:trixie-slim@sha256:a72b4433de1c...` |
+| `fly/testhost/Dockerfile` | `debian:trixie-slim@sha256:a72b4433de1c...` |
+| `fly/Dockerfile` | `ubuntu:24.04@sha256:fe81560990fa... AS base` |
+| `fly/lane-run.Dockerfile` | `ubuntu:24.04@sha256:fe81560990fa...` |
+
+`ci-images/project-layer/Dockerfile` (`ARG CI_BASE=ghcr.io/example-org/ci-base:<sha12>`)
+and `fly/hub/Dockerfile` (`ARG HUB_BASE_IMAGE`, no default, the build passes
+the builder image) name images this repo builds. They carry no digest.
+
+`tests/docker-base-digest.bh-9209-test.sh` reads every committed Dockerfile.
+It fails on a `FROM` that names a public image without `@sha256:<64 hex>`. A
+new Dockerfile must pin its base, or the test fails. A `FROM <stage>`,
+`scratch`, an ARG with no default and a `ghcr.io/example-org/` or
+`registry.fly.io/` image pass.
+
+Schedule: refresh once a month. Refresh at once when a Debian or Ubuntu
+security advisory names a package in the base.
+
+Read the current digest of a tag (the multi-arch index digest):
+
+```bash
+docker buildx imagetools inspect debian:trixie-slim --format '{{json .Manifest.Digest}}'
+```
+
+On a box with no docker, use the registry API:
+
+```bash
+repo=library/debian tag=trixie-slim
+tok=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$repo:pull" | jq -r .token)
+curl -fsSI -H "Authorization: Bearer $tok" \
+  -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+  "https://registry-1.docker.io/v2/$repo/manifests/$tag" | grep -i docker-content-digest
+```
+
+For `ubuntu:24.04`, set `repo=library/ubuntu tag=24.04`.
+
+To bump a digest:
+
+1. Read the new digest with one of the commands above.
+2. Change every `FROM` that uses that tag in one PR.
+3. Let `ci-image.yml` rebuild ci-base on that PR (it touches `ci-images/base/**`).
+4. Rebuild the Fly images through their usual paths (`bin/fly-image-build.sh`, `bin/fly-image-refresh.sh`).
+5. Run `bash tests/docker-base-digest.bh-9209-test.sh`.
+
 ## Limits
 
 - amd64 only.
 - Apt packages are not version-pinned. Two builds on two days can hold
   different trixie point releases. The pinned tools do not change.
-- The `FROM` line has no digest. The workflow summary records the digest of
-  `debian:trixie-slim` for each run.
+- The `FROM` line pins the digest (BH-9209). The workflow summary still
+  records the tag's current digest, so a run shows when the tag has moved.
 - Tags accumulate: one `:<sha12>` per PR push and per main push. Nothing
   deletes them yet. To delete old versions: the `ci-base` package page,
   "Manage versions".

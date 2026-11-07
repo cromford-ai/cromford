@@ -91,7 +91,8 @@
 #     playwright into node_modules; the system chromium + OS deps satisfy
 #     `--with-deps`.
 
-FROM ubuntu:24.04 AS base
+# Base pinned by digest (BH-9209); refresh: docs/CI-IMAGES.md "Base image digests".
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \

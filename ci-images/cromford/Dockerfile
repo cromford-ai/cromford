@@ -21,7 +21,8 @@
 # The context is the staged inputs only (`bin/ci-image.sh stage <dir>`), never
 # the whole checkout. linux/amd64 only: the gitleaks and ShellCheck digests
 # below are of the x86_64 assets. The Mac (arm64) pull is BH-7255 slice C1.
-FROM debian:trixie-slim
+# Base pinned by digest (BH-9209); refresh: docs/CI-IMAGES.md "Base image digests".
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \

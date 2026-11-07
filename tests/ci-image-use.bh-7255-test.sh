@@ -18,7 +18,7 @@
 #      D1 every tool a guard in the four jobs checks is baked, at that pin
 #      D2 the node major is the workflow's node-version; ShellCheck and
 #         gitleaks are the pins and digests of bin/ci-shellcheck.sh / the workflow
-#      D3 no `latest`, and the FROM names a tag
+#      D3 no `latest`, and the FROM names a tag (and may pin a digest)
 #      D4 the COPY sources are exactly `bin/ci-image.sh inputs` minus the Dockerfile
 #   T  bin/ci-image.sh tag / ref / stage: stable, moves on every input, ignores
 #      other files, ref form, staged context is the inputs only
@@ -150,7 +150,7 @@ ok() if wsha and args.get("GITLEAKS_SHA256") == wsha.group(1) else bad("D2: GITL
 # D3
 ok() if "latest" not in df_code else bad("D3: the Dockerfile names `latest`")
 frm = re.findall(r"^FROM\s+(\S+)", df, re.M)
-ok() if len(frm) == 1 and re.fullmatch(r"[a-z0-9./-]+:[A-Za-z0-9._-]+", frm[0]) and not frm[0].endswith(":latest") \
+ok() if len(frm) == 1 and re.fullmatch(r"[a-z0-9./-]+:[A-Za-z0-9._-]+(@sha256:[0-9a-f]{64})?", frm[0]) and not frm[0].endswith(":latest") \
     else bad(f"D3: the FROM must name one image with a tag: {frm!r}")
 # D4
 inputs = subprocess.run(["bash", cimg, "inputs"], capture_output=True, text=True).stdout.split()

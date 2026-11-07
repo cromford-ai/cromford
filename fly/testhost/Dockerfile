@@ -21,7 +21,8 @@
 # --experimental-strip-types. The other values the machines run today are in
 # docs/REMOTE-GATE.md, "Deploying the test host image", with the exact flyctl
 # deploy line.
-FROM debian:trixie-slim
+# Base pinned by digest (BH-9209); refresh: docs/CI-IMAGES.md "Base image digests".
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ARG NODE_VERSION
 ARG CODEGRAPH_VERSION
 ARG SEMGREP_VERSION
