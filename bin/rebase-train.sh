@@ -13,7 +13,8 @@
 # Rails: only PRs that carry a hub build record with VERDICT: APPROVE and a
 # PR_CREATED line naming them (same discovery as merge-sweep); only DIRTY;
 # authored by one of HARNESS_PR_AUTHORS; two strikes then park
-# (state/rebase-train-skip.txt).
+# (state/rebase-train-skip.txt). The park is a conductor hand-off to
+# bin/blocked-resolver.sh (BH-9167, bin/lib/rebase-train-handoff.sh).
 # Kill switch: flags/automerge-disabled stops the train too (a rebase exists
 # only to feed the sweep).
 #
@@ -105,6 +106,24 @@ for _P in "$(dirname "$0")/lib/pr-terminal.sh" "$H/bin/lib/pr-terminal.sh"; do
   # shellcheck source=bin/lib/pr-terminal.sh
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# >>> train park hand-off libs (BH-9167)
+# A park is a conductor hand-off to bin/blocked-resolver.sh
+# (bin/lib/rebase-train-handoff.sh). The conductor lib calls `exit 1` when one
+# of its modules fails to load, so a subshell loads it first and this shell
+# sources it only after that probe passed. Fail-open: without either lib a park
+# writes no hand-off and its ALERTS line says so. mc_init runs once, before the
+# first hand-off read of the run.
+for _P in "$(dirname "$0")/lib" "$H/bin/lib"; do
+  [ -r "$_P/merge-conductor-lib.sh" ] && [ -r "$_P/rebase-train-handoff.sh" ] || continue
+  # shellcheck source=/dev/null
+  ( . "$_P/merge-conductor-lib.sh" ) >/dev/null 2>&1 || break
+  # shellcheck source=/dev/null
+  . "$_P/merge-conductor-lib.sh" >/dev/null 2>&1 && . "$_P/rebase-train-handoff.sh"
+  break
+done
+RT_MC_INIT=0
+rt_mc_init() { [ "$RT_MC_INIT" = 1 ] || { mc_init >/dev/null 2>&1; RT_MC_INIT=1; }; }
+# <<< train park hand-off libs
 
 BASE="${BASE_BRANCH:-main}"
 
@@ -159,26 +178,54 @@ for D in "$H"/builds/pool-*-*/ "$H"/builds/*-*/; do
   PR=""; [[ "$R" =~ $PR_URL_RE ]] && PR="${BASH_REMATCH[0]}"
   [ -n "$PR" ] || continue
   case "$PR" in */"$PROJECT"/*) ;; *) continue ;; esac
-  grep -qxF "$PR" "$SKIP" && continue
+  # >>> train park hand-off (BH-9167)
+  # A PARKED PR IS HANDED OFF, NEVER DROPPED. A skip-listed PR is never rebased
+  # again. It is dropped with no read only when its hand-off to
+  # bin/blocked-resolver.sh stands (rth_handed). Otherwise it is read, and if it
+  # is still OPEN + DIRTY + ours the park is written now (the parks made before
+  # BH-9167 had none). No hand-off spends BUDGET.
+  PARKED=0; PKEY=${PR#https://github.com/}; PKEY="${PKEY%/pull/*}#${PR##*/}"
+  grep -qxF "$PR" "$SKIP" && PARKED=1
+  if [ "$PARKED" = 1 ] && ! command -v rth_handoff >/dev/null 2>&1; then continue; fi
   verdict_is APPROVE -L "$D/review.md" 2>/dev/null || continue
   # BH-1585: a record whose PR is known merged (or closed, inside the recheck
   # window) costs no call at all; every other one is ONE REST read, and a
   # merged/closed answer is written onto the record so the next run skips it.
   command -v prt_read >/dev/null 2>&1 || continue
   prt_known_terminal "$D" "$PR" && continue
+  if [ "$PARKED" = 1 ]; then
+    rt_mc_init
+    rth_handed "$PKEY" "$(mc_row_field "$PKEY" 4)" && continue
+  fi
   PRJ=$(mktemp "${TMPDIR:-/tmp}/rebase-train-pr.XXXXXX") || continue
   PRC=0; prt_read "$D" "$PR" "$PRJ" || PRC=$?
   STATE=""; [ "$PRC" = 0 ] && STATE=$(prt_fields "$PRJ")
   rm -f "$PRJ"
-  read -r PSTATE PMERGE PAUTHOR BR _ <<<"$STATE"
+  read -r PSTATE PMERGE PAUTHOR BR PHEAD _ <<<"$STATE"
   [ "${PSTATE:-}" = "OPEN" ] && [ "${PMERGE:-}" = "DIRTY" ] && harness_pr_author_match "${PAUTHOR:-}" || continue
+  if [ "$PARKED" = 1 ]; then
+    RTH=$(rth_handoff "$PR" "${PHEAD:-}" "$D" "$(rth_park_why "$LOG" "$PR")") || true
+    echo "$(STAMP) [$PROJECT] $PR parked earlier — ${RTH:-no-conductor-lib}" >> "$LOG"
+    continue
+  fi
 
   STRIKES=$(grep -c "STRIKE $PR$" "$LOG" 2>/dev/null); STRIKES=${STRIKES:-0}
   if [ "$STRIKES" -ge 2 ]; then
     echo "$PR" >> "$SKIP"
-    HARNESS="$H" "$H/bin/alert-line.sh" "[rebase-train] $PR parked after 2 failed rounds — the merge conductor classifies it conflict-unresolvable and bin/blocked-resolver.sh rebuilds the ticket fresh against current main"
+    RTH=no-conductor-lib
+    if command -v rth_handoff >/dev/null 2>&1; then
+      rt_mc_init
+      RTH=$(rth_handoff "$PR" "${PHEAD:-}" "$D" "$(rth_park_why "$LOG" "$PR")") || true
+    fi
+    case "$RTH" in
+      handed|conductor-park|already)
+        RMSG="handed to bin/blocked-resolver.sh as $(mc_row_field "$PKEY" 7 | cut -d: -f1) (its ladder: merge main, agent fix round, fresh rebuild)" ;;
+      *) RMSG="hand-off NOT written (${RTH:-no-conductor-lib}): no lane owns this PR" ;;
+    esac
+    HARNESS="$H" "$H/bin/alert-line.sh" "[rebase-train] $PR parked after 2 failed rounds — $RMSG"
     continue
   fi
+  # <<< train park hand-off
 
   WT="/root/worktrees/train-$PROJECT-$(basename "$PR")"
   echo "$(STAMP) [$PROJECT] $PR rebasing ($BR)" >> "$LOG"

@@ -161,6 +161,8 @@ the webhook uninstalled, `GITHUB_WEBHOOK_SECRET` unset, harness-jobs
 unreachable, or `bin/wake-loop.sh` not installed, no wake is ever read and every
 lane ticks exactly as it does today. Nothing anywhere waits for a wake.
 
+Lane wake gate (BH-9067): [lane gating](events-bh-9067/1-lane-gating.md), [wake pollers](events-bh-9067/2-wake-pollers.md), [parks](events-bh-9067/3-parks.md), [D1 hot path](events-bh-9067/4-d1-hot.md).
+
 ## 3. What the receiver believes
 
 **Identifiers only.** A verified signature proves the *sender* holds the shared

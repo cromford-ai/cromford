@@ -1,0 +1,4 @@
+# LANE WAKES (BH-9072, BH-9067.0): a `wakes` row with repo harness/lanes
+# decides whether a scheduled lane tick runs; bin/lib/lane-wake-gate.sh.
+POST /api/lane-wakes/ring
+POST /api/lane-wakes/take

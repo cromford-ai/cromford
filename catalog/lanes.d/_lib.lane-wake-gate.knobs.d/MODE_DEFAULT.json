@@ -1,0 +1,9 @@
+{
+  "env": "MODE_DEFAULT",
+  "read_in": "bin/lib/lane-wake-gate.sh",
+  "type": "string",
+  "default": "off",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9072. The wake gate mode of a lane that has a catalog/lane-wakes.d file and no MODE_<LANE> knob of its own: off, shadow or on. Settings row lib.lane-wake-gate.mode_default; as a row it also wins over every lane's registry default, so one row stops every gated lane. Read by lwg_mode, never from the env (a stray MODE_DEFAULT export must not move a lane)."
+}

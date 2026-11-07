@@ -982,6 +982,14 @@ lane_gate_or_exit() {
   # is a helper call and never claims; the tick word stops here too.
   export LANE_GATE_RUN="$id/${p:--}"
   unset LANE_SINGLE_RUN LANE_RUN_KEY
+  # >>> lane wake gate (BH-9072): a scheduled tick of a lane with a registry
+  # file runs only when lwg_take says so (rc 3 = skip). Any other lane pays one stat.
+  h=$(_lg_h)
+  if [ -n "${_LG_SR_LINE:-}" ] && [ -n "$h" ] && [ -f "$h/catalog/lane-wakes.d/$id.json" ] \
+     && . "$h/bin/lib/lane-wake-gate.sh" 2>/dev/null; then
+    lwg_take "$id" "${p:-fleet}" || exit 0
+  fi
+  # <<< lane wake gate
   n=$(lane_start_offset "$id")
   if [ "$n" -gt 0 ] 2>/dev/null; then
     _lg_log_throttled "$id-start-offset" "[lane-gate] $id start offset ${n}s on box $(_lg_start_box) (quarter-hour spread)"

@@ -1,0 +1,12 @@
+{
+  "env": "LWG_FAIL_LOG_EVERY_S",
+  "read_in": "bin/lib/lane-wake-gate.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 60,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9072. One fail-open line (and one bad-mode line) per (lane, scope) per this many seconds in logs/lane-wake-gate.log, so a worker outage does not write a line on every tick. Settings row lib.lane-wake-gate.lwg_fail_log_every_s; code fallback 3600 in _lwg_int (the LANE_GATE_LOG_EVERY_S value)."
+}

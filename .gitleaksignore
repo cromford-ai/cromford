@@ -98,6 +98,7 @@ tests/lane-run-agent-clis.bh-6260-test.sh:generic-api-key:116
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:196
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
+tests/lane-wake-gate.bh-9072-test.sh:generic-api-key:167
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-review-report.bh-8945-test.sh:generic-api-key:55
@@ -179,6 +180,7 @@ tests/trk-cli.bh-8450-test.sh:generic-api-key:35
 tests/trk-cli.bh-8450-test.sh:generic-api-key:64
 tests/trk-prompt-render.bh-8450-test.sh:generic-api-key:67
 tests/unblock-card.bh-7725-test.sh:generic-api-key:141
+tests/wake-loop-lane-rows.bh-9072-test.sh:generic-api-key:27
 tests/webhook-to-triage-linear.bh-8449-test.sh:generic-api-key:44
 worker/jobs/test/agent-call-ledger.bh-9064.test.js:generic-api-key:21
 worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
@@ -200,6 +202,7 @@ worker/jobs/test/ironlaw-accept.bh-4157.test.js:generic-api-key:25
 worker/jobs/test/landing-decisions-cursor.bh-6748.test.js:generic-api-key:17
 worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16
+worker/jobs/test/lane-wakes.bh-9072.test.js:generic-api-key:16
 worker/jobs/test/lead-ticket-verdicts.bh-9154.test.js:generic-api-key:24
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20

@@ -1,0 +1,9 @@
+{
+  "env": "MODE_PM_GROOM",
+  "read_in": "catalog/lane-wakes.d/pm-groom.json",
+  "type": "string",
+  "default": "shadow",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9072. The wake gate mode of pm-groom (catalog/lane-wakes.d/pm-groom.json): off (no take, the lane runs as before), shadow (take, log what on would do, the lane always runs) or on (a scheduled tick with no ring and no newer issue webhook exits 0 before any D1 read). Settings row lib.lane-wake-gate.mode_pm_groom; it wins over lib.lane-wake-gate.mode_default. Any other word is ignored and named once per LWG_FAIL_LOG_EVERY_S in logs/lane-wake-gate.log. The knob name is the mode_knob of catalog/lane-wakes.d/pm-groom.json, which lwg_mode in bin/lib/lane-wake-gate.sh reads; never read from the env."
+}

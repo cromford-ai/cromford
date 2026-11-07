@@ -1,0 +1,3 @@
+[
+    {"path": "lane-wake-gate", "class": "box-local", "authority": "the lane wake gate's watermark and fail-log throttle stamps (BH-9072)", "note": "state/lane-wake-gate/<lane>.<scope>.after (one integer or the word pending, written tmp+mv after a parsed 200 answer) and .<stamp> files (one per throttled fail-log line, LWG_FAIL_LOG_EVERY_S): bin/lib/lane-wake-gate.sh. The ring rows in the jobs worker are the record; losing a watermark costs one re-read of rings already handled, which the atomic take answers with none. One file per (lane, scope) and per stamp, no growth. Machine-local, never carried"}
+]

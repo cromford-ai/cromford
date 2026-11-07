@@ -1,0 +1,12 @@
+{
+  "env": "LWG_TIMEOUT_S",
+  "read_in": "bin/lib/lane-wake-gate.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 30,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9072. The request timeout of one POST /api/lane-wakes/take or /ring. A worker that does not answer inside it is a fail-open: the lane runs. Settings row lib.lane-wake-gate.lwg_timeout_s; code fallback 5 in _lwg_int."
+}

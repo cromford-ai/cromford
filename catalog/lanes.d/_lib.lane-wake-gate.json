@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "lane-wake-gate",
+      "file": "bin/lib/lane-wake-gate.sh",
+      "note": "BH-9072 (BH-9067.0). The lane wake gate: lane_gate_or_exit calls lwg_take for a scheduled tick of a lane that has catalog/lane-wakes.d/<lane>.json, and the tick runs only when a ring or a newer webhook row was taken (mode on). Mode words are read by lwg_mode from the settings rows lib.lane-wake-gate.mode_<lane, - as _> and lib.lane-wake-gate.mode_default, then from these registry defaults; the process env is never read for a mode. The knobs are one file each in _lib.lane-wake-gate.knobs.d/.",
+      "knobs": []
+    }
+  ]
+}
