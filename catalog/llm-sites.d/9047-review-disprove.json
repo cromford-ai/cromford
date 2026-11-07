@@ -1,0 +1,20 @@
+[
+    {
+        "id": "review-disprove",
+        "script": "bin/lib/review-disprove.sh",
+        "marker": "AGENT_CALL_ROLE=review-disprove \"$root/bin/agent-call.sh\" disprove",
+        "kind": "agent-call",
+        "lane": "lead-review",
+        "stage": "disprove",
+        "project": "$project",
+        "runners": [
+            "ladder"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "the call guard on stage lead-head K=1 with AGENT_CALL_FP lead:<slug>#<pr>@<sha>~dp<sha256(finding line)[0:12]> refuses a repeat of the same finding on the same head on any box before anything is bought; a refused call (rc 74..79) is unchecked:refused and counts as confirmed (BH-9047)",
+        "deterministic_candidate": null,
+        "note": "BH-9047: bin/lead-review.sh review_one calls dp_review after the review level cap, only on a BLOCK verdict while review.disprove.<project>.enabled reads 1. One no-tools call per model BLOCK finding (at most review.disprove.max_findings, fallback 5) on route review-disprove, --max-budget-usd from review.disprove.call_budget_usd (fallback 0.50). Before each call the day's stage disprove spend plus the budget must be at or under review.disprove.usd_cap_day (fallback 2)."
+    }
+]

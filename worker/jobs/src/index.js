@@ -87,6 +87,7 @@ import { matchRoute } from "./lib/router.js";
 import { ROUTES } from "#routes";
 import { withHarnessSentry } from "./lib/sentry.js";
 import { retryingDb } from "./lib/d1-retry.js";
+import { withStmtStats } from "./lib/stmt-stats.js";
 
 import { routes as webhooks } from "./routes/webhooks.js";
 import { routes as suiteResults } from "./routes/suite-results.js";
@@ -131,7 +132,7 @@ export const OPEN_ROUTES = [...webhooks, ...ciDurations, ...ciTestTiers, ...suit
 // "#routes" builds the table (see HOW A REQUEST FINDS ITS HANDLER above).
 export { ROUTES };
 
-export default withHarnessSentry({
+export default withHarnessSentry(withStmtStats({
   CREATED_TABLES,
   MACHINE_STATES,
   MACHINE_TERMINAL,
@@ -167,4 +168,4 @@ export default withHarnessSentry({
     // Cloudflare 1042 for a deleted host, a proxy, an HTML page — as unknown.
     return json(404, { error: "unknown endpoint", worker: "harness-jobs" });
   },
-}, { worker: "harness-jobs", pauseFlags: true });
+}), { worker: "harness-jobs", pauseFlags: true });

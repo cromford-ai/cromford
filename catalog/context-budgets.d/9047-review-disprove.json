@@ -1,0 +1,40 @@
+[
+    {
+      "lane": "disprove",
+      "stage": "disprove",
+      "project": "$project",
+      "runner": null,
+      "job": "Inside a lead review (bin/lib/review-disprove.sh dp_review, BH-9047): one no-tools call per model BLOCK finding that tries to prove the finding wrong from the code, or confirms it with the exact line.",
+      "target_tokens": 12000,
+      "ceiling_tokens": 24000,
+      "composition": [
+        {
+          "component": "instructions + answer contract",
+          "source": "prompts/lead-review.d/disprove.md",
+          "cap": "static",
+          "purpose": "what a disproof is and the one-line CONFIRMED/DISPROVED answer"
+        },
+        {
+          "component": "finding",
+          "source": "the one `- [BLOCK` line of the lead review answer",
+          "cap": "one line",
+          "purpose": "the claim to check"
+        },
+        {
+          "component": "hunk + file excerpt",
+          "source": "git diff origin/<base>...<head> -- <path>, and git show <head>:<path> lines n-40..m+40",
+          "cap": "settings row review.disprove.max_context_bytes (fallback 24,000 bytes) with a cut marker",
+          "purpose": "THE SCOPED DELTA: the code the finding cites"
+        }
+      ],
+      "bounds": [
+        "[lane:context_bytes] the hunk and the excerpt are cut together at review.disprove.max_context_bytes (VERIFIED: bin/lib/review-disprove.sh dp_context)",
+        "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files and grow past its prompt (VERIFIED: bin/lib/review-disprove.sh call site)",
+        "[lane:dedup] the lead-head call guard refuses a repeat fp for the same finding on the same head (VERIFIED: bin/lib/review-disprove.sh call site)",
+        "[harness:prompt_guard] prompt_guard 720KB (VERIFIED — bounds the assembled prompt only, NOT session growth)"
+      ],
+      "measured_before": null,
+      "measured_before_note": "never measured: the stage is new in BH-9047.",
+      "_unmeasured": "no disprove call has run yet: the stage is new in BH-9047. 24,000 tokens is the 24,000-byte context cut (about 6,000 tokens) plus the prompt, the finding and the answer, with room. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

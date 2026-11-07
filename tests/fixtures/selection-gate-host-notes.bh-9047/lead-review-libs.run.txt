@@ -1,0 +1,17 @@
+FAIL tests/lead-review-libs.bh-7455-test.sh (rc 1)
+
+===== tests/lead-review-libs.bh-7455-test.sh (rc 1) =====
+fatal: invalid object name '25ec73d76c3629276e26a8c20c4be5a3200025b7^'.
+FAIL: S2: cannot read 25ec73d76c3629276e26a8c20c4be5a3200025b7
+FAIL: S2: the old block between the anchors is not found in 25ec73d76c3629276e26a8c20c4be5a3200025b7^
+lead-review-libs: bin/lib/lead-review/libs.d/ has no fragment
+FAIL: S2: --print of 25ec73d76c3629276e26a8c20c4be5a3200025b7 is not the block of 25ec73d76c3629276e26a8c20c4be5a3200025b7^:bin/lead-review.sh
+awk: cannot open "/tmp/scratch.YBV8Gx/s2/new.sh" (No such file or directory)
+awk: cannot open "/tmp/scratch.YBV8Gx/s2/new.sh" (No such file or directory)
+FAIL: S2: 25ec73d76c3629276e26a8c20c4be5a3200025b7:bin/lead-review.sh has no loader stanza in place of the block
+cp: cannot stat '/tmp/scratch.YBV8Gx/s2/bin': No such file or directory
+sed: can't read /tmp/scratch.YBV8Gx/s3f/bin/lib/lead-review/libs.d/0140-review-level.sh: No such file or directory
+lead-review-libs: --root /tmp/scratch.YBV8Gx/s3f is not a directory
+NOTE: S4 en_US.UTF-8 not run (locale -a has no en_US.UTF-8)
+lead-review-libs.bh-7455: 130 passed, 4 failed
+remote-gate: 1 suites, 1 failing

@@ -1,0 +1,3 @@
+The finding says the empty input drops the name. The guard on line 11 handles it.
+
+DISPROVED the guard at bin/a.sh:11 returns first on an empty name

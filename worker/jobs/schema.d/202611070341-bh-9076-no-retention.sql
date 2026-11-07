@@ -1,0 +1,181 @@
+-- BH-9076 (slice 5 of BH-9067): the tables that have no retention rule, and why.
+-- Comment lines only: this fragment runs no statement. Format, one line per
+-- table: `-- no-retention: <table> <reason>`. The only reader is
+-- worker/jobs/test/d1-retention-coverage.bh-9076.test.js: every CREATE TABLE
+-- in schema.d/ must be named by a rule in src/routes/retention.d/ or by exactly
+-- one such line (a stale, repeated or empty line is red too). A new table adds
+-- its own line in its own fragment, or a rule.
+-- Reasons: "bounded" = one row per a fixed key (an upsert), so the row count
+-- follows the fleet, not time. "claim" = the row is the dedupe or cap for an
+-- action or a metered call: a missing row re-does it. "archive owed" = the
+-- table grows with time, but a reader needs every row today; the archive rule
+-- waits for that reader to change (listed in docs/notes/2026-11-07-BH-9076-d1-hot.md).
+--
+-- Own prune (a route or lane already deletes old rows):
+-- no-retention: account_leases own prune: POST /api/account-leases/claim deletes every lease past expires_at (routes/account-leases.js)
+-- no-retention: call_guard own prune: POST /api/call-guard/claim deletes rows older than RETAIN_S (8 days, routes/call-guard.js); the row is the metered-call claim
+-- no-retention: cost_rows_live own prune: POST /api/cost/live deletes rows older than PRUNE_DAYS (14, routes/cost-live.js); cost_rows keeps the money
+-- no-retention: fleet_cooldowns own prune: POST /api/cooldowns sweeps rows past until_at + SWEEP_AFTER_S (routes/cooldowns.js)
+-- no-retention: gh_ledger own prune: POST /api/metrics/gh-ledger deletes hours past its window (routes/gh-ledger.js)
+-- no-retention: lane_snapshot_parts own prune: the snapshot commit (lane-snapshots.js POST .../commit) deletes parts of other shas; at most one snapshot per (lane, project)
+-- no-retention: lane_snapshot_writebacks own prune: the writeback ack (lane-snapshots.js POST .../writebacks/ack) deletes applied or rejected rows past the prune window
+-- no-retention: lane_run_wait_alerts own prune: POST /api/lane-runs/wait-tick deletes lanes not in the tick (routes/lane-runs-metrics.js); one row per lane
+-- no-retention: main_red_pr_errors own prune: bin/main-red-pr-pair.sh calls POST /api/main-red-state/pr-errors/prune every tick (rows older than its LEDGER_DAYS)
+-- no-retention: preplans own prune: POST /api/preplans deletes rows older than PREPLAN_RETENTION_DAYS (14, lib/core.js)
+-- no-retention: utilization_snapshots own prune: PUT /api/utilization deletes the project's hours past its window in the same batch (routes/utilization.js)
+-- no-retention: webhook_deliveries own prune: pruneDeliveries (routes/webhooks.js) deletes delivery ids older than keepS after each delivery
+-- no-retention: wake_claims own prune: POST /api/wakes/prune (BH-1267, routes/wakes.js) deletes claims whose wake is gone; wakes have the wakes.age rule
+-- no-retention: wake_cursors own prune: POST /api/wakes/prune (BH-1267, routes/wakes.js) deletes cursors below the oldest wake; one row per box
+-- no-retention: secret_envelopes own prune: POST /api/secrets/envelope/sweep (routes/secret-envelope-apply.js) deletes envelopes past expires_at
+-- no-retention: secret_envelope_events own prune: POST /api/secrets/envelope/sweep copies old events to the archive D1, then deletes them (BH-7965)
+-- no-retention: ci_suite_duration_samples own prune: POST /api/ci/suite-durations keeps only the newest samples per suite (routes/ci-durations.js)
+-- no-retention: fly_idle_machines own prune: PUT /api/fly-idle/machines replaces an app's rows each pass (routes/fly-idle.js); current state only
+-- no-retention: onboarding_steps child rows: the onboarding_runs.finished rule (retention.d/bh-7949-onboarding-runs.js) deletes a run's steps with the run
+-- no-retention: staff_promotion_decisions child rows: the staff_promotions rules (retention.d/bh-5563-staff.js) delete them with their promotion
+-- no-retention: conductor_held_pages current state: the release (routes/conductor-held.js) deletes the row; only held pages exist
+--
+-- Bounded: one row per a fixed key (config, registry, cursor, current state):
+-- no-retention: ai_accounts bounded: one row per AI account (registry; revoked_at is the soft delete)
+-- no-retention: alert_family_scripts bounded: one row per alert family script (config)
+-- no-retention: archie_classes bounded: one row per decision class (config)
+-- no-retention: block_categories bounded: one row per BLOCK category (registry)
+-- no-retention: box_ssh_state bounded: one row per box (current state)
+-- no-retention: box_status bounded: one row per box (current state)
+-- no-retention: budget_cap_flags bounded: one row per lane (config)
+-- no-retention: budget_catalog bounded: one row per lane (config)
+-- no-retention: burn_days bounded: one row per day (365 a year), a daily rollup kept like fly_idle_daily
+-- no-retention: ci_health bounded: one row per (repo, metric) (current state)
+-- no-retention: ci_suite_durations bounded: one row per suite (current state)
+-- no-retention: ci_test_tier_sets bounded: one row per operator change of the test tier set (a few a month); the newest row is the live set
+-- no-retention: concurrency_rules bounded: one row per (scope, selector, kind) (config)
+-- no-retention: conflict_hotspot_runs bounded: one row per project (current state)
+-- no-retention: conflict_hotspots bounded: one row per (project, file); each run replaces the project's rows (routes/conflict-hotspots.js)
+-- no-retention: cost_fold_mark bounded: one cursor row per fold name
+-- no-retention: d1_overload_streaks bounded: one row per route (current state)
+-- no-retention: flaky_quarantine bounded: one row per (repo, test) (config; its history is flaky_quarantine_changes, archived)
+-- no-retention: fly_idle_pass bounded: one row (id = 1)
+-- no-retention: gh_budget bounded: one row per token fingerprint (current state)
+-- no-retention: harness_flags bounded: one row per (scope, name) (config)
+-- no-retention: hub_lease bounded: one row (id = 1); its history is hub_lease_changes, archived
+-- no-retention: initiatives bounded: one row per initiative (registry)
+-- no-retention: lane_flag_sightings bounded: one row per (flag, box) (current state)
+-- no-retention: lane_run_hub_load bounded: one row per box (current state)
+-- no-retention: lane_snapshots bounded: one row per (lane, project) (current state)
+-- no-retention: lanes bounded: one row per (project, box) (registry and liveness)
+-- no-retention: lead_protected_paths bounded: one row per protected glob (config; removed_at is the soft delete)
+-- no-retention: main_red bounded: one row per main-red name (current state; its history is main_red_events, archived)
+-- no-retention: main_red_verdicts bounded: one row per repo (current state)
+-- no-retention: merge_queue_check_medians bounded: one row per (repo, check) (current state)
+-- no-retention: model_prices bounded: one row per model (config; its history is price_audit, archived)
+-- no-retention: model_routes bounded: one row per (scope, project, role, position) (config; its history is model_route_changes, archived)
+-- no-retention: model_slugs bounded: one row per model (config)
+-- no-retention: model_watch bounded: one row per (vendor, model) the watch has seen (registry)
+-- no-retention: orgo_account_reads bounded: one row per Orgo account (current state)
+-- no-retention: orgo_computers bounded: one row per Orgo computer (registry; gone_at marks a removed one)
+-- no-retention: participant_machines bounded: one row per participant machine (registry and auth)
+-- no-retention: pause_flags bounded: one row per flag name (config)
+-- no-retention: phase_contracts bounded: one row per phase (config)
+-- no-retention: pool_holds bounded: one row per (project, kind, ticket) held now; the release deletes it (routes/pool-state.js)
+-- no-retention: pool_tick_summary bounded: one row per project (current state)
+-- no-retention: port_cursor bounded: one cursor row per port target
+-- no-retention: price_fly bounded: one row per Fly price key (config)
+-- no-retention: project_leases bounded: one row per (lane, project) (current lease)
+-- no-retention: project_secret_names bounded: one row per (project, secret name) (config; no secret value)
+-- no-retention: projects bounded: one row per project (registry)
+-- no-retention: prompt_heads bounded: one row per (scope, project, prompt kind) (current head)
+-- no-retention: reconcile_memory bounded: one row per (kind, name) (current state; deleted when the name goes)
+-- no-retention: reconcile_owner_beat bounded: one row per lane (current state)
+-- no-retention: registry_box_accounts bounded: one row per (account, kind, box) (registry)
+-- no-retention: registry_boxes bounded: one row per box (registry)
+-- no-retention: registry_lane_boxes bounded: one row per (lane, box) (registry)
+-- no-retention: registry_meta bounded: one row (id = 1)
+-- no-retention: registry_projects bounded: one row per project (registry)
+-- no-retention: retry_policies bounded: one row per lane (config)
+-- no-retention: review_counts_mark bounded: one cursor row per name
+-- no-retention: review_gate bounded: one row per repo (current state)
+-- no-retention: review_gate_thresholds bounded: one row per scope (config)
+-- no-retention: route_rules bounded: one row per rule (config; its history is route_rule_changes, archived)
+-- no-retention: routing bounded: one row per project (config; its history is routing_changes, archived)
+-- no-retention: settings bounded: one row per knob key (config)
+-- no-retention: staff_agents bounded: one row per staff agent (config)
+-- no-retention: staff_classes bounded: one row per (agent, class) (config)
+-- no-retention: staff_lanes bounded: one row per (agent, lane) (config)
+-- no-retention: standby_status bounded: one row per standby box (current state)
+-- no-retention: telegram_topics bounded: one row per project (config)
+-- no-retention: token_health bounded: one row per (kind, subject) (current state)
+-- no-retention: wake_cooldowns bounded: one row per (kind, project) (current state; BH-1267 wakes family)
+-- no-retention: wake_repo_last bounded: one row per repo (current state; BH-1267 wakes family)
+-- no-retention: web_vault bounded: one credential row per (project, site, field), an upsert; its history has the web_vault_audit rule
+-- no-retention: box_commands frozen: the BH-2518 v1 table; the worker reads and writes only box_commands_v2 since BH-5750 (0014-bh-5750), and it is never dropped
+--
+-- Ledgers and claims (a missing row re-does an action or a metered call):
+-- no-retention: ledgers claim: ledger rows are claim keys (GET /api/ledger?key); an archived row reads as "not done"; kinds move one by one (BH-6774 C2)
+-- no-retention: archie_actions claim: dedupe_key UNIQUE is the once-per-action claim of an Archie playbook action (routes/archie-actions.js); archive owed
+-- no-retention: archie_research claim: dedupe_key UNIQUE is the claim of a metered research call (cost_usd); a missing row re-runs the call; archive owed
+-- no-retention: archie_decisions claim: escalation_key UNIQUE is the once-per-escalation claim (routes/archie-autonomy.js); archive owed
+-- no-retention: staff_decisions claim: escalation_key UNIQUE is the once-per-escalation claim; staff: rows leave with staff_findings (retention.d/bh-5563-staff.js); archive owed
+-- no-retention: initiative_events claim: dedupe_key UNIQUE is the once-per-check claim (routes/initiatives.js reads it by key); archive owed
+-- no-retention: block_classify_runs claim: one row per verdict_id is the claim of a metered classify call (routes/block-findings.js); a missing row classifies again
+-- no-retention: jev_risk_calls claim: UNIQUE (repo, pr, head_sha, question_version) is the claim of a metered model call (routes/jev-risk.js); archive owed
+-- no-retention: dequeue_actions claim: PRIMARY KEY (repo, pr, head, class) is the once-per-class claim of a dequeue action (routes/dequeue-watch.js); archive owed
+-- no-retention: dequeue_events claim: one row per (repo, pr, head, run) carries llm_fp / llm_attempted_at, the dedupe of a metered classify call; archive owed
+-- no-retention: split_watchdog_actions claim: PRIMARY KEY (project, child, step, reason_fp) counts repeats of one watchdog step; archive owed
+-- no-retention: pr_attempts claim: routes/conductor-state.js and routes/pr-state.js COUNT a PR's attempts with no time window (the attempt cap); archive owed
+-- no-retention: fix_round_jobs claim: an open row per (project, cap_key) is the fix-round dedupe (routes/fix-rounds.js), and the rows count the rounds; archive owed
+-- no-retention: hub_probe_requests claim: UNIQUE (project, ticket, probe, args_hash) dedupes a probe, and the onboarding tracker reads the latest row per ticket with no window; archive owed
+-- no-retention: lead_review_requests claim: UNIQUE (repo, pr, head_sha) dedupes a lead review, and routes/verdicts.js reads a done request by head with no window; archive owed
+-- no-retention: triage_state claim: one row per ticket holds input_hash, the triage dedupe: a missing row re-triages the ticket (a metered call); archive owed
+-- no-retention: closeout_aged claim: one row per build dir; the insert is the dedupe (ON CONFLICT DO NOTHING) that stops a second closeout; archive owed
+-- no-retention: pool_terminals claim: one row per (project, ticket) marks a dead key; the pool reads it to never rebuild that key; archive owed
+-- no-retention: pool_spawns claim: the per-key spawn cap reads every spawn row from since=0 (bin/pool-state.sh, bin/lib/pool-state-rows.sh); a delete resets a cap; prune owed after a cap-window audit
+-- no-retention: build_queue claim: one row per (project, ticket) is the queue state and its dedupe; archive owed
+-- no-retention: deploy_queue claim: one row per (project, sha); a held row blocks a re-enqueue of that sha (routes/queue.js); archive owed
+-- no-retention: merge_queue claim: one row per (project, pr) is the queue state and its dedupe; archive owed
+-- no-retention: setting_sigs claim: the next seq is MAX(seq)+1 per key (routes/settings.js), a signature chain; a missing row breaks the chain
+-- no-retention: alerts claim: one row per alert id is the dedupe and notify state of that alert (routes/alerts.js); archive owed
+--
+-- History that a reader needs whole today (archive owed):
+-- no-retention: jobs history: stage_events, job_artifacts, job_claims, job_phases, job_transcripts, verdict_history and ledgers point at jobs.id; archive owed after a reader audit
+-- no-retention: job_artifacts history: keyed by jobs.id, read by job (routes/verdict.js, lib/pr-gate-intake.js); leaves with jobs; archive owed
+-- no-retention: job_claims history: one row per jobs.id; leaves with jobs; archive owed
+-- no-retention: job_phases history: read per job with no window (lib/core.js latest phase, routes/job-detail.js); spend_usd is money; archive owed with jobs
+-- no-retention: job_transcripts history: read per job (routes/job-detail.js, routes/transcripts.js); leaves with jobs; archive owed
+-- no-retention: verdicts history: the head-bound approval record; the merge gate reads a verdict by head with no time window (Iron guardrail 1); archive owed after a reader audit
+-- no-retention: verdict_history history: routes/verdict.js reads every verdict of a PR's jobs and routes/job-artifacts.js dedupes on MAX(id) per job, no window; archive owed
+-- no-retention: verdict_retractions history: one row per retracted verdict_id; it lives as long as its verdict; archive owed with verdicts
+-- no-retention: pr_state_events history: the PR state reads take MAX(id) per PR with no time window (routes/pr-state.js, lib/core.d/0000-pr-state-events.js); archive owed
+-- no-retention: decisions history: a box decision-log mirror; listLines (lib/core.js) pages it from since= for a restore, and INSERT OR IGNORE on (stamp, line) would re-add an archived row; archive owed
+-- no-retention: findings history: a box findings-log mirror; listLines (lib/core.js) pages it from since= for a restore, and INSERT OR IGNORE on (stamp, line) would re-add an archived row; archive owed
+-- no-retention: registry_audit history: readKnownLanes (routes/registry.js) reads every lane_box row ever written to list drained lanes; archive owed
+-- no-retention: pr_costs history: one row per PR (money); GET /api/cost reads the all-time top cost (ORDER BY cost_usd); archive owed with an archive-aware reader
+-- no-retention: pr_owners history: one row per PR (current owner state); open PRs of any age are read by key; archive owed for closed PRs
+-- no-retention: merge_trains history: one row per (project, train branch), upserted by the train lane; GET /api/merge-trains lists them; archive owed after a reader audit
+-- no-retention: machines history: one row per pool machine (state, auth_account); about 20 routes read it by id or by project; archive owed after a reader audit
+-- no-retention: lane_machines history: one row per lane machine; machine costing reads costed_until per machine (routes/lane-fleet.js, money); archive owed
+-- no-retention: fly_images history: one row per (project, image digest), a few a week; the active image is read by key; archive owed
+-- no-retention: lessons history: one row per lesson PR (UNIQUE repo, kind, number); routes/lessons.js reads every row it measures; lessons.retention_days is a reader knob; archive owed
+-- no-retention: roadmap_decisions history: the roadmap decisions log (product record); roadmap import dedupes on id, so an archived row would come back; archive owed
+-- no-retention: roadmap_links history: one row per (idea, issue) link; the board deletes a link (routes/roadmap-board.js); archive owed with roadmap_ideas
+-- no-retention: product_proposals history: one row per (project, proposal), a product record; archive owed
+--
+-- History or a cache whose rule needs a new index on a table with a
+-- CREATED_TABLES hand entry (lib/core.d/; test/created-tables.bh-4987.test.js
+-- T2/T3 pin that entry to the schema): the index, the hand entry and the rule
+-- come in one later slice (archive owed; context_packs: delete owed):
+-- no-retention: alert_actions history: archive owed with idx_alert_actions_at and its hand entry (test/fixtures/created-tables-hand.bh-4987.json)
+-- no-retention: config_changes history: archive owed with idx_config_changes_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: cost_cap_changes history: archive owed (money audit) with idx_cost_cap_changes_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: model_route_changes history: archive owed with idx_model_route_changes_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: route_rule_changes history: archive owed with idx_route_rule_changes_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: routing_changes history: archive owed with idx_routing_changes_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: price_audit history: archive owed (money audit) with idx_price_audit_effective_at and its hand entry (test/fixtures/created-tables-hand.bh-4987.json)
+-- no-retention: steer_notes history: archive owed with idx_steer_notes_created_at and its hand entry (test/fixtures/created-tables-hand.bh-4987.json)
+-- no-retention: risk_tiers history: archive owed with idx_risk_tiers_created_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: queue_risk_scores history: archive owed with idx_queue_risk_scores_updated_at and its hand entry (lib/core.d CREATED_TABLE_OVERRIDES)
+-- no-retention: context_packs cache: a 30-day delete owed with idx_context_packs_updated_at and its hand entry (test/fixtures/created-tables-hand.bh-4987.json); a missing pack fails open (bin/lib/context-pack.sh)
+--
+-- Product data (the hosted board is the client's record; archived_at is the soft delete):
+-- no-retention: hosted_board_boards product data: a hosted board; never aged out
+-- no-retention: hosted_board_tickets product data: a client ticket; never aged out
+-- no-retention: hosted_board_comments product data: a client comment; never aged out
+-- no-retention: hosted_board_tokens bounded: one row per board token (auth; revoked_at is the soft delete)

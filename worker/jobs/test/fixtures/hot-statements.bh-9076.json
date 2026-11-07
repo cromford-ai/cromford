@@ -1,0 +1,263 @@
+{
+  "source": "BH-6727 volume suite routes, 2026-11-07; replace with the live top-20 after 24 h of d1_stmt_stats samples",
+  "statements": [
+    {
+      "id": "H01-heartbeat-job",
+      "route": "POST /api/jobs/:id/heartbeat",
+      "sql": "SELECT id, status FROM jobs WHERE id=?1",
+      "binds": [
+        "build-alpha-0"
+      ],
+      "hot_tables": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "H02-job-live-head",
+      "route": "GET /api/jobs/:id/live",
+      "sql": "SELECT id, project, ticket_id, stage, status, budget_usd, spent_usd, updated_at FROM jobs WHERE id=?1",
+      "binds": [
+        "build-alpha-0"
+      ],
+      "hot_tables": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "H03-wake-claim-top",
+      "route": "POST /api/wakes/claim",
+      "sql": "SELECT MAX(id) AS hi FROM wakes",
+      "binds": [],
+      "hot_tables": [
+        "wakes"
+      ]
+    },
+    {
+      "id": "H04-wake-claim-scan",
+      "route": "POST /api/wakes/claim",
+      "sql": "SELECT * FROM wakes WHERE id > ?1 AND id <= ?5\n           AND (lower(repo) IN (SELECT value FROM json_each(?2))\n                OR kind IN (SELECT value FROM json_each(?3)))\n         ORDER BY id ASC LIMIT ?4",
+      "binds": [
+        0,
+        "[\"o/alpha\",\"o/bravo\"]",
+        "[\"checks\"]",
+        200,
+        206176
+      ],
+      "hot_tables": [
+        "wakes"
+      ]
+    },
+    {
+      "id": "H05-ledger-claim-reread",
+      "route": "POST /api/ledger/claim",
+      "sql": "SELECT * FROM ledgers WHERE kind=?1 AND key=?2",
+      "binds": [
+        "digest",
+        "daily-2026-11-07"
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H06-dora-merges",
+      "route": "GET /api/metrics/dora?days=30",
+      "sql": "SELECT key, status, job_id, created_at, updated_at FROM ledgers\n            WHERE kind='merge' AND status='merged' AND created_at>=?1\n            ORDER BY created_at DESC LIMIT 3000",
+      "binds": [
+        {
+          "ago_h": 720
+        }
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H07-dora-artifacts",
+      "route": "GET /api/metrics/dora?days=30",
+      "sql": "SELECT a.artifact_kind AS artifact_kind, a.artifact_ref AS artifact_ref,\n                  a.job_id AS job_id, a.created_at AS created_at, a.updated_at AS updated_at,\n                  j.project AS project, j.ticket_id AS ticket_id, j.created_at AS job_created_at,\n                  j.kind AS job_kind\n             FROM job_artifacts a JOIN jobs j ON j.id=a.job_id\n            WHERE a.artifact_kind IN ('pr_url','verdict') AND a.updated_at>=?1\n            ORDER BY a.updated_at DESC LIMIT 6000",
+      "binds": [
+        {
+          "ago_h": 2160
+        }
+      ],
+      "hot_tables": [
+        "jobs",
+        "job_artifacts"
+      ]
+    },
+    {
+      "id": "H08-dora-pr-state",
+      "route": "GET /api/metrics/dora?days=30",
+      "sql": "SELECT key, status, created_at, updated_at FROM ledgers\n            WHERE kind='pr_state' ORDER BY updated_at DESC LIMIT 2000",
+      "binds": [],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H09-dora-deploys",
+      "route": "GET /api/metrics/dora?days=30",
+      "sql": "SELECT key, status, detail, created_at, updated_at FROM ledgers\n            WHERE kind='deploy' AND created_at>=?1\n            ORDER BY created_at DESC LIMIT 2000",
+      "binds": [
+        {
+          "ago_h": 720
+        }
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H10-dora-build-launches",
+      "route": "GET /api/metrics/dora?days=30",
+      "sql": "SELECT project, ticket_id, MIN(issue_created_at) AS issue_created_at,\n                      MIN(first_spawn_at) AS first_spawn_at\n                 FROM jobs\n                WHERE kind='build' AND issue_created_at IS NOT NULL\n                  AND first_spawn_at IS NOT NULL AND first_spawn_at>=?1\n                GROUP BY project, ticket_id LIMIT 3000",
+      "binds": [
+        {
+          "ago_h": 720
+        }
+      ],
+      "hot_tables": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "H11-lanes-status-recent-cost",
+      "route": "GET /api/lanes/status",
+      "sql": "SELECT ts, stage, project, ticket, cost_usd, run_id FROM cost_rows\n          WHERE ts >= ?1 AND COALESCE(cost_usd,0) > 0 ORDER BY ts DESC LIMIT 500",
+      "binds": [
+        {
+          "ago_h": 168
+        }
+      ],
+      "hot_tables": [
+        "cost_rows"
+      ]
+    },
+    {
+      "id": "H12-review-tiers-merges",
+      "route": "GET /api/metrics/review-tiers?days=7",
+      "sql": "SELECT key AS pr_url, updated_at AS merged_at FROM ledgers\n    WHERE kind='merge' AND status='merged' AND updated_at>=?1\n    ORDER BY updated_at DESC LIMIT ?2",
+      "binds": [
+        {
+          "ago_h": 168
+        },
+        5000
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H13-review-tiers-main-red",
+      "route": "GET /api/metrics/review-tiers?days=7",
+      "sql": "SELECT key, status, json_extract(detail,'$.pr') AS pr, updated_at FROM ledgers\n    WHERE kind='main_red_attrib' AND updated_at>=?1\n    ORDER BY updated_at DESC LIMIT ?2",
+      "binds": [
+        {
+          "ago_h": 168
+        },
+        2000
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H14-lane-spend-p99",
+      "route": "GET /api/metrics/lane-spend?hours=24",
+      "sql": "SELECT key, status, detail FROM ledgers WHERE kind='spend_p99'",
+      "binds": [],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H15-progress-job-stamps",
+      "route": "GET /api/progress/stamps",
+      "sql": "SELECT project, kind, status, MAX(updated_at) AS at FROM jobs\n            WHERE updated_at >= ?1 AND status != 'running'\n            GROUP BY project, kind, status",
+      "binds": [
+        {
+          "ago_h": 168
+        }
+      ],
+      "hot_tables": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "H16-llm-sites-by-stage",
+      "route": "GET /api/metrics/llm-sites",
+      "sql": "SELECT stage, lane_id, runner, billing_mode, COUNT(*) AS calls,\n  SUM(cost_usd) AS usd_7d,\n  SUM(CASE WHEN ts >= ?2 THEN cost_usd END) AS usd_24h,\n  SUM(CASE WHEN ts >= ?3 THEN cost_usd END) AS usd_today,\n  SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) AS unpriced,\n  SUM(CASE WHEN row_source = 'refused' AND COALESCE(note, '') NOT LIKE 'refused:call-guard%' THEN 1 ELSE 0 END) AS r_gate,\n  SUM(CASE WHEN COALESCE(note, '') LIKE 'refused:call-guard%' THEN 1 ELSE 0 END) AS r_guard,\n  SUM(CASE WHEN COALESCE(note, '') LIKE '%context-kill:%' OR COALESCE(note, '') LIKE '%cliff-avoided:%' THEN 1 ELSE 0 END) AS r_ctx\nFROM cost_rows WHERE ts >= ?1\nGROUP BY stage, lane_id, runner, billing_mode",
+      "binds": [
+        {
+          "ago_h": 168
+        },
+        {
+          "ago_h": 24
+        },
+        {
+          "ago_h": 4
+        }
+      ],
+      "hot_tables": [
+        "cost_rows"
+      ]
+    },
+    {
+      "id": "H17-progress-merge-stamps",
+      "route": "GET /api/progress/stamps",
+      "sql": "SELECT l.key AS key, j.project AS project, MAX(l.updated_at) AS at\n             FROM ledgers l LEFT JOIN jobs j ON j.id = l.job_id\n            WHERE l.kind = 'merge' AND l.status = 'merged' AND l.updated_at >= ?1\n            GROUP BY l.key, j.project",
+      "binds": [
+        {
+          "ago_h": 168
+        }
+      ],
+      "hot_tables": [
+        "jobs",
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H18-cost-anchored-by-box",
+      "route": "GET /api/metrics/cost-anchored",
+      "sql": "SELECT box, auth_account AS account, SUM(COALESCE(cost_usd,0)) AS usd, COUNT(*) AS calls\n             FROM cost_rows WHERE ts>=?1 AND ts<?2\n            GROUP BY box, auth_account LIMIT 500",
+      "binds": [
+        {
+          "ago_h": 24
+        },
+        {
+          "ago_h": 0
+        }
+      ],
+      "hot_tables": [
+        "cost_rows"
+      ]
+    },
+    {
+      "id": "H19-cost-anchored-merges",
+      "route": "GET /api/metrics/cost-anchored",
+      "sql": "SELECT key, created_at FROM ledgers\n            WHERE kind='merge' AND status='merged' AND created_at>=?1\n            ORDER BY created_at DESC LIMIT 2000",
+      "binds": [
+        {
+          "ago_h": 24
+        }
+      ],
+      "hot_tables": [
+        "ledgers"
+      ]
+    },
+    {
+      "id": "H20-burn-by-day",
+      "route": "GET /api/burn",
+      "sql": "SELECT substr(created_at, 1, 10) AS day, project, kind,\n                COUNT(*) AS jobs,\n                SUM(COALESCE(spent_usd, 0)) AS spent_usd,\n                SUM(COALESCE(budget_usd, 0)) AS budget_usd,\n                SUM(CASE WHEN status='orphaned' THEN 1 ELSE 0 END) AS orphaned\n           FROM jobs WHERE created_at >= ?1\n          GROUP BY day, project, kind\n          ORDER BY day DESC, spent_usd DESC",
+      "binds": [
+        {
+          "ago_h": 336
+        }
+      ],
+      "hot_tables": [
+        "jobs"
+      ]
+    }
+  ]
+}

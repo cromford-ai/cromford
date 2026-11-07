@@ -1,0 +1,5 @@
+# catalog/selection-gate-host-notes.d/bh-9047.tsv — suites the pre-PR selection gate notes, not reds, on the test host (BH-9047).
+# <suite path>TAB<class>TAB<ERE every failure line must match>TAB<reason>. Classes: shallow-context, host-timing. Read by bin/selection-gate.sh step 5.
+# The merge-queue batch still runs and gates these suites; this list changes only the gate's gate.txt.
+tests/lead-review-libs.bh-7455-test.sh	shallow-context	^FAIL: S2: 	the host gets a shallow or snapshot git context; git log --diff-filter=A names the root, whose parent is not in it, so S2 cannot read the commit before 0010-llm-gate.sh (CI checks out full history)
+tests/context-kill-lanes.bh-2309-test.sh	host-timing	^FAIL: C: 	case C races a 2 s stub against a 1 s context-kill poll; a loaded shared test host lets the stub finish first (main eb5b44789: 6 fail once, 0 fail in 9 runs); CI runs it on its own runner

@@ -165,6 +165,9 @@ const SEEDED_AS_COPY = {
   // (bin/claude-auth-check.sh, bin/lane-probe.sh), copies bootstrap.smoke's
   // claude rung 0 (Haiku class) the same way.
   'auth.canary': 'bootstrap.smoke',
+  // TEST-CHANGE (BH-9047): review-disprove, the lead review's disprove pass,
+  // copies lead.review's rung 0 the same way (stage.disprove is outside test 1).
+  'review-disprove': 'lead.review',
 };
 // TEST-CHANGE (BH-4065): archie-research.xsearch copies grok.default's GROK
 // rung 0 (Archie's direct xAI X search runs on the grok runner), so it is

@@ -1,0 +1,3 @@
+# D1 STATEMENT STATS (BH-9076): the top statements the sampled counter
+# (src/lib/stmt-stats.js) wrote to d1_stmt_stats, by calls, over the last hours.
+GET /api/d1/stmt-stats/top

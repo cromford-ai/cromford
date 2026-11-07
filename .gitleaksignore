@@ -240,6 +240,7 @@ worker/jobs/test/scheduler-ready.bh-6979.test.js:generic-api-key:19
 worker/jobs/test/scheduler.bh-6978.test.js:generic-api-key:19
 worker/jobs/test/secret-envelope-apply.bh-7965.test.js:generic-api-key:21
 worker/jobs/test/secret-envelopes.bh-7964.test.js:generic-api-key:19
+worker/jobs/test/stmt-stats.bh-9076.test.js:generic-api-key:36
 worker/jobs/test/ticket-edges.bh-6977.test.js:generic-api-key:18
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:130
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:146

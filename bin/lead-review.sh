@@ -709,6 +709,7 @@ review_one() {
   local resets mreset since f what fields="" bfp bchg rsn gpaid bmode="" bline="" ldp_rc="" dbytes ldp_why nprod ldp_mode ldp_find
   local lunread=0 lspent=""
   local lpv=0 lpk="" lprc imode="" imodel ire ckl imm wlnotes="" rlcap="" rlgl=0 rlgo bires="" bimode=off birw=0 biline=""
+  local dpres="" dpmode=off dprw=0 dpline=""
   # BH-5873: the mode the gates chose (full|delta|replay). Nothing reads it yet;
   # child 2 of #5870 (delta and replay) does.
   # shellcheck disable=SC2034
@@ -1621,6 +1622,15 @@ review_one() {
     while IFS= read -r ll; do [ -n "$ll" ] && log "$key: $ll"; done < "$WT.rlnote" 2>/dev/null
     rm -f "$WT.rlnote"
   fi
+  # >>> disprove (BH-9047): bin/lib/review-disprove.sh. One call per model BLOCK
+  # finding while review.disprove.<project>.enabled reads 1; enforce rewrites $out.
+  if [ "$verdict" = BLOCK ] && command -v dp_review >/dev/null 2>&1; then
+    read -r dpres dpmode dprw < <(dp_review "$repo" "$pr" "$sha" "$project" "$WT" "$base" "$out" "$((DEADLINE - SECONDS))" "$id")
+    log "$key: disprove: ${dpres:-skipped:error} (mode ${dpmode:-off})"
+    [ "$dprw" = 1 ] && verdict=$(lr_verdict "$out")
+    [ "$dpres" = ran ] && [ -s "$WT.dp/report" ] && dpline=$(cat "$WT.dp/report")$'\n'
+  fi
+  # <<< disprove
   # BH-6372.3: the outcome cap. The ticket is the one the thread read (when it
   # read), else loc_cap reads #$tn itself; no ticket number is class unknown.
   # BH-8338: line 1 the verdict, line 3 the finding line (lr_cap_body).
@@ -1641,8 +1651,8 @@ review_one() {
   # summary when the cap ran (a BLOCK answer). It sits ABOVE `- pr body:`, which
   # readers treat as the last header line before the agent's text
   # (tests/lead-review-inconclusive-block.bh-6381-test.sh L2).
-  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- ci-local: %s\n%s- pr body: %s\n' \
-      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "${CL_STATE:-not run}" "$biline" "$bfp"
+  { printf '%s# Lead review %s (%s#%s at %s)\n\n- verdict: %s\n- %s\n- rules pack: %s\n- reviewer model: %s\n- checklist: %s\n- review level (BH-7123): mode %s%s\n- ci-local: %s\n%s%s- pr body: %s\n' \
+      "$RVLINE" "$key" "$repo" "$pr" "$sha" "$verdict" "$suite_line" "$RP_STATE" "$model" "$ckl" "$(rl_mode "$project" 2>/dev/null || echo unknown)" "${rlk:+; $rlk}" "${CL_STATE:-not run}" "$biline" "$dpline" "$bfp"
     [ -n "$capr" ] && printf -- '- outcome cap: %s\n' "$capr"
     # BH-7123 wave B: a cap-reached (notes-only) re-review says so under the header.
     [ -n "$rlcap" ] && printf -- '- review level (BH-7123): cap-reached notes-only re-review (%s): the fix-round cap is spent; every finding without an ALWAYS-BLOCK class is a NOTE\n' "$rlcap"

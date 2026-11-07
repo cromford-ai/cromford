@@ -16,6 +16,7 @@
 // NO LEDGER TABLE IS HERE. Ledger rows are claim keys (GET /api/ledger?key,
 // POST /api/ledger/claim): an archived row would read as "not done". Ledger
 // kinds move only after a per-kind reader audit (BH-6774 C2).
+import { BH9076_ARCHIVE_TABLES } from "./archive-tables.bh-9076.js";
 
 export const ARCHIVE_TABLES = {
   cost_rows: { key: ["box", "row_hash"], time: "ts" },
@@ -39,6 +40,7 @@ export const ARCHIVE_TABLES = {
   prompt_versions: { key: ["id"], time: "created_at" },
   // BH-8731: the ticket lifecycle ledger (routes/retention.d/bh-8731-ticket-events.js).
   ticket_events: { key: ["id"], time: "at" },
+  ...BH9076_ARCHIVE_TABLES,
 };
 
 // One text for every archive rule's "unbound" audit row (lib/archive-daily.js).

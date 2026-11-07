@@ -1,0 +1,5 @@
+# BH-9047: the disprove pass on a lead review BLOCK. A box records one pass
+# (INSERT OR IGNORE on repo, pr, head_sha, review_id, lane) and reads them back
+# by repo or since. Bearer-gated.
+POST /api/review-disprove
+GET /api/review-disprove
