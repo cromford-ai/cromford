@@ -347,12 +347,13 @@ PY
   [ "$(fact gate_job)" = gate ] && ok || bad "G13: the per-head workflow still has its one gate job (got '$(fact gate_job)')"
   [ "$(fact run_key)" = 'prequeue-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.run_key_suffix }}' ] && ok || bad "G13: the ledger run key carries the suffix (got '$(fact run_key)')"
   [ "$(fact group_on)" = workflow_dispatch ] && ok || bad "G13: the group workflow is dispatched only (got '$(fact group_on)')"
-  [ "$(fact group_inputs)" = "group_id:True,invariants:False,learned:False,main:True,members:True,trace:False" ] && ok || bad "G13: the group inputs (got '$(fact group_inputs)')"
+  # TEST-CHANGE (BH-9178): the optional input impact, on the group workflow and passed to each head.
+  [ "$(fact group_inputs)" = "group_id:True,impact:False,invariants:False,learned:False,main:True,members:True,trace:False" ] && ok || bad "G13: the group inputs (got '$(fact group_inputs)')"
   [ "$(fact uses)" = ./.github/workflows/prequeue-gate.yml ] && [ "$(fact secrets)" = inherit ] && [ "$(fact failfast)" = False ] && ok \
     || bad "G13: the gate job calls the per-head workflow, secrets inherit, fail-fast false (uses '$(fact uses)' secrets '$(fact secrets)' fail-fast '$(fact failfast)')"
   [ "$(fact needs)" = plan ] && [ "$(fact if)" = "needs.plan.outputs.ok == '1'" ] && [ "$(fact matrix)" = '${{ fromJSON(needs.plan.outputs.matrix) }}' ] && ok \
     || bad "G13: the gate job needs the plan and its matrix (needs '$(fact needs)' if '$(fact if)' matrix '$(fact matrix)')"
-  [ "$(fact with)" = 'head=${{ matrix.head }},invariants=${{ inputs.invariants }},learned=${{ inputs.learned }},main=${{ inputs.main }},pr=${{ matrix.pr }},run_key_suffix=-${{ matrix.pr }},trace=${{ inputs.trace }}' ] && ok \
+  [ "$(fact with)" = 'head=${{ matrix.head }},impact=${{ inputs.impact }},invariants=${{ inputs.invariants }},learned=${{ inputs.learned }},main=${{ inputs.main }},pr=${{ matrix.pr }},run_key_suffix=-${{ matrix.pr }},trace=${{ inputs.trace }}' ] && ok \
     || bad "G13: the per-head inputs (got '$(fact with)')"
   [ "$(fact perms)" = "{'contents': 'read'}" ] && ok || bad "G13: contents: read only (got '$(fact perms)')"
   [ "$(fact plan_env)" = PQ_GROUP,PQ_MAIN,PQ_MEMBERS ] && ! grep -q '\${{' "$T/w/plan.sh" && ok || bad "G13: the inputs reach the plan step through env only (env '$(fact plan_env)')"

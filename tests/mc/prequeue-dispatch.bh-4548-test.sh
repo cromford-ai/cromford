@@ -73,7 +73,8 @@ open(out + "/facts", "w").write("\n".join([
 PY
 fact() { sed -n "s/^$1=//p" "$T/w/facts" 2>/dev/null; }
 # TEST-CHANGE (BH-6335): two optional inputs, learned and trace.
-[ "$(fact inputs)" = "head,invariants,learned,main,pr,suites,trace" ] && ok || bad "W: inputs are pr/head/main/suites (got '$(fact inputs)')"
+# TEST-CHANGE (BH-9178): the optional input impact (ledger-only impact step).
+[ "$(fact inputs)" = "head,impact,invariants,learned,main,pr,suites,trace" ] && ok || bad "W: inputs are pr/head/main/suites (got '$(fact inputs)')"
 [ "$(fact required)" = "head,main,pr" ] && ok || bad "W: suites is optional, the rest required (got '$(fact required)')"
 case "$(fact runs_on)" in *vars.CI_RUNNER*) ok ;; *) bad "W: runs-on reads vars.CI_RUNNER (got '$(fact runs_on)')" ;; esac
 [ "$(fact permissions)" = "{'contents': 'read'}" ] && ok || bad "W: permissions are contents: read only (got '$(fact permissions)')"
@@ -83,7 +84,8 @@ RN=$(fact run_name); RN=${RN//'${{ inputs.pr }}'/4545}; RN=${RN//'${{ inputs.hea
 # TEST-CHANGE (BH-6335): their env, PQ_LEARNED_IN and PQ_TRACE_IN.
 # TEST-CHANGE (BH-6522): PQ_GIT_TOKEN, the job token for the one pull-head fetch.
 # TEST-CHANGE (BH-6925): the suite ledger's URL, class, ctx, repo and run key (no secret).
-[ "$(fact env)" = "PQ_GIT_TOKEN,PQ_HEAD,PQ_INVARIANTS_IN,PQ_LEARNED_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN,PQ_TRACE_IN,SUITE_LEDGER_URL,SUITE_REUSE_CLASS,SUITE_REUSE_CTX,SUITE_REUSE_REPO,SUITE_REUSE_RUN_KEY" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
+# TEST-CHANGE (BH-9178): its env, PQ_IMPACT_IN.
+[ "$(fact env)" = "PQ_GIT_TOKEN,PQ_HEAD,PQ_IMPACT_IN,PQ_INVARIANTS_IN,PQ_LEARNED_IN,PQ_MAIN,PQ_PR,PQ_SUITES_IN,PQ_TRACE_IN,SUITE_LEDGER_URL,SUITE_REUSE_CLASS,SUITE_REUSE_CTX,SUITE_REUSE_REPO,SUITE_REUSE_RUN_KEY" ] && ok || bad "W: inputs reach the script through env only (got '$(fact env)')"
 grep -q '\${{' "$T/w/run.sh" && bad "W: no \${{ }} expression inside the run script (script injection)" || ok
 case "$(fact shell)" in *-e*|None) bad "W: the run step must not use errexit (shell '$(fact shell)')" ;; *) ok ;; esac
 [ "$(grep -c 'title=prequeue-verdict' "$T/w/run.sh")" = 1 ] && ok || bad "W: exactly one verdict print in the script"

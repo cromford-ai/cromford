@@ -110,6 +110,8 @@ pq_dispatch() {
     [ -z "$suites" ] && declare -F pq_invariants_args >/dev/null && args+=($(pq_invariants_args))
     # shellcheck disable=SC2207
     [ -z "$suites" ] && declare -F pq_learned_args >/dev/null && args+=($(pq_learned_args))
+    # shellcheck disable=SC2207
+    [ -z "$suites" ] && declare -F pq_impact_args >/dev/null && args+=($(pq_impact_args))
     gh workflow run "$PQ_WF" -R "$slug" --ref main "${args[@]}" >/dev/null 2>&1 && exit 0
     pq_cache_put "$path" could-not-run "$now" dispatch-refused "" alerted
     exit 1

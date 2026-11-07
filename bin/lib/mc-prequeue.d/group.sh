@@ -239,6 +239,8 @@ pq_group_flush() {
       declare -F pq_invariants_args >/dev/null && args+=($(pq_invariants_args))
       # shellcheck disable=SC2207
       declare -F pq_learned_args >/dev/null && args+=($(pq_learned_args))
+      # shellcheck disable=SC2207
+      declare -F pq_impact_args >/dev/null && args+=($(pq_impact_args))
       to=(); [ "$b" != 0 ] && to=(timeout "$b")
       if "${to[@]}" gh workflow run "$PQ_GROUP_WF" -R "$slug" --ref main "${args[@]}" >/dev/null 2>&1; then
         mc_log "PREQUEUE group-dispatch $slug main=${m:0:12} group=$gid n=${#mem[@]} prs=$prs"

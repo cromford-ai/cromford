@@ -21,6 +21,13 @@
 // inside the same max_age_h window, so a caller can treat one as a red without
 // a run. The PUT's prior-status read keeps the class rule in both modes: it
 // only names a contradicted green.
+//
+// THE PRUNE (BH-9178). The PUT deletes rows past 30 days (500 a call) only
+// while the scheduled rule suite_results.age (routes/retention.d/
+// bh-9063-suite-ledger.js, 14 days) does not delete: retention.dry_run is not
+// 0, or retention.suite_results.days is 0. Once an operator reads the dry-run
+// audit rows and sets retention.dry_run to 0, the rule owns the table and the
+// PUT does no DELETE. A settings read that fails keeps the prune on.
 
 import { json, readBody, d1Guarded } from "../lib/http.js";
 import { ensureTable, ensureColumns, isoPlusSeconds } from "../lib/core.js";
@@ -28,9 +35,19 @@ import {
   credentialClass, readReuseKnobs, validateItems, validateHead, mergeStatus,
 } from "../lib/suite-results.js";
 import { readTrustKnob } from "../lib/suite-trust.js";
+import { intSetting } from "./retention.js";
 
 const PRUNE_AFTER_S = 30 * 86400;
 const PRUNE_CAP = 500;
+
+// pruneOwnedByRule(byKey) — true when the scheduled 14-day rule deletes
+// suite_results rows, so the PUT must not. The same reader and defaults as
+// POST /api/retention/run (retention.dry_run seed 1) and the rule's window.
+export function pruneOwnedByRule(byKey) {
+  return intSetting(byKey, "retention.dry_run", 1, 0, 1) === 0
+    && intSetting(byKey, "retention.suite_results.days", 14, 0, 3650) > 0;
+}
+const PRUNE_KEYS_SQL = "SELECT key, value FROM settings WHERE key IN (?1, ?2)";
 
 // CROSS JOIN pins json_each as the outer loop, so each item is one seek on
 // idx_suite_results_key over all four columns. A plain JOIN let SQLite scan
@@ -177,11 +194,21 @@ export const routes = [
         }
         await env.DB.prepare(UPSERT_SQL)
           .bind(body.repo, body.ctx, cls, items, body.run_id, body.head_sha || null, t).run();
-        // sql-ident-ok: PRUNE_CAP is a module number const
-        await env.DB.prepare(
-          `DELETE FROM suite_results WHERE rowid IN
-             (SELECT rowid FROM suite_results WHERE updated_at < ?1 LIMIT ${PRUNE_CAP})`
-        ).bind(isoPlusSeconds(t, -PRUNE_AFTER_S)).run();
+        let owned = false;
+        try {
+          const { results: rows } = await env.DB.prepare(PRUNE_KEYS_SQL)
+            .bind("retention.dry_run", "retention.suite_results.days").all();
+          owned = pruneOwnedByRule(new Map((rows || []).map((r) => [r.key, r])));
+        } catch {
+          owned = false;
+        }
+        if (!owned) {
+          // sql-ident-ok: PRUNE_CAP is a module number const
+          await env.DB.prepare(
+            `DELETE FROM suite_results WHERE rowid IN
+               (SELECT rowid FROM suite_results WHERE updated_at < ?1 LIMIT ${PRUNE_CAP})`
+          ).bind(isoPlusSeconds(t, -PRUNE_AFTER_S)).run();
+        }
         return json(200, { ok: true, written: body.items.length, contradicted });
       });
     },
