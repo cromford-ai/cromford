@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_JOBS_PAGES_MAX",
+  "read_in": "bin/lib/mc-ci-advisory.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 10,
+  "unit": "pages",
+  "zero_means": null,
+  "note": "BH-9210: the jobs pages (100 jobs each, actions/runs/<id>/jobs?filter=latest) read per failed run to decide whether it holds a failed required check. A run with more jobs than these pages hold stays red (the old answer). Not a whole number, or under 1: 3."
+}

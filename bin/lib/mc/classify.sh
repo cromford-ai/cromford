@@ -723,10 +723,20 @@ mc_job_running() {
 #   workflow; MC_CI_RUNS_SHA is the sha it is for). All four are reset at
 #   entry, so a failed read leaves them empty. mc_stuck_check reads the head
 #   time. The stdout word is unchanged.
+#
+#   BH-9210: on a Mergify repo, a failed latest run counts only when it holds
+#   a failed REQUIRED check (a `check-success` name of .mergify.yml). A failed
+#   run whose required jobs all succeeded, or that holds none, is advisory: it
+#   leaves the list before the reduction and is logged once per head as
+#   `advisory-red: <workflow>`. The rule, its fail-safe (an unread jobs list
+#   stays red) and its globals (MC_CI_ADVISORY, MC_CI_RED_CHECKS,
+#   MC_CI_RED_RUN_IDS, MC_CI_REQ_APPLIED, MC_CI_REQ_SHA, all reset at entry)
+#   are in bin/lib/mc-ci-advisory.sh. No queue rules: every failure counts.
 mc_ci_state() {
   local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
   MC_CI_READ_WHY=""; MC_CI_READ_HELD=0
   MC_HEAD_COMMIT_TS=""; MC_HEAD_COMMIT_SHA=""; MC_CI_RUNS=""; MC_CI_RUNS_SHA=""
+  MC_CI_ADVISORY=""; MC_CI_RED_CHECKS=""; MC_CI_RED_RUN_IDS=""; MC_CI_REQ_APPLIED=0; MC_CI_REQ_SHA=""
   GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
   GH_REST_STATUS=; GH_REST_REASON=
   mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || {
@@ -745,16 +755,29 @@ mc_ci_state() {
   runs=$(jq -r '[.workflow_runs[]? | {n: ((.name // .workflow_id // "?") | tostring),
                               t: ((.run_started_at // .created_at) // ""),
                               a: (.run_attempt // 1),
-                              s: (.status // ""), c: (.conclusion // "")}]
+                              s: (.status // ""), c: (.conclusion // ""), id: (.id // "")}]
         | group_by(.n) | map(sort_by(.t, .a) | last)
-        | .[] | "\(.s)|\(.c)"' <<<"$runs" 2>/dev/null) || { MC_CI_READ_WHY="parse"; echo unavailable; return 0; }
+        | .[] | "\(.s)|\(.c)|\(.id)|\(.n | gsub("[|\n]"; " "))"' <<<"$runs" 2>/dev/null) || { MC_CI_READ_WHY="parse"; echo unavailable; return 0; }
   [ -n "$runs" ] || { echo none; return 0; }
-  runs=$(grep -vE '^completed\|(cancelled|timed_out|skipped|neutral)$' <<<"$runs")
+  runs=$(grep -vE '^completed\|(cancelled|timed_out|skipped|neutral)\|' <<<"$runs")
+  # BH-9210: a failed run that holds no failed REQUIRED check is advisory and
+  # leaves the list here (bin/lib/mc-ci-advisory.sh). The lib is sourced at
+  # call time, as mc_mergify_required_checks sources qsc_list, so this module
+  # never reads as defining mca_split. No lib: every failed run stays.
+  if grep -qE '^completed\|failure\|' <<<"$runs"; then
+    command -v mca_split >/dev/null 2>&1 \
+      || { [ -r "${BASH_SOURCE[0]%/*}/../mc-ci-advisory.sh" ] && . "${BASH_SOURCE[0]%/*}/../mc-ci-advisory.sh"; }
+    if command -v mca_split >/dev/null 2>&1; then
+      mca_split "$slug" "$sha" "$(grep -E '^completed\|failure\|' <<<"$runs")"
+      runs=$(grep -vE '^completed\|failure\|' <<<"$runs"; [ -n "$MCA_KEEP" ] && printf '%s\n' "$MCA_KEEP")
+      runs=$(grep -v '^$' <<<"$runs")
+    fi
+  fi
   # Every surviving workflow was cancelled or skipped: no failure, but no proof
   # of a pass either. `none` is the honest word — the classifier waits on it.
   [ -n "$runs" ] || { echo none; return 0; }
   grep -qv '^completed|' <<<"$runs" && { echo pending; return 0; }
-  grep -qE '^completed\|failure$' <<<"$runs" && { echo red; return 0; }
+  grep -qE '^completed\|failure\|' <<<"$runs" && { echo red; return 0; }
   echo green
 }
 
@@ -2361,10 +2384,16 @@ mc_classify() {
     red)
       # RED ON TWO CONSECUTIVE SETTLED HEADS (BH-7241): pr_worker sets
       # MC_RED_CONSEC ("<prev8> <head8>|<names>") and skips the rerun rung.
+      # BH-9210: the reason names the failing REQUIRED checks when this head's
+      # CI read found them (MC_CI_RED_CHECKS, bin/lib/mc-ci-advisory.sh).
+      local reqred=""
+      [ "${MC_CI_REQ_SHA:-}" = "$head" ] && [ -n "${MC_CI_RED_CHECKS:-}" ] && reqred="${MC_CI_RED_CHECKS//,/, }"
       if [ -n "${MC_RED_CONSEC:-}" ]; then
+        if [ -n "$reqred" ]; then
+          printf 'RED_TWICE\tred-twice: red on consecutive heads %s and %s; failing required checks: %s' "${MC_RED_CONSEC%% *}" "$(cut -d'|' -f1 <<<"${MC_RED_CONSEC#* }")" "$reqred"; return; fi
         printf 'RED_TWICE\tred-twice: red on consecutive heads %s and %s; failing checks: %s' "${MC_RED_CONSEC%% *}" "$(cut -d'|' -f1 <<<"${MC_RED_CONSEC#* }")" "${MC_RED_CONSEC#*|}"; return; fi
       if [ "${MC_RED_RUNG:-0}" -ge 2 ] 2>/dev/null; then
-        printf 'RED_TWICE\tred-twice: still red on %s after its failed jobs were re-run once' "${head:0:8}"; return; fi
+        printf 'RED_TWICE\tred-twice: still red on %s after its failed jobs were re-run once%s' "${head:0:8}" "${reqred:+; failing required checks: $reqred}"; return; fi
       if [ "${MC_RED_RUNG:-0}" = 1 ]; then printf 'WAIT_CI\tchecks red once — failed jobs re-run, waiting on the rerun'; else printf 'WAIT_CI\tchecks red once'; fi
       return ;;
   esac
@@ -2443,6 +2472,9 @@ mc_flake_rerun() {
   # a head that is red for a real reason, a way to never reach RED_TWICE.
   [ -n "$(mc_rerun_mark "$key" "$head")" ] && return 1
   runs=$(flaky_failed_runs "$slug" "$head"); [ -n "$runs" ] || return 1
+  # BH-9210: only a run that holds a failed required check is re-run.
+  command -v mca_rerun_filter >/dev/null 2>&1 && runs=$(mca_rerun_filter "$slug" "$key" "$head" <<<"$runs")
+  [ -n "$runs" ] || return 1
   names=$(while IFS='|' read -r id path name rsha; do
             [ -n "$id" ] && flaky_run_tests "$slug" "$id"
           done <<<"$runs" | grep -av '^$' | sort -u)
@@ -2648,6 +2680,15 @@ mc_red_rerun() {
   if [ -z "$runs" ]; then
     mc_log "$key red on ${head:0:8} but the failed runs could not be read — no rerun this tick and no rung spent; the next tick asks again"
     return 1
+  fi
+  # BH-9210: only a run that holds a failed required check is re-run. None
+  # left = nothing to re-run and, as for an empty read, no rung spent.
+  if command -v mca_rerun_filter >/dev/null 2>&1; then
+    runs=$(mca_rerun_filter "$slug" "$key" "$head" <<<"$runs")
+    if [ -z "$runs" ]; then
+      mc_log "$key no failed run on ${head:0:8} holds a failed required check — no rerun, no rung spent"
+      return 1
+    fi
   fi
   # BH-3804: the PR must still be at this head, or nothing is written — no
   # rerun and no mark for either sha (project-4 #1815: a rerun of the old head's

@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_ADVISORY_RED",
+  "read_in": "bin/lib/mc-ci-advisory.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9210: the CI red rule counts only the checks Mergify requires. 1 = on a Mergify repo (not project-4) whose .mergify.yml queue_rules name a check-success, a failed latest workflow run is advisory (not red, no rerun, no RED_TWICE) when its jobs were read in full and every job named like a required check concluded success; one advisory-red: <workflow> line per head. 0 = off: every failed latest run is red, as before BH-9210."
+}

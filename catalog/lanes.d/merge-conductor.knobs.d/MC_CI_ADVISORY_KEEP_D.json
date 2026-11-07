@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_ADVISORY_KEEP_D",
+  "read_in": "bin/lib/mc-ci-advisory.sh",
+  "type": "int",
+  "default": 7,
+  "min": 1,
+  "max": 90,
+  "unit": "d",
+  "zero_means": null,
+  "note": "BH-9210: the days a line of state/merge-conductor/ci-advisory-red.tsv (one per head marked red only by advisory failures) is kept; older lines are pruned when a new line is written. The fleet-status field ci_advisory_red counts the last 24 h. Not a whole number, or under 1: 7."
+}

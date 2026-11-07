@@ -897,6 +897,17 @@ SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson d
   --argjson pf "$PAUSED" --argjson so "$STALE" --argjson fly "$FLY" --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
   '{pushed_at:$ts, projects:$pr, alerts_24h:$al, deploys:$dep, pause_flags:$pf, stale_owed:$so, fly:$fly}')
 
+# 12. ADVISORY RED (BH-9210) — the heads per repo marked red only by advisory
+# failures (a failed run that holds no failed required check) in the last 24 h,
+# read from the ledger the merge conductor writes (bin/lib/mc-ci-advisory.sh,
+# state/merge-conductor/ci-advisory-red.tsv). A missing file is []. A failure
+# here keeps the snapshot as it was, so it never costs the push.
+. "$H/bin/lib/mc-ci-advisory.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/mc-ci-advisory.sh" 2>/dev/null || true
+if command -v mca_count_24h >/dev/null 2>&1; then
+  ADVR=$(mca_count_24h "$H/state/merge-conductor/ci-advisory-red.tsv" "$NOW")
+  SNAP2=$(jq -c --slurpfile a <(printf '%s' "$ADVR") '. + {ci_advisory_red: $a[0]}' <<<"$SNAP" 2>/dev/null) && [ -n "$SNAP2" ] && SNAP="$SNAP2"
+fi
+
 # SIZE. The worker answers 413 to a body over 64000 bytes and this curl is
 # silent, so an oversized push is indistinguishable from a dead hub — it would
 # fire the dead-man it exists to feed. The 2026-09-14 fields are the growth
