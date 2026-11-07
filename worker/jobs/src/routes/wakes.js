@@ -36,6 +36,19 @@ const intSettingOr = (byKey, key, def, lo, hi) => {
   return n >= lo && n <= hi ? n : def;
 };
 
+// GET /api/wakes page size (BH-9208). Each one is the fallback of the settings
+// row named on it, used when the row is absent or not a whole number in
+// 1..1000 (1000 is the code ceiling). Seed: schema.d/202611071640-bh-9208-*.sql.
+// wakes.list_max_rows must stay >= the callers' page size:
+// bin/lib/pr-snapshot-wakes.sh and bin/pool-wake-poll.sh page at up to 500 and
+// read a shorter page as the end.
+// Fallback of settings row wakes.list_default_rows (1..1000).
+const WAKES_LIST_DEFAULT_ROWS = 200;
+// Fallback of settings row wakes.list_max_rows (1..1000).
+const WAKES_LIST_MAX_ROWS = 500;
+const WAKES_LIST_ROWS_CEIL = 1000;
+const WAKES_LIST_COLS = "id, repo, kind, key, event, minute, at, acked_at";
+
 const NUDGE_REASONS = new Set(["untriaged", "unblocked"]);
 const NUDGE_DEDUPE_RE = /^[a-z0-9:#-]{1,64}$/;
 // A Jira or Linear ticket key (BH-8451): the same shape as JIRA_KEY_RE in
@@ -300,12 +313,22 @@ export const routes = [
       if (repo) { binds.push(repo); where.push(`repo=?${binds.length}`); }
       const kind = url.searchParams.get("kind");
       if (kind) { binds.push(kind); where.push(`kind=?${binds.length}`); }
-      const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit")) || 200), 500);
-      // sql-ident-ok: where holds literal column clauses with ?N binds; limit is a Number clamped to 1..500
+      // BH-9208: the page bound is two settings rows. A settings read that
+      // fails uses the fallbacks (today's 200/500) and never fails the wakes read.
+      let byKey = new Map();
+      try {
+        ({ byKey } = await settingsRows(env));
+      } catch (e) {
+        console.warn(`wakes: settings read failed, using fallbacks: ${e && e.message}`);
+      }
+      const max = intSettingOr(byKey, "wakes.list_max_rows", WAKES_LIST_MAX_ROWS, 1, WAKES_LIST_ROWS_CEIL);
+      const def = Math.min(max, intSettingOr(byKey, "wakes.list_default_rows", WAKES_LIST_DEFAULT_ROWS, 1, WAKES_LIST_ROWS_CEIL));
+      const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit")) || def), max);
+      // sql-ident-ok: where holds literal column clauses with ?N binds; WAKES_LIST_COLS is a constant; limit is a Number clamped to 1..max
       const rows = await env.DB.prepare(
-        `SELECT * FROM wakes WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT ${limit}`
+        `SELECT ${WAKES_LIST_COLS} FROM wakes WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT ${limit}`
       ).bind(...binds).all();
-      return json(200, { wakes: rows.results || [], as_of: t });
+      return json(200, { wakes: rows.results || [], limit, as_of: t });
     },
   ],
 

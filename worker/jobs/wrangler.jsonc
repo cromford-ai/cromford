@@ -21,6 +21,10 @@
   "account_id": "00000000000000000000000000000000",
   "workers_dev": true,
   "preview_urls": false,
+  // BH-9208: upload a source map with each deploy, so a stack from the deployed
+  // worker names the src/ file and line, not a bundled index.js line
+  // (Sentry CROMFORD-HARNESS-1Z gave only index.js:74377 and index.js:29323).
+  "upload_source_maps": true,
   "d1_databases": [
     { "binding": "DB", "database_name": "harness-jobs", "database_id": "00000000-0000-0000-0000-000000000000" }
     // BH-6774: the archive store (src/lib/archive.js). Commented out until the

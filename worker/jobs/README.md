@@ -165,6 +165,12 @@ The default export is wrapped by `withHarnessSentry` (`src/lib/sentry.js`).
   `bin/harness-sync.sh` runs `npm ci --omit=dev` in the snapshot before
   `wrangler deploy` (`# >>> worker npm ci`). A failed install writes one
   ALERTS line and skips the deploy; the next run retries.
+- **Source maps (BH-9208):** `wrangler.jsonc` sets `upload_source_maps: true`.
+  Each deploy uploads `index.js.map` to Cloudflare, so a stack in the
+  Cloudflare logs and tail names the `src/` file and line, not a bundled
+  `index.js` line. Not known yet: whether the stack the Sentry SDK reads in the
+  isolate is also mapped. A Sentry-side upload needs a Sentry auth token at
+  deploy and is not done.
 
 Details and the live probe: `docs/verification-map/worker-sentry.md`.
 
@@ -978,7 +984,7 @@ Client: `merge_queue_put` / `merge_queue_list` / `merge_queue_set` (verbs
 | Route | Auth | What |
 |---|---|---|
 | `POST /webhooks/github` | `X-Hub-Signature-256` HMAC over the RAW body, keyed on `GITHUB_WEBHOOK_SECRET` | Records that something changed on a repo: `{repo, kind, key}` and nothing else from the payload. Idempotent on `(repo, kind, key, minute)`; answers `duplicate: true` when the unique index held. `ping` -> 200 and no row. An event nobody owns -> 202 and no row. No secret configured -> **503**, never an open door. |
-| `GET /api/wakes?since=&repo=&kind=&limit=` | bearer | With `since` (a row id) everything newer than that watermark, acked or not; without it, the unacked backlog. `ORDER BY id ASC`. |
+| `GET /api/wakes?since=&repo=&kind=&limit=` | bearer | With `since` (a row id) everything newer than that watermark, acked or not; without it, the unacked backlog. `ORDER BY id ASC`. Answers `{wakes, limit, as_of}`: each row has the 8 named columns `id, repo, kind, key, event, minute, at, acked_at`, and `limit` is the page bound used. BH-9208: with no `?limit` the bound is the settings row `wakes.list_default_rows` (code default 200); `?limit` is clamped to 1..`wakes.list_max_rows` (code default 500). A row that is not a whole number in 1..1000 uses the code default, and a failed settings read uses both defaults. Keep `wakes.list_max_rows` >= 500: `bin/lib/pr-snapshot-wakes.sh` and `bin/pool-wake-poll.sh` page at up to 500 and read a shorter page as the end. |
 | `POST /api/wakes/ack` `{ids:[…]}` | bearer | Marks the named unacked rows acked. Housekeeping for the backlog view — the loop's real guard is its own local watermark, so a failed ack can never make a lane run twice. |
 | `POST /api/wakes/prune` `{days, limit?}` | bearer | Retention (BH-1267). Deletes rows with `at` older than `days`, oldest first, at most `limit` (1..5000, default 5000) per call; answers `{deleted, before, days, limit, capped, as_of}`. `days` is an integer 1..3650 with **no default** — absent, `0`, negative, fractional, a string or out of range is a 400 that deletes nothing. `capped: true` means the cap was hit and the backlog is not drained; the next daily call continues. |
 | `POST /api/wakes/nudge` `{repo, key, reason, dedupe}` | bearer | The producer for a ticket GitHub never rings about (BH-2754), called by `bin/untriaged-wake.sh`. `INSERT OR IGNORE` one `kind=issue` row with `key` stored as TEXT, event `nudge:<reason>` and minute `nudge:<dedupe>`; answers `{inserted: 0\|1, as_of}`. `repo` is `owner/name`, `key` a JSON integer 1..1e9 (a string is refused), `reason` `untriaged` or `unblocked`, `dedupe` 1..64 chars of `[a-z0-9:#-]`. Anything else is a 400 that writes nothing. |
