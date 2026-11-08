@@ -53,6 +53,10 @@ MAP="$T/expected-map.tsv"
 mc_expected_map "$DIR/tests/mc/expected-map.d" "$MAP" 2>"$T/map.err" && ok \
   || bad "3: tests/mc/expected-map.d must assemble: $(head -3 "$T/map.err" | tr '\n' ' ')"
 MODULES="log locks classify queue rebase settle"
+# BH-9239: tests/lib/scratch.sh unsets HARNESS, so bin/lib/mc/log.sh falls back to
+# /root/harness, and bin/lib/mc/queue.sh sources the live gh-rest-list.sh and
+# gh-policy-cache.sh into the measured set. The fns.sh calls pin HARNESS here.
+NOH="$T/no-harness"; mkdir -p "$NOH"
 
 # ── the three drivers ───────────────────────────────────────────────────────
 # fns.sh <mcdir> <module...> — source the modules in order, print what they
@@ -123,20 +127,20 @@ for m in $MODULES; do
   bash -n "$MCD/$m.sh" 2>/dev/null && ok || bad "1: bin/lib/mc/$m.sh must pass bash -n"
 done
 for m in $MODULES; do
-  bash "$T/fns.sh" "$MCD" log "$m" >/dev/null 2>&1 && ok \
+  HARNESS="$NOH" bash "$T/fns.sh" "$MCD" log "$m" >/dev/null 2>&1 && ok \
     || bad "1: bin/lib/mc/$m.sh must source clean behind log.sh"
 done
 
 # ── 2. no function is defined by two modules ────────────────────────────────
 SETS="$T/sets"; mkdir -p "$SETS"
 SETS_OK=1
-if bash "$T/fns.sh" "$MCD" log > "$SETS/log.raw" 2>/dev/null; then
+if HARNESS="$NOH" bash "$T/fns.sh" "$MCD" log > "$SETS/log.raw" 2>/dev/null; then
   sort "$SETS/log.raw" > "$SETS/log.txt"
 else
   SETS_OK=0; : > "$SETS/log.txt"
 fi
 for m in locks classify queue rebase settle; do
-  if bash "$T/fns.sh" "$MCD" log "$m" > "$SETS/with-$m.raw" 2>/dev/null; then
+  if HARNESS="$NOH" bash "$T/fns.sh" "$MCD" log "$m" > "$SETS/with-$m.raw" 2>/dev/null; then
     sort "$SETS/with-$m.raw" > "$SETS/with-$m.txt"
     comm -13 "$SETS/log.txt" "$SETS/with-$m.txt" > "$SETS/$m.txt"
   else
