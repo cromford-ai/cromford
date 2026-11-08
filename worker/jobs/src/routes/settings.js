@@ -370,6 +370,9 @@ export const routes = [
       return d1Guarded("settings", async () => {   // BH-1000: body unchanged
       const key = String(body.key || "").trim();
       if (!SETTING_KEY_RE.test(key)) return json(400, { error: "key must match ^[a-z0-9_.-]{1,64}$" });
+      if (key === 'hub_envelope_public_key') {
+        return json(403, { error: 'hub_envelope_public_key is service-managed; use PUT /api/secrets/envelope/public-key with the hub token' });
+      }
       // BH-3831: the switch that makes the human verdict token mandatory is
       // changed only by the holder of that token. With the bearer alone, any box
       // could flip enforce back to shadow and the enforcement would be decorative.

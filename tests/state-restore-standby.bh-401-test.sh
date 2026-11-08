@@ -310,7 +310,7 @@ W="$T/l1/state/standby-stream.json"
 # S12 on success
 [ "$(jq -c '[.of,.snapshot,.ok]' "$T/curl.body" 2>/dev/null)" = "[\"hub\",\"$TS1\",true]" ] \
   && ok || bad "S12: the success report body is $(cat "$T/curl.body" 2>/dev/null)"
-grep -qx "https://wd.test.invalid/api/standby/standby-box?s=$WDSECRET" "$T/curl.log" \
+grep -qx "https://wd.test.invalid/api/standby/standby-box" "$T/curl.log" \
   && ok || bad "S12: the report URL is wrong: $(grep http "$T/curl.log")"
 grep -qE "$CANARY|$WDSECRET|sak-canary" "$T/rs.out" && bad "S12: a secret reached stdout" || ok
 

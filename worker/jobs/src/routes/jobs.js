@@ -7,6 +7,7 @@
 // src/index.js holds the ordered table that decides which of these runs.
 
 import { json } from "../lib/http.js";
+import { qaReadOk, qaJobs } from "../lib/qa-read.js";
 import {
   OPEN_STATUS, resolveLane, decorateJob, JOBS_SELECT, JOB_TRANSITIONS,
   checkTransition, checkPause, checkRules, putClaim, ensureColumns, jobId,
@@ -16,7 +17,7 @@ export const routes = [
   // ── Jobs ───────────────────────────────────────────────────────────────
   [
     "GET", "/api/jobs",
-    async ({ env, url, t }) => {
+    async ({ req, env, url, t }) => {
       const where = [], binds = [];
       // ticket_id + kind (BH-2406): bin/lib/jobs/jobs.sh job_ticket_abandoned
       // asks for one ticket's newest BUILD row (triage, lead-review, orc and
@@ -41,7 +42,7 @@ export const routes = [
         jobs = jobs.filter((j) => j.status === OPEN_STATUS
           && j.activity_age_s !== null && j.activity_age_s >= staleMin * 60);
       }
-      return json(200, { jobs, as_of: t });
+      return json(200, { jobs: req && qaReadOk(req, env) ? qaJobs(jobs) : jobs, as_of: t });
     },
   ],
 

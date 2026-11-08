@@ -254,9 +254,9 @@ test('an over-long key is refused inline on the knob that would produce it', () 
       knobs: [{ env: 'AUTOPILOT_DAILY_CAP_USD', type: 'int', default: 0, min: 0, max: 999, zero_means: 'unlimited' }]
     }]
   };
-  const st = { scope: 'project-8', projects: ['project-8'], lanes: [{ id: 'review-autopilot', off: false }] };
-  const rows = laneRows(longRegistry, st, 'project-8');
-  const html = view({ activeTab: 'project-8', status: st, rows, tabs: tabsFrom(st) });
+  const st = { scope: 'fixture-project-xyz', projects: ['fixture-project-xyz'], lanes: [{ id: 'review-autopilot', off: false }] };
+  const rows = laneRows(longRegistry, st, 'fixture-project-xyz');
+  const html = view({ activeTab: 'fixture-project-xyz', status: st, rows, tabs: tabsFrom(st) });
   // The input is rendered disabled with the reason attached, rather than
   // letting the operator type a value that can only ever 400.
   assert.ok(html.includes('AUTOPILOT_DAILY_CAP_USD'), 'the knob is still shown — hiding it would hide the problem');

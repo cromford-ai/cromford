@@ -117,7 +117,7 @@ reap() { # reap <attempt-on-the-machine> [deferrals-on-the-machine]
   ( export PATH="$T/fakebin:$PATH" HARNESS="$T/h" HARNESS_SECRET=test-secret \
            JOBS_URL=https://jobs.invalid JOBS_BOX=hub JOBS_RETRIES=0 \
            FLEET_CONF="$T/h/fleet.conf" REQ_SINK="$T/req.txt" SSH_SINK="$T/ssh.txt" \
-           BEAT_SINK="$T/beat.txt" FLY_API_TOKEN_project-5=tok \
+           BEAT_SINK="$T/beat.txt" FLY_API_TOKEN_PROJECT_5=tok \
            FLY_BIN_DIR="$T/fakebin"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }

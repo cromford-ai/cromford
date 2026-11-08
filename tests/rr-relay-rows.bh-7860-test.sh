@@ -219,7 +219,7 @@ eq "R1: the reader finds the consumer's row" "$(lib rrr_consumed "$P" "$HUBC")" 
 # ═════════════════════════════════════════════════════════════════════════════
 HI="$T/hi"
 mkdir -p "$HI/bin" "$HI/env" "$HI/flags" "$HI/logs" "$HI/state/fly" "$HI/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-3_OS=tok-fixture-1\n' > "$HI/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_3_OS=tok-fixture-1\n' > "$HI/env/fly.env"
 printf '#!/bin/bash\nexit 0\n' > "$HI/bin/beat.sh"
 printf '#!/bin/bash\ncase "${1:-}" in --tailnet-ip) echo "$BOX_IP"; exit 0 ;; esac\nexit 1\n' > "$HI/bin/fleet-conf.sh"
 chmod +x "$HI/bin/beat.sh" "$HI/bin/fleet-conf.sh"

@@ -45,7 +45,7 @@ mkdir -p "$H/bin/lib/jobs" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/state/build-notes/project-5" \
          "$H/state/vercel-deploys" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-5=tok-fixture-fly\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-fly\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 boxa 192.0.2.9\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -143,7 +143,7 @@ run_pool() { # run_pool [VAR=val ...]
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" \
            HARNESS_SECRET=fixture-secret JOBS_URL=https://jobs.invalid JOBS_BOX=hub \
            JOBS_RETRIES=0 JOBS_TIMEOUT=5 FLY_SINK="$T/fly.txt" \
-           FLY_API_TOKEN_project-5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok-fixture-fly FLY_BIN_DIR="$T/fakebin" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 reset_case() { # reset_case <key>

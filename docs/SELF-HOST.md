@@ -41,7 +41,7 @@ which settings turn a row on, `per-project` rows repeat once per project, and
 | cloudflare | d1 | `harness-locks` | always | `CLOUDFLARE_API_TOKEN` |
 | cloudflare | worker | `harness-jobs` | always | `CLOUDFLARE_API_TOKEN`, `HARNESS_SECRET`, `GITHUB_WEBHOOK_SECRET` |
 | cloudflare | worker | `harness-locks` | always | `CLOUDFLARE_API_TOKEN`, `HARNESS_TOKENS`, `ADMIN_TOKEN` |
-| cloudflare | worker | `harness-watchdog` | always | `CLOUDFLARE_API_TOKEN`, `HARNESS_SECRET`, `STAMP_SECRET` |
+| cloudflare | worker | `harness-watchdog` | always | `CLOUDFLARE_API_TOKEN`, `WATCHDOG_SECRET`, `HARNESS_SECRET`, `STAMP_SECRET` |
 | cloudflare | kv | `harness-watchdog` | always | `CLOUDFLARE_API_TOKEN` |
 | cloudflare | r2 | `<BACKUP_S3_BUCKET>` | always | `CLOUDFLARE_API_TOKEN`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` |
 | cloudflare | pages | `<CONSOLE_PAGES_PROJECT>` | always | `CLOUDFLARE_API_TOKEN` |
@@ -120,7 +120,7 @@ refuses any key whose name ends in `TOKEN`, `SECRET`, `API_KEY`, `PASSWORD` or
 `PRIVATE_KEY`. Secrets live only under `/etc/harness/env/` on the box. The dry-run
 prints the names of the ones your settings need, from this list:
 `CLOUDFLARE_API_TOKEN`, `HARNESS_SECRET`, `GITHUB_WEBHOOK_SECRET`,
-`HARNESS_TOKENS`, `ADMIN_TOKEN`, `STAMP_SECRET`, `BACKUP_S3_ACCESS_KEY_ID`,
+`HARNESS_TOKENS`, `ADMIN_TOKEN`, `WATCHDOG_SECRET`, `STAMP_SECRET`, `BACKUP_S3_ACCESS_KEY_ID`,
 `BACKUP_S3_SECRET_ACCESS_KEY`, `FLY_API_TOKEN`, `GH_APP_ID`,
 `GH_APP_PRIVATE_KEY_FILE`, `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SLACK_BOT_TOKEN`.

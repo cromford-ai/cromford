@@ -65,8 +65,8 @@ export default {
       if (req.method === "GET" && path === "/v1/admin/tokens") {
         const rows = actor
           ? await env.DB.prepare(
-              "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens WHERE name LIKE ?1 ORDER BY created_at DESC"
-            ).bind(actor.prefix + "%").all()
+              "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens WHERE role='machine' AND substr(name,1,length(?1))=?1 ORDER BY created_at DESC"
+            ).bind(actor.prefix).all()
           : await env.DB.prepare(
               "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens ORDER BY created_at DESC"
             ).all();
@@ -98,13 +98,6 @@ export default {
           if (!name.startsWith(actor.prefix)) {
             return json(403, { error: `name must start with your prefix '${actor.prefix}'` });
           }
-          const cap = Math.max(Number(env.MINT_CAP) || 5, 1);
-          const used = await env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM locks_log WHERE holder=?1 AND action='token-mint' AND at > ?2"
-          ).bind(actor.name, t - 86400).first();
-          if ((used?.n || 0) >= cap) {
-            return json(429, { error: `mint cap ${cap}/24h reached`, retry_after_s: 86400 });
-          }
         } else if (role === "minter") {
           prefix = String(body.prefix || "").trim().toLowerCase();
           if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(prefix)) {
@@ -118,11 +111,22 @@ export default {
         const token = randomHex(24);
         const id = crypto.randomUUID();
         const exp = t + ttlDays * 86400;
-        await env.DB.prepare(
-          "INSERT INTO tokens (id, name, token_hash, created_by, created_at, expires_at, role, prefix) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"
-        ).bind(id, name, await sha256Hex(token), actor ? actor.name : String(body.created_by || "admin").slice(0, 64), t, exp, role, prefix).run();
-        await env.DB.prepare("INSERT INTO locks_log (key,holder,action,at) VALUES (?1,?2,'token-mint',?3)")
-          .bind(name, actorName, t).run();
+        const cap = actor ? Math.max(Number(env.MINT_CAP) || 5, 1) : null;
+        // Admission and issuance are one conditional write. Counting issued
+        // rows also keeps revocation or log retention from resetting the cap.
+        // D1 batches transact both writes: a failed audit rolls issuance back.
+        const [issued] = await env.DB.batch([
+          env.DB.prepare(
+            `INSERT INTO tokens (id, name, token_hash, created_by, created_at, expires_at, role, prefix)
+             SELECT ?1,?2,?3,?4,?5,?6,?7,?8
+             WHERE ?9 IS NULL OR (SELECT COUNT(*) FROM tokens WHERE created_by=?4 AND created_at > ?10) < ?9`
+          ).bind(id, name, await sha256Hex(token), actor ? actor.name : String(body.created_by || "admin").slice(0, 64), t, exp, role, prefix, cap, t - 86400),
+          env.DB.prepare("INSERT INTO locks_log (key,holder,action,at) SELECT name,?2,'token-mint',?3 FROM tokens WHERE id=?1")
+            .bind(id, actorName, t),
+        ]);
+        if (issued.meta.changes === 0) {
+          return json(429, { error: `mint cap ${cap}/24h reached`, retry_after_s: 86400 });
+        }
         // The one and only time the token is returned.
         return json(201, { id, name, token, role, prefix, expires_at: exp, ttl_days: ttlDays });
       }
@@ -157,8 +161,12 @@ export default {
 
     // ── Harness auth: static secret first, then minted-token lookup ──
     let tokens = {};
-    try { tokens = JSON.parse(env.HARNESS_TOKENS || "{}"); } catch {}
-    let harness = tokens[auth];
+    try {
+      const parsed = JSON.parse(env.HARNESS_TOKENS || "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          && Object.values(parsed).every((value) => typeof value === "string" && value.trim())) tokens = parsed;
+    } catch {}
+    let harness = auth && Object.hasOwn(tokens, auth) ? tokens[auth] : null;
     if (!harness && auth) {
       // role='machine' only: a minter credential administers tokens, it never
       // holds leases — lane separation keeps a leaked minter out of coordination.

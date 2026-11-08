@@ -47,7 +47,7 @@ mkdir -p "$H/bin/lib" "$H/logs" "$H/flags" "$H/locks" "$H/env" "$H/fly" \
          "$H/state/fly" "$H/state/fly-pool/project-5" \
          "$H/state/build-queue/project-5" "$H/state/remote-results/project-5" \
          "$H/state/pool/project-5" "$H/builds" "$T/fakebin"
-printf 'FLY_API_TOKEN_project-5=tok\n' > "$H/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok\n' > "$H/env/fly.env"
 : > "$H/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$H/fleet.conf"
 printf '3\n' > "$H/flags/fly-pool-project-5"
@@ -112,7 +112,7 @@ FOB64=$(base64 < "$T/machine-failovers.log" | tr -d '\n')
 run_pool() {
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"; : > "$T/fly-calls"; : > "$T/acct-calls"
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLEET_CONF="$H/fleet.conf" \
-           FLY_API_TOKEN_project-5=tok FLY_BIN_DIR="$T/fakebin" "$@"
+           FLY_API_TOKEN_PROJECT_5=tok FLY_BIN_DIR="$T/fakebin" "$@"
     bash "$DIR/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 

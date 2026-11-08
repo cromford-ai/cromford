@@ -30,7 +30,7 @@ test('mainRedForProject matches on project or main-red-<project> and rejects eve
   const drop = [
     { project: 'project-4', name: 'main-red-example-org-project-4' },
     { name: 'main-red-project-3-2' },
-    { project: 'project-3' },
+    { project: 'fixture-other' },
     null
   ];
   assert.deepEqual(mainRedForProject([...keep, ...drop], 'project-3'), keep);

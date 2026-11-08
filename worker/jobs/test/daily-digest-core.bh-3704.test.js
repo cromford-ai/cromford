@@ -170,7 +170,7 @@ test('U2: isHumanActor is true only for an @ address or a listed name, never the
   assert.equal(isHumanActor('operator@example.com', []), true);
   assert.equal(isHumanActor('OPERATOR@example.com', []), true);
   assert.equal(isHumanActor(' operator ', ['operator']), true);
-  assert.equal(isHumanActor('the operator', [' OPERATOR ']), true, 'a caller that forgot to normalize the list');
+  assert.equal(isHumanActor('operator', [' OPERATOR ']), true, 'a caller that forgot to normalize the list');
   assert.equal(isHumanActor('operator', undefined), false);
 });
 

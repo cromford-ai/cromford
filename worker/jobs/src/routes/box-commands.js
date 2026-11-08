@@ -16,7 +16,8 @@
 //   - reason missing or blank → 400 {error:"reason_required"}.
 //   - type not one of TYPES (lib/box-command-types.js) → 400.
 //   - an OWNER_ONLY type (the Orgo and Fly pool controls, BH-5750) from an
-//     actor not in env.BOX_OPS_OWNERS → 403 {error:"owner_only"} and ONE
+//     actor not in env.BOX_OPS_OWNERS or without the independent BOX_OPS_TOKEN
+//     credential → 403 {error:"owner_only"} and ONE
 //     box_command_refused audit row (outcome refused:owner). No command row.
 //   - box not [A-Za-z0-9._-]{1,64} → 400.
 //   - box other than 'hub' without a box_status row → 409 {error:"unknown_box"}.
@@ -65,7 +66,7 @@ import { json, d1Guarded } from "../lib/http.js";
 import { laneName, strictInt, isoPlusSeconds } from "../lib/core.js";
 import { confirmed, auditStmt, knownBox } from "../lib/hub-recovery.js";
 import { TYPES, FLY, OWNER_ONLY, QUOTE_OF } from "../lib/box-command-types.js";
-import { normActor, isOwner, orgoArgs, quoteMatches, QUOTE_TTL_S } from "../lib/box-command-args.js";
+import { normActor, isOwner, ownerCredentialOk, orgoArgs, quoteMatches, QUOTE_TTL_S } from "../lib/box-command-args.js";
 const MACHINE_RE = /^[0-9a-z]{8,32}$/;
 const HISTORY_LIMIT = 50;
 // Fallback for the operator's settings row. THE ROW WINS whenever it parses as
@@ -97,7 +98,7 @@ function shape(row) {
 const byId = async (env, id) => shape(await env.DB.prepare("SELECT * FROM box_commands_v2 WHERE id=?1").bind(id).first());
 
 export const routes = [
-  ["POST", "/api/box-commands", ({ env, t, body }) => d1Guarded("box_commands", async () => {
+  ["POST", "/api/box-commands", ({ req, env, t, body }) => d1Guarded("box_commands", async () => {
     // An Access email has an '@', which laneName refuses; normActor keeps it.
     const actor = laneName(body.actor) || normActor(body.actor) || "unknown";
     const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : null;
@@ -117,7 +118,7 @@ export const routes = [
       }, t)]);
       return json(status, { error, ...extra });
     };
-    if (OWNER_ONLY.has(type) && !isOwner(env, actor)) return refuse(403, "owner_only", "refused:owner");
+    if (OWNER_ONLY.has(type) && (!ownerCredentialOk(req, env) || !isOwner(env, actor))) return refuse(403, "owner_only", "refused:owner");
     const box = name(body.box);
     if (!box) return json(400, { error: `box is required and ${NAME_ERR}` });
     // The owner types are all addressed to 'hub'; orgoArgs refuses any other box.

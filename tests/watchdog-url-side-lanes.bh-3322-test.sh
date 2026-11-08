@@ -37,7 +37,7 @@ cat > "$T/fakebin/curl" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$CURL_LOG"
 case "$*" in *"@-"*) cat >/dev/null ;; esac
-case "$*" in */api/standby\?*) printf '[]' ;; *) printf '{}' ;; esac
+case "$*" in */api/standby*) printf '[]' ;; *) printf '{}' ;; esac
 exit 0
 SH
 chmod +x "$T/fakebin/curl"
@@ -49,7 +49,7 @@ fsetup() { # fsetup <name> [global.env extra line]
   mkdir -p "$F/bin/lib" "$F/logs" "$F/state" "$F/flags" "$F/env" "$F/builds"
   cp "$DIR/bin/fleet-conf.sh" "$DIR/bin/fleet-fly-block.sh" "$DIR/bin/alert_family.py" "$F/bin/"
   cp "$DIR/bin/lib/watchdog-url.sh" "$F/bin/lib/"
-  { printf 'HARNESS_SECRET=test-secret\n'; [ -n "${2:-}" ] && printf '%s\n' "$2"; } > "$F/env/global.env"
+  { printf 'HARNESS_SECRET=test-secret\nWATCHDOG_SECRET=fixture-watchdog-secret\n'; [ -n "${2:-}" ] && printf '%s\n' "$2"; } > "$F/env/global.env"
   printf '#!/bin/bash\nprintf %%s "$1" > %s/BEAT.json\n' "$F" > "$F/bin/beat.sh"; chmod +x "$F/bin/beat.sh"
   printf 'alpha-os Org/alpha https://a.example /api/board 2 box-alpha\n' > "$F/fleet.conf"
   : > "$F/curl.log"
@@ -74,8 +74,8 @@ has "$F/curl.log" /api/standby && bad "F-unset: no standby GET without WATCHDOG_
 
 fsetup f-set "WATCHDOG_URL=$WD"
 frun
-has "$F/curl.log" "$WD/api/status?s=test-secret" && ok || bad "F-set: the status POST goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
-has "$F/curl.log" "$WD/api/standby?s=test-secret" && ok || bad "F-set: the standby GET goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
+has "$F/curl.log" "$WD/api/status" && ok || bad "F-set: the status POST goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
+has "$F/curl.log" "$WD/api/standby" && ok || bad "F-set: the standby GET goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
 [ "$(jq -r 'has("standby_error")' "$F/BEAT.json" 2>/dev/null)" = false ] && ok || bad "F-set: a good [] list carries no standby_error"
 
 # ── C: cost-rollup ───────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ JC
 }
 crun() {
   env -u WATCHDOG_URL PATH="$T/fakebin:$PATH" CURL_LOG="$C/curl.log" HARNESS="$C" HARNESS_ENV_DIR="$C/env" \
-      COST_ROLLUP_TIMEBOXED=1 LANE_GATE_DISABLE=1 WINDOWS_ONLY=1 STAMP_DRY=1 HARNESS_SECRET=cost-secret \
+      COST_ROLLUP_TIMEBOXED=1 LANE_GATE_DISABLE=1 WINDOWS_ONLY=1 STAMP_DRY=1 HARNESS_SECRET=fixture-jobs-secret WATCHDOG_SECRET=fixture-cost-secret \
       bash "$C/bin/cost-rollup.sh" </dev/null > "$C/run.out" 2>&1
 }
 
@@ -114,7 +114,7 @@ has "$C/logs/ALERTS.log" cost-snapshot && bad "C-unset: no ALERTS line when not 
 
 csetup c-set "WATCHDOG_URL=$WD"
 crun
-has "$C/curl.log" "$WD/api/cost-snapshot?s=cost-secret" && ok || bad "C-set: the snapshot goes to WATCHDOG_URL (got: $(cat "$C/curl.log"))"
+has "$C/curl.log" "$WD/api/cost-snapshot" && ok || bad "C-set: the snapshot goes to WATCHDOG_URL (got: $(cat "$C/curl.log"))"
 has "$C/logs/agent-rules.log" FAILED && bad "C-set: a 0-rc push is not FAILED" || ok
 
 # ── P: progress-push ─────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ psetup() { # psetup <name> [global.env extra line]
   cp "$DIR/bin/fleet-conf.sh" "$DIR/bin/jobs-client.sh" "$P/bin/"
   cp "$DIR/bin/lib/env-path.sh" "$DIR/bin/lib/watchdog-url.sh" "$P/bin/lib/"
   cp -R "$DIR/bin/lib/jobs" "$P/bin/lib/"
-  { printf 'HARNESS_SECRET=test-secret\nJOBS_URL=https://jobs-fixture.invalid\n'; [ -n "${2:-}" ] && printf '%s\n' "$2"; } > "$P/env/global.env"
+  { printf 'HARNESS_SECRET=test-secret\nWATCHDOG_SECRET=fixture-watchdog-secret\nJOBS_URL=https://jobs-fixture.invalid\n'; [ -n "${2:-}" ] && printf '%s\n' "$2"; } > "$P/env/global.env"
   printf '{"lanes":[{"id":"fleet-slo","scope":"hub"}]}\n' > "$P/catalog/lanes.json"
   printf 'alpha-os Org/alpha https://a.example /api/board 2 box-alpha\n' > "$P/fleet.conf"
   : > "$P/curl.log"
@@ -145,7 +145,7 @@ case "$TICK" in *"post failed"*) bad "P-unset: not configured is not a failed po
 
 psetup p-set "WATCHDOG_URL=$WD"
 prun
-has "$P/curl.log" "$WD/api/progress?s=" && ok || bad "P-set: the POST goes to WATCHDOG_URL (got: $(cat "$P/curl.log"))"
+has "$P/curl.log" "$WD/api/progress" && ok || bad "P-set: the POST goes to WATCHDOG_URL (got: $(cat "$P/curl.log"))"
 
 # ── S: state-restore --standby ───────────────────────────────────────────────
 # A scratch H whose bin/ holds the real state-restore.sh and stubs for its
@@ -183,7 +183,7 @@ has "$S/curl.log" /api/standby/ && bad "S-unset: no standby report without WATCH
 
 ssetup s-set "WATCHDOG_URL=$WD"
 srun
-has "$S/curl.log" "$WD/api/standby/standby-box?s=wd-secret" && ok || bad "S-set: the report goes to WATCHDOG_URL (got: $(cat "$S/curl.log"); out: $(cat "$S/rs.out"))"
+has "$S/curl.log" "$WD/api/standby/standby-box" && ok || bad "S-set: the report goes to WATCHDOG_URL (got: $(cat "$S/curl.log"); out: $(cat "$S/rs.out"))"
 [ -e "$S/hb" ] && ok || bad "S-set: the standby heartbeat must still run"
 
 # ── H: the host is gone from the four scripts and three lane JSONs ───────────

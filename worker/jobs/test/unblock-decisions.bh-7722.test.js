@@ -165,7 +165,8 @@ test('BH-7722 unblock decisions ledger', async (t) => {
     ).run(), /CHECK/);
     const s = (k) => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value;
     assert.equal(s('unblock.enabled'), '1');
-    assert.equal(s('unblock.project.cromford.mode'), 'shadow');
+    // The earlier projects seed starts off; INSERT OR IGNORE preserves that safer setting.
+    assert.equal(s('unblock.project.cromford.mode'), 'off');
     assert.equal(s('unblock.standing_approval.cromford'), '1');
     assert.equal(s('retention.unblock_decisions.days'), '180');
     const exec0 = db.prepare("SELECT model, runner FROM model_routes WHERE project IS NULL AND role = 'stage.execute' AND position = 0 AND runner = 'claude'").get();
@@ -184,7 +185,8 @@ test('BH-7722 unblock decisions ledger', async (t) => {
     assert.match(readFileSync(new URL(r7725, SCHEMA_D), 'utf8'), /'stage\.unblock'/, 'BH-7725 seeds stage.unblock');
     assert.match(text, /'unblock\.judge'/, 'this fragment seeds unblock.judge');
     assert.ok(!text.includes('unblock.knob_allowlist'), 'the allowlist row is #7762\'s');
-    assert.ok(!text.includes('project-6-os'), 'project-6-os rows are #7796\'s');
+    const statements = text.replace(/--[^\n]*/g, '');
+    assert.ok(!statements.includes('project-6-os'), 'project-6-os rows are #7796\'s (a comment example is not a seed)');
     assert.ok(!/claude-[a-z]/.test(text), 'no model literal');
   });
 

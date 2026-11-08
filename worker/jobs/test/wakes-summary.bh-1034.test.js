@@ -82,12 +82,12 @@ test('summary: one row per repo, with the newest id, the newest at, and every ki
   const r = await call(fx, '');
   assert.equal(r.status, 200);
   assert.equal(r.body.repos.length, 2, 'two repos rang, so two rows');
-  const project-3 = r.body.repos.find((x) => x.repo === 'example-org/project-3');
-  assert.ok(project-3, 'the repo that rang twice is missing from the summary');
-  assert.equal(project-3.last_id, 2, 'last_id is the newest wake id of the repo');
-  assert.equal('n' in project-3, false, 'no per-window count');
-  assert.equal(project-3.last_at, iso(1 * H), 'last_at must be the NEWEST wake, not the oldest');
-  assert.deepEqual(String(project-3.kinds).split(',').sort(), ['pr', 'push']);
+  const project_3 = r.body.repos.find((x) => x.repo === 'example-org/project-3');
+  assert.ok(project_3, 'the repo that rang twice is missing from the summary');
+  assert.equal(project_3.last_id, 2, 'last_id is the newest wake id of the repo');
+  assert.equal('n' in project_3, false, 'no per-window count');
+  assert.equal(project_3.last_at, iso(1 * H), 'last_at must be the NEWEST wake, not the oldest');
+  assert.deepEqual(String(project_3.kinds).split(',').sort(), ['pr', 'push']);
   const ts = r.body.repos.find((x) => x.repo === 'example-org/project-5');
   assert.equal(ts.last_id, 3);
   assert.equal(ts.kinds, 'pr');

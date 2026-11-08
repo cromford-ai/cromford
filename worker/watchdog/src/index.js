@@ -70,8 +70,14 @@ async function expectedBoxes(env) {
   }
 }
 
-function authed(url, env) {
-  return url.searchParams.get("s") === env.HARNESS_SECRET;
+function bearerMatches(req, secret) {
+  const value = typeof secret === "string" ? secret.trim() : "";
+  return !!value && req.headers.get("authorization") === `Bearer ${value}`;
+}
+function authed(req, env) {
+  const watchdog = typeof env.WATCHDOG_SECRET === "string" ? env.WATCHDOG_SECRET.trim() : "";
+  const jobs = typeof env.HARNESS_SECRET === "string" ? env.HARNESS_SECRET.trim() : "";
+  return !!watchdog && watchdog !== jobs && bearerMatches(req, watchdog);
 }
 
 // Alert with damping: fire if never alerted or REALERT_MIN elapsed. Returns
@@ -101,7 +107,7 @@ export default {
     // ticket statuses without any board token reaching Cloudflare. Store is KV
     // key `tickets-snapshot`; the console proxies the GET behind the dash cookie.
     if (p === "/api/tickets-snapshot") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       if (req.method === "POST") {
         const body = await req.text();
         if (body.length > 512e3) return new Response("too big", { status: 413 });
@@ -117,7 +123,7 @@ export default {
     // unpriced-call counts) so Mission Control shows real spend, not just run/ticket
     // volume. Same KV-snapshot shape as tickets-snapshot; console proxies the GET.
     if (p === "/api/cost-snapshot") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       if (req.method === "POST") {
         const body = await req.text();
         if (body.length > 512e3) return new Response("too big", { status: 413 });
@@ -135,7 +141,7 @@ export default {
     // does: bin/mac/mac-burn-push.sh scans the local ledgers and POSTs a daily
     // rollup. Same auth + size cap as the other snapshots.
     if (p === "/api/mac-burn") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       if (req.method === "POST") {
         const body = await req.text();
         if (body.length > 512e3) return new Response("too big", { status: 413 });
@@ -149,7 +155,7 @@ export default {
     // Liveness ping: crontab curl from each box. Optional JSON body = metrics.
     let m = p.match(/^\/api\/ping\/([a-z0-9-]+)$/);
     if (m) {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       let metrics = null;
       if (req.method === "POST") { try { metrics = await req.json(); } catch {} }
       await env.KV.put(`ping:${m[1]}`, JSON.stringify({ ts: now(), metrics }));
@@ -166,7 +172,7 @@ export default {
 
     // Hub pushes its compact fleet-status JSON here each cycle.
     if (p === "/api/status" && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       const body = await req.text();
       if (body.length > 64000) return new Response("too big", { status: 413 });
       await env.KV.put("status:fleet", JSON.stringify({ ts: now(), body }));
@@ -175,7 +181,7 @@ export default {
 
     // Read-only status view (works while the hub is down; age labeled).
     if (p === "/api/status" || p === "/status") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       const raw = await env.KV.get("status:fleet");
       const pings = {};
       for (const b of await expectedBoxes(env)) {
@@ -198,7 +204,7 @@ export default {
     // watchdog stamps ts. Shape and reader live in standby.js.
     m = p.match(/^\/api\/standby\/([a-z0-9-]+)$/);
     if (m && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       if (!BOXES.includes(m[1])) return new Response("unknown box", { status: 400 });
       const body = await req.text();
       if (body.length > 2048) return new Response("too big", { status: 400 });
@@ -209,14 +215,14 @@ export default {
       return new Response("ok");
     }
     if (p === "/api/standby" && req.method === "GET") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       return Response.json(await listStandbys(env, now()));
     }
 
     // Command queue: enqueue (worker cron / future telegram buttons write here
     // through this same route with the shared secret).
     if (p === "/api/command" && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       const c = await req.json();
       const id = `${now()}-${crypto.randomUUID().slice(0, 8)}`;
       await env.KV.put(`cmd:${id}`, JSON.stringify({ id, ts: now(), type: c.type, arg: c.arg ?? null }), { expirationTtl: 86400 });
@@ -225,7 +231,7 @@ export default {
     // Hub poller: list pending commands. Consuming is explicit (ack) so a
     // crashed poller never loses a command.
     if (p === "/api/commands") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       const l = await env.KV.list({ prefix: "cmd:" });
       const out = [];
       for (const k of l.keys) { const v = await env.KV.get(k.name); if (v) out.push(JSON.parse(v)); }
@@ -233,7 +239,7 @@ export default {
     }
     m = p.match(/^\/api\/commands\/ack\/([0-9a-z-]+)$/);
     if (m && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       await env.KV.delete(`cmd:${m[1]}`);
       return new Response("ok");
     }
@@ -252,13 +258,13 @@ export default {
       return { v };
     };
     if (p === "/api/progress/dry-run" && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       const { v, err } = await readBodyObj();
       if (err) return err;
       return Response.json(await dryRun(env, v, now(), BOXES));
     }
     if (p === "/api/progress") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       if (req.method === "POST") {
         const { v, err } = await readBodyObj();
         if (err) return err;
@@ -274,8 +280,7 @@ export default {
     // clock, never the caller's.
     m = p.match(/^\/api\/stamp\/([^/]+)$/);
     if (m && req.method === "POST") {
-      const s = url.searchParams.get("s");
-      if (!env.STAMP_SECRET || !s || s !== env.STAMP_SECRET) return new Response("no", { status: 403 });
+      if (!bearerMatches(req, env.STAMP_SECRET)) return new Response("no", { status: 403 });
       let cfg = null;
       try { cfg = JSON.parse(await env.KV.get(PROGRESS_CFG_KEY)); } catch {}
       if (!NAME_RE.test(m[1]) || !cfg || !cfg.detectors || !Object.hasOwn(cfg.detectors, m[1])) {
@@ -288,7 +293,7 @@ export default {
     // Authed end-to-end alert test — proves the worker's OWN Telegram secrets
     // work (a typo'd secret would otherwise fail silently until a real alert).
     if (p === "/api/test-alert" && req.method === "POST") {
-      if (!authed(url, env)) return new Response("no", { status: 403 });
+      if (!authed(req, env)) return new Response("no", { status: 403 });
       await tg(env, "🐶 harness-watchdog: test alert — Telegram path verified.");
       return new Response("ok");
     }

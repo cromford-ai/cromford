@@ -244,7 +244,7 @@ check "S3 success heartbeat url" "$(cut -d' ' -f1 "$T/jobs.log")" "https://jobs.
 check "S3 success heartbeat body" "$(cut -d' ' -f3- "$T/jobs.log" | jq -c '[.box,.of,.snapshot,.ok]')" "[\"standby-box\",\"hub\",\"$TS1\",true]"
 check "S3 success watchdog reports" "$(lines "$T/wd.log")" 1
 check "S3 success watchdog url+body" "$(cat "$T/wd.log")" \
-  "https://wd.test.invalid/api/standby/standby-box?s=wdsecret-2640 {\"of\":\"hub\",\"snapshot\":\"$TS1\",\"ok\":true}"
+  "https://wd.test.invalid/api/standby/standby-box {\"of\":\"hub\",\"snapshot\":\"$TS1\",\"ok\":true}"
 check "S3 recorded is the last line" "$(tail -1 "$T/rs.out")" "standby heartbeat recorded"
 grep -q "$CANARY" "$T/rs.out" && bad "S3 the jobs secret reached stdout" || ok
 

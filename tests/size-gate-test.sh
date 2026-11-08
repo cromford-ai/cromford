@@ -518,14 +518,14 @@ FILES: 6
 LINES: 900')" SIZE_GATE_ENFORCE_WIDGET_OS=0 SIZE_GATE_ENFORCE=1)
 grep -q CONTINUED <<<"$OUT" && ok || bad "the project override must beat the global switch (got: $OUT)"
 # A project whose name IS a shell identifier is read verbatim too — env files are
-# written by hand, and `SIZE_GATE_ENFORCE_project-5=0` is what a person types.
+# written by hand, and `SIZE_GATE_ENFORCE_fixture_project=0` is what a person types.
 OUT=$( rm -rf "$T/b"; mkdir -p "$T/b"; : > "$T/decompose.log"
        printf '%s\n' "$(BODY '## Size
 FILES: 6
 LINES: 900')" > "$T/b/plan.md"
-       env HARNESS="$T/h" BUILD="$T/b" PROJECT=project-5 KEY=TK-9 TICKET=9 \
+       env HARNESS="$T/h" BUILD="$T/b" PROJECT=fixture_project KEY=TK-9 TICKET=9 \
            ALERTS="$T/h/logs/ALERTS.log" SINK=/dev/null DECOMPOSE_LOG="$T/decompose.log" \
-           SWITCHBLOCK="$T/switch.sh" SIZE_GATE_ENFORCE_project-5=0 \
+           SWITCHBLOCK="$T/switch.sh" SIZE_GATE_ENFORCE_fixture_project=0 \
        bash -c 'set -uo pipefail
                 STAMP() { echo TS; }
                 RESULT() { echo "RESULT=$*"; }

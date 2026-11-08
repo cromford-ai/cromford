@@ -236,7 +236,7 @@ mkdir -p "$FH/bin/lib" "$FH/logs" "$FH/flags" "$FH/locks" "$FH/env" "$FH/fly" "$
 for L in bin/fly-pool.sh bin/result-prefix-ok.sh bin/fleet-conf.sh bin/alert-line.sh; do
   ( cd "$REPO" && scratch_install_closure "$L" "$FH" ) >/dev/null 2>&1 || bad "F setup: could not install $L"
 done
-printf 'FLY_API_TOKEN_project-5=tok-fixture-1\n' > "$FH/env/fly.env"
+printf 'FLY_API_TOKEN_PROJECT_5=tok-fixture-1\n' > "$FH/env/fly.env"
 : > "$FH/env/global.env"
 printf 'project-5 example-org/project-5 - - 0 local\n' > "$FH/fleet.conf"
 printf '3\n' > "$FH/flags/fly-pool-project-5"
@@ -272,7 +272,7 @@ frun() {
   local p; for p in "$FH/state/build-queue/project-5"/*.json "$FH/state/fly-pool/project-5"/*.json; do [ -e "$p" ] && rm -f "$p"; done
   jq -nc '{ticket_id:"1016",key:"BH-1016",attempt:1,deferrals:0,deaths:0,enqueued_at:"2026-09-23T13:28:00Z"}' \
     > "$FH/state/build-queue/project-5/BH-1016.json"
-  ( export PATH="$FB:$PATH" HARNESS="$FH" FLEET_CONF="$FH/fleet.conf" FLY_API_TOKEN_project-5=tok-fixture-1 FLY_BIN_DIR="$FB"
+  ( export PATH="$FB:$PATH" HARNESS="$FH" FLEET_CONF="$FH/fleet.conf" FLY_API_TOKEN_PROJECT_5=tok-fixture-1 FLY_BIN_DIR="$FB"
     bash "$FH/bin/fly-pool.sh" project-5 >/dev/null 2>&1 )
 }
 spawned() { cnt 'machine run' "$T/fly-calls"; }

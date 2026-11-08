@@ -83,3 +83,19 @@ watchdog_url_seed() {
   fi
   return 1
 }
+
+# A dedicated credential; never reuse the jobs-plane bearer. Keep the header
+# out of process arguments, including callers that stream JSON on stdin.
+watchdog_secret() {
+  local secret="" file="${WATCHDOG_SECRET_FILE:-${HENV:-${HARNESS:-/root/harness}/env}/.watchdog-secret}"
+  [ ! -r "$file" ] || secret=$(tr -d '\r\n' < "$file")
+  [ -n "$secret" ] || secret="${WATCHDOG_SECRET:-}"
+  [ -n "$secret" ] || return 1
+  case "$secret" in *'"'*|*\\*|*$'\n'*|*$'\r'*) return 1 ;; esac
+  printf '%s' "$secret"
+}
+watchdog_curl() {
+  local secret
+  secret=$(watchdog_secret) || return 1
+  curl --config /dev/fd/3 "$@" 3<<<"header = \"Authorization: Bearer $secret\""
+}

@@ -270,7 +270,7 @@ standby_finish() { # $1 = the rc the run is exiting with
     echo "standby watermark NOT written ($W)"
   fi
   [ -r "$HENV/.watchdog-secret" ] && s=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-  [ -n "$s" ] || s="${HARNESS_SECRET:-}"
+  [ -n "$s" ] || s="${WATCHDOG_SECRET:-}"
   self=$(HARNESS="$H" "$HERE/box-name.sh" 2>/dev/null)
   if [ -z "$s" ]; then
     echo "standby report skipped: watchdog secret not configured"
@@ -280,8 +280,8 @@ standby_finish() { # $1 = the rc the run is exiting with
     echo "standby report skipped: WATCHDOG_URL not configured"
   else
     body=$(jq -nc --arg of "$BOX" --arg s "$TS" --argjson rc "$rc" '{of: $of, snapshot: $s, ok: ($rc == 0)}')
-    curl -fsS -m 10 -X POST -H 'content-type: application/json' --data "$body" \
-      "$wd/api/standby/$self?s=$s" >/dev/null 2>&1 \
+    watchdog_curl -fsS -m 10 -X POST -H 'content-type: application/json' --data "$body" \
+      "$wd/api/standby/$self" >/dev/null 2>&1 \
       || echo "standby report failed (fail-open)"
   fi
   # The second report, to the hub's standby_status (BH-2640). Also fail-open:
