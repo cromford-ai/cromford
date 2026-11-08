@@ -1,0 +1,9 @@
+{
+  "env": "MODE_ARCHIE_CARDS",
+  "read_in": "catalog/lane-wakes.d/archie-cards.json",
+  "type": "string",
+  "default": "shadow",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9073 (BH-9067.1). The wake gate mode of archie-cards (): off (no take, the lane runs as before), shadow (take, log what on would do, the lane always runs) or on (a scheduled tick with no ring exits 0 before any D1 read (scope fleet: rings only, the backstop ring of catalog/lane-calendar.d/archie-cards.tsv)). Settings row lib.lane-wake-gate.mode_archie_cards; it wins over lib.lane-wake-gate.mode_default. Any other word is ignored and named once per LWG_FAIL_LOG_EVERY_S in logs/lane-wake-gate.log. The knob name is the mode_knob of , which lwg_mode in bin/lib/lane-wake-gate.sh reads; never read from the env."
+}

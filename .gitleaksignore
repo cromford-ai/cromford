@@ -100,6 +100,7 @@ tests/lane-run-image.bh-7516-test.sh:generic-api-key:196
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
 tests/lane-run-image.bh-7516-test.sh:generic-api-key:210
 tests/lane-wake-gate.bh-9072-test.sh:generic-api-key:167
+tests/lane-wake-map.bh-9073-test.sh:generic-api-key:311
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-review-report.bh-8945-test.sh:generic-api-key:55

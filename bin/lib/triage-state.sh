@@ -879,6 +879,69 @@ _ts_enforce_reason() {
 # _ts_sum — TS_SUMMARY with ts_waste_bracket inside its closing bracket
 # (TS_SUMMARY always ends "]").
 _ts_sum() { printf '%s' "${TS_SUMMARY%]}$(ts_waste_bracket)]"; }
+# _ts_end_zero <summary> — the $0 end of a triage tick: absorb the gate
+# fingerprint, close the job row, mark the lane tick a skip, count the waste
+# as zero, log `rc=skip :: <summary> [gate=<reason>...]` and EXIT 0.
+_ts_end_zero() {
+  # A ts-deferred tick read only owed keys, never the board: its scope is not
+  # full, so rt_gate_consume absorbs the fingerprint without stamping the
+  # daily sweep's clock (state/<p>.gate-meta).
+  [ "${GATE_REASON:-}" = ts-deferred ] && SCOPE_N=ts-deferred
+  command -v rt_gate_consume >/dev/null 2>&1 && rt_gate_consume
+  if [ -n "${JOB_ID:-}" ] && command -v job_update >/dev/null 2>&1; then
+    [ -n "${JOB_BEAT:-}" ] && command -v job_beat_stop >/dev/null 2>&1 && job_beat_stop "$JOB_BEAT"
+    job_update "$JOB_ID" stage=done status=done "meta=triage-state: 0 changed" >/dev/null 2>&1
+  fi
+  command -v LANE_TICK >/dev/null 2>&1 && LANE_TICK skip
+  ts_waste_account zero
+  _ts_log "rc=skip :: $1 [gate=${GATE_REASON:-?}$(ts_waste_bracket)]"
+  exit 0
+}
+# _ts_wake_counts — "<new> <changed> <recheck-due> <other>": this tick's
+# decisions.tsv `llm` rows by reason. `other` is every other llm reason
+# (unhashable, rows-unreadable, ...). No file reads as "0 0 0 0".
+_ts_wake_counts() {
+  awk -F'\t' '$3 == "llm" { if ($4 == "new") n++; else if ($4 == "changed") c++; else if ($4 == "recheck-due") r++; else o++ }
+    END { printf "%d %d %d %d\n", n, c, r, o }' "$(_ts_dir)/decisions.tsv" 2>/dev/null || echo "0 0 0 0"
+}
+# _ts_wake_idle_end — the run-triage wake gate short-circuit (BH-9073,
+# docs/events-bh-9067/1-lane-gating.md). Mode `lwg_mode run-triage`
+# (bin/lib/lane-wake-gate.sh; a missing lib or any other word is off):
+#   on      a tick with nothing to do ends at $0 through _ts_end_zero, in any
+#           TS_MODE but off: TS_READY=1, the gate reason is not forced,
+#           forced-env, daily-sweep, remote-results-pending, no-gate-state or
+#           gate-fetch-failed, every llm count is 0 (new, changed, recheck-due
+#           and the fail-open reasons), no enqueue candidate, no queue line,
+#           no finished build, and no UNBLOCKED / STACKABLE / board prs: /
+#           REOFFER line in the scope.
+#   shadow  the same test writes one would-end line to logs/lane-wake-gate.log;
+#           the session runs and the project log does not change.
+#   off     nothing.
+_ts_wake_idle_end() {
+  local mode="" n c r o
+  [ "${TS_READY:-0}" = 1 ] || return 0
+  case "${GATE_REASON:-}" in forced|forced-env|daily-sweep|remote-results-pending|no-gate-state|gate-fetch-failed) return 0 ;; esac
+  if ! command -v lwg_mode >/dev/null 2>&1; then
+    [ -n "$(_ts_h)" ] && [ -r "$(_ts_h)/bin/lib/lane-wake-gate.sh" ] \
+      && . "$(_ts_h)/bin/lib/lane-wake-gate.sh" 2>/dev/null
+  fi
+  command -v lwg_mode >/dev/null 2>&1 && mode=$(lwg_mode run-triage 2>/dev/null)
+  case "$mode" in on|shadow) ;; *) return 0 ;; esac
+  read -r n c r o <<<"$(_ts_wake_counts)"
+  [ "${n:-1}${c:-1}${r:-1}${o:-1}" = 0000 ] || return 0
+  [ -z "${TS_ENQ:-}${QLINES:-}${QDIRS:-}${RDIRS:-}" ] || return 0
+  ! grep -qE 'UNBLOCKED|STACKABLE|^board prs:|board gate: REOFFER ' <<<"$(printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}")" || return 0
+  if [ "$mode" = shadow ]; then
+    # Shadow evidence goes where every gated lane's would-skip goes, so the
+    # project log of a shadow tick stays byte-identical.
+    [ -n "$(_ts_h)" ] || return 0
+    mkdir -p "$(_ts_h)/logs" 2>/dev/null
+    printf '%s triage-state %s: wake gate shadow, new=0 chg=0 due=0 — would end at $0, the session runs [gate=%s]\n' \
+      "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${PROJECT:-?}" "${GATE_REASON:-?}" >> "$(_ts_h)/logs/lane-wake-gate.log" 2>/dev/null
+    return 0
+  fi
+  _ts_end_zero "triage-state: wake gate on, new=0 chg=0 due=0 — no session"
+}
 ts_tick() {
   TS_ENFORCING=0; TS_PR_ENFORCING=0
   ts_precheck
@@ -887,6 +950,7 @@ ts_tick() {
   command -v ts_pr_precheck >/dev/null 2>&1 && ts_pr_precheck "${PROJECT:-}"
   [ "$TS_PR_MODE" = enforce ] && [ "$TS_PR_READY" = 1 ] && _ts_enforce_reason && TS_PR_ENFORCING=1
   case "${GATE_REASON:-}" in forced|forced-env) ;; *) ts_rows_unreadable_tick && return 0 ;; esac
+  _ts_wake_idle_end
   [ "$TS_MODE" = enforce ] && [ "$TS_READY" = 1 ] || return 0
   _ts_enforce_reason || { ts_waste_account unrestricted; _ts_log "triage-state enforce: $(_ts_sum) — observe only on a '${GATE_REASON:-?}' tick"; return 0; }
   TS_ENFORCING=1
@@ -919,19 +983,7 @@ ts_tick() {
 ${BOARD_SEC:-}" in *"board gate: REOFFER "*) can_end=0 ;; esac
   if [ "$can_end" = 1 ] && [ -z "$want" ] && [ -z "${QLINES:-}${QDIRS:-}${RDIRS:-}" ] \
      && ! grep -qE 'UNBLOCKED|STACKABLE|^board prs:' <<<"$(printf '%s\n%s\n' "${TICK_SCOPE:-}" "${BOARD_SEC:-}")"; then
-    # A ts-deferred tick read only owed keys, never the board: its scope is not
-    # full, so rt_gate_consume absorbs the fingerprint without stamping the
-    # daily sweep's clock (state/<p>.gate-meta).
-    [ "${GATE_REASON:-}" = ts-deferred ] && SCOPE_N=ts-deferred
-    command -v rt_gate_consume >/dev/null 2>&1 && rt_gate_consume
-    if [ -n "${JOB_ID:-}" ] && command -v job_update >/dev/null 2>&1; then
-      [ -n "${JOB_BEAT:-}" ] && command -v job_beat_stop >/dev/null 2>&1 && job_beat_stop "$JOB_BEAT"
-      job_update "$JOB_ID" stage=done status=done "meta=triage-state: 0 changed" >/dev/null 2>&1
-    fi
-    command -v LANE_TICK >/dev/null 2>&1 && LANE_TICK skip
-    ts_waste_account zero
-    _ts_log "rc=skip :: triage-state: 0 changed — $TS_SUMMARY${TS_LAUNCHED:+, launched:$TS_LAUNCHED}; no model call [gate=${GATE_REASON:-?}$(ts_waste_bracket)]"
-    exit 0
+    _ts_end_zero "triage-state: 0 changed — $TS_SUMMARY${TS_LAUNCHED:+, launched:$TS_LAUNCHED}; no model call"
   fi
   ts_waste_account restricted
   _ts_log "triage-state enforce: $(_ts_sum)${TS_LAUNCHED:+, launched:$TS_LAUNCHED}"

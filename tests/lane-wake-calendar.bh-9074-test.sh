@@ -104,7 +104,9 @@ fresh() {
   ( cd "$DIR" && scratch_install_closure "$SCRIPT_REL" "$H" && scratch_install_closure bin/jobs-client.sh "$H" \
     && scratch_install_closure bin/fleet-conf.sh "$H" ) >/dev/null 2>&1 || bad "setup: closure install of $SCRIPT_REL"
   chmod +x "$H/bin/"*.sh 2>/dev/null
-  cp -r "$DIR/catalog/lane-calendar.d" "$H/catalog/" 2>/dev/null
+  # BH-9073 adds 16 more ring files; this suite pins only BH-9074's 8 rings.
+  mkdir -p "$H/catalog/lane-calendar.d"
+  for L in archie archie-fm-watch archie-research claude-auth-check lookback orc-monitor pm-groom rule-miner; do cp "$DIR/catalog/lane-calendar.d/$L.tsv" "$H/catalog/lane-calendar.d/" 2>/dev/null; done
   mkdir -p "$H/catalog/lane-wakes.d"
   cp "$DIR"/catalog/lane-wakes.d/*.json "$H/catalog/lane-wakes.d/" 2>/dev/null
   # pm-groom's registry file is the contract's (#9122). Without it in this

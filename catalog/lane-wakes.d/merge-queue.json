@@ -1,0 +1,1 @@
+{"lane": "merge-queue", "scope": "project", "kinds": ["pr", "checks", "push", "merge_group"], "mode_knob": "MODE_MERGE_QUEUE"}

@@ -1,0 +1,1 @@
+{"lane": "review-prs", "scope": "project", "kinds": ["pr", "checks"], "mode_knob": "MODE_REVIEW_PRS"}

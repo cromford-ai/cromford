@@ -1,0 +1,1 @@
+{"lane": "postmerge-qa", "scope": "project", "kinds": ["deploy", "push"], "mode_knob": "MODE_POSTMERGE_QA"}

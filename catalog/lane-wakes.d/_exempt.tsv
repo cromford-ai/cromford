@@ -1,0 +1,33 @@
+# catalog/lane-wakes.d/_exempt.tsv (BH-9073, BH-9067.1): every model lane of the
+# census (catalog/llm-sites.d) with a cron cadence that has NO wake registry file
+# here, and why. <lane>\t<class>\t<reason>. Classes: owned, backstop, schedule,
+# box, on-demand. Read by tests/lane-wake-map.bh-9073-test.sh and
+# tests/cron-shrink.bh-9073-test.sh only; lwg never reads it (no lane starts with _).
+pm-groom	owned	the contract tracer of BH-9072; its registry file is the contract's
+claude-auth-check	owned	a calendar lane of BH-9067.2 (BH-9074)
+archie	owned	a calendar lane of BH-9067.2 (BH-9074)
+archie-research	owned	a calendar lane of BH-9067.2 (BH-9074)
+archie-fm-watch	owned	a calendar lane of BH-9067.2 (BH-9074)
+rule-miner	owned	a calendar lane of BH-9067.2 (BH-9074)
+lookback	owned	a calendar lane of BH-9067.2 (BH-9074)
+orc-monitor	owned	a calendar lane of BH-9067.2 (BH-9074)
+fly-pool	owned	pools on queue depth (BH-9067.2, pool-wake-poll)
+merge-conductor	backstop	behind bin/lib/cadence-backstop.sh and launched by bin/wake-loop.sh on wakes
+blocked-resolver	backstop	behind bin/lib/cadence-backstop.sh and launched by bin/wake-loop.sh on wakes
+healthcheck	schedule	a health probe: it must run on its clock, not on a wake
+apply-migrations	schedule	applies migrations on its clock; a missed wake must not hold a schema
+deploy-train	schedule	a deploy schedule; bin/wake-loop.sh launches it on deploy wakes already
+archie-learn	schedule	daily; a backstop ring equals the cron, so a gate saves nothing
+lesson-propose	schedule	daily; a backstop ring equals the cron, so a gate saves nothing
+prompt-eval	schedule	weekly; a backstop ring equals the cron, so a gate saves nothing
+lesson-classify	schedule	hourly; a backstop ring equals the cron, so a gate saves nothing
+review-autopilot	schedule	hourly; a backstop ring equals the cron, so a gate saves nothing
+lead-review	box	box-scoped on many boxes; one fleet ring is taken by one box, so a ring cannot wake every box
+preplan-tick	box	box-scoped on many boxes; one fleet ring is taken by one box, so a ring cannot wake every box
+box-chat	on-demand	no cron line
+feature-map-draft	on-demand	no cron line
+greenfield	on-demand	no cron line
+prebuild-repro	on-demand	no cron line (per build)
+security-audit	on-demand	no cron line
+trap-eval	on-demand	no cron line
+web-task	on-demand	no cron line
