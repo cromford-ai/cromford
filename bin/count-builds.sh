@@ -21,8 +21,12 @@
 # `ps` rather than `pgrep` because the identity is in the ARGUMENTS, not in the
 # match — and because a process table can then be replayed from a fixture, which
 # is how tests/free-slots-test.sh drives both the counting and the anchor.
-P="${1:-}"
-ps -ww -eo args= 2>/dev/null | awk -v want="$P" '
+# EXCLUDE (arg 2, optional): a ticket key left out of the count. The WIP gate
+# in bin/lib/rb/gates.sh runs INSIDE run-build.sh, so without it the asking
+# build counted itself and flags/wip-limit-<p> = 1 deferred every non-hotfix
+# local build (project-6-desktop, 2026-10-27 to 2026-11-06).
+P="${1:-}"; X="${2:-}"
+ps -ww -eo args= 2>/dev/null | awk -v want="$P" -v skip="$X" '
   # THE ANCHOR, unchanged in substance: argv[0] is a bash, argv[1] is the script
   # itself. An agent quoting the path carries its runner at argv[0]; a poller
   # carries "-c" at argv[1]. Neither can reach the body. The harness root is not
@@ -30,6 +34,7 @@ ps -ww -eo args= 2>/dev/null | awk -v want="$P" '
   # must END at bin/run-build.sh, so a .bak or a lookalike does not count.
   $1 ~ /(^|\/)bash$/ && $2 ~ /(^|\/)bin\/run-build\.sh$/ {
     if (want != "" && $3 != want) next
+    if (skip != "" && $5 == skip) next
     id = $3 SUBSEP $4 SUBSEP $5
     if (!(id in seen)) { seen[id] = 1; n++ }
   }

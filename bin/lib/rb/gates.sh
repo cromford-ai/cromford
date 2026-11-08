@@ -1028,7 +1028,7 @@ BB() { # BB <stage> [tier] [verdict] [pr_url] [merged] [detail]
 # so a project that is permanently over its cap is greppable rather than a
 # mystery.
 WIP=$(cat "$HARNESS/flags/wip-limit-$PROJECT" 2>/dev/null || echo "")
-if [ -n "$WIP" ] && [ "$("$HARNESS/bin/count-builds.sh" "$PROJECT")" -ge "$WIP" ]; then
+if [ -n "$WIP" ] && [ "$("$HARNESS/bin/count-builds.sh" "$PROJECT" "$KEY")" -ge "$WIP" ]; then
   if [ "${HOTFIX:-}" = 1 ]; then
     echo "$(STAMP) [$PROJECT/$KEY] hotfix: wip-limit $WIP reached, exceeding it by one for $KEY" >> "$BUILD/pipeline.log"
   else
