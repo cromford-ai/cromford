@@ -48,3 +48,15 @@ export async function settingsRows(env) {
 export function invalidateSettings(env) {
   snaps.delete(env.DB);
 }
+
+// The value of `key` (as a string) from the snapshot stored for `db`, while
+// that snapshot is younger than its TTL; else null. It never queries D1 and
+// never stores anything, so a reader that must add no D1 load (the overload
+// retry knobs in lib/d1-retry.js, BH-9190) can use it. With TTL 0 there is no
+// snapshot, so it is always null.
+export function peekSetting(db, key) {
+  const snap = snaps.get(db);
+  if (!snap || Date.now() - snap.at >= snap.ttlMs) return null;
+  const row = snap.byKey.get(key);
+  return row && row.value !== null && row.value !== undefined ? String(row.value) : null;
+}

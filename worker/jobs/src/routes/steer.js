@@ -20,6 +20,7 @@
 
 import { json } from "../lib/http.js";
 import { ensureTable, laneName, strictInt } from "../lib/core.js";
+import { isD1Overloaded } from "../lib/d1-retry.js";
 
 export const STEER_MODES = ["now", "ticket", "hold"];
 export const STEER_TEXT_MAX = 4000;
@@ -48,9 +49,35 @@ const noteOut = (r) => ({
   created_at: r.created_at, updated_at: r.updated_at,
 });
 
-// A settings row as an integer in lo..hi, or the fallback.
-async function setting(env, key, lo, hi, fallback) {
-  const v = await env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(key).first("value");
+// A settings row as an integer in lo..hi, or the fallback (BH-9190):
+// - One read per key per request. index.js builds a new env object per
+//   request, so the memo is keyed on it and holds the raw value; a second call
+//   for the key in the same request sends no D1 read.
+// - When D1 is still overloaded after withD1Retry gives up, the row counts as
+//   absent: the fallback applies and one warn line is written, so a steer
+//   request does not fail on a knob read. Every other error rethrows and is
+//   not memoised.
+const settingMemo = new WeakMap(); // env -> Map(key -> Promise<raw value | null>)
+
+export async function setting(env, key, lo, hi, fallback) {
+  let memo = settingMemo.get(env);
+  if (!memo) settingMemo.set(env, (memo = new Map()));
+  let read = memo.get(key);
+  if (!read) {
+    read = env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(key).first("value").catch((e) => {
+      if (!isD1Overloaded(e)) throw e;
+      console.warn(`steer setting ${key}: D1 overloaded after ${e.d1Attempts ?? 1} attempts; using fallback ${fallback}`);
+      return null;
+    });
+    memo.set(key, read);
+  }
+  let v;
+  try {
+    v = await read;
+  } catch (e) {
+    if (memo.get(key) === read) memo.delete(key);
+    throw e;
+  }
   const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v.trim()) : NaN;
   return Number.isInteger(n) && n >= lo && n <= hi ? n : fallback;
 }
