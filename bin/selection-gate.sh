@@ -1,5 +1,6 @@
 #!/bin/bash
 # bin/selection-gate.sh --tree <dir> --base <ref> --out <dir> [--timeout S] [-P n]
+# bin/selection-gate.sh --classify <run file> <suite>   (red|green|unknown, BH-9094)
 # — the merge-queue batch's selection for ONE head, run on the fleet test host
 # before the PR opens (BH-8062, shape B).
 #
@@ -54,6 +55,10 @@
 #      red and is named in baseline:. None left: rc 0. A clean red or green is
 #      cached in $H/state/selection-gate/baseline/<mb>/<suite, / as _>; dirs
 #      older than SELECTION_GATE_BASELINE_KEEP_DAYS days are deleted first.
+#      BH-9094: a row `<mb> TAB <suite> TAB red|green` of
+#      $H/state/selection-gate/prime.tsv (bin/selection-gate-prime.sh writes it
+#      on the hub, bin/fly-pool.sh relays it to the pool machines) is a cached
+#      answer too. The per-file cache wins when both have a value.
 #
 # OUTPUT. <out>/gate.txt, written once (tmp + mv):
 #   head: <40-hex>  base: <mb|->  suites: <n>  rc: <0|1|could-not-run|no-selection>
@@ -63,6 +68,7 @@
 #   and, only with SELECTION_GATE_BASELINE_RUN=1 (else the file is these 10 lines):
 #   baseline-red: <comma list|->
 #   baseline: <-|skipped: head-is-base|ran <n> on <mb12> (<c> cached)|could-not-run: <why>>
+#   (<c> counts per-file cache hits and prime.tsv hits, BH-9094)
 # plus <out>/selection.txt (the list) and <out>/run.txt (the runner's output).
 #
 # EXIT. 0 green, 1 red, 3 could-not-run, 4 no-selection, 2 bad arguments.
@@ -83,7 +89,28 @@ TREE=""; BASE=""; OUT=""
 TO=2400
 # lane.fly-pool.selection_gate_p (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_P.json)
 PAR=12
-usage() { sed -n '2,3p' "$0" >&2; exit 2; }
+usage() { sed -n '2,4p' "$0" >&2; exit 2; }
+# bl_class <run file> <suite> — red, green or unknown. red: a `FAIL <suite>
+# (rc N)` line with N not 127 (127 is a suite the base does not have) and no
+# other line for it. green: a `PASS <suite>` line and no other. Anything else
+# (BLIND, no line, a near-miss name, both) is unknown.
+bl_class() {
+  awk -v s="$2" '
+    $0 == "PASS " s { p = 1; next }
+    index($0, "FAIL " s " (rc ") == 1 {
+      r = substr($0, length("FAIL " s " (rc ") + 1)
+      if (r ~ /^[0-9]+\)$/ && r != "127)") f = 1; else o = 1
+      next }
+    index($0, " " s) && $0 ~ /^(BLIND|RUNNER-FAILURE) / { o = 1 }
+    END { if (f && !p && !o) print "red"; else if (p && !f && !o) print "green"; else print "unknown" }' "$1" 2>/dev/null
+}
+# --classify <run file> <suite> (BH-9094): prints bl_class for one suite and
+# exits 0. bin/selection-gate-prime.sh classifies its prime run through this
+# mode, so a primed red means what a base-run red means.
+if [ "${1:-}" = --classify ]; then
+  [ $# -eq 3 ] || { echo "selection-gate: --classify <run file> <suite>" >&2; exit 2; }
+  bl_class "$2" "$3"; exit 0
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --tree)    [ $# -ge 2 ] || usage; TREE="$2"; shift ;;
@@ -91,7 +118,7 @@ while [ $# -gt 0 ]; do
     --out)     [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
     --timeout) [ $# -ge 2 ] || usage; TO="$2"; shift ;;
     -P)        [ $# -ge 2 ] || usage; PAR="$2"; shift ;;
-    -h|--help) sed -n '2,78p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,84p' "$0"; exit 0 ;;
     *) echo "selection-gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -251,20 +278,6 @@ bl_cleanup() {
   git -C "$TREE" worktree prune >/dev/null 2>&1
   rm -rf "$BL_TMP"; BL_TMP=""
 }
-# bl_class <run file> <suite> — red, green or unknown. red: a `FAIL <suite>
-# (rc N)` line with N not 127 (127 is a suite the base does not have) and no
-# other line for it. green: a `PASS <suite>` line and no other. Anything else
-# (BLIND, no line, a near-miss name, both) is unknown.
-bl_class() {
-  awk -v s="$2" '
-    $0 == "PASS " s { p = 1; next }
-    index($0, "FAIL " s " (rc ") == 1 {
-      r = substr($0, length("FAIL " s " (rc ") + 1)
-      if (r ~ /^[0-9]+\)$/ && r != "127)") f = 1; else o = 1
-      next }
-    index($0, " " s) && $0 ~ /^(BLIND|RUNNER-FAILURE) / { o = 1 }
-    END { if (f && !p && !o) print "red"; else if (p && !f && !o) print "green"; else print "unknown" }' "$1" 2>/dev/null
-}
 # baseline_pass — reads and rewrites keep; sets BRED and BSTAT. The result per
 # (base sha, suite) is cached in $H/state/selection-gate/baseline/<MB>/<suite,
 # / as _> (red or green only), and a dir older than SELECTION_GATE_BASELINE_KEEP_DAYS
@@ -272,14 +285,20 @@ bl_class() {
 baseline_pass() {
   local cdir="$H/state/selection-gate/baseline" s v k r tok changed brc=0 t0 bel hit=0
   local -a cand=() send=() bred=() still=()
-  local -A got=()
+  local -A got=() prime=()
+  local ps pv
   if [ "$HEAD_SHA" = "$MB" ]; then BSTAT="skipped: head-is-base"; return 0; fi
   # A suite this diff edits is never sent: its red can be this diff's.
   changed=$(git -C "$TREE" diff --name-only "$MB" HEAD 2>/dev/null) || { BSTAT="could-not-run: no-diff"; return 0; }
   for s in "${keep[@]}"; do grep -qxF -- "$s" <<<"$changed" || cand+=("$s"); done
   find "$cdir" -mindepth 1 -maxdepth 1 -type d -mtime "+$BKEEP" -exec rm -rf {} + 2>/dev/null
+  # BH-9094: the relayed prime, rows for MB with a red or green value only.
+  while IFS=$'\t' read -r ps pv; do [ -n "$ps" ] && prime[$ps]=$pv; done < <(awk -F'\t' -v mb="$MB" \
+    'NF == 3 && $1 == mb && ($3 == "red" || $3 == "green") { print $2 "\t" $3 }' \
+    "$H/state/selection-gate/prime.tsv" 2>/dev/null)
   for s in "${cand[@]}"; do
     v=$(cat "$cdir/$MB/${s//\//_}" 2>/dev/null)
+    case "$v" in red|green) ;; *) v="${prime[$s]:-}" ;; esac
     case "$v" in red|green) got[$s]=$v; hit=$((hit + 1)) ;; *) send+=("$s") ;; esac
   done
   if [ "${#send[@]}" -gt 0 ]; then

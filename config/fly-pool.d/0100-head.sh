@@ -245,6 +245,11 @@ job_is_now() {
 # shellcheck source=bin/lib/pool-rb-rows.sh
 . "$HARNESS/bin/lib/pool-rb-rows.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-rb-rows.sh" 2>/dev/null || true
+# BH-9094: sg_prime_relay, the selection-gate prime relay (live-machine
+# refresh block). Missing, a pool gate keeps its own cold base-run cache.
+# shellcheck source=bin/lib/sg-prime-relay.sh
+. "$HARNESS/bin/lib/sg-prime-relay.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/sg-prime-relay.sh" 2>/dev/null || true
 # Hotfix files first, then dispatched keys, then the rest, order preserved
 # within each group — so the emergency takes the machine the tick can afford,
 # a reused machine takes the emergency job, and a dispatch goes next.

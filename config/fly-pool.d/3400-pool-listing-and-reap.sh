@@ -1320,6 +1320,8 @@ for MF in "$POOL"/*.json; do
           && echo "$SNAP_MT" > "$POOL/.$MID.snapmt"
       fi
     fi
+    # BH-9094: the hub's selection-gate prime, when its mtime moved.
+    command -v sg_prime_relay >/dev/null 2>&1 && sg_prime_relay "$MID"
   fi
   if [ "$DEAD" = 1 ]; then
     NEXT=$((ATT+1))
@@ -1353,7 +1355,7 @@ for MF in "$POOL"/*.json; do
     LOCAL=""
     # Same rule as next_job_or_destroy: the row is closed and the job requeued
     # whatever the destroy answered, and the sweep is what recovers the machine.
-    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.sgprimemt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome.
     machines_row_close "$MID"

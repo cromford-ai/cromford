@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── SELECTION GATE PRIME LANE (BH-9094) ─────────────────────────────────────
+# Once per hour, offset 7, bin/selection-gate-prime.sh runs the suites red most
+# often in the last SELECTION_GATE_PRIME_WINDOW_DAYS days of cromford
+# gate.txt records (SELECTION_GATE_PRIME_SUITES of them) once on the
+# origin/main tip, on the shared Fly test host. It caches each clean answer in
+# state/selection-gate/baseline/<sha>/ and writes state/selection-gate/prime.tsv,
+# which bin/fly-pool.sh relays to every live cromford pool machine. A sha
+# already primed makes no run. flock -n dedupes.
+# Off: flags/lane-off-selection-gate-prime, or bin/harness-ctl.sh off selection-gate-prime.
+7 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/selection-gate-prime.sh >/dev/null 2>&1

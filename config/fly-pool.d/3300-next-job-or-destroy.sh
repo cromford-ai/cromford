@@ -350,7 +350,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     # The file goes whatever the destroy answered: a reaped RESULT must still
     # close its row and free its account. The machine is not lost — the sweep
     # re-lists the app every tick and destroys it once it stops.
-    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.sgprimemt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome. `command -v` for
     # the same reason the destroy above has it: the two suites that source THIS

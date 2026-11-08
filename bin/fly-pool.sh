@@ -245,6 +245,11 @@ job_is_now() {
 # shellcheck source=bin/lib/pool-rb-rows.sh
 . "$HARNESS/bin/lib/pool-rb-rows.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-rb-rows.sh" 2>/dev/null || true
+# BH-9094: sg_prime_relay, the selection-gate prime relay (live-machine
+# refresh block). Missing, a pool gate keeps its own cold base-run cache.
+# shellcheck source=bin/lib/sg-prime-relay.sh
+. "$HARNESS/bin/lib/sg-prime-relay.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/sg-prime-relay.sh" 2>/dev/null || true
 # Hotfix files first, then dispatched keys, then the rest, order preserved
 # within each group — so the emergency takes the machine the tick can afford,
 # a reused machine takes the emergency job, and a dispatch goes next.
@@ -3568,7 +3573,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
     # The file goes whatever the destroy answered: a reaped RESULT must still
     # close its row and free its account. The machine is not lost — the sweep
     # re-lists the app every tick and destroys it once it stops.
-    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.sgprimemt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome. `command -v` for
     # the same reason the destroy above has it: the two suites that source THIS
@@ -4915,6 +4920,8 @@ for MF in "$POOL"/*.json; do
           && echo "$SNAP_MT" > "$POOL/.$MID.snapmt"
       fi
     fi
+    # BH-9094: the hub's selection-gate prime, when its mtime moved.
+    command -v sg_prime_relay >/dev/null 2>&1 && sg_prime_relay "$MID"
   fi
   if [ "$DEAD" = 1 ]; then
     NEXT=$((ATT+1))
@@ -4948,7 +4955,7 @@ for MF in "$POOL"/*.json; do
     LOCAL=""
     # Same rule as next_job_or_destroy: the row is closed and the job requeued
     # whatever the destroy answered, and the sweep is what recovers the machine.
-    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.puterr"
+    rm -f "$MF" "$POOL/.$MID.snapmt" "$POOL/.$MID.sgprimemt" "$POOL/.$MID.puterr"
     # >>> machines rows (BH-1035)
     # Close the registry row using the actual destroy outcome.
     machines_row_close "$MID"

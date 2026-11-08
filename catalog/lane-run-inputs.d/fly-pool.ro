@@ -41,3 +41,8 @@ state/dispatch-now/$p/*
 # pool_key_slice_merged (bin/fly-pool.sh:1950). Read only: an absent copy makes
 # the helper answer rc 1, which keeps a queued blocker in flight (today's rule).
 state/merge-sweep-done.txt
+# BH-9094: the selection-gate prime the hub lane writes, relayed to each live
+# cromford machine by sg_prime_relay (bin/fly-pool.sh:4919,
+# bin/lib/sg-prime-relay.sh). Read only: an absent copy means no relay, and a
+# pool gate keeps its own cold base-run cache.
+state/selection-gate/prime.tsv

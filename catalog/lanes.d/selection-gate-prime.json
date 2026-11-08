@@ -1,0 +1,119 @@
+{
+  "id": "selection-gate-prime",
+  "name": "Selection gate prime (the base-run cache for the main tip, BH-9094)",
+  "scope": "hub",
+  "script": "bin/selection-gate-prime.sh",
+  "cadence": "7 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-selection-gate-prime",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "SELECTION_GATE_PRIME_SUITES",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 200,
+      "unit": "suites",
+      "zero_means": null,
+      "note": "BH-9094: how many suites bin/selection-gate-prime.sh primes per main sha, the ones red most often in the gate.txt records of the window, read as ${SELECTION_GATE_PRIME_SUITES:-20}. A value outside 1..200 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_WINDOW_DAYS",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 30,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9094: the age of the gate.txt records bin/selection-gate-prime.sh counts reds in (find -mtime -N), read as ${SELECTION_GATE_PRIME_WINDOW_DAYS:-7}. A value outside 1..30 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_TIMEOUT_S",
+      "type": "int",
+      "default": 900,
+      "min": 5,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9094: the bound of the one prime run on the test host, read as ${SELECTION_GATE_PRIME_TIMEOUT_S:-900} (the same as SELECTION_GATE_BASELINE_TIMEOUT_S). A run that reaches it caches nothing. A value outside 5..3600 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_P",
+      "type": "int",
+      "default": 4,
+      "min": 1,
+      "max": 16,
+      "unit": "suites",
+      "zero_means": null,
+      "note": "BH-9094: REMOTE_GATE_P of the prime run, read as ${SELECTION_GATE_PRIME_P:-4}: a third of the gate's 12, so the hourly run takes little of the shared test host. A value outside 1..16 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_KEEP_DAYS",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 14,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9094: retention. bin/selection-gate-prime.sh deletes the state/selection-gate/baseline/<sha> dirs older than this (find -mtime +N) at the start of each run, read as ${SELECTION_GATE_PRIME_KEEP_DAYS:-2} (the gate's own SELECTION_GATE_BASELINE_KEEP_DAYS). A value outside 1..14 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_RELAY_SHAS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 24,
+      "unit": "shas",
+      "zero_means": null,
+      "note": "BH-9094: how many of the newest primed shas state/selection-gate/prime.tsv carries to the pool machines, read as ${SELECTION_GATE_PRIME_RELAY_SHAS:-3}. 3 x 20 rows is about 6 KB, one mput. A value outside 1..24 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_FETCH_TIMEOUT_S",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9094: the bound of the `git fetch origin main` at the start of each run, read as ${SELECTION_GATE_PRIME_FETCH_TIMEOUT_S:-60}. A failed or slow fetch is one log line and no prime. A value outside 5..600 is one ALERTS line and no prime.",
+      "settable": true
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_REPO",
+      "type": "string",
+      "default": "/root/repos/cromford",
+      "zero_means": null,
+      "required": false,
+      "note": "Read by bin/selection-gate-prime.sh as ${SELECTION_GATE_PRIME_REPO:-/root/repos/cromford}: the checkout it fetches and makes the worktree from. Its dir name is the project whose gate.txt records count. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "SELECTION_GATE_PRIME_RUNNER",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "required": false,
+      "note": "Read by bin/selection-gate-prime.sh as ${SELECTION_GATE_PRIME_RUNNER:-<worktree>/bin/remote-gate.sh}: the runner. Unset (empty) means bin/remote-gate.sh of the primed worktree. Test seam; NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/selection-gate-prime.log"
+  }
+}
