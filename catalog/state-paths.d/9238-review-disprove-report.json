@@ -1,0 +1,3 @@
+[
+    {"path": "review-disprove-report", "class": "box-local", "authority": "the disprove report files (BH-9238)", "note": "state/review-disprove-report/latest.txt and <date>.json: the report line and its numbers, rebuilt from GET /api/review-disprove every run by bin/review-disprove-report.sh. The rows are the record; these files are a readable copy. The lane deletes <date>.json older than REVIEW_DISPROVE_REPORT_KEEP_D (84) days."}
+]

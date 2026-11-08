@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── REVIEW DISPROVE REPORT (BH-9238, C2 of BH-9047) ──────────────────────────
+# Daily at 06:25Z: the 7-day report line on the disprove pass (share of BLOCKs
+# fully disproved, and what the next human/Opus read said of those), and the
+# stop rule: in enforce mode, a PR merged after an auto-dropped BLOCK that gets
+# a fix-main-red or revert PR on the finding's lines within 7 days turns
+# review.disprove.<project>.enabled to 0. No model call. The beat goes out on
+# Mondays. docs/notes/2026-11-08-BH-9238-disprove-report.md.
+# Kill: flags/lane-off-review-disprove-report, or bin/harness-ctl.sh off review-disprove-report.
+25 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/review-disprove-report.sh >/dev/null 2>&1

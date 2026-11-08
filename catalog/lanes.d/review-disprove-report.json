@@ -1,0 +1,100 @@
+{
+  "id": "review-disprove-report",
+  "name": "Review disprove report",
+  "scope": "hub",
+  "script": "bin/review-disprove-report.sh",
+  "cadence": "25 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-review-disprove-report",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "REVIEW_DISPROVE_REPORT_WINDOW_D",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 90,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9238: the trailing window of review_disprove_runs rows the report line counts. Read as ${REVIEW_DISPROVE_REPORT_WINDOW_D:-7}; a bad value falls back to 7 and the log line names it."
+    },
+    {
+      "env": "REVIEW_DISPROVE_REPORT_DOW",
+      "type": "int",
+      "default": 1,
+      "min": 1,
+      "max": 7,
+      "zero_means": null,
+      "note": "BH-9238: the weekday (date +%u, 1 = Monday) the report beat is posted; the files are written every day. --report-now posts on any day."
+    },
+    {
+      "env": "REVIEW_DISPROVE_REPORT_SEND",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-9238: 1 = post the weekly report beat (a triaged fleet_alert, the route-shadow-report pass-through) when there is at least one BLOCK; 0 = write state/review-disprove-report/latest.txt and <date>.json only. --no-send wins."
+    },
+    {
+      "env": "REVIEW_DISPROVE_REPORT_MAX_READS",
+      "type": "int",
+      "default": 40,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "note": "BH-9238: next-read lookups per run (each one /api/verdicts read plus at most one GitHub compare read); fully disproved rows past it are counted 'not read (cap)'."
+    },
+    {
+      "env": "REVIEW_DISPROVE_REPORT_KEEP_D",
+      "type": "int",
+      "default": 84,
+      "min": 7,
+      "max": 3650,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9238: retention of state/review-disprove-report/<date>.json; the lane deletes files older than this each run (the rows themselves are kept by retention.review_disprove_runs.days)."
+    },
+    {
+      "env": "REVIEW_DISPROVE_STOP_WINDOW_D",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 30,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9238: the stop rule counts a fix-main-red or revert PR merged within this many days after the PR merged; candidates are read from the last 2 x this many days."
+    },
+    {
+      "env": "REVIEW_DISPROVE_STOP_SLACK_LINES",
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "max": 500,
+      "unit": "lines",
+      "zero_means": null,
+      "note": "BH-9238: a fix PR hunk touches a disproved finding when it overlaps the finding's lines plus or minus this many lines (main moves after the review)."
+    },
+    {
+      "env": "REVIEW_DISPROVE_STOP_MAX_PRS",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 500,
+      "zero_means": null,
+      "note": "BH-9238: GitHub REST reads per run for the stop rule (PR, closed-PR list pages, file lists). Past it the run stops checking and the report line says truncated; the next daily run checks again."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/review-disprove-report.log"
+  }
+}
