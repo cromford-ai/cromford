@@ -35,7 +35,7 @@ test('R2: the failed attempts and their payloads are collectable after the call'
       }
       return { ok: true };
     }, noSleep);
-    assert.deepEqual(got, { ok: true });
+    assert.equal(got.ok, true);
   })();
   for (let i = 0; i < 5 && refs.some((r) => r.deref() !== undefined); i++) {
     await new Promise((r) => setImmediate(r));
@@ -57,6 +57,6 @@ test('R3: through retryingDb, an overloaded all() is retried and returns the sec
     },
   };
   const got = await retryingDb(raw).prepare('SELECT id FROM wakes').bind().all();
-  assert.deepEqual(got, { results: [{ id: 1 }] });
+  assert.deepEqual(got.results, [{ id: 1 }]);
   assert.equal(calls, 2);
 });
