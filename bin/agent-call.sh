@@ -153,6 +153,20 @@ CONTEXT_BUDGETS="${CONTEXT_BUDGETS:-$CB_DEFAULT}"
 # _budget_for below runs byte-identically to before.
 # shellcheck source=/dev/null
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
+# THE BRAND LAW (BH-9100). When the repo declares a brand file, the stages on
+# the law's brand-stages: line carry it after the sil_text laws, with the path.
+# Here, after the jobs client, so the path knob can be read. Same un-exported
+# treatment as above; a missing lib or no brand file keeps the value as it is.
+# shellcheck source=/dev/null
+if   [ -r "$(dirname "$0")/lib/brand-ui-law.sh" ]; then . "$(dirname "$0")/lib/brand-ui-law.sh"
+elif [ -r "$HARNESS/bin/lib/brand-ui-law.sh" ];    then . "$HARNESS/bin/lib/brand-ui-law.sh"; fi
+if command -v bul_text >/dev/null 2>&1; then
+  _BUL=$(bul_text "$STAGE" "$PROJECT" "$PROMPT" "$OUT" "$HARNESS/prompts/iron-laws.d")
+  if [ -n "$_BUL" ]; then
+    AGENT_SYSTEM_APPEND="${AGENT_SYSTEM_APPEND:+$AGENT_SYSTEM_APPEND$'\n\n'}$_BUL"
+    export -n AGENT_SYSTEM_APPEND
+  fi
+fi
 # Account attribution (2026-08-31): which credential pays, fingerprinted live
 # at row-write time. Repo sibling preferred so the tests drive the checkout's
 # copy; $HARNESS/bin is the deployed path. Missing helper degrades to
