@@ -40,6 +40,14 @@
 #       that head itself (lead review of #6624). rc 1 otherwise: no row, a live
 #       newest row, a clean run, or a `died` row whose prof_line starts
 #       `withdrawn ` (a row every machine refused at claim; mc_fly_stale_for).
+#   mc_fly_ready_undeferred_for <rows-json> <key>
+#       BH-9198: rc 0 when the NEWEST row of <key> is `done`, rc 0 (or null),
+#       and its prof_line is `PROF mc-pr state=READY ... deferred=-`. The
+#       machine reached READY, stopped at one of pr_worker's READY gates
+#       (block gate, prequeue, lead-unpinned, MERGE_HELD) before its
+#       machine-defer step, and deferred nothing. A new row would end the same
+#       way every tick, and the reason it had stays on that machine. rc 1
+#       otherwise.
 #   mc_fly_stale_for <rows-json> <key> <now-epoch> <stale-s>
 #       rc 0 + the age in seconds when the NEWEST row of <key> is queued and was
 #       enqueued <stale-s> or more seconds ago: no machine took it (no
@@ -49,13 +57,16 @@
 #       lane_run.refused_max_wait_s (BH-6942). rc 1 otherwise.
 #       MC_FLY_QUEUE_STALE_S is the knob (default 600, the ticket's "unclaimed
 #       for 10 min" rollback line).
-#   mc_fly_enqueue <project> <slug> <pr> <head>
+#   mc_fly_enqueue <project> <slug> <pr> <head> [hotfix]
 #       sets MC_FLY_KEY. rc 0 = enqueued (201), 3 = already live (409),
 #       4 = a row of another head of this PR is live (MC_FLY_OTHER names it;
 #       a queued row of another head past MC_FLY_QUEUE_STALE_S does not count),
 #       5 = the machine deferred this head (MC_FLY_DEFERRED), 6 = no valid key,
 #       7 = the machine run of this head failed (MC_FLY_FAILED), 8 = its row
-#       waits unclaimed past MC_FLY_QUEUE_STALE_S (MC_FLY_STALE), 1 = the read
+#       waits unclaimed past MC_FLY_QUEUE_STALE_S (MC_FLY_STALE), 9 = the
+#       machine run of this head ended READY with nothing deferred
+#       (MC_FLY_READY=1, BH-9198), 10 = the 5th argument is `hotfix` and
+#       none of 5, 7 or 9 applies: no row is enqueued (BH-9198), 1 = the read
 #       or the enqueue failed. Only rc 0 and 3 mean a row exists. BH-9202:
 #       after the read, _mc_fly_ready_loop alerts once per (PR, head) when
 #       MC_FLY_READY_LOOP_ALERT_N (default 3) done rows of the key end READY.
@@ -63,7 +74,11 @@
 #       the launch-loop decision for one row. rc 0 = handled here (enqueued or
 #       skipped, accounted in fan-in): start no local worker. rc 1 = run the
 #       local worker as today, after one `fallback=<word>` line. Reads
-#       LAND_FIRE; counts into MC_FLY_N_ENQ, MC_FLY_N_SKIP and MC_FLY_N_FB,
+#       LAND_FIRE; a non-draft hotfix PR (hotfix_pr_is: its label, or the
+#       label in its build record) is never enqueued: `fallback=hotfix`
+#       (BH-9198, rc 10), because the hub lands the emergency. Its rows are
+#       still read first, so a machine's deferred=rereview still asks the
+#       lead (BH-9026). Counts into MC_FLY_N_ENQ, MC_FLY_N_SKIP and MC_FLY_N_FB,
 #       and appends enq|skip|fb to MC_FLY_COUNT_FILE when it is set.
 #   mc_fly_rereview_request <project> <slug> <pr> <head40> <url> <labels>
 #       BH-9026: rc 5 with `rereview` in MC_FLY_DEFERRED asks the lead for a
@@ -188,6 +203,14 @@ mc_fly_failed_for() {
   printf '%s' "$d"
 }
 
+mc_fly_ready_undeferred_for() {
+  printf '%s' "${1:-}" | jq -e --arg k "${2:-}" '
+    first(.rows[]? | select(.project == $k)) // {} |
+    (.status // "") == "done" and (.rc == null or .rc == 0)
+    and ((.prof_line // "") | test("(^| )PROF mc-pr state=READY ")
+         and test("(^| )deferred=-( |$)"))' >/dev/null 2>&1 || return 1
+}
+
 mc_fly_stale_for() {
   local a
   a=$(printf '%s' "${1:-}" | jq -r --arg k "${2:-}" --argjson now "${3:-0}" --argjson st "${4:-600}" '
@@ -202,8 +225,8 @@ mc_fly_stale_for() {
 }
 
 mc_fly_enqueue() {
-  local p="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" root rows rc
-  MC_FLY_KEY=""; MC_FLY_OTHER=""; MC_FLY_DEFERRED=""; MC_FLY_FAILED=""; MC_FLY_STALE=""
+  local p="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" hot="${5:-}" root rows rc
+  MC_FLY_KEY=""; MC_FLY_OTHER=""; MC_FLY_DEFERRED=""; MC_FLY_FAILED=""; MC_FLY_STALE=""; MC_FLY_READY=""
   MC_FLY_KEY=$(mc_fly_run_key "$p" "$n" "$head") || return 6
   _mc_fly_client || return 1
   root=$(_mc_fly_root)
@@ -216,6 +239,14 @@ mc_fly_enqueue() {
   if MC_FLY_FAILED=$(mc_fly_failed_for "$rows" "$MC_FLY_KEY"); then return 7; fi
   _mc_fly_ready_loop "$p" "$slug" "$n" "$head" "$rows"
   if MC_FLY_DEFERRED=$(mc_fly_deferred_for "$rows" "$MC_FLY_KEY"); then return 5; fi
+  # READY on the machine with nothing deferred (BH-9198): the machine did not
+  # land it and will not on the next row either, so the hub runs it, lands it
+  # or writes its own ready-why reason. BH-9202's `hold` above answers first
+  # for the same row, so this is a second guard.
+  if mc_fly_ready_undeferred_for "$rows" "$MC_FLY_KEY"; then MC_FLY_READY=1; return 9; fi
+  # A hotfix is landed by the hub (BH-9198): a machine does not land, so a
+  # pool row only delays the emergency. Any live row of it lands nothing.
+  [ "$hot" = hotfix ] && return 10
   # No machine took the row in time (no capacity, or no fleet at all): the hub
   # works the PR rather than leave it waiting. A machine that claims the row
   # later lands nothing (MC_ON_MACHINE), so the overlap is reads, not a merge.
@@ -244,8 +275,8 @@ mc_fly_enqueue() {
 }
 
 mc_fly_arm() {
-  local p="$1" slug="$2" row="$3" num head why rc
-  MC_FLY_DEFERRED=""; MC_FLY_FAILED=""; MC_FLY_STALE=""
+  local p="$1" slug="$2" row="$3" num head why rc hot
+  MC_FLY_DEFERRED=""; MC_FLY_FAILED=""; MC_FLY_STALE=""; MC_FLY_READY=""
   num="${row%%$'\t'*}"
   head=$(printf '%s' "$row" | cut -f3)
   if [ "${LAND_FIRE:-0}" = 1 ]; then
@@ -253,7 +284,10 @@ mc_fly_arm() {
     # answered (BH-870), so a land-fire tick stays whole on the hub.
     why=land-fire
   else
-    mc_fly_enqueue "$p" "$slug" "$num" "$head"; rc=$?
+    # A hotfix heads the order (BH-369) and the hub lands it (BH-9198): rc 10,
+    # and the tick's hotfix pending marker stays for its own local worker.
+    hot=""; _mc_fly_hotfix "$row" && hot=hotfix
+    mc_fly_enqueue "$p" "$slug" "$num" "$head" "$hot"; rc=$?
     case "$rc" in
       0|3)
         fanin_account "$slug#$num" enqueued:fly
@@ -289,11 +323,13 @@ mc_fly_arm() {
       6) why=key-too-long ;;
       7) why=machine-failed ;;
       8) why=no-capacity ;;
+      9) why=machine-ready-undeferred ;;
+      10) why=hotfix ;;
       *) why=enqueue-failed ;;
     esac
   fi
   MC_FLY_N_FB=$(( ${MC_FLY_N_FB:-0} + 1 )); _mc_fly_count fb
-  mc_log "$slug#$num fallback=$why${MC_FLY_DEFERRED:+ ($MC_FLY_DEFERRED)}${MC_FLY_FAILED:+ ($MC_FLY_FAILED at ${MC_FLY_KEY:-?})}$(_mc_fly_stale_note) — this PR runs on the hub this tick"
+  mc_log "$slug#$num fallback=$why${MC_FLY_DEFERRED:+ ($MC_FLY_DEFERRED)}${MC_FLY_FAILED:+ ($MC_FLY_FAILED at ${MC_FLY_KEY:-?})}$(_mc_fly_stale_note)$(_mc_fly_ready_note) — this PR runs on the hub this tick"
   return 1
 }
 
@@ -409,6 +445,26 @@ _mc_fly_stale_note() {
     withdrawn) printf ' (%s withdrawn: refused at claim by every machine)' "${MC_FLY_KEY:-?}" ;;
     *) printf ' (%s unclaimed for %ss)' "${MC_FLY_KEY:-?}" "$MC_FLY_STALE" ;;
   esac
+}
+
+# _mc_fly_ready_note — the fallback line's note for rc 9 (BH-9198).
+_mc_fly_ready_note() {
+  [ "${MC_FLY_READY:-}" = 1 ] || return 0
+  printf ' (%s READY on the machine with no land deferred; the hub lands it or logs why)' "${MC_FLY_KEY:-?}"
+}
+
+# _mc_fly_hotfix <list-row> — rc 0 when the row is a non-draft hotfix PR: the
+# same test as the hotfix order block of tick_project (labels col 10, the
+# build record's ticket-meta.json). A missing helper answers "not a hotfix".
+_mc_fly_hotfix() {
+  local row="$1" url draft labels rec=""
+  command -v hotfix_pr_is >/dev/null 2>&1 || return 1
+  url=$(printf '%s' "$row" | cut -f2)
+  draft=$(printf '%s' "$row" | cut -f5)
+  labels=$(printf '%s' "$row" | cut -f10)
+  [ "$draft" != true ] || return 1
+  command -v mc_record_for >/dev/null 2>&1 && rec=$(mc_record_for "$url" 2>/dev/null || true)
+  hotfix_pr_is "${labels:--}" "$rec"
 }
 
 # _mc_fly_count enq|skip|fb — one word per row into MC_FLY_COUNT_FILE, the
