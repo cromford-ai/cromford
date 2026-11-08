@@ -1,0 +1,2 @@
+The verdict MERGE #8790 is for head 111111111111, and the PR head is now 222222222222. A verdict does not carry over to a new head, and the script answered HOLD gate=head-moved. I do not merge. The new head needs its own lead review.
+VERDICT: hold

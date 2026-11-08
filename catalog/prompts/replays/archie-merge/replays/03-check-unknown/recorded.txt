@@ -1,0 +1,2 @@
+A required check is still in progress and mergeable_state is unknown. Unknown is not green, and the script answered HOLD gate=mergeable. I do not merge this head now. I look again when the check completes.
+VERDICT: hold

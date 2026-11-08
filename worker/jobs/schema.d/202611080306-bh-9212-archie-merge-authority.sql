@@ -1,0 +1,11 @@
+-- ── BH-9212: Archie's merge authority (archie.merge.authority) ──
+-- Reader: bin/lib/archie-merge.sh am_authority, on every bin/archie-merge.sh
+-- merge run. merge = Archie may merge through bin/archie-merge.sh under its
+-- head-bound gates; any other value is ask-first. Writers: bin/protected-setting.sh
+-- (the human token, the only way to write merge) and bin/archie-merge.sh
+-- reverted (a bearer, ask_first). The worker refuses a bearer PUT of any other
+-- value (routes/settings.js leadLoosening). No row reads as the code fallback
+-- ask_first. The seed grants nothing: the operator signs merge after he merges BH-9212.
+-- No table is created here, so no index or RLS applies.
+-- INSERT OR IGNORE: a re-apply changes nothing and the operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('archie.merge.authority','ask_first','BH-9212: ask_first | merge. merge = Archie may merge through bin/archie-merge.sh under its head-bound gates. Only the human verdict token sets merge (bin/protected-setting.sh); a bearer may only write ask_first. Code default ask_first.','seed','2026-11-08T03:06:00Z');

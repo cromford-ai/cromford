@@ -196,8 +196,9 @@ export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mo
 // accepted PUT too: lead_authority.* and risk_tier.*. A code constant, not a
 // settings row: a row would let a D1 writer un-protect a key. BH-5022:
 // risk_tier.* decides which PRs merge with no review at all, so its globs,
-// limits and modes are signed the same way.
-export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier."];
+// limits and modes are signed the same way. BH-9212: archie.merge.* is Archie's
+// merge authority; a bearer may only tighten it (routes/settings.js leadLoosening).
+export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier.", "archie.merge."];
 
 export function isProtectedSetting(key) {
   return PROTECTED_HUMAN_KEYS.includes(key) || PROTECTED_PREFIXES.some((p) => key.startsWith(p));

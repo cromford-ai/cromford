@@ -237,7 +237,7 @@ test('P1 settingProof answers none, proven, mismatch and null', async () => {
 });
 
 test('P2 isProtectedSetting covers the two switches, lead_authority. and risk_tier. (BH-5022)', () => {
-  assert.deepEqual(PROTECTED_PREFIXES, ['lead_authority.', 'risk_tier.']);
+  assert.deepEqual(PROTECTED_PREFIXES, ['lead_authority.', 'risk_tier.', 'archie.merge.']);
   for (const k of ['human_verdict_mode', 'human_verdict_sig_mode', 'lead_authority.x', 'risk_tier.low_globs']) {
     assert.equal(isProtectedSetting(k), true, k);
   }

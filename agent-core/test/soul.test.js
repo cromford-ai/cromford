@@ -22,7 +22,8 @@ test('P1: the archie soul parses into non-empty MAY, NEVER and REPORT lists', ()
   const never = s.never.map(norm);
   assert.ok(never.includes('a push to main'), JSON.stringify(never));
   assert.ok(never.includes('a production db write'), JSON.stringify(never));
-  assert.ok(never.includes('a direct merge (gh pr merge)'), JSON.stringify(never));
+  // BH-9212: a gated merge through bin/archie-merge.sh moved to MAY; the NEVER item is the ungated merge
+  assert.ok(never.includes('an ungated merge (a gh pr merge, an admin merge, any merge outside bin/archie-merge.sh)'), JSON.stringify(never));
   assert.ok(never.includes('a write to a client-visible board other than a ticket comment the triage rules allow'), JSON.stringify(never));
   // BH-5751: each box launch is money the owner approves; the parenthesis keeps it one item
   assert.ok(never.some((n) => n.startsWith("launching a box without the owner's yes for that one launch")), JSON.stringify(never));

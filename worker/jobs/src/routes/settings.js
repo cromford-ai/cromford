@@ -158,6 +158,10 @@ async function effectiveLead(env, key, row) {
 // says. Authority is normalised the way bin/lib/lead-authority.sh reads it, with
 // all whitespace removed (la_decide); risk_tier.* is a whitespace-split glob set.
 function leadLoosening(key, from, to) {
+  // BH-9212: archie.merge.* (archie.merge.authority: ask_first | merge). A
+  // bearer, Archie's own shell included, may only write ask_first; every other
+  // value, whatever the current one, needs the human token.
+  if (key.startsWith("archie.merge.")) return to === "ask_first" ? null : {};
   if (key.startsWith("lead_authority.")) {
     const f = from == null ? from : from.replace(/\s+/g, "");
     const t = to.replace(/\s+/g, "");

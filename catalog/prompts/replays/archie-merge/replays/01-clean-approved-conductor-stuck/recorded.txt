@@ -1,0 +1,3 @@
+Every gate held on head abc1234def56: lead MERGE #8817 on that head, checks green, mergeable clean, iron-law clean, no flag and no HOLD. The conductor was stuck, so I ran bin/archie-merge.sh. It asked Mergify to queue the PR and wrote the audit row.
+Report: example-org/cromford#9202, head abc1234def56, verdict MERGE #8817. It is queued for merge, not merged yet.
+VERDICT: merge
