@@ -133,9 +133,12 @@ export function leadTokenOk(req, env) {
 // HUMAN_VERDICT_TOKEN, a worker secret (`wrangler secret put
 // HUMAN_VERDICT_TOKEN`) whose value lives only on the operator's Mac, never on the hub,
 // a box or in a bundle. Unset on the worker is DENIED, the leadTokenOk rule.
+// A human token that equals the fleet (HARNESS_SECRET) or lead token is no
+// separate credential: every box holds those, so it is DENIED too.
 export function humanTokenOk(req, env) {
   const got = req.headers.get("x-human-verdict-token") || "";
-  return Boolean(env.HUMAN_VERDICT_TOKEN) && got === env.HUMAN_VERDICT_TOKEN;
+  const token = env.HUMAN_VERDICT_TOKEN;
+  return Boolean(token) && token !== env.HARNESS_SECRET && token !== env.LEAD_VERDICT_TOKEN && got === token;
 }
 
 // BH-3846. The worker-only signing key, or null when unset. Never on the hub,
@@ -199,6 +202,11 @@ export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mo
 // limits and modes are signed the same way. BH-9212: archie.merge.* is Archie's
 // merge authority; a bearer may only tighten it (routes/settings.js leadLoosening).
 export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier.", "archie.merge."];
+
+// Settings rows a service writes itself, never the generic PUT /api/settings:
+// any box holds the bearer, so a box could swap the key a caller seals secrets
+// to. hub_envelope_public_key is written only by routes/secret-envelope-apply.js.
+export const SERVICE_MANAGED_KEYS = ["hub_envelope_public_key"];
 
 export function isProtectedSetting(key) {
   return PROTECTED_HUMAN_KEYS.includes(key) || PROTECTED_PREFIXES.some((p) => key.startsWith(p));

@@ -63,6 +63,8 @@ function world({ throws = false } = {}) {
   const forwarded = [];
   const real = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
+    // The authed probe (signedIn) carries no body: the click is signed in.
+    if (!init.body) return new Response('{}', { status: 200 });
     const body = JSON.parse(String(init.body));
     forwarded.push(body);
     const ckey = `${body.project}:${body.ticket}:${body.type}`;

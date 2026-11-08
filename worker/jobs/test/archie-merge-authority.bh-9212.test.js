@@ -157,7 +157,9 @@ test('W-(j) control: lead_authority.* and risk_tier.* bearer rules are unchanged
   const db = openDb();
   assert.equal((await put(db, 'lead_authority.example-org.cromford', 'human')).status, 200);
   assert.equal((await put(db, 'lead_authority.example-org.cromford', 'lane')).status, 403);
-  assert.equal((await put(db, 'risk_tier.low_globs', 'docs/**')).status, 200);
-  assert.equal((await put(db, 'risk_tier.low_globs', 'docs/** a/**')).status, 200);
-  assert.equal((await put(db, 'risk_tier.low_globs', 'a/**')).status, 403);
+  // cromford#6: the first write and any widening of low_globs need the human token.
+  assert.equal((await put(db, 'risk_tier.low_globs', 'docs/**')).status, 403);
+  assert.equal((await put(db, 'risk_tier.low_globs', 'docs/** a/**', { human: HUMAN })).status, 200);
+  assert.equal((await put(db, 'risk_tier.low_globs', 'docs/** a/** b/**')).status, 403);
+  assert.equal((await put(db, 'risk_tier.low_globs', 'a/**')).status, 200);
 });

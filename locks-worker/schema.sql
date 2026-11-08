@@ -32,3 +32,5 @@ CREATE TABLE IF NOT EXISTS tokens (
 --   ALTER TABLE tokens ADD COLUMN role TEXT NOT NULL DEFAULT 'machine';
 --   ALTER TABLE tokens ADD COLUMN prefix TEXT;
 CREATE INDEX IF NOT EXISTS tokens_name ON tokens(name);
+-- 2026-11-08 (outside audit F08): the mint cap counts tokens by creator and time.
+CREATE INDEX IF NOT EXISTS tokens_created_by_at ON tokens(created_by, created_at);

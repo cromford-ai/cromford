@@ -65,8 +65,8 @@ export default {
       if (req.method === "GET" && path === "/v1/admin/tokens") {
         const rows = actor
           ? await env.DB.prepare(
-              "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens WHERE name LIKE ?1 ORDER BY created_at DESC"
-            ).bind(actor.prefix + "%").all()
+              "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens WHERE role='machine' AND substr(name,1,length(?1)) = ?1 ORDER BY created_at DESC"
+            ).bind(actor.prefix).all()
           : await env.DB.prepare(
               "SELECT id, name, role, prefix, created_by, created_at, expires_at, revoked_at, last_used_at FROM tokens ORDER BY created_at DESC"
             ).all();
@@ -91,6 +91,7 @@ export default {
         }
         let role = body.role === "minter" ? "minter" : "machine";
         let prefix = null;
+        let mintCap = 0; // >0: a minter mint, capped per 24h in the INSERT itself
         if (actor) {
           // Minter constraints: machine tokens only, inside its prefix, rate-capped.
           if (body.role === "minter") return json(403, { error: "a minter cannot mint minters" });
@@ -98,13 +99,7 @@ export default {
           if (!name.startsWith(actor.prefix)) {
             return json(403, { error: `name must start with your prefix '${actor.prefix}'` });
           }
-          const cap = Math.max(Number(env.MINT_CAP) || 5, 1);
-          const used = await env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM locks_log WHERE holder=?1 AND action='token-mint' AND at > ?2"
-          ).bind(actor.name, t - 86400).first();
-          if ((used?.n || 0) >= cap) {
-            return json(429, { error: `mint cap ${cap}/24h reached`, retry_after_s: 86400 });
-          }
+          mintCap = Math.max(Number(env.MINT_CAP) || 5, 1);
         } else if (role === "minter") {
           prefix = String(body.prefix || "").trim().toLowerCase();
           if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(prefix)) {
@@ -118,11 +113,33 @@ export default {
         const token = randomHex(24);
         const id = crypto.randomUUID();
         const exp = t + ttlDays * 86400;
-        await env.DB.prepare(
-          "INSERT INTO tokens (id, name, token_hash, created_by, created_at, expires_at, role, prefix) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"
-        ).bind(id, name, await sha256Hex(token), actor ? actor.name : String(body.created_by || "admin").slice(0, 64), t, exp, role, prefix).run();
-        await env.DB.prepare("INSERT INTO locks_log (key,holder,action,at) VALUES (?1,?2,'token-mint',?3)")
-          .bind(name, actorName, t).run();
+        const created_by = actor ? actor.name : String(body.created_by || "admin").slice(0, 64);
+        const tokenHash = await sha256Hex(token);
+        if (mintCap) {
+          // One conditional INSERT: the count and the write cannot be split by a
+          // second request, and it counts tokens rows (revoked ones too), so log
+          // retention cannot reset the cap. The audit row rides the same batch,
+          // and is skipped by its own guard when the INSERT inserted nothing.
+          const [ins] = await env.DB.batch([
+            env.DB.prepare(
+              `INSERT INTO tokens (id, name, token_hash, created_by, created_at, expires_at, role, prefix)
+               SELECT ?1,?2,?3,?4,?5,?6,?7,?8
+               WHERE (SELECT COUNT(*) FROM tokens WHERE created_by=?4 AND created_at>?9) < ?10`
+            ).bind(id, name, tokenHash, created_by, t, exp, role, prefix, t - 86400, mintCap),
+            env.DB.prepare(
+              "INSERT INTO locks_log (key,holder,action,at) SELECT ?1,?2,'token-mint',?3 WHERE EXISTS (SELECT 1 FROM tokens WHERE id=?4)"
+            ).bind(name, actorName, t, id),
+          ]);
+          if (!ins.meta.changes) return json(429, { error: `mint cap ${mintCap}/24h reached`, retry_after_s: 86400 });
+        } else {
+          await env.DB.batch([
+            env.DB.prepare(
+              "INSERT INTO tokens (id, name, token_hash, created_by, created_at, expires_at, role, prefix) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)"
+            ).bind(id, name, tokenHash, created_by, t, exp, role, prefix),
+            env.DB.prepare("INSERT INTO locks_log (key,holder,action,at) VALUES (?1,?2,'token-mint',?3)")
+              .bind(name, actorName, t),
+          ]);
+        }
         // The one and only time the token is returned.
         return json(201, { id, name, token, role, prefix, expires_at: exp, ttl_days: ttlDays });
       }
@@ -158,7 +175,9 @@ export default {
     // ── Harness auth: static secret first, then minted-token lookup ──
     let tokens = {};
     try { tokens = JSON.parse(env.HARNESS_TOKENS || "{}"); } catch {}
-    let harness = tokens[auth];
+    // Own, string-valued keys only: `constructor` / `toString` are prototype
+    // keys, never tokens. A non-string value is not a holder name either.
+    let harness = Object.hasOwn(tokens, auth) && typeof tokens[auth] === "string" ? tokens[auth] : undefined;
     if (!harness && auth) {
       // role='machine' only: a minter credential administers tokens, it never
       // holds leases — lane separation keeps a leaked minter out of coordination.
@@ -210,8 +229,8 @@ export default {
       const { key, lease_id, ttl_s = 7200 } = body;
       const exp = t + Math.min(Math.max(ttl_s, 60), 86400);
       const r = await env.DB.prepare(
-        "UPDATE locks SET expires_at=?1 WHERE key=?2 AND lease_id=?3 AND holder=?4"
-      ).bind(exp, key, lease_id, harness).run();
+        "UPDATE locks SET expires_at=?1 WHERE key=?2 AND lease_id=?3 AND holder=?4 AND expires_at > ?5"
+      ).bind(exp, key, lease_id, harness, t).run();
       if (r.meta.changes === 0) return json(404, { error: "no such lease (expired or stolen)" });
       return json(200, { key, expires_at: exp });
     }

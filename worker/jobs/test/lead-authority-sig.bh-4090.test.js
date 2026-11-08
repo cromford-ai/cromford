@@ -140,24 +140,25 @@ test('L3 the human token loosens and the write is signed at the next seq', async
   assert.equal((await put(db, K, 'lane', { human: 'nope' })).status, 403);
 });
 
-test('L4 risk_tier globs: the bearer may only add globs', async () => {
+test('L4 risk_tier.low_globs: the bearer may only remove globs; the first write and any addition need the human token', async () => {
   const db = openDb();
-  await ok(put(db, X, 'a b'));
-  await ok(put(db, X, 'b  a\tc'));
+  const first = await put(db, X, 'a b');
+  assert.equal(first.status, 403, JSON.stringify(first.body));
+  await ok(put(db, X, 'a b c', { human: HUMAN }));
   const before = sigs(db, X).length;
   const auditBefore = changes(db);
-  const no = await put(db, X, 'a c');
+  const no = await put(db, X, 'a b c d');
   assert.equal(no.status, 403, JSON.stringify(no.body));
   assert.equal(no.body.key, X);
-  assert.deepEqual(no.body.removed, ['b']);
-  assert.equal(no.body.to, 'a c');
+  assert.deepEqual(no.body.added, ['d']);
+  assert.equal(no.body.to, 'a b c d');
   assert.match(no.body.error, /x-human-verdict-token/);
-  assert.equal(setting(db, X), 'b  a\tc');
+  assert.equal(setting(db, X), 'a b c');
   assert.equal(sigs(db, X).length, before);
   assert.equal(changes(db), auditBefore);
-  // reorder and doubled whitespace are not a removal
-  await ok(put(db, X, 'c b a'));
-  const yes = await ok(put(db, X, 'a c', { human: HUMAN }));
+  // reorder and doubled whitespace are not an addition; dropping a glob tightens
+  await ok(put(db, X, 'c  b\ta'));
+  const yes = await ok(put(db, X, 'a c'));
   assert.equal(yes.body.signed, true);
   assert.equal(setting(db, X), 'a c');
 });
@@ -211,7 +212,7 @@ test('L6 in shadow an unproven row reads as stored with a warn; L6b an unreadabl
 
 test('L7 an unproven risk_tier row is 409 under enforce, stored in shadow; the PUT judges the effective value', async () => {
   const db = openDb();
-  await ok(put(db, X, 'a b'));
+  await ok(put(db, X, 'a b', { human: HUMAN }));
   setRaw(db, X, 'a');
   let g;
   const seen = await warns(async () => { g = await ok(get(db, X)); });
@@ -243,7 +244,7 @@ test('L8 the bulk list marks lead_* rows proven and never rewrites them', async 
   const db = openDb();
   enforce(db);
   await ok(put(db, K, 'human'));
-  await ok(put(db, X, 'a b'));
+  await ok(put(db, X, 'a b', { human: HUMAN }));
   setRaw(db, X, 'a');
   const r = await ok(send(db, '/api/settings', 'GET'));
   const row = (k) => r.body.settings.find((s) => s.key === k);
@@ -264,7 +265,7 @@ test('L9 a write with no signing key reads unproven and fails closed under enfor
   const g = await ok(get(db, K, { env: { ...NOKEY, HUMAN_VERDICT_ENFORCE: '1' } }));
   assert.equal(g.body.setting.value, 'human');
   assert.equal(g.body.setting.unproven, true);
-  await ok(put(db, X, 'a', { env: NOKEY }));
+  await ok(put(db, X, 'a', { env: NOKEY, human: HUMAN }));
   enforce(db);
   assert.equal((await get(db, X)).status, 409);
 });

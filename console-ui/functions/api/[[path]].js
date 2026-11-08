@@ -63,6 +63,12 @@ const passThrough = (upstream, body) => {
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers: out });
 };
 
+// The credentials a request carries, in the shape signedIn() probes with.
+const requestCreds = (request) => ({
+  cookie: request.headers.get('cookie') || '',
+  authorization: request.headers.get('authorization') || ''
+});
+
 const NEEDS_REASON = new Set(['pause_board', 'resume_board', 'pause_set']);
 
 // The 400 message for a pause command the console must not queue, or null.
@@ -110,7 +116,11 @@ export async function onRequest(context) {
     }
     const refusal = pauseRefusal(sent);
     if (refusal) return jsonError(400, refusal);
-    if (sent.type === 'merge_pr') await rekeyHeadMovedRefusal(env && env.CONSOLE_DB, sent);
+    // The rekey writes CONSOLE_DB, so it runs only for a caller the worker
+    // authenticates (audit F06). Anyone else is forwarded and the worker refuses.
+    if (sent.type === 'merge_pr' && (await signedIn(requestCreds(request)))) {
+      await rekeyHeadMovedRefusal(env && env.CONSOLE_DB, sent);
+    }
     ({ actor } = await resolveIdentity(request, env || {}));
     init.body = JSON.stringify({ ...sent, actor });
     headers.set('content-type', 'application/json');

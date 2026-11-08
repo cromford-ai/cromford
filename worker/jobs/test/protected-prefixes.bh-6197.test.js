@@ -39,16 +39,18 @@ const setRaw = (db, k, v) => db.prepare('UPDATE settings SET value=? WHERE key=?
 const sigs = (db, k) => db.prepare('SELECT * FROM setting_sigs WHERE key=?').all(k).length;
 const ENV = { HARNESS_SECRET: SECRET, HUMAN_VERDICT_TOKEN: HUMAN, HUMAN_VERDICT_SIG_KEY: 'sig-test-key' };
 
-const send = (db, path, method, body) => {
+const send = (db, path, method, body, extra = {}) => {
   const req = new Request(`https://jobs.test${path}`, {
     method,
-    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', ...extra },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return worker.fetch(req, { DB: sqliteDB(db), ...ENV })
     .then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
 };
-const put = (db, key, value) => send(db, '/api/settings', 'PUT', { key, value });
+// The first write of a risk_tier.* row needs the human token (cromford#6).
+const put = (db, key, value) => send(db, '/api/settings', 'PUT', { key, value },
+  key.startsWith('risk_tier.') ? { 'x-human-verdict-token': HUMAN } : {});
 
 test('E1 a bearer PUT of an extras key is not signed', async () => {
   const db = openDb();

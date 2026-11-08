@@ -16,7 +16,7 @@ import { invalidateSettings, settingsRows } from "../lib/settings-cache.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
 import { retiredModeRefusal } from "../lib/retired-mode-values.js";
 import {
-  PROTECTED_HUMAN_KEYS, PROTECTED_PREFIXES, humanTokenOk, isProtectedSetting, protectedMode, settingProof,
+  PROTECTED_HUMAN_KEYS, PROTECTED_PREFIXES, SERVICE_MANAGED_KEYS, humanTokenOk, isProtectedSetting, protectedMode, settingProof,
   settingSigMessage, settingSigMessageV2, sigKeyOf,
 } from "./verdicts.js";
 import {
@@ -169,10 +169,19 @@ function leadLoosening(key, from, to) {
     if (t === "human:precision") return f === "human" ? {} : null;
     return f === null || f === "lane" || f === "human:precision" ? null : {};
   }
-  if (from === undefined) return {};
+  // No row (or an unproven one): the consumer's own fallback is the real current
+  // value, so the first write cannot be shown to tighten anything.
+  if (from == null) return {};
   const globs = (v) => (v || "").split(/\s+/).filter(Boolean);
+  const prior = new Set(globs(from));
   const next = new Set(globs(to));
-  const removed = [...new Set(globs(from))].filter((g) => !next.has(g));
+  // low_globs is an allowlist (eligibility to merge without review): ADDING a
+  // glob widens it. The other risk_tier.* lists withhold eligibility: REMOVING loosens.
+  if (key === "risk_tier.low_globs") {
+    const added = [...next].filter((g) => !prior.has(g));
+    return added.length ? { added } : null;
+  }
+  const removed = [...prior].filter((g) => !next.has(g));
   return removed.length ? { removed } : null;
 }
 
@@ -370,6 +379,9 @@ export const routes = [
       return d1Guarded("settings", async () => {   // BH-1000: body unchanged
       const key = String(body.key || "").trim();
       if (!SETTING_KEY_RE.test(key)) return json(400, { error: "key must match ^[a-z0-9_.-]{1,64}$" });
+      if (SERVICE_MANAGED_KEYS.includes(key)) {
+        return json(403, { error: `${key} is service-managed and is not written through PUT /api/settings`, key });
+      }
       // BH-3831: the switch that makes the human verdict token mandatory is
       // changed only by the holder of that token. With the bearer alone, any box
       // could flip enforce back to shadow and the enforcement would be decorative.
