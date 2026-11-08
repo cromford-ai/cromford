@@ -1,0 +1,2 @@
+# tests/mc/expected-map.d/BH-9229.tsv — BH-9229: mc_mergify_payload_dequeue reads the dequeue code and failing checks from a Mergify payload block; origin=lib because it is a new module function.
+queue	mc_mergify_payload_dequeue	lib

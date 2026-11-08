@@ -5854,6 +5854,7 @@ br_fix_round() {
   if [ "$reason" = queue-ejected-twice ] && ejruns=$(br_eject_runs "$url" "${head:-}"); then
     brief="$brief"$'\n\n'"THE MERGE QUEUE EJECTED THIS PR TWICE. Its batch build (this branch merged onto current main together with the PRs queued ahead of it) failed both times, while this branch's own checks are green. Open these failing batch runs first; fixing what they show is the job:"$'\n'"$ejruns"
   fi
+  [ "$reason" = queue-ejected-twice ] && command -v brec_brief >/dev/null 2>&1 && brief="$brief$(brec_brief "$url" "${head:-}")"
   # <<< eject runs brief
   # AN ORPHANED CHILD ALWAYS HAS A BRIEF, and it is the only one it needs: there
   # are no review findings on this park and no conflict was produced above, so
@@ -7502,9 +7503,15 @@ br_one() {
     # at the fix round, whose brief carries those runs. Without the file the
     # ladder runs as before.
     if [ "$reason" = queue-ejected-twice ] && { [ "$action" = mechanical ] || [ "$action" = regen ]; } \
-       && [ "$(br_num "$st" fixrounds)" -lt "$(br_fix_cap "$st")" ] && br_eject_runs "$url" "${rowhead:-}" >/dev/null; then
-      say "$p/$rkey [$reason]: the conductor handed over the failing batch runs — straight to the fix round (rung 1 cannot answer a batch build red against current main)"
-      ladder_action=fix-round; action=fix-round
+       && [ "$(br_num "$st" fixrounds)" -lt "$(br_fix_cap "$st")" ]; then
+      if br_eject_runs "$url" "${rowhead:-}" >/dev/null; then
+        say "$p/$rkey [$reason]: the conductor handed over the failing batch runs — straight to the fix round (rung 1 cannot answer a batch build red against current main)"
+        ladder_action=fix-round; action=fix-round
+      elif command -v brec_checks >/dev/null 2>&1 && brec_names=$(brec_checks "$url" "${rowhead:-}"); then
+        # BH-9229: the eject-cause record names the failing checks for this head.
+        say "$p/$rkey [$reason]: the eject cause names failing checks ($brec_names) — straight to the fix round"
+        ladder_action=fix-round; action=fix-round
+      fi
     fi
     # <<< ejected twice: fix round first
   fi

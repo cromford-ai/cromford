@@ -1,0 +1,29 @@
+[
+  {
+    "id": 6696874499,
+    "user": {
+      "login": "mergify[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-06T21:57:04Z",
+    "body": "Queue requested — the merge queue status continues in [this comment ↓](https://github.com/example-org/cromford/pull/9189#issuecomment-6711807239)."
+  },
+  {
+    "id": 6711807239,
+    "user": {
+      "login": "mergify[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-07T19:11:55Z",
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-07T19:11:54.823008+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-07T19:38:45.088475+00:00\", \"dequeue_reason\": {\"code\": \"BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS\", \"label\": \"reached maximum batch speculative checks failure resolution\", \"message\": \"The maximum batch failure resolution attempts has been reached\", \"checks\": [\"Pure-logic gate fixtures\"], \"checks_count\": 1}}\n-*- Mergify Payload End -*-\n-->\n\n### 🚫 Left the queue · reached maximum batch speculative checks failure resolution\n\n27 min in the queue, 26 min of it CI.\n\n**So far**\n\n- ✅ **Entered the queue** Sat 7 Nov, 19:11 · rule `default` · triggered by @operator with the [`@mergifyio queue` command](https://github.com/example-org/cromford/pull/9189#issuecomment-6711805066)\n- ⏹️ **Testing stopped** · draft #9215\n- 🚫 **Left the queue** 19:38 · `488caf3`\n\n**Reason**\n\nThe maximum batch failure resolution attempts has been reached\n\nFailing checks:\n- ❌ [`Pure-logic gate fixtures`](https://github.com/example-org/cromford/actions/runs/42405061348/job/128507263621) ([job log](https://github.com/example-org/cromford/actions/runs/42405061348/job/128507263621))\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = \"Pure-logic gate fixtures\"`\n\nRequeue requested — the merge queue status continues in [this comment ↓](https://github.com/example-org/cromford/pull/9189#issuecomment-6715131096).\n\n<details>\n<summary>7 merge conditions met</summary>\n\n- [x] `#changes-requested-reviews-by=0`\n- [x] `check-success = \"Jobs worker — routes + schema\"`\n- [x] `check-success = \"Mission Control SPA — unit tests + build\"`\n- [x] `check-success = \"Prompt replay evals (prompts/** only)\"`\n- [x] `check-success = \"Syntax + shellcheck + config integrity\"`\n- [x] `check-success = \"Test determinism lint\"`\n- [x] `check-success = \"Tests cannot touch a real harness\"`\n\n</details>\n\n<sub>Times in UTC · [dashboard](https://dashboard.mergify.com/orgs/example-org/repos/cromford/queues/status?branch=main&pull=9189) · [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>"
+  },
+  {
+    "id": 6715131096,
+    "user": {
+      "login": "mergify[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-08T00:36:42Z",
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-08T00:36:41.656940+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-08T01:03:49.774724+00:00\", \"dequeue_reason\": {\"code\": \"CHECKS_FAILED\", \"label\": \"checks failed\", \"message\": \"The merge conditions cannot be satisfied due to failing checks\", \"checks\": [\"Pure-logic gate fixtures\", \"Tests, traced (shard 7/9)\"], \"checks_count\": 2}}\n-*- Mergify Payload End -*-\n-->\n\n### ❌ Left the queue · `Tests, traced (shard 7/9)` fails with this pull request\n\n27 min in the queue, 24 min of it CI.\n\n**So far**\n\n- ✅ **Entered the queue** Sun 8 Nov, 00:36 · rule `default` · triggered by @operator with the [`@mergifyio queue` command](https://github.com/example-org/cromford/pull/9189#issuecomment-6715130255)\n- ❌ **Checks failed** · draft #9225\n- 🚫 **Left the queue** 01:03 · `082b296`\n\n**The failure is in this pull request.** It failed tested alone on top of `main`.\n\n**Reason**\n\nThe merge conditions cannot be satisfied due to failing checks\n\n- `Pure-logic gate fixtures`\n\nFailing checks:\n- ❌ [`Pure-logic gate fixtures`](https://github.com/example-org/cromford/actions/runs/42430703334/job/128584368908) ([job log](https://github.com/example-org/cromford/actions/runs/42430703334/job/128584368908))\n- ❌ [`Tests, traced (shard 7/9)`](https://github.com/example-org/cromford/actions/runs/42430703334/job/128579305878) ([job log](https://github.com/example-org/cromford/actions/runs/42430703334/job/128579305878))\n\n**To get back in the queue**\n\n- Push a fix: the pull request is queued again once its queue conditions match.\n- If the failure is a flake, tick the box below to queue it again as it is.\n\n**Merge conditions not met when it left the queue**\n\n- [ ] `check-success = \"Pure-logic gate fixtures\"`\n\nTick the box to put this pull request back in the merge queue (same as `@mergifyio queue`).\n\n- [ ] Requeue this pull request <!-- mergify:queue-control:requeue -->\n\n<details>\n<summary>7 merge conditions met</summary>\n\n- [x] `#changes-requested-reviews-by=0`\n- [x] `check-success = \"Jobs worker — routes + schema\"`\n- [x] `check-success = \"Mission Control SPA — unit tests + build\"`\n- [x] `check-success = \"Prompt replay evals (prompts/** only)\"`\n- [x] `check-success = \"Syntax + shellcheck + config integrity\"`\n- [x] `check-success = \"Test determinism lint\"`\n- [x] `check-success = \"Tests cannot touch a real harness\"`\n\n</details>\n\n<sub>Times in UTC · [dashboard](https://dashboard.mergify.com/orgs/example-org/repos/cromford/queues/status?branch=main&pull=9189) · [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>"
+  }
+]

@@ -677,8 +677,9 @@ mc_dequeue_label() {
   prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" labels - gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$MC_MERGIFY_LABEL" >/dev/null 2>&1 || true
 }
 
-# mc_dequeue_reason <owner/repo> <pr-url> <head-sha> -> `github-review-approved`
-#   or the empty string (BH-872).
+# mc_dequeue_reason <owner/repo> <pr-url> <head-sha> -> `github-review-approved`,
+#   `checks-failed:<check>,<check>` (BH-9229: the newest comment's payload code
+#   is CHECKS_FAILED and it names checks), or the empty string (BH-872).
 #
 # WHY A DEQUEUE NEEDS A REASON. An ejection under Mergify is normally a red
 # batch, and that is what the conductor's ejection arm says. But a standing
@@ -741,8 +742,31 @@ mc_mergify_names_review() {
     END { if (rseen) exit(rhit ? 0 : 1); exit(unchecked ? 0 : 1) }'
 }
 
+# mc_mergify_payload_dequeue — stdin: ONE Mergify comment body. Pure.
+#   rc 0 when the body has a `-*- Mergify Payload -*-` block whose JSON has
+#   state "dequeued" and a string dequeue_reason.code. Prints the code on line
+#   1, then one failing check name per line (dequeue_reason.checks: strings, or
+#   objects with a name). rc 1 otherwise: no block, bad JSON, not a dequeue.
+#   BH-9229: current Mergify bodies state the cause here and in a `**Reason**`
+#   paragraph, not in a `## Reason` heading.
+mc_mergify_payload_dequeue() {
+  local out
+  out=$(jq -R -s -r '
+    ((capture("-\\*- Mergify Payload -\\*-(?<p>[\\s\\S]*?)-\\*- Mergify Payload End -\\*-").p | fromjson?) // null)
+    | select(type == "object" and .state == "dequeued"
+             and ((.dequeue_reason | type) == "object")
+             and ((.dequeue_reason.code | type) == "string") and .dequeue_reason.code != "")
+    | .dequeue_reason.code,
+      ((.dequeue_reason.checks // []) | if type == "array" then .[] else empty end
+       | if type == "string" then . elif type == "object" then (.name // "") else "" end
+       | if type == "string" then gsub("[\r\n\t]+"; " ") else "" end
+       | select(. != ""))' 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
 mc_dequeue_reason() {
-  local slug="${1:-}" url="${2:-}" head="${3:-}" tok=github-review-approved num raw body sum
+  local slug="${1:-}" url="${2:-}" head="${3:-}" tok=github-review-approved num raw body sum pd
   [ -n "$slug" ] && [ -n "$url" ] || { printf ''; return 0; }
   num=$(mc_num_of_url "$url")
   # BH-1586: both reads through gh_rest (ledgered, ETag). The comments are the
@@ -754,6 +778,11 @@ mc_dequeue_reason() {
     raw=$(jq -r '.[]? | select((.user.login // "") == "mergify[bot]") | ((.body // "") | gsub("[\r\n]+"; "\u0001"))' <<<"$raw" 2>/dev/null) || raw=""
     body=$(printf '%s\n' "$raw" | tail -n 1 | tr '\001' '\n')
     printf '%s\n' "$body" | mc_mergify_names_review "$tok" && { printf '%s' "$tok"; return 0; }
+    # BH-9229: a CHECKS_FAILED payload names its failing checks.
+    if pd=$(printf '%s\n' "$body" | mc_mergify_payload_dequeue) && [ "${pd%%$'\n'*}" = CHECKS_FAILED ]; then
+      pd=$(printf '%s\n' "$pd" | tail -n +2 | paste -sd, -)
+      [ -n "$pd" ] && { printf 'checks-failed:%s' "$pd"; return 0; }
+    fi
   fi
   if [ -n "$head" ]; then
     mc_rest_var sum gh_rest GET "repos/$slug/commits/$head/check-runs" -F per_page=100 || sum=""
@@ -1068,6 +1097,9 @@ mc_eject_fix_now() {
 mc_dequeue_surface() {
   local key="${1:-}" url="${2:-}" head="${3:-}" reason="${4:-}" merges="${5:-0}" body cslug cnum
   [ -n "$key" ] && [ -n "$url" ] && [ -n "$head" ] && [ -n "$reason" ] || return 0
+  # The text below names a standing review. Any other mc_dequeue_reason token
+  # (BH-9229 checks-failed:<names>) posts nothing and writes no mark.
+  [ "$reason" = github-review-approved ] || return 0
   mc_attempt_has "dequeue-surfaced $key $head" 2>/dev/null && return 0
   mc_attempt_put "dequeue-surfaced $key $head"
   body="Mergify took this PR out of the queue because a standing changes-requested review makes github-review-approved false. What re-enqueues it: that review is dismissed or a newer head is approved; the conductor requeues a head once, and a head already requeued needs a person."

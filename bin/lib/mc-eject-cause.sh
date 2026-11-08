@@ -14,6 +14,8 @@
 #   batch-red   the native queue: its merge_group build went red (no read)
 #   conflict | review | timeout | checks | dequeued | head-moved | other
 #               from the `## Reason` of Mergify's comment for this head
+#   checks      also from the payload JSON's dequeue_reason (code and
+#               checks) of that comment (BH-9229)
 #   unknown     no comment for this head, or the comments could not be read
 # The settle arm writes it to one record file per PR, one EJECT_CAUSE log line,
 # and the row reason (`queue-ejected: <cause> (<detail>)`).
@@ -71,15 +73,28 @@ _ec_left() {
 }
 
 # ec_classify <head> — stdin: ONE Mergify comment body, in lines. Pure.
-#   Prints <cause>\t<detail>, or nothing when the body has no `## Reason`.
+#   Prints <cause>\t<detail>, or nothing when the body has no `## Reason`
+#   and no payload dequeue code that names failing checks.
 #   Only the `## Reason` section is read for the cause: the status list, the
 #   Hint and the conditions checklist are on every comment, whatever the cause.
 ec_classify() {
-  local head="${1:-}" body left reason lr first names
+  local head="${1:-}" body left reason lr first names pd code cnt=0
   body=$(cat)
   left=$(printf '%s\n' "$body" | _ec_left)
   if [ -n "$left" ] && [ -n "$head" ] && ! _ec_same "$left" "$head"; then
     printf "unknown\tMergify's newest dequeue names %s, not this head\n" "${left:0:8}"; return 0
+  fi
+  # The payload first (BH-9229): current Mergify writes `**Reason**`, not a
+  # `## Reason` heading, and states the code and the failing checks in its
+  # payload JSON. A code MC_FAILED_BATCH_CODES counts (fbh_code_counts, else
+  # its fallback list) with at least one check is a checks cause.
+  if command -v mc_mergify_payload_dequeue >/dev/null 2>&1 \
+     && pd=$(printf '%s\n' "$body" | mc_mergify_payload_dequeue); then
+    code="${pd%%$'\n'*}"
+    if command -v fbh_code_counts >/dev/null 2>&1; then fbh_code_counts "$code" && cnt=1
+    else case ",CHECKS_FAILED,BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS," in *",$code,"*) cnt=1 ;; esac; fi
+    names=$(printf '%s\n' "$pd" | tail -n +2 | awk 'NF { o = o (o == "" ? "" : ", ") $0 } END { printf "%s", o }')
+    if [ "$cnt" = 1 ] && [ -n "$names" ]; then printf 'checks\t%s\n' "$(_ec_clean "$names")"; return 0; fi
   fi
   reason=$(printf '%s\n' "$body" | awk '
     /^##[[:space:]]/ { inr = ($0 ~ /^##[[:space:]]+Reason[[:space:]]*$/); if (inr) seen = 1; next }
