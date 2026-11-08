@@ -1,7 +1,8 @@
 #!/bin/bash
 # shellcheck shell=bash
-# bin/lib/review-disprove.sh — the disprove pass on a lead review BLOCK
-# (BH-9047). Sourced by bin/lead-review.sh, never run. Defines functions only.
+# bin/lib/review-disprove.sh — the disprove pass on a lead review BLOCK and on
+# a conductor re-review BLOCK (BH-9047). Sourced by bin/lead-review.sh and by
+# mc_rereview (bin/lib/mc/rebase.sh), never run. Defines functions only.
 # The root is ${HARNESS:-${H:-}}; an empty root is no pass, never a guessed path.
 #
 # After the lead verdict is BLOCK (and after the re-review downgrade, break-it
@@ -17,9 +18,16 @@
 # shadow (the default mode) records and changes nothing. enforce rewrites the
 # review out: a DISPROVED finding becomes `- [NOTE] disproved: (<class>) ...`,
 # a DISPROVED protected finding (any class but the exact droppable ones in
-# _dp_droppable) keeps its BLOCK and gains `| disprove-said:`,
-# and only when no line of any finding shape still reads as a BLOCK and no
-# `NEEDS_HUMAN:` line stands (_dp_blocks_left) the verdict is MERGE-WITH-NOTES.
+# _dp_droppable, and any line that holds GUARD_SILENCED or FRAUD:) keeps its
+# BLOCK and gains `| disprove-said:`, and only when no line of any finding
+# shape still reads as a BLOCK and no `NEEDS_HUMAN:` line stands
+# (_dp_blocks_left; in the conductor lane also no BLOCK word on any line
+# outside a fence, _dp_stray_block) the verdict is the lane's clearing word (_dp_clear_word:
+# MERGE-WITH-NOTES for the lead review, APPROVE for the conductor).
+#
+# The lane (C1): DP_LANE=lead (the default) or conductor picks the verdict
+# reader (_dp_verdict), the clearing word, and the record's lane and actor.
+# DP_DIR (default <wt>.dp) is where the pass writes its files.
 #
 # Settings rows (dp_knob; each fallback is the value in brackets):
 #   review.disprove.<project>.enabled [0]  exactly 1 = on
@@ -28,15 +36,39 @@
 #   review.disprove.call_budget_usd [0.50] >0, <=5
 #   review.disprove.max_context_bytes [24000] 2000..200000
 #   review.disprove.min_left_s [120] 30..3600
+#   review.disprove.conductor_left_s [900] 60..3600 (dpc_run only)
 #
 # dp_review <repo> <pr> <head> <project> <wt> <base> <out> <left-s> <review-id>
 #   The reviewer's entry. Prints ONE line `<result> <mode> <rewrote>`. result
 #   is `ran` or `skipped:<off|not-block|no-root|no-route|no-prompt|no-finding>`.
-#   rewrote is 1 only in enforce when <out> changed. Writes <wt>.dp/report (the
-#   header line and one indented line per finding) and <wt>.dp/record.json (the
+#   rewrote is 1 only in enforce when <out> changed. Writes <DP_DIR>/report (the
+#   header line and one indented line per finding) and <DP_DIR>/record.json (the
 #   POST /api/review-disprove body), and posts it (dp_record).
+#
+# dpc_gate_on <project> / dpc_run <slug> <num> <project> <head> <out> <rid>
+#   The conductor lane (C1), below dp_review.
 
 _dp_root() { printf '%s' "${HARNESS:-${H:-}}"; }
+# _dp_lane — conductor when DP_LANE says so, else lead.
+_dp_lane() { if [ "${DP_LANE:-lead}" = conductor ]; then printf conductor; else printf lead; fi; }
+# _dp_clear_word — the verdict word enforce writes when no BLOCK is left: the
+# lead review's MERGE-WITH-NOTES, or APPROVE for the conductor, whose reader
+# (verdict_parse) knows only APPROVE|BLOCK.
+_dp_clear_word() { if [ "$(_dp_lane)" = conductor ]; then printf APPROVE; else printf MERGE-WITH-NOTES; fi; }
+# _dp_verdict <file> <fallback> — the lane's verdict reader on <file>: lr_verdict
+# (lead) or verdict_parse (conductor; `unknown` when it cannot read one).
+# <fallback> when the reader is not loaded.
+_dp_verdict() {
+  local v
+  if [ "$(_dp_lane)" = conductor ]; then
+    command -v verdict_parse >/dev/null 2>&1 || { printf '%s' "$2"; return 0; }
+    v=$(verdict_parse "$1" 2>/dev/null) || v=unknown
+  else
+    command -v lr_verdict >/dev/null 2>&1 || { printf '%s' "$2"; return 0; }
+    v=$(lr_verdict "$1")
+  fi
+  printf '%s' "$v"
+}
 _dp_log() {
   if command -v log >/dev/null 2>&1; then log "disprove: $*"; else printf 'disprove: %s\n' "$*" >&2; fi
 }
@@ -95,7 +127,9 @@ _dp_path_ok() { case "$1" in ''|-*|/*|*..*) return 1 ;; esac; return 0; }
 # dp_extract <out> — one TSV line per `- [BLOCK` finding at column 0 outside a
 # ``` fence: <line-no> <kind> <protected 0|1> <class|-> <path:n[-m]|->.
 # kind: check (has a location), noloc, or skip (a mechanical class or a
-# break-it line: no call, not a model finding). Protected unless _dp_droppable.
+# break-it line: no call, not a model finding). Protected unless _dp_droppable,
+# and always protected when the line holds GUARD_SILENCED or FRAUD: (the
+# conductor prompt makes both an automatic BLOCK).
 dp_extract() {
   local l n=0 f=0 cls rest loc kind prot
   local re_find='^- \[BLOCK([^]]*)\] ?(.*)$' re_loc='^`?([A-Za-z0-9._/-]+):([0-9]+)(-[0-9]+)?'
@@ -113,6 +147,7 @@ dp_extract() {
     case "$(printf '%s' "$cls" | tr '[:upper:]' '[:lower:]')" in needs-human|split-required|red-build) kind=skip ;; esac
     case "$rest" in break-it:*) kind=skip ;; esac
     { [ "$kind" = skip ] || _dp_droppable "$cls"; } && prot=0
+    case "$l" in *GUARD_SILENCED*|*FRAUD:*) [ "$kind" = skip ] || prot=1 ;; esac
     printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$kind" "$prot" "${cls:--}" "${loc:--}"
   done < "$1"
 }
@@ -177,7 +212,23 @@ _dp_blocks_left() {
   local w='\[?(BLOCK|BLOCKING|BLOCKER|HIGH|MEDIUM|MAJOR|CRITICAL)([]:[:space:](—-]|\*\*|$)'
   w="${RL_BLOCKWORD_RE:-$w}"
   grep -qiE "^[[:space:]]*([-*]|[0-9]+[.)])?[[:space:]]*(\*\*)?$w" "$1" && return 0
-  grep -qE '^[[:space:]]*NEEDS_HUMAN:' "$1"
+  grep -qE '^[[:space:]]*NEEDS_HUMAN:' "$1" && return 0
+  [ "$(_dp_lane)" = conductor ] && _dp_stray_block "$1"
+}
+
+# _dp_stray_block <file> — conductor lane only: rc 0 when a line outside a
+# ``` fence holds the word BLOCK, BLOCKING or BLOCKER (any case). The
+# conductor prompt is free-form, with no template and no lr_block_no_finding
+# check, so a BLOCK in a heading (`### 1. [BLOCK data-loss]`), a table row
+# (`| 2 | BLOCK (money) |`) or prose must hold the verdict. Not counted: the
+# last VERDICT line (the one the rewrite replaces) and a `- [NOTE] disproved:`
+# line the rewrite wrote. A false hold keeps BLOCK (fail closed).
+_dp_stray_block() {
+  awk -v last="$(awk '/^[*]*VERDICT:/ { l = NR } END { print l + 0 }' "$1")" '
+    /^[[:space:]]*(```|~~~)/ { f = !f; next }
+    f || NR == last || /^- \[NOTE\] disproved:/ { next }
+    { if (toupper($0) ~ /(^|[^A-Z0-9_])BLOCK(ING|ER)?([^A-Z0-9_]|$)/) { hit = 1; exit } }
+    END { exit hit ? 0 : 1 }' "$1"
 }
 
 # _dp_rewrite_pass <file> <hold> — print <file> with the `rep` lines of
@@ -195,7 +246,10 @@ _dp_rewrite_pass() {
       elif [ "$o" = D ]; then
         l="$l | disprove-said: DISPROVED $rs (kept: another BLOCK holds the verdict)"
       else
-        l="$l | disprove-said: DISPROVED $rs (kept: $c is never auto-dropped)"
+        case "$l" in
+          *GUARD_SILENCED*|*FRAUD:*) l="$l | disprove-said: DISPROVED $rs (kept: a GUARD_SILENCED or FRAUD: finding is never auto-dropped)" ;;
+          *) l="$l | disprove-said: DISPROVED $rs (kept: $c is never auto-dropped)" ;;
+        esac
       fi
     fi
     printf '%s\n' "$l"
@@ -227,11 +281,11 @@ dp_rewrite() {
     _dp_rewrite_pass "$out.dpkeep" 1 > "$out.dpnew"
   fi
   if ! _dp_blocks_left "$out.dpnew"; then
-    awk -v last="$(awk '/^[*]*VERDICT:/ { l = NR } END { print l + 0 }' "$out.dpnew")" \
-      'NR == last { print "VERDICT: MERGE-WITH-NOTES"; next } { print }' "$out.dpnew" > "$out.dpnew2" && mv -f "$out.dpnew2" "$out.dpnew"
+    awk -v last="$(awk '/^[*]*VERDICT:/ { l = NR } END { print l + 0 }' "$out.dpnew")" -v w="$(_dp_clear_word)" \
+      'NR == last { print "VERDICT: " w; next } { print }' "$out.dpnew" > "$out.dpnew2" && mv -f "$out.dpnew2" "$out.dpnew"
   fi
   mv -f "$out.dpnew" "$out" || { mv -f "$out.dpkeep" "$out"; return 3; }
-  v=unknown; command -v lr_verdict >/dev/null 2>&1 && v=$(lr_verdict "$out")
+  v=$(_dp_verdict "$out" unknown)
   if [ "$v" = unknown ]; then mv -f "$out.dpkeep" "$out"; return 3; fi
   rm -f "$out.dpkeep"
   return 0
@@ -249,10 +303,12 @@ dp_review() {
   local repo="$1" pr="$2" head="$3" project="$4" wt="$5" base="$6" out="$7" left="$8" rid="$9"
   local root od mode model vb va max cap bud maxb minl t0 i=0 no kind prot cls loc o rs stop="" rc spend spent=0
   local cost costs_known=1 calls=0 fp p n m nf=0 nc=0 nd=0 nk=0 nu=0 nchk=0 rw=0 rwrc tail_note
-  root=$(_dp_root); od="$wt.dp"
+  local lane actor
+  root=$(_dp_root); od="${DP_DIR:-$wt.dp}"; lane=$(_dp_lane)
+  actor=lead-review; [ "$lane" = conductor ] && actor=merge-conductor
   mode=$(dp_gate "$project")
   [ "$mode" != off ] || { printf 'skipped:off off 0\n'; return 0; }
-  vb=BLOCK; command -v lr_verdict >/dev/null 2>&1 && vb=$(lr_verdict "$out")
+  vb=$(_dp_verdict "$out" BLOCK)
   [ "$vb" = BLOCK ] || { printf 'skipped:not-block %s 0\n' "$mode"; return 0; }
   [ -n "$root" ] || { _dp_log "no harness root"; printf 'skipped:no-root %s 0\n' "$mode"; return 0; }
   model=$(model_for review-disprove "$project" 2>/dev/null 7>&- 8>&-) && [ -n "$model" ] \
@@ -313,7 +369,7 @@ dp_review() {
   if [ "$mode" = enforce ]; then
     rwrc=0; dp_rewrite "$out" "$od/outcomes.tsv" || rwrc=$?
     case "$rwrc" in
-      0) rw=1; va=$(lr_verdict "$out") ;;
+      0) rw=1; va=$(_dp_verdict "$out" unknown) ;;
       3) tail_note=" (the rewrite left no readable verdict; the BLOCK stands)"; _dp_log "$repo#$pr: the rewrite left no readable verdict; restored" ;;
     esac
   else tail_note=" (shadow: unchanged)"; fi
@@ -327,14 +383,97 @@ dp_review() {
     done < "$od/outcomes.tsv"; } > "$od/report"
   jq -cRn --arg repo "$repo" --argjson pr "$pr" --arg sha "$head" --arg rid "$rid" --arg project "$project" --arg mode "$mode" \
     --arg vb "$vb" --arg va "$va" --argjson nf "$nf" --argjson nchk "$nchk" --argjson nc "$nc" --argjson nd "$nd" --argjson nk "$nk" \
-    --argjson nu "$nu" --argjson cost "$cost" '
-    { repo: $repo, pr: $pr, head_sha: $sha, review_id: $rid, lane: "lead", project: $project, mode: $mode,
+    --argjson nu "$nu" --argjson cost "$cost" --arg lane "$lane" --arg actor "$actor" '
+    { repo: $repo, pr: $pr, head_sha: $sha, review_id: $rid, lane: $lane, project: $project, mode: $mode,
       verdict_before: $vb, verdict_after: $va, findings: $nf, checked: $nchk, confirmed: $nc, disproved: $nd,
-      kept_protected: $nk, unchecked: $nu, cost_usd: $cost, actor: "lead-review",
+      kept_protected: $nk, unchecked: $nu, cost_usd: $cost, actor: $actor,
       detail: ([inputs | split("\t") | {cls: .[3], loc: .[4], outcome: .[1], reason: ((.[5] // "")[0:300])}][0:20]) }' \
     < "$od/outcomes.tsv" > "$od/record.json" 2>/dev/null \
     || { _dp_log "$repo#$pr: could not build the record"; : > "$od/record.json"; }
   [ -s "$od/record.json" ] && dp_record "$od/record.json"
   _dp_log "$repo#$pr @${head:0:12}: mode $mode, $nf finding(s), $calls call(s): $nc confirmed, $nd disproved, $nk kept, $nu unchecked; verdict $vb -> $va"
   printf 'ran %s %s\n' "$mode" "$rw"
+}
+
+# ── the conductor lane (BH-9047 C1) ──────────────────────────────────────────
+# mc_rereview (bin/lib/mc/rebase.sh) sources this file in a subshell, with
+# HARNESS set to the conductor's root, and calls the two functions below.
+
+# _dpc_load — the libs dp_review reads, each only when its function is not
+# already defined. rc 1 when one is missing.
+_dpc_load() {
+  local root; root=$(_dp_root); [ -n "$root" ] || return 1
+  { command -v _jobs_req >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1; } \
+    || { [ -r "$root/bin/jobs-client.sh" ] && . "$root/bin/jobs-client.sh"; } || return 1
+  command -v model_for >/dev/null 2>&1 || { [ -r "$root/bin/lib/model-route.sh" ] && . "$root/bin/lib/model-route.sh"; } || return 1
+  command -v llm_gate_spend_today >/dev/null 2>&1 || { [ -r "$root/bin/lib/llm-gate.sh" ] && . "$root/bin/lib/llm-gate.sh"; } || return 1
+  command -v lead_fp >/dev/null 2>&1 || { [ -r "$root/bin/lib/review-bought.sh" ] && . "$root/bin/lib/review-bought.sh"; } || return 1
+  command -v verdict_parse >/dev/null 2>&1 || { [ -r "$root/bin/lib/verdict-parse.sh" ] && . "$root/bin/lib/verdict-parse.sh"; } || return 1
+  command -v _jobs_req >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1 && command -v model_for >/dev/null 2>&1 \
+    && command -v llm_gate_spend_today >/dev/null 2>&1 && command -v verdict_parse >/dev/null 2>&1
+}
+
+# dpc_gate_on <project> — rc 0 when dp_gate <project> is shadow or enforce.
+# The jobs client loads in a subshell; no root or no client is off.
+dpc_gate_on() {
+  local m
+  m=$( { command -v _jobs_req >/dev/null 2>&1 && command -v setting_get >/dev/null 2>&1; } \
+         || { r=$(_dp_root); [ -n "$r" ] && [ -r "$r/bin/jobs-client.sh" ] && . "$r/bin/jobs-client.sh"; } >/dev/null 2>&1 \
+         || { printf off; exit 0; }
+       dp_gate "$1" ) 2>/dev/null
+  [ "$m" = shadow ] || [ "$m" = enforce ]
+}
+
+# dpc_run <slug> <num> <project> <head> <out> <review-id> — the disprove pass
+# on a conductor re-review BLOCK. Prints ONE line `<result> <mode> <rewrote>`
+# (dp_review's line, or skipped:<off|not-block|no-root|no-lib|no-finding|
+# no-checkout>). The checkout is mc_patch_wt's (the hub clone of the project);
+# origin main and <head> are fetched, the changed files' blobs are read once
+# (a partial clone), and mc_git_auth_clear runs on every path after
+# mc_patch_wt. The hunk base is main. In enforce, when <out> was
+# rewritten, the report lines go above its last VERDICT line. <out>.dp is
+# removed at the end; the D1 row and the caller's log line are the record.
+dpc_run() {
+  local slug="$1" num="$2" project="$3" head="$4" out="$5" rid="$6"
+  ( local root od mode res r m w left vb
+    root=$(_dp_root); [ -n "$root" ] || { echo "skipped:no-root off 0"; exit 0; }
+    case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+    od="$out.dp"
+    _dpc_load >/dev/null 2>&1 || { echo "skipped:no-lib off 0"; exit 0; }
+    command -v log >/dev/null 2>&1 || log() { if command -v mc_log >/dev/null 2>&1; then mc_log "$*"; else printf '%s\n' "$*" >&2; fi; }
+    export DP_LANE=conductor DP_DIR="$od"
+    mode=$(dp_gate "$project")
+    [ "$mode" != off ] || { echo "skipped:off off 0"; exit 0; }
+    [ "$(_dp_verdict "$out" BLOCK)" = BLOCK ] || { echo "skipped:not-block $mode 0"; exit 0; }
+    # No model finding: no fetch, no call (dp_review would say the same).
+    dp_extract "$out" | awk -F'\t' '$2 != "skip"' | grep -q . || { echo "skipped:no-finding $mode 0"; exit 0; }
+    command -v mc_patch_wt >/dev/null 2>&1 || { echo "skipped:no-checkout $mode 0"; exit 0; }
+    if ! mc_patch_wt "$slug" "$project" >/dev/null 2>&1 || [ -z "${MC_PATCH_WT:-}" ]; then
+      command -v mc_git_auth_clear >/dev/null 2>&1 && mc_git_auth_clear
+      echo "skipped:no-checkout $mode 0"; exit 0
+    fi
+    if ! git -C "$MC_PATCH_WT" -c credential.helper= fetch -q origin main "$head" >/dev/null 2>&1; then
+      command -v mc_git_auth_clear >/dev/null 2>&1 && mc_git_auth_clear
+      echo "skipped:no-checkout $mode 0"; exit 0
+    fi
+    # A --filter=blob:none clone (mc_patch_wt with no /root/repos/<project>)
+    # holds no blobs: read the diff once while origin still has its credential,
+    # so the changed files' blobs on both sides are local (BH-9047 r8). A path
+    # outside the diff stays unread; its finding fails closed to CONFIRMED.
+    git -C "$MC_PATCH_WT" -c credential.helper= diff "origin/main...$head" >/dev/null 2>&1 || true
+    command -v mc_git_auth_clear >/dev/null 2>&1 && mc_git_auth_clear
+    left=$(_dp_int conductor_left_s 60 3600 900)   # review.disprove.conductor_left_s
+    res=$(dp_review "$slug" "$num" "$head" "$project" "$MC_PATCH_WT" main "$out" "$left" "$rid" 7>&- 8>&- | tail -n 1)
+    read -r r m w <<<"$res"
+    if [ "$w" = 1 ] && [ -s "$od/report" ]; then
+      vb=$(_dp_verdict "$out" unknown)
+      awk -v rep="$od/report" -v last="$(awk '/^[*]*VERDICT:/ { l = NR } END { print l + 0 }' "$out")" \
+        'NR == last { while ((getline x < rep) > 0) print x; print "" } { print }' "$out" > "$out.dpins" \
+        && cp -f "$out" "$out.dpprev" && mv -f "$out.dpins" "$out"
+      # The report lines must not change the verdict the rewrite left.
+      if [ -f "$out.dpprev" ] && [ "$(_dp_verdict "$out" unknown)" != "$vb" ]; then mv -f "$out.dpprev" "$out"; fi
+      rm -f "$out.dpins" "$out.dpprev"
+    fi
+    rm -rf "$od"
+    printf '%s\n' "${res:-skipped:error $mode 0}" )
 }

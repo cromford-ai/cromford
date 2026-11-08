@@ -1,0 +1,3 @@
+The finding is right: line 12 reads $1 with no default.
+
+CONFIRMED bin/a.sh:12

@@ -81,3 +81,20 @@ gate.txt. CI and the merge-queue batch still run and gate both suites on full
 history. The real outputs are the fixtures in
 `tests/fixtures/selection-gate-host-notes.bh-9047/`, and
 `tests/selection-gate-host-notes.bh-9047-test.sh` (N1-N4) pins the rows.
+
+## C1: conductor re-review
+
+Slice C1 runs this disprove pass on a merge-conductor re-review BLOCK too.
+`mc_rereview` (`bin/lib/mc/rebase.sh`) calls `dpc_run` after `verdict_parse`
+gives `BLOCK` and before the `rrverdict` row is put. The record has
+`lane = conductor` and `actor = merge-conductor`. Enforce clears with
+`VERDICT: APPROVE`, because `verdict_parse` does not read `MERGE-WITH-NOTES`.
+A `GUARD_SILENCED` or `FRAUD:` finding line is never dropped, in both lanes.
+The new knob is `review.disprove.conductor_left_s` (seed 900). The gate, the
+grammar sentence, the checkout and the knob are in
+`docs/notes/2026-11-07-BH-9047-disprove-conductor.md`.
+
+In a `--filter=blob:none` conductor clone, `dpc_run` reads
+`git diff origin/main...<head>` once before `mc_git_auth_clear`, so the changed
+files' blobs are local when the model calls start (r8). A finding on a path
+outside the diff has no readable blob and fails closed to CONFIRMED.

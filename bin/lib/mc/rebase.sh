@@ -2966,6 +2966,7 @@ mc_union_renumber_fragments() {
 mc_rereview() {
   local slug="$1" num="$2" project="$3" url="$4" rev="$5" head="$6" rec="$7" out="$8"
   local dfile pfile scope lede body prior="" evid="" v arc=0 why= dbytes=0 rr_acct="default" live rr_fp rr_wd out_abs
+  local dpon=0 dpsent="" dpres="" dpmode="" dprw=0
   mkdir -p "$MC_STATE_DIR/diffs"
   dfile="$MC_STATE_DIR/diffs/${slug##*/}-$num.diff"
   # A diff we could not READ is the lane failing too (rc 2), not a reviewer with
@@ -3006,10 +3007,19 @@ mc_rereview() {
     lede=$(printf 'RE-REVIEW ON A MOVED HEAD. PR %s on %s was approved at commit %s and its head is now %s. No reviewer has read the commits since.' "$url" "$slug" "$rev" "$head")
     scope="the commits since $rev (the PR's compare view $url/files, commits after $rev) as the part nobody has adjudicated"
   fi
+  # >>> disprove (BH-9047 C1): while review.disprove.<project>.enabled reads 1,
+  # one more sentence asks for the `- [BLOCK <class>] <path>:<line>` grammar
+  # dp_extract reads. Off (every other project), the prompt is byte-identical.
+  if [ -r "$MC_H/bin/lib/review-disprove.sh" ] \
+     && ( HARNESS="${HARNESS:-$MC_H}"; . "$MC_H/bin/lib/review-disprove.sh" && dpc_gate_on "$project" ) >/dev/null 2>&1; then
+    dpon=1
+    dpsent=' FINDING LINES: write each blocking finding as ONE line at column 0, exactly `- [BLOCK <class>] <path>:<line> <text>`, with <class> from the ALWAYS-BLOCK list in ~/.claude/CLAUDE.md, and each other finding as one line `- [NOTE] <text>`.'
+  fi
+  # <<< disprove
   pfile=$(mktemp)
   {
-    printf '%s Your job is the general adversarial review of the CURRENT diff for this PR against the iron laws in ~/.claude/CLAUDE.md, with %s. Check that any fix commits did what the earlier findings asked, that no earlier finding was answered by weakening a test or a claim, and that nothing outside those findings rode along. GUARD_SILENCED: a fix round that makes a static guard pass by editing the guard'"'"'s own rule module, allow-list or fixture (checks/, guardrails/, *allowlist*, *ignore files, semgrep/eslint/gitleaks config, fixtures, snapshots) instead of the code the guard points at is an automatic BLOCK — write GUARD_SILENCED on that finding line. FRAUD CLASSES — hunt these six by name: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. Tag any finding that is one of them as FRAUD: <class>. This is a static review without a build run; say so. Last line exactly VERDICT: APPROVE or VERDICT: BLOCK.\n\nPR body:\n%s%s\n\nPrior harness review of the approved head:\n%s%s\n\nDIFF (complete diff also at %s):\n' \
-      "$lede" "$scope" "$body" "$live" "$prior" "$evid" "$dfile"
+    printf '%s Your job is the general adversarial review of the CURRENT diff for this PR against the iron laws in ~/.claude/CLAUDE.md, with %s. Check that any fix commits did what the earlier findings asked, that no earlier finding was answered by weakening a test or a claim, and that nothing outside those findings rode along. GUARD_SILENCED: a fix round that makes a static guard pass by editing the guard'"'"'s own rule module, allow-list or fixture (checks/, guardrails/, *allowlist*, *ignore files, semgrep/eslint/gitleaks config, fixtures, snapshots) instead of the code the guard points at is an automatic BLOCK — write GUARD_SILENCED on that finding line. FRAUD CLASSES — hunt these six by name: (weakened-tests) an assertion softened, skipped, deleted, or written so it cannot fail; (false-completion) a claim of done the evidence does not support; (scope-creep) work in the diff nobody asked for; (unauthorized-action) a capability, route, permission, deletion or write the ticket never authorized; (spec-betrayal) an implementation that quietly contradicts the spec or ticket line it claims to implement; (debris) leftover scaffolding, dead code, temp scripts, or stray logging shipped as if it belonged. Tag any finding that is one of them as FRAUD: <class>. This is a static review without a build run; say so.%s Last line exactly VERDICT: APPROVE or VERDICT: BLOCK.\n\nPR body:\n%s%s\n\nPrior harness review of the approved head:\n%s%s\n\nDIFF (complete diff also at %s):\n' \
+      "$lede" "$scope" "$dpsent" "$body" "$live" "$prior" "$evid" "$dfile"
     head -c "$MC_RR_DIFF_INLINE_BYTES" "$dfile"
     # A capped read says so, in the prompt, with both numbers and the path to the
     # rest. A reviewer who is never told cannot tell the head of a diff from the
@@ -3136,6 +3146,17 @@ mc_rereview() {
   # shared reader; its `unknown` (and a tree without the lib) is rc 1 here,
   # the no-verdict path, never an approval.
   v=$(verdict_parse "$out" 2>/dev/null) || return 1
+  # >>> disprove (BH-9047 C1): one call per model BLOCK finding, in a subshell
+  # (the review body never sees the jobs client). Shadow leaves $out alone;
+  # enforce may rewrite it, so v is read again. Before the rrverdict put.
+  if [ "$v" = BLOCK ] && [ "$dpon" = 1 ]; then
+    read -r dpres dpmode dprw < <( HARNESS="${HARNESS:-$MC_H}"
+      . "$MC_H/bin/lib/review-disprove.sh" 2>/dev/null || { echo "skipped:no-lib off 0"; exit 0; }
+      dpc_run "$slug" "$num" "$project" "$head" "$out" "rr${MC_RR_REASON:+~$MC_RR_REASON}" 2>/dev/null )
+    mc_log "$slug#$num disprove (conductor): ${dpres:-skipped:error} (mode ${dpmode:-off})"
+    if [ "$dprw" = 1 ]; then v=$(verdict_parse "$out" 2>/dev/null) || v=BLOCK; fi
+  fi
+  # <<< disprove
   # THE D1 RECORD OF A PAID VERDICT (BH-3930): `rrverdict` "<head> <WORD>
   # <epoch> <served>", the row review_bought reads, so no lane buys this head
   # again. <served> is rp_out_prov's word for who answered (BH-4134; `-` when
