@@ -311,3 +311,23 @@ PLAN_MALFORMED). The lead review checks each answer against the diff.
 - When the body has `Reference:` lines and the diff touches UI, preview QA saves light and dark shots at 1440 and 390 px to `qa-shots/ref/<slug>-<theme>-<width>.png`. `bin/reference-shots.sh` pushes them to the side branch `harness-shots/<key>-<yyyymmdd>` and writes the PR body's `## Reference screenshots` table (preview next to reference). The self-check row `body-reference-shots` refuses a body without the images.
 - The knobs are in `catalog/lanes.d/_lib.spec-trace.json`: `SPEC_TRACE_ENFORCE` (default 1; 0 logs only), `SPEC_TRACE_SECTION_MAX_BYTES` (12000), `SPEC_TRACE_TOTAL_MAX_BYTES` (40000), `REFERENCE_SHOTS_KEEP_DAYS` (30), `REFERENCE_SHOTS_PRUNE` (dry), `REFERENCE_SHOTS_PRUNE_MAX` (20).
 - A body with none of these lines changes nothing: no prompt text, no gate, no row.
+
+<!-- client-questions:begin (BH-9028) -->
+## Client questions: recommend, give reasons, state the default (the operator, 2026-11-03)
+
+This applies when this lane writes a question to a client on a board: a triage `needs_clarification` comment, a PLAN_BLOCKED close-out, or any other comment that asks the client something. A bare list of questions is never posted. Each question has four parts, in this order, one line each:
+
+1. The question.
+2. `Recommended: <the answer we recommend>`
+3. 1 to 3 reasons, in plain words for a non-engineer, on one line.
+4. The default for no reply, a line that starts `If we do not hear from you`. Example: "If we do not hear from you by <date>, we build the recommended option." Write a date only when a lane or a person on our side acts on that date. Otherwise write what happens, with no date.
+
+The client can then answer with one word: "yes", or the other option.
+
+A planner that stops on a question writes every question in ONE fenced block in plan.md. The fence opens with three backticks and `client-questions`, and holds a JSON array, one object per question:
+`[{"question": "Which fee field does the rep edit?", "recommended": "The per-client fee field.", "reasons": ["It is the field the invoice reads."], "default": "we build it on the per-client fee field."}]`
+
+On a `PLAN_BLOCKED` result, run `/root/harness/bin/client-questions.sh render <dir>/plan.md` and post its output as the questions. This overrides any "post the plan's open questions" line in this file. Exit 3 means the plan has no client-questions block: write the four parts yourself from plan.md. Any other non-zero exit means a question has no recommended answer, reasons or default: post no questions comment, and write one ALERTS.log line that names the ticket and the reason the script printed.
+
+The De-AI voice and the direct-link rules still apply. Ticket status and the client-court skip do not change.
+<!-- client-questions:end -->

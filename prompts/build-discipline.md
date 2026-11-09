@@ -145,3 +145,23 @@ The reasons and knobs for D64 are in docs/notes/2026-10-10-BH-5789-fixture-hygie
 
 ## Added 2026-10-22 (BH-7945): limits are knobs
 - **D69 Every new limit is a knob.** Every new limit, rate, threshold, price, timeout, cap or `max_tokens` is a knob: a seed row in the project's settings or config table, plus a code fallback with a comment that names the row. Create the row in the same PR. A literal with no row or knob read is `[BLOCK hardcoded-knob]` in review. In one project, interview answers were cut at 1024 output tokens with no prod row, and four other calls had no DB key at all.
+
+<!-- client-questions:begin (BH-9028) -->
+## Client questions: recommend, give reasons, state the default (the operator, 2026-11-03)
+
+This applies when this lane writes a question to a client on a board: a triage `needs_clarification` comment, a PLAN_BLOCKED close-out, or any other comment that asks the client something. A bare list of questions is never posted. Each question has four parts, in this order, one line each:
+
+1. The question.
+2. `Recommended: <the answer we recommend>`
+3. 1 to 3 reasons, in plain words for a non-engineer, on one line.
+4. The default for no reply, a line that starts `If we do not hear from you`. Example: "If we do not hear from you by <date>, we build the recommended option." Write a date only when a lane or a person on our side acts on that date. Otherwise write what happens, with no date.
+
+The client can then answer with one word: "yes", or the other option.
+
+A planner that stops on a question writes every question in ONE fenced block in plan.md. The fence opens with three backticks and `client-questions`, and holds a JSON array, one object per question:
+`[{"question": "Which fee field does the rep edit?", "recommended": "The per-client fee field.", "reasons": ["It is the field the invoice reads."], "default": "we build it on the per-client fee field."}]`
+
+On a `PLAN_BLOCKED` result, run `/root/harness/bin/client-questions.sh render <dir>/plan.md` and post its output as the questions. This overrides any "post the plan's open questions" line in this file. Exit 3 means the plan has no client-questions block: write the four parts yourself from plan.md. Any other non-zero exit means a question has no recommended answer, reasons or default: post no questions comment, and write one ALERTS.log line that names the ticket and the reason the script printed.
+
+The De-AI voice and the direct-link rules still apply. Ticket status and the client-court skip do not change.
+<!-- client-questions:end -->

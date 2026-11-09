@@ -43,6 +43,7 @@ tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
 tests/ci-local.bh-6897-test.sh:generic-api-key:156
 tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
 tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
+tests/client-questions.bh-9028-test.sh:generic-api-key:37
 tests/component-watch.bh-6972-test.sh:generic-api-key:186
 tests/conductor-enqueue-only.bh-6495-test.sh:curl-auth-header:141
 tests/conductor-fly-fallback.bh-6817-test.sh:curl-auth-header:128

@@ -135,9 +135,14 @@ _pb_answers_since() {
 #   rc 1 nothing to quote, or the POST failed: no marker, the sweep carries it
 #   rc 4 not this lane's: not PLAN_BLOCKED, already closed out, an in-app board,
 #        or no repo / issue number
+#   rc 5 refused: the plan's client-questions block fails cq_check
+#        (bin/lib/client-questions.sh): a logged reason, nothing posted, RESULT unmarked
+#   A plan with a client-questions block posts the rendered four-part questions
+#   (question, Recommended, Why, the no-reply default); a plan with none quotes
+#   pb_excerpt as before.
 #   Log lines go to stdout; the caller sends them to pipeline.log.
 pb_notice() {
-  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf last ans why now
+  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf last ans why now cqrc=3 qs=""
   local _PB_WHO="$p/$key"
   [ -n "$h" ] && [ -n "$p" ] && [ -n "$key" ] && [ -n "$b" ] && [ -s "$b/RESULT" ] || return 4
   line=$(head -1 "$b/RESULT" 2>/dev/null)
@@ -152,7 +157,25 @@ pb_notice() {
   # does not carry it); the key's number only when no id came in.
   case "$t" in ''|*[!0-9]*) num=$(sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p' <<<"$key") ;; *) num="$t" ;; esac
   [ -n "$repo" ] && [ "$repo" != "-" ] && [ -n "$num" ] || return 4
-  ex=$(HARNESS="$h" pb_excerpt "$b/plan.md")
+  # CLIENT QUESTIONS (BH-9028): a block in plan.md is posted rendered, each
+  # question with its recommended answer, reasons and default, or not at all.
+  command -v cq_block >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/client-questions.sh" 2>/dev/null
+  if command -v cq_block >/dev/null 2>&1; then
+    cq_block "$b/plan.md" >/dev/null; cqrc=$?
+  elif grep -qE '^```client-questions[[:space:]]*$' "$b/plan.md" 2>/dev/null; then
+    _pb_say "plan-blocked notice refused: bin/lib/client-questions.sh is not loaded"
+    return 5
+  fi
+  if [ "$cqrc" != 3 ]; then
+    if ! why=$(HARNESS="$h" cq_check "$b/plan.md" 2>&1 >/dev/null) \
+       || ! qs=$(HARNESS="$h" cq_render "$b/plan.md" 2>/dev/null) || [ -z "$qs" ]; then
+      _pb_say "plan-blocked notice refused on $repo#$num: ${why%%$'\n'*} (no comment posted; the questions need a recommended answer, reasons and a default)"
+      return 5
+    fi
+    ex="$qs"
+  else
+    ex=$(HARNESS="$h" pb_excerpt "$b/plan.md")
+  fi
   if [ -z "$ex" ]; then
     _pb_say "no plan-blocked notice: no blocked section to quote (missing plan.md, or no scrubber) — the RESULT is unmarked, so the owning box's sweep carries it"
     return 1
@@ -190,11 +213,15 @@ pb_notice() {
   command -v gh_token_live >/dev/null 2>&1 && HARNESS="$h" gh_token_live "$repo"
   command -v gh_rest_comment >/dev/null 2>&1 || { _pb_say "no plan-blocked notice: bin/lib/gh-rest.sh is missing — the sweep carries it"; return 1; }
   bf=$(mktemp "${TMPDIR:-/tmp}/plan-blocked-body.XXXXXX") || { _pb_say "no plan-blocked notice: no temp file for the body"; return 1; }
-  {
-    printf 'We stopped before building this one. The plan needs an answer the ticket does not give yet:\n\n'
-    printf '%s\n' "$ex" | sed 's/^/> /; s/^> $/>/'
-    printf '\nReply here with the answer and we will plan it again.\n'
-  } > "$bf"
+  if [ -n "$qs" ]; then
+    printf 'We stopped before building this one. The plan needs your answer on these questions:\n\n%s\n\nReply here with one word per question ("yes", or the other option) and we will plan it again.\n' "$qs" > "$bf"
+  else
+    {
+      printf 'We stopped before building this one. The plan needs an answer the ticket does not give yet:\n\n'
+      printf '%s\n' "$ex" | sed 's/^/> /; s/^> $/>/'
+      printf '\nReply here with the answer and we will plan it again.\n'
+    } > "$bf"
+  fi
   if ! gh_rest_comment "$repo" "$num" "$bf"; then
     rm -f "$bf"
     _pb_say "plan-blocked notice NOT posted on $repo#$num (HTTP ${GH_REST_STATUS:-000}) — the RESULT is unmarked, so the owning box's sweep carries it"
