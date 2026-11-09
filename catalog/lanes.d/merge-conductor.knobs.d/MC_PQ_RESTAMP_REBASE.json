@@ -1,0 +1,11 @@
+{
+  "env": "MC_PQ_RESTAMP_REBASE",
+  "read_in": "bin/merge-conductor.d/bh-9243-restamp-rebase.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9243: 1 = when pq_gate answers rebase for a stale schema stamp on a reviewed head (deferred-land), the conductor spawns the restamp rebase in the same tick, once per (PR, head), under the MC_LAND_REBASE_PARALLEL cap. The row stays READY with a prequeue-restamp why when the rebase cannot spawn, so it never flaps READY/NEEDS_REBASE. 0 = off: the NEEDS_REBASE transition as before. Per-project row: lane.merge-conductor.<project>.mc_pq_restamp_rebase."
+}

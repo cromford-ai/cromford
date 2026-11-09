@@ -2303,7 +2303,10 @@ pr_worker() {
         pq_gate "$SLUG" "$NUM" "$URL" "$HEAD" "$PBASE" >/dev/null
         case "$PQ_VERDICT" in
           hold) mc_ready_why "$KEY" "$HEAD" prequeue-pending "$PQ_WHY"; return 0 ;;
-          rebase) mc_transition "$KEY" NEEDS_REBASE "prequeue reuse: $PQ_WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+          # BH-9243: a stale schema stamp (PQ_RESTAMP_LAND=1) spawns its restamp
+          # rebase here, in this tick; NEEDS_REBASE would flap back to READY.
+          rebase) [ "$PQ_RESTAMP_LAND" = 1 ] && command -v mc_pq_restamp_rebase >/dev/null 2>&1 && mc_pq_restamp_rebase && return 0
+                  mc_transition "$KEY" NEEDS_REBASE "prequeue reuse: $PQ_WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
                   return 0 ;;
           defer) PQ_DEFER=1 ;;
           red)  PQ_WHY=""; [ -n "$PQ_PATH" ] && [ -r "$PQ_PATH.why" ] && PQ_WHY=$(head -n1 "$PQ_PATH.why")

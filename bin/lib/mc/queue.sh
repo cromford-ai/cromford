@@ -479,7 +479,12 @@ mc_mergify_check_live() {
 #         live queue check on the head that is not a failure and not a dequeue
 #         ("Waiting for queue conditions to match", "In merge queue", ...).
 #         Prints the reason in one line.
-#   rc 1  Mergify does not hold it.
+#   rc 1  Mergify does not hold it. A DEQUEUED head is not held (BH-9243):
+#         Mergify's own `dequeued` label (when no `queued`/`checking` label is
+#         beside it), or a queue check titled "Dequeued ..." or "Another queue
+#         action already ran" (the title Mergify leaves on a dequeued head).
+#         Mergify never requeues a dequeued PR without a head change, so a hold
+#         read there was a deadlock: the push is the head change.
 #   rc 2  the check runs could not be read.
 # A `@mergifyio queue` request that waits for its queue conditions puts no
 # label on the PR (project-6 #2300, 2026-10-22), so the label alone is not
@@ -487,10 +492,11 @@ mc_mergify_check_live() {
 mc_mergify_holds() {
   local slug="$1" url="$2" head="$3" labels="${4:-}" chk rc
   grep -qE '(^|,)(queued|checking)(,|$)' <<<"$labels" && { printf 'Mergify label (queued/checking)'; return 0; }
+  grep -qE '(^|,)dequeued(,|$)' <<<"$labels" && return 1
   chk=$(mc_mergify_check_live "$slug" "$url" "$head"); rc=$?
   [ "$rc" = 0 ] || return 2
   chk=$(printf '%s\n' "$chk" | grep -vE '^[^|]*\|(failure|cancelled|timed_out|action_required|startup_failure|stale)\|' \
-        | grep -viE '^[^|]*\|[^|]*\|.*dequeued' | sed '/^$/d' || true)
+        | grep -viE '^[^|]*\|[^|]*\|(.*dequeued|another queue action already ran)' | sed '/^$/d' || true)
   [ -n "$chk" ] || return 1
   printf 'Mergify queue check "%s"' "$(head -1 <<<"$chk" | cut -d'|' -f3 | tr -d '\t\r')"
   return 0

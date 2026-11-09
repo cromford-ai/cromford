@@ -9,7 +9,10 @@
 #   hold     leave the row READY this tick; PQ_WHY says why (main tip unreadable)
 #   red      park the row prequeue-red; PQ_SUITES names at least one suite
 #   rebase   a reused green whose head conflicts with current main (BH-5572);
-#            PQ_WHY names the paths, the row goes to NEEDS_REBASE
+#            PQ_WHY names the paths, the row goes to NEEDS_REBASE. Also a
+#            stale schema stamp on a reviewed head (deferred-land, BH-9154):
+#            then PQ_RESTAMP_LAND=1 (else 0) and the conductor spawns the
+#            restamp rebase in the same tick (BH-9243)
 #   defer    not dispatched: a later READY check refuses this head this tick
 #            (BH-5572); PQ_WHY names it, and the caller must not enqueue
 # Every proceed/red answer publishes prequeue-verdict through
@@ -197,7 +200,7 @@ pq_gate() {
   # lock; a busy lock answers hold or no-answer, as it always did. Local, so it
   # ends with the gate.
   local MC_GIT_LOCK_WAIT; MC_GIT_LOCK_WAIT=$(pq_knob MC_PREQUEUE_GIT_LOCK_WAIT_S)
-  PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""; PQ_OFF_WHY=""
+  PQ_VERDICT=proceed; PQ_MAIN=""; PQ_WHY=""; PQ_SUITES=""; PQ_PATH=""; PQ_OFF_WHY=""; PQ_RESTAMP_LAND=0
   _pq_wf=""; _pq_key="$slug#$num"; _pq_cs=(); _pq_cl=()
   # THE GATE OFF (BH-8062). MC_PREQUEUE_GATE=0 turns off only the verdict: the
   # cache read and the prequeue-gate.yml dispatch. pq_restamp, pq_mignum and
@@ -257,8 +260,10 @@ pq_gate() {
       PQ_WHY="restamped ${rn:-?} schema fragment(s) to ${rw:0:12}; the new head is asked next tick"; _pq_end hold; return 0 ;;
     "held "*) PQ_WHY="schema restamp held: ${rs#held }"; _pq_end hold; return 0 ;;
     # BH-9154: a reviewed head is not pushed by the hook. It goes to the
-    # conductor rebase (NEEDS_REBASE), whose one push carries the restamp.
-    "deferred-land "*) PQ_WHY="stale schema stamp on a reviewed head: the conductor rebase restamps it in its one push"; _pq_end rebase; return 0 ;;
+    # conductor rebase, whose one push carries the restamp. PQ_RESTAMP_LAND=1
+    # tells pr_worker this `rebase` is a stale stamp, not a conflict: it spawns
+    # that rebase in the same tick (mc_pq_restamp_rebase, BH-9243).
+    "deferred-land "*) PQ_WHY="stale schema stamp on a reviewed head: the conductor rebase restamps it in its one push"; PQ_RESTAMP_LAND=1; _pq_end rebase; return 0 ;;
   esac
   # BH-7671: a head whose added migration number main or a queued PR took is
   # renumbered before the queue (mc-prequeue.d/migration-numbers.sh). A push or
