@@ -14,6 +14,9 @@ import worker from '../src/index.js';
 const SCHEMA = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
 const ADMIN = 'testadmin';
 const STATIC = '{"static-tok":"fleet-a"}';
+// One captured anchor. Every fixture time below is relative arithmetic off it, and the worker
+// compares expires_at to its own clock, so the anchor must be the real now.
+const NOW = Math.floor(Date.now() / 1000); // determinism: ok one captured anchor; all fixtures are relative offsets from it
 
 function d1(db) {
   const wrap = (sql, binds) => ({
@@ -49,7 +52,7 @@ async function minter(db, prefix) {
 }
 
 function seedToken(db, id, name, role, prefix, secret = id) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = NOW;
   db.prepare('INSERT INTO tokens (id,name,token_hash,created_by,created_at,expires_at,role,prefix) VALUES (?,?,?,?,?,?,?,?)')
     .run(id, name, sha(secret), 'admin', now, now + 9999, role, prefix);
 }
@@ -118,7 +121,7 @@ test('F08 the cap is one conditional INSERT in a batch with the audit row', asyn
 
 test('F08 EXPLAIN QUERY PLAN: the cap count uses the (created_by, created_at) index', () => {
   const db = open();
-  const now = Math.floor(Date.now() / 1000);
+  const now = NOW;
   const ins = db.prepare('INSERT INTO tokens (id,name,token_hash,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?)');
   for (let i = 0; i < 5000; i++) ins.run(`i${i}`, `n${i}`, `h${i}`, `u${i % 50}`, now - i, now + 999);
   const plan = db.prepare('EXPLAIN QUERY PLAN SELECT COUNT(*) FROM tokens WHERE created_by=?1 AND created_at>?2')
