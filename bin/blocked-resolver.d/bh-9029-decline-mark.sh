@@ -15,6 +15,12 @@
 # stands on, `vrow`/`vword` the verdict row id and word, `ladder` the counters
 # "<mechanicals>/<fixrounds>/<fixround_bonus>/<rebuilds>".
 #
+# THE MARK IS A RECORD, AND THE SKIP HOLDS ONLY WHILE THERE IS NO NEXT ACTION
+# (BH-9282). Before its SKIP line bdm_skip asks bdn_next
+# (bh-9282-decline-next.sh): on a ladder reason with CI red on the PR head and
+# fix rounds left on that head (after the BH-7660 per-head reset), the row runs
+# a fix round this tick (rc 1, no SKIP line). Otherwise the skip below stands.
+#
 # THE SKIP. bdm_skip, at the top of br_one, answers rc 0 (the row takes no rung
 # this tick, br_one rc 3) while the same row id with the same word still stands
 # on `vhead`, the PR is still on `head`, the reason and the ladder are the same,
@@ -28,6 +34,7 @@
 # Call sites, one line each in the driver:
 #   br_supersede_guard, the two verdict arms -> bdm_set
 #   br_one, after the fix-round adoption     -> bdm_skip (rc 0: br_one rc 3)
+#   bdm_skip, before the SKIP line           -> bdn_next (BH-9282; rc 0: run)
 # BR_OPT_OFF=bh-9029-decline-mark does not source this file; each call site
 # then does what it did before.
 
@@ -103,6 +110,8 @@ bdm_skip() {
     1) bdm_clear "$p" "$rkey" "$reason" "$ck" "verdict row $mvr no longer stands on ${mvh:0:12} (no verdict stands there now)"; return 1 ;;
     *) return 1 ;;
   esac
+  # BH-9282: a red reviewed head gets a next action (bh-9282-decline-next).
+  if command -v bdn_next >/dev/null 2>&1 && bdn_next "$src" "$p" "$rkey" "$ck" "$reason" "$url" "$mh" "$mvr" "$mvw" "$st"; then return 1; fi
   if [ "$mlog" != 1 ]; then
     say "$p/$rkey [$reason]: SKIP decline-mark — SUPERSEDE DECLINED ($mk) stands: verdict row $mvr on ${mvh:0:12}, PR head ${mh:0:12}; not retried until the head, the verdict or the ladder changes"
     [ "${OBSERVE:-0}" = 1 ] || br_sup_write "$p" "$ck" '.decl_mark.logged=true' \

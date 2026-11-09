@@ -1,0 +1,10 @@
+{
+  "env": "BR_DECLINE_HUMAN_HOURS",
+  "type": "int",
+  "default": 12,
+  "min": 1,
+  "max": 720,
+  "unit": "hours",
+  "read_in": "bin/blocked-resolver.d/bh-9282-decline-next.sh",
+  "note": "BH-9282: a PR whose supersede was declined on a lead/human verdict, whose CI is red on its head and whose fix rounds on that head are spent gets ONE needs-human comment (once per ticket and head) when it is still red this many hours after the resolver first saw that head. The clock starts at the first sighting, so a deploy causes no burst. 12 matches the pipeline-health >12h awaiting-merge alert."
+}

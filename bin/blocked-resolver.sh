@@ -5661,6 +5661,8 @@ br_fix_round() {
     dqbrief=$(printf '%s' "$st" | jq -r '.dequeue.brief // empty' 2>/dev/null)
     [ -n "$dqbrief" ] && { findings=$(br_findings_join "$dqbrief" "$findings"); frc=0; }
   fi
+  # BH-9282: a BLOCK head's round reads the lead's review (bh-9282-decline-next).
+  if [ "$frc" != 75 ] && command -v bdn_brief >/dev/null 2>&1; then local bdnf; bdnf=$(bdn_brief "$url" "${head:-}" "$st" "$findings") && findings="$bdnf" || frc=$?; fi
   if [ "$frc" = 75 ]; then
     say "$p/$rkey [$reason]: the posted findings could not be read this tick — fix round not started, no rung spent, retried next tick"
     return 0
@@ -7267,6 +7269,7 @@ br_one() {
   # fragment): rc 3, no rung, while the same verdict row stands on the same head
   # and the ladder has not moved.
   if command -v bdm_skip >/dev/null 2>&1 && bdm_skip "$src" "$p" "$rkey" "$ck" "$reason" "$url" "$st"; then br_reset_token; return 3; fi
+  [ -n "${BR_DECLINE_NEXT_URL:-}" ] && st=$(br_load "$p" "$ck")   # BH-9282: bdn_next may have reset the per-head counters
   # AN EXTERNAL PR (BH-4664) takes the external module's gates and hooks, never
   # this ladder: nothing below may close, rebuild or abandon an outsider's PR.
   case "$reason" in
@@ -7514,6 +7517,8 @@ br_one() {
       fi
     fi
     # <<< ejected twice: fix round first
+    # BH-9282: a declined supersede on a red reviewed head runs its fix round (bh-9282-decline-next).
+    if command -v bdn_ladder >/dev/null 2>&1 && bdn_ladder "$url" "$action"; then ladder_action=fix-round; action=fix-round; fi
   fi
   # THE SAME PATH, AGAIN, AND THE NEXT RUNG WOULD BE THE REBUILD (BH-579). That
   # is the TK-1529 shape: three rebuilds, one conflict, siblings still moving

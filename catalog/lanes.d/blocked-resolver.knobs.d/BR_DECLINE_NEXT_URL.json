@@ -1,0 +1,10 @@
+{
+  "env": "BR_DECLINE_NEXT_URL",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "settable": false,
+  "read_in": "bin/blocked-resolver.d/bh-9282-decline-next.sh",
+  "note": "BH-9282: per-tick handoff, not an operator setting, so not settable and no settings row drives it. bdn_next sets it to the PR url when it offers a fix round on a declined-supersede PR whose CI is red; bdn_ladder reads and clears it on the same tick. Empty = no offer this tick."
+}
