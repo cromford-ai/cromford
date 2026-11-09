@@ -90,6 +90,8 @@ This SLO has its **own, longer window** (`SLO_LANE_WINDOW_MIN`, default 360m). I
 to: a lane is only judged once it has settled, so a 60m window over a 90m settle time
 could never contain one judgeable lane, and the SLO would have read `0.00` forever.
 
+Remote lanes the hub holds no copy of (BH-8364): one read of the newest `rr-relay` ledger rows per run (`SLO_RELAY_ROWS_LIMIT`, default 200, 0 = no read). A row with no `builds/<build-id>` and no hub json adds a lane here (and a launch to `build_refusal` when it is inside that window), and a death when its result matches `SLO_LANE_DEATH_RE`.
+
 ### `stale_running`
 
 A row that says `running` long after any real build could still be running is a lane

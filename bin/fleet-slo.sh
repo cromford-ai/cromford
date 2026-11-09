@@ -75,6 +75,8 @@ lane_switch fleet-slo-off file && { echo "fleet-slo disabled by flag"; exit 0; }
 # no conf file must measure what the repo documents.
 # shellcheck source=lib/conf-row.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/conf-row.sh" 2>/dev/null || true
+# shellcheck source=lib/rr-relay.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh" 2>/dev/null || true
 conf() { # conf <KEY> <fallback>
   local v="" k
   if [ -z "${SLO_CONF:-}" ] && command -v conf_row >/dev/null 2>&1; then
@@ -110,6 +112,8 @@ STALE_LIMIT=$(conf SLO_STALE_RUNNING_LIMIT 200)
 BOX_SILENT_MIN=$(conf SLO_BOX_SILENT_MIN 60)
 BOX_SILENT_MAX=$(conf SLO_BOX_SILENT_MAX 1)
 MAIN_RED_MAX=$(conf SLO_MAIN_RED_MAX 1)
+# 200 is the fallback of the fleet-slo knob SLO_RELAY_ROWS_LIMIT; 0 = no read.
+RELAY_ROWS=$(conf SLO_RELAY_ROWS_LIMIT 200)
 
 NOW=$(date +%s)
 CUT=$(( NOW - WINDOW_MIN * 60 ))
@@ -131,6 +135,39 @@ newer_count() { # newer_count <dir> <name-glob> <maxdepth>
 rate() { awk -v n="${1:-0}" -v d="${2:-0}" 'BEGIN{ printf "%.2f", (d>0 ? n/d : 0) }'; }
 ge()   { awk -v a="${1:-0}" -v b="${2:-0}" 'BEGIN{ exit !(a+0 >= b+0) }'; }
 
+# --- remote lanes the hub holds no copy of (BH-8364) ---------------------
+# Each sent relay json has an rr-relay row (bin/lib/rr-relay.sh). A row whose
+# hub build dir builds/<build-id> and hub json state/remote-results/<p>/<KEY>.json
+# are both gone is a lane the file loops below cannot see, so it adds to SLO 1
+# (created inside the window) and SLO 2 (created inside the lane window; a
+# death when its result matches SLO_LANE_DEATH_RE). A row with either hub copy
+# is the file loops' own. One list call per run. SLO 1 and SLO 2 are computed
+# here, before the second lane_env_apply below, so the knob is the conf read
+# above (the first lane_env_apply already put a settings row in the env). The
+# jobs client reads its own secret and url (bin/jobs-client.sh). No lib, no
+# client, an outage or a body with no rows adds nothing.
+RR_LAUNCHES=0; RR_LANES=0; RR_DEATHS=0; RR_DEAD_NAMES=""
+if [[ $RELAY_ROWS =~ ^[0-9]+$ ]] && [ "$RELAY_ROWS" -gt 0 ] && command -v rrr_list >/dev/null 2>&1; then
+  if ! declare -F _jobs_req >/dev/null 2>&1 && [ -r "$H/bin/jobs-client.sh" ]; then # shellcheck source=/dev/null
+    . "$H/bin/jobs-client.sh" 2>/dev/null
+  fi
+  if declare -F _jobs_req >/dev/null 2>&1; then
+    while IFS=$'\t' read -r RP RK RB _ RC RR; do
+      [ -n "$RB" ] || continue
+      [ -e "$H/builds/$RB" ] && continue
+      [ -e "$H/state/remote-results/$RP/$RK.json" ] && continue
+      [ -n "$RC" ] && [ "$RC" != - ] || continue
+      RE=$(date -u -d "$RC" +%s 2>/dev/null) || continue
+      [ "$RE" -ge "$CUT" ] && RR_LAUNCHES=$(( RR_LAUNCHES + 1 ))
+      [ "$RE" -ge "$LANE_CUT" ] || continue
+      RR_LANES=$(( RR_LANES + 1 ))
+      if grep -qE "$LANE_DEATH_RE" <<<"$RR"; then
+        RR_DEATHS=$(( RR_DEATHS + 1 )); RR_DEAD_NAMES="$RR_DEAD_NAMES $RK(row)"
+      fi
+    done < <(rrr_list "$RELAY_ROWS" 2>/dev/null)
+  fi
+fi
+
 # --- SLO 1: build refusal rate --------------------------------------------
 # Refusals from the hub-visible log set: its own ALERTS.log (hub-side gates) and
 # fleet-alerts.log (historic: bin/fleet-heartbeat.sh filled it with lines it read
@@ -150,7 +187,7 @@ for F in "$H/logs/ALERTS.log" "$H/logs/fleet-alerts.log"; do
         END { print n+0 }' "$F" 2>/dev/null)
   REFUSALS=$(( REFUSALS + ${N:-0} ))
 done
-LAUNCHES=$(( $(newer_count "$H/builds" context.json 2>/dev/null) + $(newer_count "$H/state/remote-results" '*.json' 2>/dev/null) ))
+LAUNCHES=$(( $(newer_count "$H/builds" context.json 2>/dev/null) + $(newer_count "$H/state/remote-results" '*.json' 2>/dev/null) + RR_LAUNCHES ))
 DENOM=$LAUNCHES; [ "$REFUSALS" -gt "$DENOM" ] && DENOM=$REFUSALS
 REFUSAL_VAL=$(rate "$REFUSALS" "$DENOM")
 REFUSAL_BREACH=0
@@ -194,6 +231,7 @@ while IFS= read -r RJ; do
     DEATHS=$(( DEATHS + 1 )); DEAD_NAMES="$DEAD_NAMES $(basename "$RJ" .json)(remote)"
   fi
 done < <(find "$H/state/remote-results" -maxdepth 2 -type f -name '*.json' -newermt "@$LANE_CUT" 2>/dev/null)
+LANES=$(( LANES + RR_LANES )); DEATHS=$(( DEATHS + RR_DEATHS )); DEAD_NAMES="$DEAD_NAMES$RR_DEAD_NAMES"
 LANE_VAL=$(rate "$DEATHS" "$LANES")
 LANE_BREACH=0
 if [ "$LANES" -ge "$LANE_MIN" ] && ge "$LANE_VAL" "$LANE_RATE"; then LANE_BREACH=1; fi

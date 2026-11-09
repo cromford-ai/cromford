@@ -96,6 +96,10 @@ if [ -f "$H/bin/jobs-client.sh" ]; then # shellcheck source=/dev/null
 # is gone (BH-7582). Absent, that check pages exactly as it did before.
 if [ -r "$H/bin/lib/remote-results-ledger.sh" ]; then # shellcheck source=bin/lib/remote-results-ledger.sh
   . "$H/bin/lib/remote-results-ledger.sh"; fi
+# ...and, before it pages, the owning box's rr-consumed row (BH-8364). Absent,
+# the check pages exactly as it did before.
+if [ -r "$H/bin/lib/rr-relay.sh" ]; then # shellcheck source=bin/lib/rr-relay.sh
+  . "$H/bin/lib/rr-relay.sh"; fi
 if [ -r "$H/bin/lib/gh-repo-token.sh" ]; then # shellcheck source=bin/lib/gh-repo-token.sh
   . "$H/bin/lib/gh-repo-token.sh"; fi
 # Checks 4 and 5: is this record's close-out still owed, or is the ticket over?
@@ -674,6 +678,11 @@ done
 # tick (knob STALEREMOTE_LEDGER_READS). The cache and the retention stamp live
 # in state/remote-results-terminal/ (class cache, catalog/state-paths.json):
 # this block writes nothing under state/remote-results.
+# CONSUMED ON THE BOX (BH-8364): a json that would page asks the owning box's
+# rr-consumed row (bin/lib/rr-relay.sh rrr_consumed) first. A row in any status
+# is no page and one count in its own `consumed <n>` line. No row, an outage,
+# no lib or a read past the cap pages as before. The read shares the
+# STALEREMOTE_LEDGER_READS cap.
 SR_READ_CAP=${STALEREMOTE_LEDGER_READS:-200}           # fallback of the pipeline-health knob STALEREMOTE_LEDGER_READS
 [[ "$SR_READ_CAP" =~ ^[0-9]+$ ]] || SR_READ_CAP=200
 SR_RET_EVERY=${REMOTE_RESULTS_RETENTION_EVERY_S:-3600} # fallback of the pipeline-health knob REMOTE_RESULTS_RETENTION_EVERY_S
@@ -682,7 +691,7 @@ SR_LIB=0; command -v rr_build_state >/dev/null 2>&1 && SR_LIB=1
 SR_TCD="$H/state/remote-results-terminal"
 for P in $PROJECTS; do
   [ -d "$H/state/remote-results/$P" ] || continue
-  SR_TERM=0; SR_CACHED=0; SR_UNK=0; SR_DEF=0; SR_READS=0
+  SR_TERM=0; SR_CACHED=0; SR_UNK=0; SR_DEF=0; SR_READS=0; SR_CONS=0
   [ "$SR_LIB" = 1 ] && rr_terminal_cache_load "$SR_TCD/$P.tsv"
   for J in "$H/state/remote-results/$P/"*.json; do
     [ -f "$J" ] || continue
@@ -710,11 +719,17 @@ for P in $PROJECTS; do
         esac
       fi
     fi
+    if [ "$SR_PAGE" = 1 ] && command -v rrr_consumed >/dev/null 2>&1 && [ "$SR_READS" -lt "$SR_READ_CAP" ]; then
+      SR_READS=$((SR_READS+1))
+      rrr_consumed "$P" "$J" >/dev/null && { SR_PAGE=0; SR_CONS=$((SR_CONS+1)); }
+    fi
     [ "$SR_PAGE" = 1 ] && \
       alert 7200 "staleremote:$P:$JK.json" "$P remote-result $JK.json unconsumed >30m — the run-triage staging step is not running or failing"
   done
   [ $((SR_TERM+SR_CACHED+SR_UNK+SR_DEF)) -gt 0 ] && \
     echo "$(STAMP) $P staleremote: ledger-terminal $SR_TERM, cached $SR_CACHED, unknown $SR_UNK (not paged, ledger unreadable), deferred $SR_DEF (read cap $SR_READ_CAP)" >> "$H/logs/pipeline-health.log"
+  [ "$SR_CONS" -gt 0 ] && \
+    echo "$(STAMP) $P staleremote: consumed $SR_CONS (the owning box's rr-consumed row; not paged)" >> "$H/logs/pipeline-health.log"
   # The retention rule for these jsons (bin/remote-results-retention.sh), once
   # per project per REMOTE_RESULTS_RETENTION_EVERY_S. It writes its own audit
   # line; its exit code never changes this lane.

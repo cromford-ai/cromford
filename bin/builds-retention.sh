@@ -19,6 +19,10 @@
 #   unswept      a dir with RESULT and no COMMENTED, RELAYED or DEFERRED, line
 #                1 not QUEUED_FLY/BUILD_DEFERRED (bin/orphan-reconcile.sh)
 #   remote-json  state/remote-results/<p>/<K>.json exists
+#   relay-parked a pool- dir's sent relay json is still owed to its box: the
+#                rr-relay row is parked and no rr-consumed row exists
+#                (bin/lib/rr-relay.sh rrr_open; BH-8364). An outage, no row, no
+#                lib or a read past relay_reads_max is no keep
 #   live         locks/build-key-<p>-<K>.lock is held
 #   collision    a dir already archived (index row or archive path); +1 error
 # RULE 2, `settled`, a group with no PR_MERGED dir (BH-7931):
@@ -28,7 +32,7 @@
 #   settled-young  a name stamp, or the mtime of any dir of the group or any
 #                file at depth 1 in it, is newer than now - (settled_window_days
 #                + 1) days
-#   remote-json, collision  as rule 1
+#   remote-json, relay-parked, collision  as rule 1
 #   live         as rule 1, or a claim file state/claims/<p>/<K> exists
 #   then the group moves when ONE of these holds:
 #     superseded    a dir has a SUPERSEDED marker, or another group of the
@@ -53,6 +57,8 @@
 #                                               between groups (capped=1) and
 #                                               the next day drains the rest
 #   builds_retention.tracker_reads_max    200   tracker reads per run (rule 2)
+#   builds_retention.relay_reads_max      200   rr-relay reads per run
+#                                               (relay-parked); 0 = no reads
 # The flip of dry_run is an operator step: docs/HARNESS-COORDINATION.md.
 #
 # Per dir: the index row first, then `mv -T -n`, then a check that the source
@@ -67,6 +73,8 @@
 #   collision=<n> settled-open=<n> settled-young=<n> tracker-unreadable=<n>
 #   tracker-budget=<n> capped=<0|1> errors=<n> settled=<d>[(default)]
 #   tracker_reads=<n> wall=<s>s
+# and, just before it when the rr-relay lib is loaded:
+#   <ts> relay relay-parked=<n> relay_reads=<n> relay_deferred=<n> relay_reads_max=<n>
 #   | <ts> already running | <ts> cross-fs (no move)
 #
 # Exit 0 on every path. Alerts (bin/lane-alert.sh, warn):
@@ -130,6 +138,8 @@ flock -n 8 || { line "already running"; exit 0; }
 # shellcheck source=bin/jobs-client.sh
 . "$SELF/jobs-client.sh" >/dev/null 2>&1 || true
 set -uo pipefail
+# shellcheck source=bin/lib/rr-relay.sh
+. "$SELF/lib/rr-relay.sh" 2>/dev/null || true
 # knob <key> <default> <pattern> — the row value when it matches, else the
 # default with `(default)` in KNOB_TAG.
 knob() {
@@ -143,6 +153,8 @@ knob builds_retention.dry_run 1 '^[01]$'; DRY="$KNOB"
 knob builds_retention.max_dirs 2000 '^[1-9][0-9]{0,6}$'; MAX="$KNOB"
 knob builds_retention.settled_window_days 30 '^(0|[1-9][0-9]{0,3})$'; SWIN="$KNOB"; SWIN_TAG="$KNOB_TAG"
 knob builds_retention.tracker_reads_max 200 '^[1-9][0-9]{0,4}$'; TRMAX="$KNOB"
+# 200 is the documented fallback of the settings row builds_retention.relay_reads_max.
+knob builds_retention.relay_reads_max 200 '^(0|[1-9][0-9]{0,4})$'; RRMAX="$KNOB"
 [ "$FORCE_DRY" = 1 ] && DRY=1
 
 B="$H/builds"
@@ -230,14 +242,32 @@ if [ "$SWIN" -gt 0 ]; then
     done <<<"${GDIRS[$g]}"
   done
 fi
-TREADS=0; TRL=0
+TREADS=0; TRL=0; RRREADS=0; RRDEF=0
 
-declare -A KEPT=([no-stamp]=$NOSTAMP [young]=0 [not-merged]=0 [unswept]=0 [remote-json]=0 [live]=0 [collision]=0
+declare -A KEPT=([no-stamp]=$NOSTAMP [young]=0 [not-merged]=0 [unswept]=0 [remote-json]=0 [relay-parked]=0 [live]=0 [collision]=0
                  [settled-open]=0 [settled-young]=0 [tracker-unreadable]=0 [tracker-budget]=0)
 NGROUPS=${#GDIRS[@]}
 ELIG=0; MOVED=0; WOULD=0; CAPPED=0; ERRS=0; DONE=0
 LIST="$H/logs/builds-retention-dryrun.txt"
 [ "$DRY" = 1 ] && : > "$LIST"
+
+# relay_owed <p> <k> <group> — rc 1 with KEPT_WHY=relay-parked when a pool- dir
+# of the group has a sent relay json still owed to its box (rrr_open rc 0). An
+# rc 1 or 2, a read past relay_reads_max, a non-pool dir or no lib is rc 0, the
+# answer before BH-8364. A group with a pool- dir past the cap counts once in
+# relay_deferred.
+relay_owed() {
+  local n s capped=0
+  command -v rrr_open >/dev/null 2>&1 && [ "$RRMAX" -gt 0 ] || return 0
+  while IFS=$'\t' read -r n s; do
+    case "$n" in pool-*) ;; *) continue ;; esac
+    if [ "$RRREADS" -ge "$RRMAX" ]; then capped=1; continue; fi
+    RRREADS=$((RRREADS + 1))
+    if rrr_open "$1" "$2" "$n" </dev/null; then KEPT_WHY=relay-parked; return 1; fi
+  done <<<"${GDIRS[$3]}"
+  [ "$capped" = 0 ] || RRDEF=$((RRDEF + 1))
+  return 0
+}
 
 # judge <group> — rc 0 eligible, else KEPT_WHY names the rule. File reads and
 # stats happen only here, for groups whose every name is past the cut.
@@ -277,6 +307,7 @@ judge() {
   fi
   [ "$unsw" = 0 ] || { KEPT_WHY=unswept; return 1; }
   [ ! -e "$H/state/remote-results/$p/$k.json" ] || { KEPT_WHY=remote-json; return 1; }
+  relay_owed "$p" "$k" "$g" || return 1
   lk="$H/locks/build-key-$p-$k.lock"
   if [ -e "$lk" ] && ! { flock -n 7 ; } 7<"$lk" 2>/dev/null; then KEPT_WHY=live; return 1; fi
   while IFS=$'\t' read -r n s; do
@@ -298,6 +329,7 @@ settled() {
     KEPT_WHY=settled-young; return 1
   fi
   [ ! -e "$H/state/remote-results/$p/$k.json" ] || { KEPT_WHY=remote-json; return 1; }
+  relay_owed "$p" "$k" "$g" || return 1
   [ ! -e "$H/state/claims/$p/$k" ] || { KEPT_WHY=live; return 1; }
   lk="$H/locks/build-key-$p-$k.lock"
   if [ -e "$lk" ] && ! { flock -n 7 ; } 7<"$lk" 2>/dev/null; then KEPT_WHY=live; return 1; fi
@@ -377,6 +409,9 @@ done < <(for g in "${!GDIRS[@]}"; do printf '%s\t%s\n' "${GMAX[$g]:-0}" "$g"; do
 
 [ "$DRY" = 1 ] && WOULD=$(( $(wc -l < "$LIST" 2>/dev/null || echo 0) ))
 PREV=$(tac "$LOG" 2>/dev/null | grep -m 1 ' run ')
+# The relay counts ride their own line: the run line's fields are pinned.
+command -v rrr_open >/dev/null 2>&1 && \
+  line "relay relay-parked=${KEPT[relay-parked]} relay_reads=$RRREADS relay_deferred=$RRDEF relay_reads_max=$RRMAX"
 line "run dry=$DRY window=$WIN$WIN_TAG cut=${CUT:0:12} dirs=$NDIRS groups=$NGROUPS eligible_groups=$ELIG moved=$MOVED would_move=$WOULD kept no-stamp=${KEPT[no-stamp]} young=${KEPT[young]} not-merged=${KEPT[not-merged]} unswept=${KEPT[unswept]} remote-json=${KEPT[remote-json]} live=${KEPT[live]} collision=${KEPT[collision]} settled-open=${KEPT[settled-open]} settled-young=${KEPT[settled-young]} tracker-unreadable=${KEPT[tracker-unreadable]} tracker-budget=${KEPT[tracker-budget]} capped=$CAPPED errors=$ERRS settled=$SWIN$SWIN_TAG tracker_reads=$TREADS wall=${SECONDS}s"
 # ── the drain alert: two real runs in a row hit max_dirs ────────────────────
 # The previous run line must be dry=0 capped=1 and less than 48 h old. A dry

@@ -2991,6 +2991,10 @@ mq_touch() {
 #   copy is now live, RELAYED stamped only because both pushes returned 0, and
 #   ONE ALERTS line when they did not.
 #   rc 0 pushed and stamped; rc 1 the push failed, hub json kept, alert written.
+# The sent json's rr-relay ledger row (BH-8364). No lib = no row; the push is unchanged.
+# shellcheck source=bin/lib/rr-relay.sh
+{ [ -r "$HARNESS/bin/lib/rr-relay.sh" ] && . "$HARNESS/bin/lib/rr-relay.sh"; } \
+  || { [ -r "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/lib/rr-relay.sh"; } || true
 pool_push_full() {
   local p="$1" k="$2" t="$3" loc="$4" box="$5" pr="$6" tier="$7"
   local bd pay ok=1 art mbd
@@ -3003,6 +3007,9 @@ pool_push_full() {
   pay=$(jq -nc --arg k "$k" --arg t "$t" --arg r "$(head -1 "$loc/RESULT")" \
     --arg pr "$pr" --arg tier "$tier" --arg bd "$bd" --arg mbd "$mbd" --arg ts "$(STAMP)" \
     '{key:$k,ticket_id:$t,result:$r,pr_url:$pr,tier:$tier,build_dir:$bd,machine_build_dir:$mbd,ingested_at:$ts,source:"pool"}')
+  # The rr-relay row parks BEFORE the json is sent, as the ingest does. A failed
+  # PUT is one log line and never changes this function's rc.
+  command -v rrr_park >/dev/null 2>&1 && { rrr_park "$p" "$pay" || true; }
   # NO -n on the payload ssh: the json rides stdin into cat (medic 2026-07-31).
   ssh -o BatchMode=yes -o ConnectTimeout=15 "root@$box" \
     "mkdir -p /root/harness/state/remote-results/$p; cat > /root/harness/state/remote-results/$p/$k.json" \

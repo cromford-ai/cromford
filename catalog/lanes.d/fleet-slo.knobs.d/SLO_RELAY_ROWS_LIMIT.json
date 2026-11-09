@@ -1,0 +1,10 @@
+{
+  "env": "SLO_RELAY_ROWS_LIMIT",
+  "type": "int",
+  "default": 200,
+  "min": 0,
+  "max": 1000,
+  "unit": "rows",
+  "zero_means": "off",
+  "note": "BH-8364: the newest rr-relay ledger rows bin/fleet-slo.sh reads once per run (one GET /api/ledger?kind=rr-relay&limit=N). A row whose hub build dir and hub json are both gone adds a launch to build_refusal and a lane to lane_death (a death when its result matches SLO_LANE_DEATH_RE). Also read as conf.slo.slo_relay_rows_limit or a flags/slo.conf line. 0 reads nothing. A non-number reads nothing."
+}

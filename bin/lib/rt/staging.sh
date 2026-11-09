@@ -98,6 +98,13 @@ if ! { [ -r "$HARNESS/bin/lib/rr-cursor.sh" ] && . "$HARNESS/bin/lib/rr-cursor.s
     empty|badjson) mv -f "$2" "$RRDIR/.handled/$(basename "$2").$3" ;;
     *) mv -f "$2" "$RRDIR/.handled/$(basename "$2")" ;; esac; }
 fi
+# A JSON THIS PROJECT ALREADY CONSUMED (BH-8364): bin/lib/rr-relay.sh reads the
+# rr-consumed row rrc_json_consume wrote, so a restored box or a re-push does
+# not stage one build twice. A tree without the lib defines nothing and the
+# guard below is skipped.
+# shellcheck source=bin/lib/rr-relay.sh
+{ [ -r "$HARNESS/bin/lib/rr-relay.sh" ] && . "$HARNESS/bin/lib/rr-relay.sh"; } \
+  || { [ -r "$(dirname "${BASH_SOURCE[0]}")/../rr-relay.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/../rr-relay.sh"; } || true
 RR_CLOSED_OUT() { # RR_CLOSED_OUT <result-line> <staged-dir>
   command -v bd_closed_out >/dev/null 2>&1 || return 0
   bd_closed_out "${1:-}" || return 0
@@ -269,6 +276,17 @@ if ls "$RRDIR"/*.json >/dev/null 2>&1; then
       elif ! RR_KEY_HAS_MARK "$RRKEY" BUILD_DIR; then
         echo "$STAMP [$PROJECT] relay json for $RRKEY carries no cross-path identity and no staged dir for this ticket carries either path's marker — staged, not consumed: nothing here says the ledger ever staged this build (BH-1301)" >> "$LOG"
       fi
+    fi
+    # The rr-consumed row for this json's key@build (BH-8364). Only `staged` or
+    # `duplicate` consume it; no row, an outage, `empty` or `badjson` stage as
+    # before.
+    if [ "$RRSTAGED" = 0 ] && command -v rrr_consumed >/dev/null 2>&1; then
+      RRCS=$(rrr_consumed "$PROJECT" "$RRF" 2>/dev/null) || RRCS=""
+      case "$RRCS" in
+        staged|duplicate)
+          RRSTAGED=1
+          echo "$STAMP [$PROJECT] relay json for $RRKEY (build ${RRBDN:-?}) was already consumed on $RRCS per its rr-consumed row — consumed, not staged twice (BH-8364)" >> "$LOG" ;;
+      esac
     fi
     if [ "$RRSTAGED" = 1 ]; then
       RRBP=$(RR_BDPATH "$RRBD0") && [ -d "$RRBP" ] && touch "$RRBP/COMMENTED" 2>/dev/null

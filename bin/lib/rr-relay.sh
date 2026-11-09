@@ -6,10 +6,18 @@
 # state/remote-results/<p>/<KEY>.json. The json now has a `ledgers` row:
 #   rr-relay  key <p>/<KEY>@<build-id>  status parked|staged|duplicate|empty|badjson
 #                                       detail the relay payload
-# The writer parks it (rrr_park, status parked). The consumer
-# (rrc_json_consume in bin/lib/rr-cursor.sh) sets the status to its outcome and
-# sends no detail, so the parked payload stays. The key is the key the
-# rr-consumed row of the same json carries (rrr_rowkey is that chain).
+# The writers park it (rrr_park, status parked): bin/fly-results-ingest.sh and
+# pool_push_full in bin/fly-pool.sh (config/fly-pool.d/3000-pool-full-push.sh).
+# The consumer (rrc_json_consume in bin/lib/rr-cursor.sh) sets the status to its
+# outcome and sends no detail, so the parked payload stays. The key is the key
+# the rr-consumed row of the same json carries (rrr_rowkey is that chain).
+#
+# The readers (BH-8364), and what each asks:
+#   bin/fleet-status-push.sh   rrr_consumed: is a pending json consumed?
+#   bin/pipeline-health.sh     rrr_consumed: a stale hub json is no page
+#   bin/lib/rt/staging.sh      rrr_consumed: a json consumed before is not staged twice
+#   bin/builds-retention.sh    rrr_open: a pool dir whose sent json is owed is kept
+#   bin/fleet-slo.sh           rrr_list: remote lanes the hub holds no copy of
 #
 # THE FILE IS STILL WRITTEN AND STILL THE INPUT (#4141, the last-good cache).
 # The writer PUTs the row BEFORE it writes or sends the file. A box that
@@ -85,4 +93,50 @@ rrr_consumed() {
   st=$(printf '%s' "$row" | jq -r '.status // ""' 2>/dev/null)
   [ -n "$st" ] || return 1
   printf '%s\n' "$st"
+}
+
+# rrr_open <project> <KEY> <build-id> — is a sent relay json still owed to its
+#   box? rc 0 = the rr-relay row is `parked` and no rr-consumed row exists for
+#   the same key; rc 2 = no rr-relay row, another status, or an rr-consumed row
+#   in any status; rc 1 = could not ask (no client, an outage on either read, a
+#   bad id, an empty KEY or build id, a row with no status). Prints nothing.
+rrr_open() {
+  local p="${1:-}" k="${2:-}" b="${3:-}" row rc st
+  _rrr_id_ok "$p" || return 1
+  case "$k" in ''|.|..|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$b" in ''|.|..|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  command -v job_ledger_row >/dev/null 2>&1 || return 1
+  row=$(job_ledger_row rr-relay "$p/$k@$b" 2>/dev/null); rc=$?
+  [ "$rc" = 2 ] && return 2
+  [ "$rc" = 0 ] || return 1
+  st=$(printf '%s' "$row" | jq -r '.status // ""' 2>/dev/null)
+  [ -n "$st" ] || return 1
+  [ "$st" = parked ] || return 2
+  job_ledger_row rr-consumed "$p/$k@$b" >/dev/null 2>&1; rc=$?
+  [ "$rc" = 2 ] && return 0
+  [ "$rc" = 0 ] && return 2
+  return 1
+}
+
+# rrr_list <limit> — the newest rr-relay rows, one GET (served by
+#   idx_ledgers_kind_updated, ORDER BY updated_at DESC, key DESC). Prints TSV
+#   `project KEY build-id status created_at result` (result = line 1 of the
+#   detail's .result, "" when the detail does not parse; created_at `-` when
+#   the row has none). A key with no `/` or no `@` is skipped. A limit that is
+#   not a number from 1 to 1000 is 200. rc 1: no _jobs_req, the call failed,
+#   or the body has no .ledgers array (nothing printed).
+rrr_list() {
+  local lim="${1:-}" body
+  [[ $lim =~ ^[0-9]{1,4}$ ]] && [ "$lim" -ge 1 ] && [ "$lim" -le 1000 ] || lim=200
+  declare -F _jobs_req >/dev/null 2>&1 || return 1
+  body=$(_jobs_req GET "/api/ledger?kind=rr-relay&limit=$lim" 2>/dev/null) || return 1
+  printf '%s' "$body" | jq -e '.ledgers | type == "array"' >/dev/null 2>&1 || return 1
+  printf '%s' "$body" | jq -r '
+    .ledgers[] | (.key // "") as $k
+    | select($k | test("^[^/]+/[^@/]+@.+$"))
+    | ($k | index("/")) as $s | ($k[$s+1:]) as $r | ($r | index("@")) as $a
+    | [$k[0:$s], $r[0:$a], $r[$a+1:], (.status // "-"),
+       ((.created_at // "") | if . == "" then "-" else . end),
+       ((.detail // "") | (try (fromjson | .result // "" | tostring) catch "") | split("\n")[0] // "")]
+    | @tsv' 2>/dev/null
 }
