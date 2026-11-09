@@ -68,6 +68,14 @@
 #                        empty when that row has none (the committed catalog)
 #                        or the model is unpriced. Opt-in, so every 9-field
 #                        reader keeps its exact line.
+#   --peak               (BH-9124) append one more field, LAST: `peak`, the
+#                        largest context of ONE API response in the sum
+#                        (input + cache_read + cache_write of that response).
+#                        It is field 10, or field 11 after --price-version.
+#                        Opt-in for the same reason: cost-live's `unp` and the
+#                        --price-version readers name the last field, and an
+#                        extra field would land in it. The context meter's
+#                        declared kill (bin/agent-call.sh) reads it.
 #   --advisor            price the ADVISOR instead (BH-3491): only the
 #                        usage.iterations[] entries of type advisor_message, each
 #                        at its own model, deduped on the response like the
@@ -76,7 +84,7 @@
 set -uo pipefail
 
 SESSION=""; CWD=""; CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; SINCE=""
-PRICES=""; FORMAT=line; SUBAGENTS=1; ADVISOR=0; PRICEV=0
+PRICES=""; FORMAT=line; SUBAGENTS=1; ADVISOR=0; PRICEV=0; PEAK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd)         CWD="${2:-}"; shift 2 ;;
@@ -92,7 +100,8 @@ while [ $# -gt 0 ]; do
     --no-subagents) SUBAGENTS=0; shift ;;
     --advisor)     ADVISOR=1; shift ;;
     --price-version) PRICEV=1; shift ;;
-    -h|--help)     sed -n '2,75p' "$0"; exit 0 ;;
+    --peak)        PEAK=1; shift ;;
+    -h|--help)     sed -n '2,83p' "$0"; exit 0 ;;
     *)             [ -z "$SESSION" ] && SESSION="$1"; shift ;;
   esac
 done
@@ -136,7 +145,7 @@ done <<<"$_TC_KV"
 unset _TC_KV _TC_K _TC_V
 MAXSCAN="${COST_TRANSCRIPT_SCAN_MAX:-}"
 OUT=$(SESSION="$SESSION" CWD="$CWD" CFG="$CFG" SINCE="$SINCE" PRICES="$PRICES" \
-      FORMAT="$FORMAT" SUBAGENTS="$SUBAGENTS" MAXSCAN="$MAXSCAN" ADVISOR="$ADVISOR" PRICEV="$PRICEV" \
+      FORMAT="$FORMAT" SUBAGENTS="$SUBAGENTS" MAXSCAN="$MAXSCAN" ADVISOR="$ADVISOR" PRICEV="$PRICEV" PEAK="$PEAK" \
       CACHE_TTL="${COST_CACHE_TTL:-}" python3 - <<'PYEOF'
 import glob, json, os, sys
 
@@ -302,6 +311,7 @@ def add_usage(agg, model, u):
 seen = set()
 agg = {}          # model -> [in, out, cache_read, cw_5m, cw_1h, msgs]
 msgs = 0
+peak = 0          # BH-9124: the largest context of one response (--peak)
 for fp in files:
     try:
         fh = open(fp, errors="ignore")
@@ -331,6 +341,14 @@ for fp in files:
             if key is None or key in seen:
                 continue
             seen.add(key)
+            # One response's context: what it read plus what it wrote to cache.
+            # Read off the top-level usage, so one response counts once.
+            try:
+                one = (int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0)
+                       + int(u.get("cache_creation_input_tokens") or 0))
+            except (TypeError, ValueError):
+                one = 0
+            peak = max(peak, one)
             if ADVISOR:
                 # The advisor's sub-inferences, each at its own model. One
                 # response counts once however many lines repeat it (above).
@@ -400,6 +418,8 @@ else:
         v = (price_for(top) or {}).get("version")
         ok = isinstance(v, int) and not isinstance(v, bool) and v > 0
         line += "|" + (str(v) if ok else "")
+    if os.environ.get("PEAK") == "1":
+        line += "|%d" % peak
     print(line)
 PYEOF
 )

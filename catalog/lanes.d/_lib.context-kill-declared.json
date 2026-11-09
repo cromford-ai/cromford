@@ -1,0 +1,35 @@
+{
+  "libs": [
+    {
+      "id": "context-kill-declared",
+      "file": "bin/agent-call.sh",
+      "note": "BH-9124 declared context kill (slice C2 of BH-9064, 2026-11-06): context_meter in bin/agent-call.sh stops a session whose largest single API call (bin/transcript-cost.sh --peak) is over the lane's declared ceiling_tokens (catalog/context-budgets.json), after the cumulative kill of the context-kill lib. Default 1 (armed). Applied by agent-call.sh right after lib_env_apply context-kill. Note: docs/notes/2026-11-06-BH-9124-declared-kill.md. Each knob is a settings row lib.context-kill-declared.<env lowercased>; the code default is the documented fallback.",
+      "knobs": [
+        {
+          "env": "CONTEXT_KILL_DECLARED",
+          "type": "string",
+          "default": "1",
+          "zero_means": "off",
+          "required": false,
+          "note": "BH-9124. The declared kill in context_meter (bin/agent-call.sh): a lane CONTEXT_KILL_DECLARED_LANES arms (default: the five lanes the ticket names, plan execute review fix lead-review) is stopped when one API call's context (input + cache_read + cache_write, bin/transcript-cost.sh --peak) is over its ceiling_tokens. 1 = kill, 0 = off, observe = one line in logs/claude-cost.log per session and no kill. Default 1 (armed). Unset is 1; any other value is observe (fail toward no kill). Read as ${CONTEXT_KILL_DECLARED:-1}. Settings row: lib.context-kill-declared.context_kill_declared."
+        },
+        {
+          "env": "CONTEXT_KILL_DECLARED_UNIT",
+          "type": "string",
+          "default": "peak",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9124. What the declared kill compares with the lane's ceiling_tokens: peak = the largest single API call of the session (default; ceiling_tokens is declared per call), cumulative = the session total (input + cache_read), the unit of context_kill_tokens. Any other value is peak. Read as ${CONTEXT_KILL_DECLARED_UNIT:-peak}. Settings row: lib.context-kill-declared.context_kill_declared_unit."
+        },
+        {
+          "env": "CONTEXT_KILL_DECLARED_LANES",
+          "type": "string",
+          "default": "plan execute review fix lead-review",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9124. Which stages the declared kill arms: a space/comma list of stages, or `all` (every lane with a ceiling_tokens in catalog/context-budgets.json). Default: the five lanes the ticket names (plan 400K, execute 500K, review 400K, fix 400K, lead-review 200K). The other lanes' ceiling_tokens (20K to 80K) are prompt budgets that were never measured against a real per-call peak, which carries about 40K-80K of CLI and CLAUDE.md overhead, so `all` would stop honest staff-tick, archie, pm and medic sessions. Add a lane here only after a --peak measurement sizes its ceiling. A lane row with `declared_kill: true` is armed in any case. Read as ${CONTEXT_KILL_DECLARED_LANES:-plan execute review fix lead-review}. Settings row: lib.context-kill-declared.context_kill_declared_lanes."
+        }
+      ]
+    }
+  ]
+}

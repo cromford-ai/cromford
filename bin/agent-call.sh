@@ -479,6 +479,9 @@ command -v cost_live_boundary_push >/dev/null 2>&1 || cost_live_boundary_push() 
 # THE KILLS AS SETTINGS ROWS (BH-2538): lib.context-kill.* rows become the
 # CONTEXT_KILL_TOKENS_<LANE> env _ctx_kill_row reads. No row exports nothing.
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply context-kill; } || true
+# THE DECLARED KILL'S KNOBS (BH-9124): lib.context-kill-declared.* rows become
+# CONTEXT_KILL_DECLARED / _UNIT / _LANES, which _ctx_declared_row and context_meter read.
+[ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply context-kill-declared; } || true
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply runner-fastfail; } || true
 # OWN-ACCOUNT PINS (BH-1657): which Claude account a project is pinned to, by
 # label, from the settings row account.<project> (env ACCOUNT_OWN_PROJECTS only
@@ -1405,6 +1408,38 @@ _ctx_kill_ceiling() { # _ctx_kill_ceiling <stage> [project] [runner] [model]
   printf '%s' "$cap"
 }
 
+# THE DECLARED KILL (BH-9124, slice C2 of BH-9064). The second bound of the
+# meter: the lane's DECLARED per-call ceiling (`ceiling_tokens`), compared with
+# the largest single API call of the session (bin/transcript-cost.sh --peak).
+# A lane is armed when its stage is in CONTEXT_KILL_DECLARED_LANES (default:
+# plan execute review fix lead-review; `all` arms every lane), or when its row
+# carries `declared_kill: true`. Same specificity ladder as _ctx_kill_ceiling:
+# the most specific matching lane decides, and the strictest number breaks a tie.
+# Knobs: catalog/lanes.d/_lib.context-kill-declared.json.
+_ctx_declared_row() { # _ctx_declared_row <stage> [project] [runner] — rc 0 + ceiling_tokens, rc 1 when none
+  local st="${1:-}" pj="${2:-}" rn="${3:-}" c="" v
+  # The context-kill switch (flags/context-kill-off, CONTEXT_KILL=0) turns this kill off too.
+  case "${CONTEXT_KILL:-1}" in 0|no|off|false|NO|OFF|FALSE) return 1 ;; esac
+  declare -F lane_switch >/dev/null && lane_switch context-kill-off file && return 1
+  while IFS= read -r v; do
+    case "$v" in ''|0|*[!0-9]*) continue ;; esac
+    { [ -z "$c" ] || [ "$v" -lt "$c" ]; } && c="$v"
+  done < <(jq -r --arg s "$st" --arg p "$pj" --arg r "$rn" \
+      --arg lanes " $(printf '%s' "${CONTEXT_KILL_DECLARED_LANES:-plan execute review fix lead-review}" | tr ',' ' ') " '
+      [ .lanes[]
+        | select(.stage == $s)
+        | select((.project // $p) == $p) | select((.runner // $r) == $r)
+        | { spec: (2 * (if .project then 1 else 0 end) + (if .runner then 1 else 0 end)),
+            armed: (.declared_kill == true or ($lanes | contains(" all ")) or ($lanes | contains(" \($s) "))),
+            cap: .ceiling_tokens } ]
+      | if length == 0 then empty
+        else (max_by(.spec).spec) as $best
+             | .[] | select(.spec == $best and .armed) | "\(.cap // "")" end' \
+      "${CONTEXT_BUDGETS:-/nonexistent}" 2>/dev/null)
+  [ -n "$c" ] || return 1
+  printf '%s' "$c"
+}
+
 # The sidecar. It runs beside the child, never in its path: a read that FAILS
 # (rc 3 = no transcript yet, rc 4 = no usage yet, or a helper that is simply
 # not there) keeps polling and never kills. Fail-open is the right direction
@@ -1417,26 +1452,73 @@ _ctx_kill_ceiling() { # _ctx_kill_ceiling <stage> [project] [runner] [model]
 # on a poll whose read failed; the ceiling rule is skipped on that poll. A
 # fingerprint that cannot be read counts as a change: never stop on our own
 # read failure.
+# THE DECLARED KILL (BH-9124) is the second check, after the cumulative one,
+# which still wins on a poll where both fire. The meter runs with no cumulative
+# cap (an empty <ceiling>) when only the declared ceiling arms the lane.
+# CONTEXT_KILL_DECLARED: 1 = kill, 0 = off, observe = one log line per session
+# and no kill. Unset is 1, armed (catalog/lanes.d/_lib.context-kill-declared.json).
+# Any other value is observe: fail toward no kill. CONTEXT_KILL_DECLARED_UNIT:
+# peak (default) compares the largest single call with the lane's
+# ceiling_tokens; cumulative compares the session total instead. A peak that
+# cannot be read never kills (fail-open, as above). On execute and fix in a
+# build dir, the C1 checkpoint brief (ecb_write) is written BEFORE the TERM.
 context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-start-fp np-start-epoch np-min np-pct]
   local pid="$1" sid="$2" cap="$3" cwd="$4" line in cr msgs tot said=""
   local nps="${5:-}" npt="${6:-}" npmin="${7:-0}" nppct="${8:-0}" npnow npchg npv
-  local errf="$OUT.ctxmeter.err"
+  local errf="$OUT.ctxmeter.err" pk dmode=off dunit=peak dcl="" dval dsaid="" ecb build
+  case "${CONTEXT_KILL_DECLARED:-1}" in
+    1|on|yes|true|ON|YES|TRUE) dmode=on ;;
+    0|off|no|false|OFF|NO|FALSE) dmode=off ;;
+    *) dmode=observe ;;
+  esac
+  [ "${CONTEXT_KILL_DECLARED_UNIT:-peak}" = cumulative ] && dunit=cumulative
+  if [ "$dmode" != off ]; then
+    dcl=$(_ctx_declared_row "$STAGE" "$PROJECT" "${runner:-}") || dcl=""
+  fi
   while kill -0 "$pid" 2>/dev/null; do
     sleep "${CONTEXT_KILL_POLL_S:-15}"
     kill -0 "$pid" 2>/dev/null || break
-    tot=""
-    if ! line=$(eval "${ACCT_EXPORTS:-}"; "$_CTX_TCB" "$sid" --cwd "$cwd" 2>"$errf") || [ -z "$line" ]; then
+    tot=""; pk=""
+    if ! line=$(eval "${ACCT_EXPORTS:-}"; "$_CTX_TCB" "$sid" --cwd "$cwd" --peak 2>"$errf") || [ -z "$line" ]; then
       [ -n "$said" ] || { said=1
         echo "$(STAMP) [$PROJECT] $STAGE: context meter could not read session $sid — running UNMETERED rather than killing on a failed read ($(head -c 200 "$errf" 2>/dev/null | tr '\n' ' '))" >> "$HARNESS/logs/claude-cost.log"; }
     else
-      # input|output|cache_read|cache_write|usd|model|messages|files|unpriced
-      IFS='|' read -r in _ cr _ _ _ msgs _ _ <<<"$line"
+      # input|output|cache_read|cache_write|usd|model|messages|files|unpriced|peak
+      IFS='|' read -r in _ cr _ _ _ msgs _ _ pk <<<"$line"
       case "${in}${cr}" in ''|*[!0-9]*) ;; *) tot=$(( in + cr )) ;; esac
+      case "$pk" in ''|*[!0-9]*) pk="" ;; esac
     fi
-    if [ -n "$tot" ] && [ "$tot" -gt "$cap" ]; then
+    if [ -n "$tot" ] && [ -n "$cap" ] && [ "$tot" -gt "$cap" ]; then
       printf 'ceiling=%s total=%s calls=%s session=%s\n' "$cap" "$tot" "${msgs:-0}" "$sid" > "$OUT.ctxkill"
       kill -TERM "$pid" 2>/dev/null
       break
+    fi
+    dval="$pk"; [ "$dunit" = cumulative ] && dval="$tot"
+    if [ -n "$dcl" ] && [ -n "$dval" ] && [ "$dval" -gt "$dcl" ]; then
+      if [ "$dmode" = observe ]; then
+        [ -n "$dsaid" ] || { dsaid=1
+          echo "$(STAMP) [$PROJECT] $STAGE: CONTEXT KILL DECLARED (observe): session $sid $dunit=$dval is over the declared ceiling $dcl — no kill, CONTEXT_KILL_DECLARED=1 kills it" >> "$HARNESS/logs/claude-cost.log"; }
+      else
+        # Marker first, then the brief, then the TERM: a killed session can
+        # never look finished, and the relaunch (bin/lib/rb/execute.sh) reads the brief.
+        printf 'rule=declared ceiling=%s peak=%s total=%s calls=%s session=%s unit=%s\n' \
+          "$dcl" "${pk:-?}" "${tot:-?}" "${msgs:-0}" "$sid" "$dunit" > "$OUT.ctxkill"
+        case "$STAGE:$OUT" in
+          execute:*/builds/*/*|fix:*/builds/*/*)
+            build=$(dirname "$OUT")
+            if ! command -v ecb_write >/dev/null 2>&1; then
+              for ecb in "$(dirname "$0")/lib/execute-checkpoint-brief.sh" "$HARNESS/bin/lib/execute-checkpoint-brief.sh"; do
+                # shellcheck disable=SC1090
+                [ -r "$ecb" ] && . "$ecb" >/dev/null 2>&1 && break
+              done
+            fi
+            # Fail-open: a brief that cannot be written never holds the TERM back.
+            command -v ecb_write >/dev/null 2>&1 && { ( cd "$cwd" 2>/dev/null && ecb_write "$build" ) >/dev/null 2>&1 || true; }
+            ;;
+        esac
+        kill -TERM "$pid" 2>/dev/null
+        break
+      fi
     fi
     [ -n "$nps" ] || continue
     npchg=1; [ "$(np_snapshot "$cwd" 2>/dev/null)" = "$nps" ] && npchg=0
@@ -1459,12 +1541,13 @@ context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-s
 # never be merged by the alert state machine and the same kill can never be
 # said twice. lane-alert.sh carries it to the medic and the digest; a box that
 # does not have it (or whose copy fails) still gets the fact in ALERTS.log.
-ctx_kill_alert() { # ctx_kill_alert <model> <ceiling=.. total=.. calls=.. session=..>
-  local cm="$1" ck="$2" la line kv _cap="" _tot="" _msgs="" _sid="" _cc="" _cliff=""
+ctx_kill_alert() { # ctx_kill_alert <model> <[rule=declared] ceiling=.. total=.. calls=.. session=..>
+  local cm="$1" ck="$2" la line kv _cap="" _tot="" _msgs="" _sid="" _cc="" _cliff="" _rule="" _pk="" _unit=""
   for kv in $ck; do
     case "$kv" in
       ceiling=*) _cap="${kv#*=}" ;; total=*) _tot="${kv#*=}" ;;
       calls=*)   _msgs="${kv#*=}" ;; session=*) _sid="${kv#*=}" ;;
+      rule=*)    _rule="${kv#*=}" ;; peak=*) _pk="${kv#*=}" ;; unit=*) _unit="${kv#*=}" ;;
     esac
   done
   # WHICH BOUND FIRED IS THE WHOLE POINT OF THE LINE (BH-1384). A ceiling the
@@ -1474,7 +1557,15 @@ ctx_kill_alert() { # ctx_kill_alert <model> <ceiling=.. total=.. calls=.. sessio
   # ceiling did not have.
   [ -f "$OUT.cliffcap" ] && { read -r _cc < "$OUT.cliffcap" || true; }
   for kv in $_cc; do case "$kv" in cliff=*) _cliff="${kv#*=}" ;; esac; done
-  if [ -n "$_cliff" ]; then
+  if [ "$_rule" = declared ]; then
+    # BH-9124: the declared kill names its rule. The ceiling is the lane's
+    # declared ceiling_tokens, not the cumulative kill number.
+    if [ "$_unit" = cumulative ]; then
+      line="CONTEXT KILL: $STAGE/$PROJECT on $cm killed by rule=declared at $_tot cumulative context tokens against the declared ceiling $_cap after $_msgs API calls (session $_sid) — output truncated, stage fails by policy, no vendor failover"
+    else
+      line="CONTEXT KILL: $STAGE/$PROJECT on $cm killed by rule=declared at a $_pk-token API call against the declared ceiling $_cap after $_msgs API calls (session $_sid) — output truncated, stage fails by policy, no vendor failover"
+    fi
+  elif [ -n "$_cliff" ]; then
     line="CLIFF-AVOIDED: $STAGE/$PROJECT on $cm stopped at $_tot context tokens against ceiling $_cap, derived from the $_cliff-token price cliff for $cm, after $_msgs API calls (session $_sid) — output truncated, stage fails by policy, no vendor failover"
   else
     line="CONTEXT KILL: $STAGE/$PROJECT on $cm killed at $_tot context tokens against ceiling $_cap after $_msgs API calls (session $_sid) — output truncated, stage fails by policy, no vendor failover"
@@ -2099,6 +2190,8 @@ ac_cost_row_write() {
     read -r _ck < "$OUT.ctxkill" || true
     for _kv in $_ck; do case "$_kv" in ceiling=*) _kc="${_kv#*=}" ;; total=*) _kt="${_kv#*=}" ;; esac; done
     [ -f "$OUT.cliffcap" ] && _tag=cliff-avoided
+    # BH-9124: a declared kill is a context kill whatever the cliff marker says.
+    case " $_ck " in *" rule=declared "*) _tag=context-kill ;; esac
     # tk= / fp= name the WORK (BH-2538): ctx_kill_repeats counts on them.
     _RN="${_RN:+$_RN;}$_tag:ceiling=${_kc:-?}:total=${_kt:-?}:tk=${CK_TK:-}:fp=${CK_FP:-}"
     # The meter only fires after billed responses, so this call STARTED
@@ -2859,9 +2952,11 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         # the cliff marker, which is per-model: the fable rung may have a cliff
         # where the opus rung has none (BH-1384).
         rm -f "$OUT.ctxkill" "$OUT.cliffcap" "$OUT.tripwire" "$OUT.noprogress"
-        local _CAP="" _CPID="" _MPID="" _CTXF="" _CTXWHY="" _CL="" _LPID="" _NPS="" _NPT="" _NP_MIN="" _NP_PCT=""
+        local _DCL="" _CAP="" _CPID="" _MPID="" _CTXF="" _CTXWHY="" _CL="" _LPID="" _NPS="" _NPT="" _NP_MIN="" _NP_PCT=""
         _CAP=$(_ctx_kill_ceiling "$STAGE" "$PROJECT" "$runner" "$cm")
-        if [ -n "$_CAP" ]; then
+        # BH-9124: a lane armed only by its declared ceiling is metered too.
+        [ "${CONTEXT_KILL_DECLARED:-1}" != 0 ] && _DCL=$(_ctx_declared_row "$STAGE" "$PROJECT" "$runner")
+        if [ -n "$_CAP" ] || [ -n "$_DCL" ]; then
           _CTX_TCB="$(dirname "$0")/transcript-cost.sh"
           [ -x "$_CTX_TCB" ] || _CTX_TCB="$HARNESS/bin/transcript-cost.sh"
           if [ ! -x "$_CTX_TCB" ]; then
@@ -2879,8 +2974,8 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
             # so a busy lane reports the condition instead of paging on it.
             _CTXF="$HARNESS/flags/alerted-ctxkill-unenforceable-$STAGE-$(date -u +%Y%m%d)"
             [ -f "$_CTXF" ] || { mkdir -p "$HARNESS/flags" 2>/dev/null; touch "$_CTXF" 2>/dev/null
-              echo "$(STAMP) [agent-call] CONTEXT KILL UNENFORCEABLE: $STAGE/$PROJECT declares context_kill_tokens $_CAP but $_CTXWHY — the session runs UNBOUNDED." >> "$ALERTS"; }
-            _CAP=""
+              echo "$(STAMP) [agent-call] CONTEXT KILL UNENFORCEABLE: $STAGE/$PROJECT declares context_kill_tokens ${_CAP:-none} (declared ceiling ${_DCL:-none}) but $_CTXWHY — the session runs UNBOUNDED." >> "$ALERTS"; }
+            _CAP=""; _DCL=""
             # No ceiling means no kill, so a cliff marker for this attempt would
             # describe a bound that is not in force.
             rm -f "$OUT.cliffcap"
@@ -2903,14 +2998,14 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         if [ -n "$_CAP" ] && np_armed "$STAGE" "$PWD"; then
           _NPS=$(np_snapshot "$PWD" 2>/dev/null) && _NPT=$(date -u +%s) || _NPS=""
         fi
-        if [ -n "$_CAP" ] || [ -n "$_CL" ]; then
+        if [ -n "$_CAP" ] || [ -n "$_DCL" ] || [ -n "$_CL" ]; then
           # Same invocation, backgrounded so the meter can watch it. $! is the
           # pipeline's last element — the subshell, which execs into timeout, so
           # a TERM to it is forwarded to the whole process group the CLI runs in
           # (and --kill-after=120 still SIGKILLs a CLI that ignores it).
           printf '%s' "$PROMPT" | ( eval "$ACCT_EXPORTS"; exec timeout --kill-after=120 "$TO" ${EG_WRAP[@]+"${EG_WRAP[@]}"} env -u AGENT_CALL_RUNNERS -u AGENT_CALL_ROLE -u CONTEXT_KILL_TOKENS -u CONTEXT_KILL_CLIFF -u CONTEXT_KILL_CLIFF_MARGIN IS_SANDBOX=1 ${SP_ENV[@]+"${SP_ENV[@]}"} claude "${ARGS[@]}" ) > "$OUT.json" 2> "$OUT.err" &
           _CPID=$!
-          if [ -n "$_CAP" ]; then
+          if [ -n "$_CAP" ] || [ -n "$_DCL" ]; then
             context_meter "$_CPID" "$SESSION_ID" "$_CAP" "$PWD" "$_NPS" "$_NPT" "${_NP_MIN:-0}" "${_NP_PCT:-0}" &
             _MPID=$!
           fi
