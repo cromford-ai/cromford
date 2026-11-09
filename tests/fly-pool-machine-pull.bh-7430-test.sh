@@ -520,7 +520,12 @@ BASE="${BH7430_BASE_REF:-$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null
 if [ -n "$BASE" ] && git -C "$DIR" show "$BASE:bin/fly-pool.sh" > "$T/base-fly-pool.sh" 2>/dev/null; then
   norm() { sed -E 's#/tmp/poolsync-[A-Za-z0-9]+\.tgz#TB#g; s#/dev/shm/pool\.[A-Za-z0-9]+#TMP#g' "$1"; }
   reset_case 1; seed_fixtures
-  run_pool "$T/base-fly-pool.sh" -- PA_NAME=max3
+  # The base run gets the same two BH-9065 knobs. A base from before BH-9065
+  # ignores them; a base from after it (every PR branched since #9197 merged)
+  # reads them, and without them its fallback class map launched the plan job
+  # on a different machine size than the head run, so B1 compared two knob
+  # settings, not two scripts.
+  run_pool "$T/base-fly-pool.sh" -- POOL_MACHINE_SOFT_CAP_S=0 VM_CLASS=build=compute PA_NAME=max3
   cat "$T/fly.txt" "$T/ssh.txt" "$T/sleep.txt" > "$T/shim.base"
   reset_case 1; seed_fixtures
   # POOL_MACHINE_SOFT_CAP_S=0 and VM_CLASS=build=compute (BH-9065): the soft
