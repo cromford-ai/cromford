@@ -37,7 +37,7 @@ _SP_ROOT=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
 sp_render() {
   local _sp_kind=${1-} _sp_outvar=${2-} _sp_dir _sp_f _sp_res _sp_body _sp_out _sp_name _sp_rules
   case "$_sp_kind" in
-    plan|execute|review|fix-round|qa) ;;
+    plan|execute|execute-resume|review|fix-round|qa) ;;
     *) echo "stage-prompt: unknown kind '$_sp_kind'" >&2; return 2 ;;
   esac
   _sp_dir=${SP_STAGES_DIR:-$_SP_ROOT/prompts/stages}

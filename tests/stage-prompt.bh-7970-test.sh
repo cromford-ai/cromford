@@ -298,9 +298,10 @@ if [ -n "$L_SP" ] && [ -n "$L_MN" ] && [ "$L_SP" -gt "$L_MN" ] && [ "$(grep -c '
 else bad "block-order: sp_render plan at '$L_SP', migration block end at '$L_MN', CC plan at '$L_CC'"; fi
 
 # 20. review-others-inline: the T0 prefix and the security and refute prompts stay in review.sh.
+# TEST-CHANGE (BH-9123): prompts/stages/ gains execute-resume.md, the execute relaunch prompt.
 R="$DIR/bin/lib/rb/review.sh"
 if grep -q '^SECURITY_PROMPT=' "$R" && grep -q '^REFUTE_PROMPT=' "$R" && grep -qF 'STATIC REVIEW, NO BUILD RUN' "$R" \
-   && [ "$(cd "$DIR/prompts/stages" 2>/dev/null && ls | sort | tr '\n' ' ')" = 'execute.md fix-round.md plan.md qa.md review.md ' ]; then
+   && [ "$(cd "$DIR/prompts/stages" 2>/dev/null && ls | sort | tr '\n' ' ')" = 'execute-resume.md execute.md fix-round.md plan.md qa.md review.md ' ]; then
   ok; casepass review-others-inline
 else bad "review-others-inline: prompts/stages holds '$(ls "$DIR/prompts/stages" 2>/dev/null | tr '\n' ' ')'"; fi
 

@@ -3781,7 +3781,10 @@ LADDER_EXHAUSTED_RUNNERS=""; LADDER_RESETS_AT=""
 # openrouter_fallback_ok reads: "no claude account can serve" is exactly claude
 # being on this list after ladder_recover spent every account it could rotate to.
 LADDER_ACCOUNT_DEAD_RUNNERS=""
-LADDER_CLASS=""; LADDER_CLASS_DETAIL=""; LADDER_LAST_SESSION=""; LADDER_RESUME_SID=""
+LADDER_CLASS=""; LADDER_CLASS_DETAIL=""; LADDER_LAST_SESSION=""; LADDER_RESUME_SID="${LADDER_RESUME_SID:-}"
+# BH-9123: bin/lib/rb/execute.sh may hand in LADDER_RESUME_SID to resume a timed-out
+# execute session on the first attempt. It is this call's, never the session's.
+export -n LADDER_RESUME_SID 2>/dev/null || true
 
 # Does the installed claude CLI take --resume? Probed once, cached, and never
 # fatal: a CLI without it starts a fresh session instead of resuming one.
@@ -4369,7 +4372,7 @@ if [ -n "${JOB_ID:-}" ] && command -v job_phase_open >/dev/null 2>&1; then
     [ -z "${STEER_TAKEN_IDS:-}" ] || steer_settle "$JOB_ID" "$_ac_steer_rc"' EXIT
 fi
 
-run_attempt "$RUNNER"
+run_attempt "$RUNNER"; LADDER_RESUME_SID=""
 
 # RECOVERY BEFORE FALLBACK (2026-09-16). Everything this vendor can still do
 # for us happens here, before a single rung is descended: a transient failure is

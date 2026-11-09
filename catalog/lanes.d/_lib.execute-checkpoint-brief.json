@@ -1,0 +1,31 @@
+{
+  "libs": [
+    {
+      "id": "execute-checkpoint-brief",
+      "file": "bin/lib/execute-checkpoint-brief.sh",
+      "note": "BH-9123 (slice C1 of BH-9064) execute checkpoint brief (2026-11-06): when an execute session ends on a timeout (rc 124), a kill (rc 143) or a context kill, bin/lib/rb/execute.sh writes $BUILD/checkpoint-brief.md (the last commit, the diff stat, the acceptance items not yet covered), records the checkpoint on the ledger row and relaunches execute with prompts/stages/execute-resume.md, at most AGENT_LEDGER_MAX_ATTEMPTS times, then parks (RESULT EXECUTE_EMPTY parked:). Applied by bin/lib/rb/execute.sh. Note: docs/notes/2026-11-06-BH-9123-execute-resume.md.",
+      "knobs": [
+        {
+          "env": "EXECUTE_BRIEF_STAT_LINES",
+          "type": "int",
+          "default": 80,
+          "min": 1,
+          "max": 1000,
+          "zero_means": null,
+          "required": false,
+          "note": "Lines of `git diff --stat` kept in the checkpoint brief. Read as ${EXECUTE_BRIEF_STAT_LINES:-80}."
+        },
+        {
+          "env": "EXECUTE_BRIEF_ITEMS_MAX",
+          "type": "int",
+          "default": 60,
+          "min": 1,
+          "max": 500,
+          "zero_means": null,
+          "required": false,
+          "note": "Acceptance items read from the plan into the checkpoint brief. Read as ${EXECUTE_BRIEF_ITEMS_MAX:-60}."
+        }
+      ]
+    }
+  ]
+}

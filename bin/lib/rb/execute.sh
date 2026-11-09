@@ -54,6 +54,15 @@ EE_HEAD_START=$(git rev-parse -q --verify HEAD 2>/dev/null || echo -)
 CKPT_START
 # BH-7970: sp_render (bin/lib/stage-prompt.sh). A box without the lib refuses the stage below; it never sends an empty prompt.
 . "$HARNESS/bin/lib/stage-prompt.sh" 2>/dev/null || sp_render() { echo "stage-prompt: bin/lib/stage-prompt.sh not loaded" >&2; return 1; }
+# BH-9123 (BH-9064 C1): the execute checkpoint brief and resume (bin/lib/execute-checkpoint-brief.sh).
+# A box without the lib runs the execute stage as before.
+command -v ecb_write >/dev/null 2>&1 || . "$HARNESS/bin/lib/execute-checkpoint-brief.sh" 2>/dev/null || true
+# Its knobs and the ledger's attempt cap are settings rows (lib.execute-checkpoint-brief.*,
+# lib.agent-call-ledger.*), applied here as bin/agent-call.sh applies them. Fail-open.
+if [ "${LANE_GATE_DISABLE:-0}" != 1 ]; then
+  command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
+  command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply agent-call-ledger; lib_env_apply execute-checkpoint-brief; } || true
+fi
 # >>> execute prompt (tests/run-build-test-home.bh-580-test.sh drives this block)
 # BH-7970: the prompt text lives in prompts/stages/execute.md.
 sp_render execute SP_PROMPT_EXECUTE || {
@@ -61,10 +70,90 @@ sp_render execute SP_PROMPT_EXECUTE || {
   RESULT "BUILD_REFUSED prompt template missing (execute)"
   exit 3
 }
+# BH-9123: a NEW build of work an earlier build left checkpointed (the ledger
+# row of this build fp carries a checkpoint) starts from the brief, never from
+# a fresh execute of the plan. No ledger or no checkpoint: the prompt above.
+ECB_START_CHECKPOINT=""
+if command -v ecb_start_prompt >/dev/null 2>&1 && ecb_start_prompt SP_PROMPT_EXECUTE; then
+  echo "$(STAMP) [$PROJECT/$KEY] EXECUTE resume: the ledger row carries checkpoint ${ECB_START_CHECKPOINT:-?} — the session starts from checkpoint-brief.md, not from the plan" >> "$BUILD/pipeline.log"
+fi
 CC execute "$EXECUTE_MODEL" "${EXECUTE_TIMEOUT_SECS:-7200}" "$BUILD/execute-run.txt" "$SP_PROMPT_EXECUTE"
 # <<< execute prompt
 # >>> execute result (tests/run-build-checkpoint-test.sh drives this block)
+EX_RC=$?   # BH-9123: the rc of `CC execute` above. Keep this the first line.
 CKPT_STOP
+# A TIMEOUT OR A KILL IS A CHECKPOINT, NOT AN END (BH-9123, slice C1 of BH-9064). On rc 124 (the
+# stage timeout), rc 143 (a SIGTERM) or a context kill ($OUT.ctxkill), the
+# work so far is the pushed wip commit (CKPT_STOP above). The brief
+# (checkpoint-brief.md) names the last commit and the open acceptance items,
+# and the next execute call continues from it with --resume when the session
+# file is on this box (A6) and the call did not end on a context kill. No relaunch on rc 0, 1, 74 or 75, or on a
+# no-progress stop (BH-8868 owns it). At most AGENT_LEDGER_MAX_ATTEMPTS (3)
+# execute calls per build. At that cap, or when the ledger refuses the call as
+# terminal (failed at its cap, or parked), the ledger row is parked and the
+# RESULT is EXECUTE_EMPTY parked (A7: the first word every reader routes).
+# K3 (the call guard) runs before the ledger, so its execute ceiling can refuse
+# the next call first ("call-guard repeat execute paid=N/M"). Inside a
+# checkpoint chain (a relaunch in this build, or a build that started from a
+# ledger checkpoint) that refusal parks too. Outside a chain it stays the
+# BH-2305 deferral below.
+# Without bin/lib/execute-checkpoint-brief.sh nothing here runs.
+EX_CALLS=1
+EX_MAX=$(_n=${AGENT_LEDGER_MAX_ATTEMPTS:-}; case "$_n" in ''|*[!0-9]*|0) echo 3 ;; *) echo "$((10#$_n))" ;; esac)
+while command -v ecb_write >/dev/null 2>&1; do
+  EX_L1=$(head -1 "$BUILD/execute-run.txt" 2>/dev/null | head -c 400)
+  EX_PARK=""
+  case "$EX_L1" in
+    "AGENT_CALL_REFUSED call-guard repeat ledger-failed "*|"AGENT_CALL_REFUSED call-guard repeat ledger-parked "*)
+      EX_PARK="the ledger refused the call as terminal: ${EX_L1#AGENT_CALL_REFUSED }" ;;
+    "AGENT_CALL_REFUSED call-guard repeat execute paid="*)
+      { [ "$EX_CALLS" -gt 1 ] || [ -n "${ECB_START_CHECKPOINT:-}" ]; } \
+        && EX_PARK="K3 refused the call in a checkpoint chain: ${EX_L1#AGENT_CALL_REFUSED }" ;;
+  esac
+  if [ -z "$EX_PARK" ]; then
+    [ -f "$BUILD/execute-run.txt.noprogress" ] && break
+    case "$EX_RC" in
+      124|143) ;;
+      0|1|74|75) break ;;
+      *) [ -f "$BUILD/execute-run.txt.ctxkill" ] || break ;;
+    esac
+    [ "$EX_CALLS" -ge "$EX_MAX" ] && EX_PARK="$EX_CALLS execute calls ended rc $EX_RC (cap AGENT_LEDGER_MAX_ATTEMPTS=$EX_MAX)"
+  fi
+  EX_CK=$(ecb_checkpoint_text "$BUILD" "$BRANCH")
+  if [ -n "$EX_PARK" ]; then
+    EX_ATT=$EX_CALLS; EX_FP=${BUILD_CALL_FP:--}
+    for EX_F in $EX_L1; do
+      case "$EX_F" in
+        attempts=[0-9]*) EX_ATT=${EX_F#attempts=} ;;
+        paid=[0-9]*) EX_ATT=${EX_F#paid=}; EX_ATT=${EX_ATT%%/*} ;;
+        fp=?*) EX_FP=${EX_F#fp=} ;;
+      esac
+    done
+    [ -n "${BUILD_CALL_FP:-}" ] && ecb_park "$PROJECT" "$BUILD_CALL_FP" "$EX_CK"
+    echo "$(STAMP) [$PROJECT/$KEY] EXECUTE parked: $EX_PARK — checkpoint $EX_CK" >> "$BUILD/pipeline.log"
+    RESULT "EXECUTE_EMPTY parked: attempts=$EX_ATT fp=$EX_FP checkpoint=${EX_CK%% *}"
+    exit 3
+  fi
+  ecb_write "$BUILD" "$BRANCH" "$BASE" || break
+  [ -n "${BUILD_CALL_FP:-}" ] && ecb_record "$PROJECT" "$BUILD_CALL_FP" "$EX_CK"
+  ecb_render_resume SP_PROMPT_RESUME "$BUILD" || {
+    echo "$(STAMP) [$PROJECT/$KEY] EXECUTE resume: no execute-resume prompt on $(hostname) — no relaunch" >> "$BUILD/pipeline.log"
+    break; }
+  EX_SID=$(ecb_resume_sid "$BUILD") || EX_SID=""
+  # A context kill never resumes its session: the resumed transcript already
+  # carries the context that was killed, so the meter kills the first poll of
+  # the new call and that call buys the same context again. The brief goes to
+  # a fresh session.
+  [ -f "$BUILD/execute-run.txt.ctxkill" ] && EX_SID=""
+  # The kill marker belongs to the call that ended; the next call starts clean.
+  [ -f "$BUILD/execute-run.txt.ctxkill" ] && mv -f "$BUILD/execute-run.txt.ctxkill" "$BUILD/execute-run.txt.ctxkill.$EX_CALLS" 2>/dev/null
+  echo "$(STAMP) [$PROJECT/$KEY] EXECUTE resume $((EX_CALLS + 1))/$EX_MAX: call $EX_CALLS ended rc $EX_RC — continue from checkpoint $EX_CK${EX_SID:+ with --resume $EX_SID}" >> "$BUILD/pipeline.log"
+  CKPT_START
+  EX_RC=0
+  LADDER_RESUME_SID="$EX_SID" CC execute "$EXECUTE_MODEL" "${EXECUTE_TIMEOUT_SECS:-7200}" "$BUILD/execute-run.txt" "$SP_PROMPT_RESUME" || EX_RC=$?
+  CKPT_STOP
+  EX_CALLS=$((EX_CALLS + 1))
+done
 # A CALL-GUARD REFUSAL IS NOT AN EMPTY SESSION (BH-2305). With execute guarded
 # by default, bin/agent-call.sh can refuse this call before any session runs
 # (rc 74, its marker on line 1 of the outfile). "no changes produced" would be
