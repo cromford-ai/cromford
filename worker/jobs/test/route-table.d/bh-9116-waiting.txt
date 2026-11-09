@@ -1,0 +1,4 @@
+# BH-9116: the D1 half of the "To do (waiting)" view. One read-only batch over
+# triage_state, build_queue, jobs + job_heartbeats and ticket_edges for the open
+# tickets the console sends. Gated by the bearer.
+POST /api/waiting/state

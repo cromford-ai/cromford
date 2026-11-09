@@ -21,6 +21,8 @@ import { Section, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js'
 import { agoFromMinutes, minutesSince, snapshotLabel, safeHttpsUrl, prNumberFromUrl } from '../lib/format.js';
 import { tierLabel } from '../lib/labels.js';
 import { stageLabel, verdictLabel } from '../lib/stages.js';
+import { dropStaleClaims } from '../lib/waiting.js';
+import WaitingPanel from './WaitingPanel.js';
 
 // CARDS or LIST, remembered per viewer. It is a convenience, so every access is
 // guarded: a private window, blocked site data or a thumbnail capture must
@@ -57,6 +59,7 @@ export function KanbanScreen() {
         <div class="tabs">
           <button class=${tab === 'pipeline' ? 'tab tab--on' : 'tab'} onClick=${() => setTab('pipeline')}>PIPELINE</button>
           <button class=${tab === 'boards' ? 'tab tab--on' : 'tab'} onClick=${() => setTab('boards')}>BOARDS</button>
+          <button class=${tab === 'waiting' ? 'tab tab--on' : 'tab'} onClick=${() => setTab('waiting')}>TO DO (WAITING)</button>
         </div>
         ${tab === 'pipeline' ? html`
           <div class="tabs" title="the same rows either way — cards to see the shape of the pipeline, a list to scan and sort it">
@@ -72,6 +75,10 @@ export function KanbanScreen() {
 
       ${tab === 'pipeline'
         ? html`<${Pipeline} project=${project} view=${view}/>`
+        : tab === 'waiting'
+        ? html`<${PageHeadline} chip="To do (waiting)" line1=${project ? `Open ${project} tickets not in flight.` : 'Open tickets not in flight.'}
+            line2="Every open board ticket with no running build, one reason each: why it waits, since when, on what."/>
+          <${WaitingPanel} key=${project || 'all'} project=${project}/>`
         : html`<${PageHeadline} chip="Boards" line1=${`${projects.length} ${projects.length === 1 ? 'board' : 'boards'}.`} line2="Each project's own product board, from the hub's ticket snapshot."/>
           <${Boards} project=${project} projects=${projects}/>`}
     </div>`;
@@ -98,13 +105,18 @@ function Pipeline({ project, view }) {
   // without this the pipeline shows nothing for a ticket somebody else is
   // actively building — which reads as "nobody picked this up".
   const snap = useApi(() => api.ticketsSnapshot(), [], { intervalMs: 60000 });
+  // BH-9116: the waiting payload names the stale claims (a claimed queue row
+  // with no running build). They are not building, so the BUILDING column and
+  // its count drop them. Read beside the two above, not after them; a failed
+  // read leaves the board as the API sent it.
+  const waiting = useApi(() => api.waiting(), [], { intervalMs: 60000 });
 
   if (p.loading && !p.data) return html`<${KanbanHeadline} board=${null}/><${Skeleton} rows=${4} height=${70}/>`;
   if (p.error && !p.data) return html`<${KanbanHeadline} board=${null}/><${ErrorBox} error=${p.error} onRetry=${p.reload}/>`;
 
   const external = externalClaims(snap.data)
     .filter((c) => !project || c.project === project);
-  const board = filterPipeline(p.data, project);
+  const board = dropStaleClaims(filterPipeline(p.data, project), waiting.data);
   const total = PIPELINE_COLUMNS.reduce((n, c) => n + board.columns[c.key].length, 0);
   const shipped = shippedCaveat(board);
 
@@ -143,6 +155,8 @@ const COLUMN_LEGEND = [
 // "reviewed, no opinion". No PR and no verdict is still a dash.
 const ownUnreviewed = (hasPr, verdict) => hasPr && !verdict;
 
+const staleClaimWords = (n) => `${n} stale claim${n === 1 ? '' : 's'} not counted`;
+
 const emptyNote = (project) => (project
   ? `No build, command or queued ticket for ${project} right now.`
   : 'Nothing is queued, building, waiting on review or recently merged across the fleet.');
@@ -180,6 +194,11 @@ export function PipelineBoard({ board, external, shipped, showEmpty, emptyNote, 
                 ? html`<span class="kb__stale"
                     title=${`${view.building_stale} unmerged build${view.building_stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not counted above.${view.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
                     · ${view.building_stale} stale${view.building_stale_is_fleet_wide ? ' (fleet)' : ''}
+                  </span>`
+                : null}
+              ${col.key === 'building' && view.building_excluded_stale > 0
+                ? html`<span class="kb__stale" title="claimed queue rows with no running build and no fresh heartbeat; the TO DO (WAITING) tab lists them as stale-claim">
+                    · ${staleClaimWords(view.building_excluded_stale)}
                   </span>`
                 : null}
               ${col.key === 'merged_deployed' && shipped
@@ -320,6 +339,11 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
           ? html`<span class="kb__stale"
               title=${`${stale} unmerged build${stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not in the BUILDING rows above.${board.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
               BUILDING · ${stale} stale${board.building_stale_is_fleet_wide ? ' (fleet)' : ''} not shown
+            </span>`
+          : null}
+        ${board.building_excluded_stale > 0
+          ? html`<span class="kb__stale" title="claimed queue rows with no running build; the TO DO (WAITING) tab lists them as stale-claim">
+              BUILDING · ${staleClaimWords(board.building_excluded_stale)}
             </span>`
           : null}
         ${external.length

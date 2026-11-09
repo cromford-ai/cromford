@@ -21,6 +21,7 @@ import { PauseReasonForm } from '../ui/PauseForms.js';
 import { RoutingPanel } from './RoutingPanel.js';
 import { PreplanAdoption } from './PreplanAdoption.js';
 import BuildQueuePanel from './BuildQueuePanel.js';
+import WaitingPanel from './WaitingPanel.js';
 import DeployQueuePanel from './DeployQueuePanel.js';
 import MergeTrainsPanel from './MergeTrainsPanel.js';
 import ConflictHotspotsPanel from './ConflictHotspotsPanel.js';
@@ -202,7 +203,11 @@ export function ProjectScreen({ project }) {
         </div>
 
         <div class="split__col">
-          <${Section} title="QUEUES" note="build queue, deploy queue and merge trains for this project">
+          <${Section} title="QUEUES" note="to do (waiting), build queue, deploy queue and merge trains for this project">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <span class="section__note" style="margin:0">TO DO (WAITING)</span>
+              <${WaitingPanel} project=${project}/>
+            </div>
             <${BuildQueuePanel} project=${project}/>
             <${DeployQueuePanel} project=${project}/>
             <${MergeTrainsPanel} project=${project}/>

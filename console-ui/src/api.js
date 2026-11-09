@@ -149,6 +149,8 @@ export const api = {
   // four live calls out to the client board APIs. It is a snapshot, so its
   // generated_at_epoch (SECONDS) is rendered alongside it.
   ticketsSnapshot: () => get('/api/dash/tickets-snapshot'),
+  // BH-9116: the "To do (waiting)" view (functions/api/dash/kanban/waiting.js).
+  waiting: (p) => get('/api/dash/kanban/waiting' + (p ? '?project=' + encodeURIComponent(p) : '')),
   // Two reads, and the cursor semantics differ between them — mixing their
   // cursors is the bug to avoid:
   //   no target  -> every thread, ONE global `last_id` (guaranteed contract)

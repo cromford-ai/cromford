@@ -177,15 +177,17 @@ test('the real Project page mounts one QUEUES section, above ROUTING, holding th
   assert.equal(titles.filter((t) => t === 'QUEUES').length, 1, titles.join(', '));
   assert.ok(titles.indexOf('QUEUES') < titles.indexOf('ROUTING'), `QUEUES sits above ROUTING: ${titles.join(', ')}`);
   const section = all(root).find((n) => n.attrs && n.attrs.class === 'section__title' && n.textContent === 'QUEUES').parentNode.parentNode;
-  // Three children: the build queue ("nothing queued"), the deploy queue, and
-  // MergeTrainsPanel (BH-3153), here an ErrorBox because the faked answer has
-  // no merge_trains.
+  // Four children: the TO DO (WAITING) list (BH-9116), the build queue
+  // ("nothing queued"), the deploy queue, and MergeTrainsPanel (BH-3153), here
+  // an ErrorBox because the faked answer has no merge_trains.
+  // TEST-CHANGE: BH-9116 — QUEUES gains the TO DO (WAITING) list first, so 3 -> 4 and merge trains moves to body[3].
   const body = section.childNodes.filter((n) => n.nodeType === 1 && n.attrs.class !== 'section__head');
-  assert.equal(body.length, 3, 'the build queue, deploy queue and merge trains panels render');
+  assert.equal(body.length, 4, 'the waiting list, build queue, deploy queue and merge trains panels render');
+  assert.match(body[0].textContent, /TO DO \(WAITING\)/);
   assert.match(section.textContent, /build queue, deploy queue and merge trains for this project/);
   assert.match(section.textContent, /nothing queued/);
   assert.match(section.textContent, /DEPLOY QUEUE/);
-  assert.match(body[2].textContent, /could not load/);
+  assert.match(body[3].textContent, /could not load/);
   // The build panel's three reads, the deploy queue's three and the merge
   // trains' one GET of the newest 50; no action is sent.
   assert.deepEqual(calls.filter((c) => /\/api\/coord\/(queue|deploy-queue|merge-trains)/.test(c.url))

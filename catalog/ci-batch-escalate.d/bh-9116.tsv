@@ -1,0 +1,3 @@
+# BH-9116: the WAITING view test runs the real worker route on sqlite.
+worker/jobs/src/routes/waiting.js	spa	console-ui/tests/waiting.bh-9116.test.js imports the waiting route the WAITING view reads
+worker/jobs/test/lib/d1-sqlite.bh-1030.js	spa	console-ui/tests/waiting.bh-9116.test.js builds its D1 stand-in from the worker test lib
