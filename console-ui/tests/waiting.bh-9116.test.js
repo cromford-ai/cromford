@@ -60,6 +60,12 @@ const NOW = Date.parse('2026-11-05T22:00:00Z');
 const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const ago = (m) => iso(NOW - m * 60000);
 const P = 'project-3';
+// The reason each seeded ticket must land on (C4 and F2). One shared map, so
+// both cases pin the same 9 pairs (BH-9314).
+const EXPECTED_REASON_BY_KEY = {
+  'NT-1': 'not-triaged', 'NC-2': 'needs-clarification', 'RC-10': 'needs-clarification', 'BB-3': 'blocked-by',
+  'RQ-4': 'ready-not-queued', 'QU-5': 'queued', 'DF-6': 'deferred', 'SC-7': 'stale-claim', 'OT-8': 'other'
+};
 
 const tk = (key, o = {}) => ({
   key, status: 'todo', title: `title ${key}`, updatedAt: ago(120), triage_verdict: 'untriaged',
@@ -241,10 +247,7 @@ test('C4 one ticket per reason: each key once, counts sum to rows', () => {
   assert.deepEqual([...keys].sort(), ['BB-3', 'DF-6', 'NC-2', 'NT-1', 'OT-8', 'QU-5', 'RC-10', 'RQ-4', 'SC-7'].sort());
   assert.equal(new Set(keys).size, keys.length, 'each key once');
   const by = Object.fromEntries(out.rows.map((r) => [r.key, r.reason]));
-  assert.deepEqual(by, {
-    'NT-1': 'not-triaged', 'NC-2': 'needs-clarification', 'RC-10': 'needs-clarification', 'BB-3': 'blocked-by',
-    'RQ-4': 'ready-not-queued', 'QU-5': 'queued', 'DF-6': 'deferred', 'SC-7': 'stale-claim', 'OT-8': 'other'
-  });
+  assert.deepEqual(by, EXPECTED_REASON_BY_KEY);
   const sum = Object.values(out.counts).reduce((a, b) => a + b, 0);
   assert.equal(sum, out.rows.length);
   assert.equal(out.total, out.rows.length);
@@ -382,10 +385,7 @@ test('F2 the seeded board end to end (acceptance 1)', async (t) => {
     assert.equal(body.ok, true, JSON.stringify(body));
     const project-3 = body.rows.filter((x) => x.project === P);
     const by = Object.fromEntries(project-3.map((x) => [x.key, x.reason]));
-    assert.deepEqual(by, {
-      'NT-1': 'not-triaged', 'NC-2': 'needs-clarification', 'RC-10': 'needs-clarification', 'BB-3': 'blocked-by',
-      'RQ-4': 'ready-not-queued', 'QU-5': 'queued', 'DF-6': 'deferred', 'SC-7': 'stale-claim', 'OT-8': 'other'
-    });
+    assert.deepEqual(by, EXPECTED_REASON_BY_KEY);
     assert.equal(project-3.length, 9, 'each ticket once');
     for (const reason of WAITING_REASONS) assert.ok(body.counts[reason] >= 1, `${reason} counted`);
     assert.equal(project-3.find((x) => x.key === 'QU-5').position, 1);
