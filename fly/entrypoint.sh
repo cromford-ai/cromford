@@ -1,7 +1,9 @@
 #!/bin/bash
 # fly/entrypoint.sh — builder machine boot (Phase 1 of the Fly builder trial).
 #
-# Runs as PID-1 child of tini. Order (per plan "Phase 1 > fly/entrypoint.sh"):
+# Runs as the first image process (the ENTRYPOINT). Its last step execs
+# tini, so tini starts with a new environ that holds no HBUNDLE_*/SEED_* app
+# secret. Order (per plan "Phase 1 > fly/entrypoint.sh"):
 #   1. tmpfs at /run/harness-env (mode 700) — secrets live in RAM only; a
 #      stopped/crashed machine's volume never holds a client token.
 #   2. tailscaled (state on the volume so node identity survives stop/start) +
@@ -10,7 +12,7 @@
 #      paths against /data.
 #   4. Volume health check — repo git broken => wipe + mark for re-warm (the
 #      runner re-clones once env arrives; the volume is pure cache).
-#   5. exec fly/builder-runner.sh.
+#   5. exec tini -s -- fly/builder-runner.sh (the handoff block).
 #
 # Open-detail decisions (simplest robust option, per task brief):
 #   - PROJECT is derived from Fly's injected FLY_APP_NAME ("builder-<project>")
@@ -27,6 +29,25 @@
 set -uo pipefail
 
 log() { echo "[entrypoint $(date -u '+%H:%M:%SZ')] $*"; }
+
+# >>> boot traps (BH-9265)
+# Before BH-9265 tini was the first image process and the entrypoint ran as
+# its child. Now the entrypoint runs first. On Fly it is the child of Fly's
+# init, so a stop signal has its default action, as before. Under `docker run`
+# with no --init (the docker pool, bin/lib/docker-pool-host.sh) it is PID 1,
+# and the kernel drops a signal to PID 1 that has no handler. These traps keep
+# a stop during boot ending the process there. The exec at the handoff resets
+# them, and the runner installs its own.
+boot_on_signal() { # boot_on_signal <rc>
+  trap '' TERM INT
+  log "boot: stop signal before the runner started; exit $1"
+  exit "$1"
+}
+if [ "$$" = 1 ] || { [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ "${BOOT_TRAPS_FORCE:-}" = 1 ]; }; then
+  trap 'boot_on_signal 143' TERM
+  trap 'boot_on_signal 130' INT
+fi
+# <<< boot traps (BH-9265)
 
 # --- 0. identity --------------------------------------------------------------
 PROJECT="${PROJECT:-}"
@@ -75,6 +96,20 @@ fi
 chmod 700 /run/harness-env
 log "tmpfs mounted at /run/harness-env (RAM-only secrets)"
 
+# >>> env scrub (BH-9265)
+# tailscaled starts before the seed block unsets the app secrets, and it lives
+# for the life of the machine. It starts through `env -u NAME` for each
+# HBUNDLE_*/SEED_* name, so its environ never holds one. Same match as the
+# unset loop in the seed block.
+seed_env_unset_args() { # fills SEED_ENV_U with `-u NAME` per seed name
+  SEED_ENV_U=()
+  local v
+  while IFS= read -r v; do
+    case "$v" in HBUNDLE_*|SEED_*) SEED_ENV_U+=(-u "$v") ;; esac
+  done < <(compgen -e)
+}
+# <<< env scrub (BH-9265)
+
 # --- 2. tailscale -------------------------------------------------------------
 # POOL_MODE machines (wave 3) are ephemeral and volume-less: the hub pushes
 # env + job and pulls RESULT over the Fly console, so they never join the
@@ -97,7 +132,8 @@ fi
 mkdir -p /data
 # userspace-networking avoids needing a TUN device / NET_ADMIN on the Fly VM;
 # hub->builder ssh works over it. --state on the volume => stable node identity.
-tailscaled \
+seed_env_unset_args
+env ${SEED_ENV_U[@]+"${SEED_ENV_U[@]}"} tailscaled \
   --state=/data/tailscaled.state \
   --socket=/var/run/tailscale/tailscaled.sock \
   --tun=userspace-networking \
@@ -342,5 +378,19 @@ else
 fi
 
 # --- 5. hand off to the runner ------------------------------------------------
+# >>> handoff (BH-9265)
+# exec tini here, not as the ENTRYPOINT: the exec gives tini the environ of
+# this shell, after the seed block unset every HBUNDLE_*/SEED_* name. tini
+# keeps the same pid, so the stop signal reaches it as before, and it forwards
+# it to the runner. -s makes tini a subreaper when it is not PID 1 (Fly), so
+# it still reaps tailscaled and the heartbeat children. If the parent is
+# already tini (a hand-run under the old ENTRYPOINT), or tini is missing, the
+# runner is exec'd directly, as before.
+TINI_BIN="${TINI_BIN:-/usr/bin/tini}"
+if [ "$(cat "/proc/$PPID/comm" 2>/dev/null)" != tini ] && [ -x "$TINI_BIN" ]; then
+  log "exec tini -s -- builder-runner"
+  exec "$TINI_BIN" -s -- "$RUNNER"
+fi
 log "exec builder-runner"
 exec "$RUNNER"
+# <<< handoff (BH-9265)

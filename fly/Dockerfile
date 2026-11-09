@@ -17,7 +17,7 @@
 #   claude CLI + codex CLI (failover-runner parity with agent-call.sh);
 #   codegraph (telemetry off); semgrep in an isolated venv; rtk; playwright +
 #   chromium baked at PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers.
-# ENTRYPOINT is tini -> fly/entrypoint.sh.
+# ENTRYPOINT is fly/entrypoint.sh, which execs tini -> builder-runner.sh.
 #
 # EVERY BAKED TOOL IS PINNED (BH-1517 for claude/codex, BH-1528 for the rest).
 # Each tool is one `ARG <TOOL>_VERSION` declared directly above the one RUN that
@@ -511,5 +511,9 @@ RUN chmod +x /opt/fly-boot/entrypoint.sh /opt/fly-boot/builder-runner.sh /opt/fl
 # before this line.
 ENV PATH="/data/harness/bin/gh-ledger:${PATH}"
 
-# tini as PID 1 reaps the background tailscaled/heartbeat processes cleanly.
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/fly-boot/entrypoint.sh"]
+# The entrypoint runs first and execs tini as its last step (BH-9265). tini
+# then starts with an environ that holds no HBUNDLE_*/SEED_* app secret (the
+# entrypoint unset them), and it still reaps the background tailscaled and
+# heartbeat processes. As the ENTRYPOINT, tini kept every app secret in its
+# /proc/<pid>/environ for the life of the machine.
+ENTRYPOINT ["/opt/fly-boot/entrypoint.sh"]
