@@ -203,9 +203,22 @@ fi
 # register a supervisord program exactly the way the cron block above does.
 # HARNESS is pinned to the live tree because $HERE may be the checkout's bin/.
 HARNESS=/root/harness "$HERE/audit-install.sh" || true
-command -v bun >/dev/null || { curl -fsSL https://bun.sh/install | bash; export PATH="$HOME/.bun/bin:$PATH"; echo 'export PATH="$HOME/.bun/bin:$PATH"' >> ~/.bashrc; }
-# QA + security tooling (2026-07-27): playwright drives preview deployments in the
-# QA stage; semgrep feeds the review stage. Both fail-open in run-build.sh.
+# Bun, Playwright and CodeGraph at pinned versions (BH-9266): the versions come
+# from the bake.<name>.version settings rows, the ones the Fly image bakes. Bun
+# is the GitHub release zip checked against SHASUMS256.txt; the other two are
+# exact npm versions. A missing row or an unreachable jobs worker gives the
+# documented fallback and one WARN line per tool; nothing here stops the run.
+# Playwright drives preview deployments in the QA stage and fails open there.
+# >>> tool pins (BH-9266)
+# shellcheck source=bin/lib/bootstrap-tool-pins.sh
+if . "$HERE/lib/bootstrap-tool-pins.sh" 2>/dev/null; then
+  btp_ensure_all || true
+else
+  echo "WARN: bin/lib/bootstrap-tool-pins.sh not found; bun, playwright and codegraph not installed"
+fi
+# <<< tool pins
+# Security tooling (2026-07-27): semgrep feeds the review stage and fails open
+# in run-build.sh.
 # Debian pip is externally-managed — semgrep goes in its own venv (whisper pattern).
 command -v semgrep >/dev/null || {
   apt-get install -y -q python3-venv >/dev/null 2>&1 || true
@@ -223,16 +236,11 @@ if . "$HERE/lib/gitleaks-pin.sh" 2>/dev/null; then
 else
   echo "WARN: bin/lib/gitleaks-pin.sh not found; gitleaks not installed"
 fi
-command -v playwright >/dev/null || npm install -g playwright >/dev/null 2>&1 || true
-npx playwright install --with-deps chromium >/dev/null 2>&1 || true
 
 # CodeGraph (2026-07-29, the operator): local semantic code index + MCP tools for every
 # Claude session. Telemetry stays off on fleet boxes (client code). Repos get
 # indexed after clone below; builds/triage use codegraph explore/query first.
-if ! command -v codegraph >/dev/null 2>&1; then
-  DO_NOT_TRACK=1 curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
-fi
+# The pinned install is in the `tool pins` block above.
 codegraph telemetry off >/dev/null 2>&1 || true
 codegraph install -t claude -l global -y >/dev/null 2>&1 || true
 grep -q VERCEL_PLUGIN_TELEMETRY ~/.bashrc || echo "export VERCEL_PLUGIN_TELEMETRY=off" >> ~/.bashrc
