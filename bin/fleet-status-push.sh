@@ -349,7 +349,7 @@ if command -v mc_prod_red_state >/dev/null 2>&1; then
       2) PRMAP=$(jq -c --arg p "$_p" --arg g "$_st" '.[$p] = {state:"unknown",generated_at:$g}' <<<"$PRMAP") ;;
     esac
   done
-  _pj=$(jq -c --argjson m "$PRMAP" 'with_entries(if $m[.key] then .value.prod = $m[.key] else . end)' <<<"$PROJECTS" 2>/dev/null) && [ -n "$_pj" ] && PROJECTS="$_pj"
+  _pj=$(jq -c --slurpfile m <(printf '%s' "$PRMAP") '$m[0] as $m | with_entries(if $m[.key] then .value.prod = $m[.key] else . end)' <<<"$PROJECTS" 2>/dev/null) && [ -n "$_pj" ] && PROJECTS="$_pj"
 fi
 # <<< prod red
 RRP=$(printf '%s' "$ROWS" | jq -sc 'reduce .[] as $r ({}; .[$r.project] = ($r.rrp // 0))' 2>/dev/null) || RRP='{}'
@@ -397,7 +397,7 @@ if command -v flag_list >/dev/null 2>&1 && _flag_db_configured; then
     [ -n "$PF_PORTED" ] || PF_PORTED='[]'
     mkdir -p "$H/logs" 2>/dev/null && echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') pause_flags unknown (worker unreachable, no cached list): kept the last pushed list $PF_PORTED" >> "$H/logs/fleet-status-push.log"
   fi
-  PAUSED=$(printf '%s\n' "$PF_OTHER" | grep -v '^$' | jq -Rnc --argjson p "$PF_PORTED" '$p + [inputs] | unique')
+  PAUSED=$(printf '%s\n' "$PF_OTHER" | grep -v '^$' | jq -Rnc --slurpfile p <(printf '%s' "$PF_PORTED") '$p[0] + [inputs] | unique')
 else
   PAUSED=$(printf '%s\n' "$PF_FILES" | grep -v '^$' | jq -Rnc '[inputs]')
 fi
@@ -868,15 +868,26 @@ EXP=$("$H/bin/fleet-conf.sh" --boxes-with-roles 2>/dev/null \
   || EXP=null
 case "$EXP" in '['*'"'*']') ;; *) EXP=null ;; esac
 
-SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson dep "$DEPLOY" --argjson pf "$PAUSED" --argjson so "$STALE" \
-  --argjson fly "$FLY" --argjson exp "$EXP" --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
-  --argjson quota "$QUOTA" --arg qerr "$QERR" --argjson ld "$LANES_DOWN" --argjson ldd "$LANES_DOWN_DETAIL" \
-  --argjson dl "$DEFER_LINES" --argjson df "$DEFER_FAMS" --argjson rules "$RULES" --argjson ceil "$CEIL" \
-  --argjson rrp "$RRP" --argjson hub "$HUB" --argjson bk "$BACKUPS" --arg bsm "$BSTALE" \
-  --arg ghq "$GHQ" --argjson ghr "$GHREST" --arg ghrv "$GHRESERVE" \
-  --argjson sb "$SB" --arg sberr "$SBERR" --argjson hh "$HH" --arg hherr "$HHERR" --arg hubhh "$HUB_HH" \
-  --argjson cit "$CIT" --argjson citn "$CIT_TOTAL" \
-  '{pushed_at:$ts, projects:$pr, alerts_24h:$al, deploys:$dep, pause_flags:$pf, stale_owed:$so, fly:$fly,
+# BH-9112: every fleet-sized value reaches jq through a file descriptor
+# (process substitution; printf is a builtin, so no execve carries it), never
+# through argv. One --argjson string over MAX_ARG_STRLEN (128 KiB) made execve
+# fail with E2BIG, and every run on bh-hub-2 fell back to the shape below.
+# Only scalars of a few bytes stay --arg/--argjson.
+SNAP=$(jq -nc --slurpfile pr <(printf '%s' "$PROJECTS") --argjson al "${ALERTS24:-0}" \
+  --slurpfile dep <(printf '%s' "$DEPLOY") --slurpfile pf <(printf '%s' "$PAUSED") --slurpfile so <(printf '%s' "$STALE") \
+  --slurpfile fly <(printf '%s' "$FLY") --slurpfile exp <(printf '%s' "$EXP") --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
+  --slurpfile quota <(printf '%s' "$QUOTA") --arg qerr "$QERR" \
+  --slurpfile ld <(printf '%s' "$LANES_DOWN") --slurpfile ldd <(printf '%s' "$LANES_DOWN_DETAIL") \
+  --argjson dl "$DEFER_LINES" --argjson df "$DEFER_FAMS" --slurpfile rules <(printf '%s' "$RULES") \
+  --slurpfile ceil <(printf '%s' "$CEIL") --slurpfile rrp <(printf '%s' "$RRP") --slurpfile hub <(printf '%s' "$HUB") \
+  --slurpfile bk <(printf '%s' "$BACKUPS") --arg bsm "$BSTALE" \
+  --rawfile ghq <(printf '%s' "$GHQ") --slurpfile ghr <(printf '%s' "$GHREST") --arg ghrv "$GHRESERVE" \
+  --slurpfile sb <(printf '%s' "$SB") --arg sberr "$SBERR" --slurpfile hh <(printf '%s' "$HH") --arg hherr "$HHERR" --arg hubhh "$HUB_HH" \
+  --slurpfile cit <(printf '%s' "$CIT") --argjson citn "$CIT_TOTAL" \
+  '$pr[0] as $pr | $dep[0] as $dep | $pf[0] as $pf | $so[0] as $so | $fly[0] as $fly | $exp[0] as $exp
+   | $quota[0] as $quota | $ld[0] as $ld | $ldd[0] as $ldd | $rules[0] as $rules | $ceil[0] as $ceil
+   | $rrp[0] as $rrp | $hub[0] as $hub | $bk[0] as $bk | $ghr[0] as $ghr | $sb[0] as $sb | $hh[0] as $hh | $cit[0] as $cit
+   | {pushed_at:$ts, projects:$pr, alerts_24h:$al, deploys:$dep, pause_flags:$pf, stale_owed:$so, fly:$fly,
     quota:$quota, lanes_down:$ld, lanes_down_detail:$ldd,
     alert_backlog:{deferred_lines:$dl, deferred_families:$df},
     rules:$rules, ceilings:$ceil, remote_results_pending:$rrp, hub:$hub, backups:$bk,
@@ -890,12 +901,41 @@ SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson d
    + (if $hherr == "" then {} else {harness_heads_error:$hherr} end)
    + (if $ghrv == "" then {} else {gh_quota_reserve:($ghrv|tonumber)} end)
    + (if $ghq == "" then {} else (try {gh_quota:($ghq|fromjson)} catch {}) end)')
-# A jq that choked on any --argjson above would leave SNAP empty and push
+SNAP_RC=$?
+
+# fsp_snap_diag <jq rc> — one line that names why the full SNAP is empty (BH-9112):
+# each field that is not valid JSON, the three largest fields with their byte
+# counts, the environment byte count and the jq exit code. Here-strings only,
+# so the diagnosis cannot hit the argv limit it may be reporting.
+fsp_snap_diag() {
+  local pair n v inv="" sizes=""
+  for pair in projects:PROJECTS deploys:DEPLOY pause_flags:PAUSED stale_owed:STALE fly:FLY \
+      expected_boxes:EXP quota:QUOTA lanes_down:LANES_DOWN lanes_down_detail:LANES_DOWN_DETAIL \
+      rules:RULES ceilings:CEIL remote_results_pending:RRP hub:HUB backups:BACKUPS \
+      gh_rest_quota:GHREST standby:SB harness_heads:HH ci_timeout_budget:CIT; do
+    n=${pair%%:*}; v=${pair#*:}; v=${!v-}
+    jq empty <<<"$v" >/dev/null 2>&1 || inv="$inv,$n"
+    sizes="$sizes$n:${#v}"$'\n'
+  done
+  # gh_quota is raw text the filter parses under try, so only its size counts.
+  sizes="${sizes}gh_quota:${#GHQ}"$'\n'
+  inv=${inv#,}
+  printf 'invalid=%s largest=%s env=%s rc=%s' "${inv:-none}" \
+    "$(printf '%s' "$sizes" | sort -t: -k2,2nr | head -3 | paste -sd, -)" \
+    "$(env | wc -c | tr -d ' ')" "$1"
+}
+SNAP_DIAG=""
+if [ -z "$SNAP" ]; then
+  SNAP_DIAG=$(fsp_snap_diag "$SNAP_RC")
+  mkdir -p "$H/logs" 2>/dev/null && echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') full snapshot fell back: $SNAP_DIAG" >> "$H/logs/fleet-status-push.log"
+fi
+# A jq that choked on any input above would leave SNAP empty and push
 # nothing; rebuild the pre-2026-09-14 shape instead, so a bug in the new fields
 # costs the extra state and not the dead-man signal.
-[ -n "$SNAP" ] || SNAP=$(jq -nc --argjson pr "$PROJECTS" --argjson al "${ALERTS24:-0}" --argjson dep "$DEPLOY" \
-  --argjson pf "$PAUSED" --argjson so "$STALE" --argjson fly "$FLY" --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
-  '{pushed_at:$ts, projects:$pr, alerts_24h:$al, deploys:$dep, pause_flags:$pf, stale_owed:$so, fly:$fly}')
+[ -n "$SNAP" ] || SNAP=$(jq -nc --slurpfile pr <(printf '%s' "$PROJECTS") --argjson al "${ALERTS24:-0}" \
+  --slurpfile dep <(printf '%s' "$DEPLOY") --slurpfile pf <(printf '%s' "$PAUSED") --slurpfile so <(printf '%s' "$STALE") \
+  --slurpfile fly <(printf '%s' "$FLY") --arg ts "$(date -u '+%Y-%m-%d %H:%M:%SZ')" \
+  '{pushed_at:$ts, projects:$pr[0], alerts_24h:$al, deploys:$dep[0], pause_flags:$pf[0], stale_owed:$so[0], fly:$fly[0]}')
 
 # 12. ADVISORY RED (BH-9210) — the heads per repo marked red only by advisory
 # failures (a failed run that holds no failed required check) in the last 24 h,
@@ -914,13 +954,27 @@ fi
 # risk (quota is per account, rules per cap), so shed exactly those and push the
 # shape that has always fit. Bounded first (quota trimmed to five fields, rules
 # to 50 rows); this is the backstop for the day that is not enough.
+# BH-9112: largest first. The shed drops the sheddable keys one at a time,
+# biggest first, and stops once the snapshot fits, so one oversized field (a
+# 150 KB rules answer) costs that field and not lanes_down and the hub as well.
+# snapshot_shed names what was dropped. A pad in a field that cannot be shed
+# still drops every sheddable key, as before.
 # TODO (headroom): if the SHED payload ever approaches the cap, drop `last_line`
 # and the per-machine fly detail next.
-if [ "${#SNAP}" -gt 60000 ]; then
-  SHED=$(printf %s "$SNAP" | jq -c 'del(.quota, .quota_error, .gh_quota, .rules, .ceilings, .lanes_down, .lanes_down_detail,
-    .alert_backlog, .remote_results_pending, .hub, .backups, .backup_stale_min,
-    .gh_rest_quota, .gh_quota_reserve, .standby, .standby_error, .harness_heads, .harness_heads_error,
-    .ci_timeout_budget, .ci_timeout_budget_truncated) + {snapshot_trimmed:"size"}' 2>/dev/null)
+# SNAP_CAP is the watchdog's 64000-byte body limit less headroom, unchanged
+# since 2026-09-14. It follows the worker's limit, not an operator choice.
+SNAP_CAP=60000
+if [ "${#SNAP}" -gt "$SNAP_CAP" ]; then
+  SHED=$(printf %s "$SNAP" | jq -c --argjson cap "$SNAP_CAP" '
+    ["quota", "quota_error", "gh_quota", "rules", "ceilings", "lanes_down", "lanes_down_detail",
+     "alert_backlog", "remote_results_pending", "hub", "backups", "backup_stale_min",
+     "gh_rest_quota", "gh_quota_reserve", "standby", "standby_error", "harness_heads", "harness_heads_error",
+     "ci_timeout_budget", "ci_timeout_budget_truncated"] as $keys
+    | . as $s
+    | [$keys[] | select(. as $k | $s | has($k))] | sort_by(-($s[.] | tojson | utf8bytelength))
+    | reduce .[] as $k ({s: $s, shed: []};
+        if (.s | tojson | utf8bytelength) > $cap then .s |= del(.[$k]) | .shed += [$k] else . end)
+    | .s + {snapshot_trimmed: "size", snapshot_shed: .shed}' 2>/dev/null)
   [ -n "$SHED" ] && SNAP="$SHED"
 fi
 [ -n "$URL" ] && { printf %s "$SNAP" | curl -fsS -m 15 -X POST "$URL" -H 'content-type: application/json' --data-binary @- >/dev/null 2>&1; }
@@ -929,8 +983,25 @@ fi
 # from the same push the watchdog does rather than a second, drifting source.
 # Strictly best-effort and strictly AFTER the watchdog push: the dead-man signal
 # is the load-bearing one and must never depend on the console being up.
-"$H/bin/beat.sh" "$(jq -nc --argjson s "$SNAP" --arg rk "fleet:$NOW" \
-  '$s + {kind:"fleet_status", rkey:$rk}')" >/dev/null 2>&1 || true
+# The snapshot goes in on stdin (BH-9112); after the shed the beat's own argv
+# is at most SNAP_CAP plus a few bytes, under MAX_ARG_STRLEN.
+"$H/bin/beat.sh" "$(printf '%s' "$SNAP" | jq -c --arg rk "fleet:$NOW" \
+  '. + {kind:"fleet_status", rkey:$rk}')" >/dev/null 2>&1 || true
+
+# ── THE SNAPSHOT FALLBACK ALERT (BH-9112) ────────────────────────────────────
+# AFTER the push and the beat, like the alerts below. The log line above names
+# every fallback run; ALERTS.log hears of it once per UTC day. The day flag is
+# written first, so a crash in between costs one alert, never a repeat.
+if [ -n "$SNAP_DIAG" ]; then
+  SNAP_FLAG="alerted-fleet-status-snap-fallback-$(date -u +%Y%m%d)"
+  if [ ! -e "$H/flags/$SNAP_FLAG" ]; then
+    # shellcheck source=bin/lib/flags.sh
+    command -v flag_set >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/lib/flags.sh" 2>/dev/null
+    HARNESS="$H" JOBS_HARNESS="$H" flag_set --local-only "$SNAP_FLAG" >/dev/null 2>&1
+    [ -x "$H/bin/alert-line.sh" ] && { "$H/bin/alert-line.sh" --severity warn --id fleet-status-snap-fallback \
+      "[fleet-status-push] full snapshot fell back to the pre-2026-09-14 shape: $SNAP_DIAG" >/dev/null 2>&1 || true; }
+  fi
+fi
 
 # ── THE LEASE ALERT (BH-1000) ────────────────────────────────────────────────
 # DELIBERATELY AFTER the push and the beat: the snapshot already carries the

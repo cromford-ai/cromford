@@ -83,9 +83,16 @@ Every one is fail-open — an absent source degrades the field, never the push.
 
 Size: the worker refuses a body over 64000 bytes with 413, and the push is
 silent, so an oversized snapshot would fire the dead-man it exists to feed.
-`quota` is trimmed and `rules` capped at 50 rows; above 60000 bytes the push
-sheds all eight fields, adds `snapshot_trimmed:"size"`, and sends the shape that
-has always fit.
+`quota` is trimmed and `rules` capped at 50 rows; above 60000 bytes
+(`SNAP_CAP`) the push sheds the 2026-09-14 fields largest first, one at a time,
+until the body fits (BH-9112). It adds `snapshot_trimmed:"size"` and
+`snapshot_shed:[<dropped keys>]`. One oversized field (a 150 KB `rules`) costs
+that field only; a pad in a field that cannot be shed still sheds them all.
+Every fleet-sized value reaches jq through a file descriptor, never argv
+(BH-9112). If the full snapshot still fails, the pre-2026-09-14 shape is
+pushed, `logs/fleet-status-push.log` gets one `full snapshot fell back:
+invalid=… largest=… env=… rc=…` line per run, and ALERTS.log gets one
+`fleet-status-snap-fallback` warn line per UTC day.
 
 ### 2. Command queue + wake-ups (worker -> hub, the missing direction)
 The hub already polls Telegram for the operator's messages; point the same poll (or
