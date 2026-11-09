@@ -48,6 +48,18 @@
 # (status_check_any=). vs_clear_row reads the clearance on a head by the same
 # rule as the queue.
 #
+# BH-9287: WHICH APP WRITES THE STATUS. A lane-run machine's default App is the
+# builders App, which has no "Commit statuses" permission, so every conductor
+# publish there answered 403. A box that holds a STATUS App profile
+# (<env dir>/github-app-status.env, written by fly/lane-run-entrypoint.sh from
+# GH_APP_STATUS_ID + GH_APP_STATUS_PRIVATE_KEY) mints the status write from
+# that profile (vs_status_profile, vs_status_profile_ready). Any other box,
+# the hub included, mints as before, byte for byte.
+# vs_mergify_names <owner/repo> <context> tells the conductor's alert whether
+# the repo's .mergify.yml waits on the context at all (rc 0 yes, 1 no or no
+# file, 75 unreadable); vs_app_name prints the slug of the App that mints
+# here (GET /app, through bin/gh-token.sh --app-slug).
+#
 # vs_lead_desc <verdict-row-json> <desc> (BH-5352) prefixes the description of a
 # row a participant machine wrote (auth=participant) with `lead review by <name>: `.
 #
@@ -91,6 +103,104 @@ vs_clear_row() {
     | if $w == null then "-\t-\t"
       else "\($w.state // "?")\t\($w.updated_at // $w.created_at // "?")\t\(($w.description // "") | gsub("[\t\n]"; " "))" end' \
     "${1:-/nonexistent}" 2>/dev/null || return 2
+}
+
+# vs_status_profile (BH-9287) — the gh-token.sh App profile a status write
+#   mints from on a box that holds it. A contract name shared with
+#   fly/lane-run-entrypoint.sh, which writes env/github-app-status.env, so no
+#   env override (the vs_builder_context precedent).
+vs_status_profile() { printf '%s\n' status; }
+
+# _vs_env_dir — the env dir gh-token.sh reads: harness_env_dir when it is
+#   loaded, else <harness>/env (the gh_auth_armed rule). rc 1 and nothing
+#   printed with no harness root.
+_vs_env_dir() {
+  local root="${_GHAA_H:-${HARNESS:-${H:-}}}"
+  [ -n "$root" ] || return 1
+  if declare -F harness_env_dir >/dev/null 2>&1; then harness_env_dir "$root"; else printf '%s\n' "$root/env"; fi
+}
+
+# vs_status_profile_ready (BH-9287) — rc 0 when this box holds the status
+#   profile: <env dir>/github-app-<vs_status_profile>.env is readable. rc 1
+#   with no harness root (the BH-2613 lib-root contract).
+vs_status_profile_ready() {
+  local d
+  d=$(_vs_env_dir) && [ -n "$d" ] || return 1
+  [ -r "$d/github-app-$(vs_status_profile).env" ]
+}
+
+# vs_app_name (BH-9287) — the slug of the App a status write mints from on
+#   this box (GET /app on its JWT: bin/gh-token.sh [--app status] --app-slug).
+#   rc 1 and nothing printed when the box does not mint or GitHub did not
+#   answer: a name is never guessed.
+vs_app_name() {
+  local h="${_GHAA_H:-${HARNESS:-${H:-}}}" p="" out
+  [ -n "$h" ] && [ -x "$h/bin/gh-token.sh" ] || return 1
+  vs_status_profile_ready && p=$(vs_status_profile)
+  out=$("$h/bin/gh-token.sh" ${p:+--app "$p"} --app-slug 2>/dev/null) || return 1
+  out=$(head -n 1 <<<"$out")
+  [[ $out =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+  printf '%s\n' "$out"
+}
+
+# vs_mergify_names <owner/repo> <context> (BH-9287) — does the repo's
+#   .mergify.yml wait on <context>? rc 0 when a success condition
+#   (check-success, check-success-or-neutral, status-success; `=` or `~=`) in
+#   any section holds <context> as a whole token: bounded on both sides by a
+#   character outside [A-Za-z0-9_-] or the end of the value. A comment line,
+#   a trailing ` # ...` comment, a negated `-check-success=` and a
+#   `check-failure` veto do not count. rc 1 = no such condition, or no
+#   .mergify.yml (404). rc 75 = the file could not be read, or jq/base64 are
+#   missing: the caller treats that as "names it", so an outage never hides
+#   an alert. The read goes through gh_policy_read (the conductor's
+#   per-repo `mergify` cache entry) when it is loaded, else gh_rest.
+vs_mergify_names() {
+  local slug="${1:-}" ctx="${2:-}" t rc=0 body b64 yml
+  [ -n "$slug" ] && [ -n "$ctx" ] || return 75
+  command -v jq >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 || return 75
+  t=$(mktemp "${TMPDIR:-/tmp}/vs-mergify.XXXXXX") || return 75
+  if command -v gh_policy_read >/dev/null 2>&1; then
+    gh_policy_read "$slug" mergify "repos/$slug/contents/.mergify.yml" > "$t" || rc=$?
+  elif command -v gh_rest >/dev/null 2>&1; then
+    gh_rest GET "repos/$slug/contents/.mergify.yml" > "$t" || rc=$?
+  else
+    rc=75
+  fi
+  body=$(cat "$t" 2>/dev/null); rm -f "$t"
+  case "$rc" in
+    0) ;;
+    44) return 1 ;;
+    *) [ "${GH_REST_STATUS:-}" = 404 ] && return 1; return 75 ;;
+  esac
+  b64=$(jq -r '.content // empty' <<<"$body" 2>/dev/null) || return 75
+  [ -n "$b64" ] || return 75
+  yml=$(printf '%s' "$b64" | tr -d '\n\r ' | base64 -d 2>/dev/null) || yml=""
+  [ -n "$yml" ] || yml="$b64"
+  awk -v ctx="$ctx" -v q="'" '
+    function tok(v,   s, i, a, b) {
+      s = v
+      while ((i = index(s, ctx)) > 0) {
+        a = (i == 1) ? "" : substr(s, i - 1, 1)
+        b = substr(s, i + length(ctx), 1)
+        if (a !~ /[-A-Za-z0-9_]/ && b !~ /[-A-Za-z0-9_]/) return 1
+        s = substr(s, i + 1)
+      }
+      return 0
+    }
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      while (match(line, /(^|[^-A-Za-z0-9_])(check-success-or-neutral|check-success|status-success)[[:space:]]*~?=[[:space:]]*/)) {
+        v = substr(line, RSTART + RLENGTH)
+        line = v
+        c = substr(v, 1, 1)
+        if (c == "\"" || c == q) { v = substr(v, 2); i = index(v, c); if (i) v = substr(v, 1, i - 1) }
+        else { sub(/["\047][[:space:]]*$/, "", v); sub(/[[:space:]]+$/, "", v) }
+        if (v != "" && tok(v)) { found = 1; exit }
+      }
+    }
+    END { exit found ? 0 : 1 }' <<<"$yml"
 }
 
 # vs_lead_desc <verdict-row-json> <desc> — BH-5352: the description for the
@@ -145,6 +255,13 @@ vs_publish() {
   command -v gh_rest >/dev/null 2>&1 || { echo "vs_publish: bin/lib/gh-rest.sh is not loaded; $(vs_context) not published on ${sha:0:12}" >&2; return 1; }
   a=(-f "state=$state" -f "context=$(vs_context)" -f "description=${desc:0:140}")
   case "$url" in https://*) a+=(-f "target_url=$url") ;; esac
+  # BH-9287: a box with the status profile mints from it. `local` only then,
+  # so a caller's own GH_APP_PROFILE (exported or not) is untouched otherwise
+  # and is back the moment this returns.
+  if vs_status_profile_ready; then
+    local GH_APP_PROFILE
+    GH_APP_PROFILE=$(vs_status_profile); export GH_APP_PROFILE
+  fi
   if declare -F gh_auth_armed >/dev/null 2>&1 && gh_auth_armed; then
     # BH-8848: an armed box posts as the App or not at all; one re-mint.
     if ! gh_auth_for "$slug" || [[ "${GH_TOKEN:-}" != ghs_* ]]; then

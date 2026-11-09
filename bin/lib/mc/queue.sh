@@ -1409,7 +1409,7 @@ mc_enqueue_mergify() {
     vsnote="the $LR_CTX status could not be published on ${head:0:12} (${vserr:-no reason given}); "
     echo "${vserr:-vs_publish failed on $slug@${head:0:12}}" >&2
     command -v mc_log >/dev/null 2>&1 && mc_log "${vserr:-vs_publish failed on $slug@${head:0:12}} — $url"
-    mc_status_unpublished_alert "$slug" "$url" "$vserr"
+    mc_status_unpublished_alert "$slug" "$url" "$vserr" "$LR_CTX"
   fi
   # >>> stale lead review (BH-8337)
   # This publish is the second lead-verdict success publisher (bin/lead-verdict.sh
@@ -1585,15 +1585,29 @@ mc_queue_inactive_alert() {
   ) 9>"$lock"
 }
 
-# mc_status_unpublished_alert <owner/repo> <pr-url> <why> — ONE alert per repo
-#   per UTC day when mc_enqueue_mergify could not publish the lead-verdict
-#   status (BH-3348). Same lock and ledger shape as mc_queue_inactive_alert. On
-#   a repo whose queue_conditions require the status, every PR the conductor
-#   asks for waits in the queue until a publish succeeds; the usual cause is an
-#   App without "Commit statuses: Read and write" or a token mint that failed.
+# mc_status_unpublished_alert <owner/repo> <pr-url> <why> [<context>] — when
+#   mc_enqueue_mergify could not publish the <context> status (BH-3348;
+#   default vs_context). BH-9287: the repo's .mergify.yml decides
+#   (vs_mergify_names):
+#   - names no success condition on <context>, or there is no .mergify.yml:
+#     ONE `VS_UNPUBLISHED_INFO` conductor log line, no alert, no ledger mark.
+#     No queue waits on that status (project-6: 363 such pages in 20 days).
+#   - names it, or the file could not be read (rc 75, fail toward
+#     visibility): ONE alert per repo per UTC day, the same lock and ledger
+#     shape as mc_queue_inactive_alert. The text names the App that failed
+#     (vs_app_name, GET /app), asked only inside the lock after the ledger
+#     says no alert went out today.
 mc_status_unpublished_alert() {
-  local slug="$1" url="$2" why="${3:-}" mark lock
+  local slug="$1" url="$2" why="${3:-}" ctx="${4:-}" mark lock nrc=0
+  [ -n "$ctx" ] || ctx=$(vs_context 2>/dev/null || echo lead-verdict)
   command -v mc_alert >/dev/null 2>&1 && command -v mc_attempt_has >/dev/null 2>&1 || return 0
+  if command -v vs_mergify_names >/dev/null 2>&1; then vs_mergify_names "$slug" "$ctx" || nrc=$?
+  else nrc=75; fi
+  if [ "$nrc" = 1 ]; then
+    command -v mc_log >/dev/null 2>&1 \
+      && mc_log "VS_UNPUBLISHED_INFO $slug: the $ctx status was not published (${why:-no reason given}); .mergify.yml names no $ctx condition, so no queue waits on it. No alert: $url"
+    return 0
+  fi
   mark="status-unpublished $slug $(date -u +%Y%m%d)"
   lock="${MC_LOCK_DIR:-$MC_H/locks}/merge-conductor-status-unpublished-${slug//\//_}.lock"
   mkdir -p "${lock%/*}" 2>/dev/null
@@ -1601,7 +1615,12 @@ mc_status_unpublished_alert() {
     flock -x 9
     mc_attempt_has "$mark" 2>/dev/null && exit 1
     mc_attempt_put "$mark"
-    mc_alert "$slug" READY "the $(vs_context 2>/dev/null || echo lead-verdict) commit status could not be published (${why:-no reason given}). If this repo's queue_conditions require it, Mergify holds every PR the conductor queues until a publish succeeds: give the hub App \"Commit statuses: Read and write\" or fix its token mint. The next enqueue ask publishes again: $url"
+    local app lead
+    app=$(vs_app_name 2>/dev/null) || app=""
+    [ -n "$app" ] || app="unnamed (GET /app did not answer)"
+    if [ "$nrc" = 0 ]; then lead=".mergify.yml on $slug names $ctx, so "
+    else lead=".mergify.yml on $slug could not be read; if it names $ctx, "; fi
+    mc_alert "$slug" READY "the $ctx commit status could not be published by the $app App (${why:-no reason given}). ${lead}Mergify holds every PR the conductor queues until a publish succeeds. Fix: give the $app App \"Commit statuses: Read and write\", or stage the status App on the lane-run app (GH_APP_STATUS_ID, GH_APP_STATUS_PRIVATE_KEY; docs/notes/2026-11-09-BH-9287-verdict-status-identity.md). The next enqueue ask publishes again: $url"
     exit 0
   ) 9>"$lock"
 }

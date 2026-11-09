@@ -25,6 +25,11 @@
 #   ( set -a; . /etc/harness/env/fly.env; \
 #     printf 'FLY_API_TOKEN_project-6_OS=%s\n' "$FLY_API_TOKEN_project-6_OS" ) \
 #     | flyctl secrets import -a lane-run-mk --stage
+#   # BH-9287: the status App (optional). GH_APP_STATUS_ID and
+#   # GH_APP_STATUS_PRIVATE_KEY (the PEM text) are the hub App's own id and
+#   # key; the entrypoint writes them as App profile `status`, and the
+#   # lead-verdict commit status is minted from that App
+#   # (docs/notes/2026-11-09-BH-9287-verdict-status-identity.md).
 #   # BH-7848: the full list for a project: bin/lane-run-secrets.sh fly-pool
 #   # <project> (and --stage-cmd <app> prints the stdin staging command).
 #   JC=bin/jobs-client.sh

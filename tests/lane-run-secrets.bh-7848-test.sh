@@ -8,15 +8,16 @@
 #   L2  round-trip with the REAL fly/lane-run-entrypoint.sh: every name on the
 #       list has a consumer there or in the lf_app_ready gate, and every
 #       GH_APP_*/FLY_API_TOKEN* variable the entrypoint reads is on the list
-#   R1  fly-pool project-6-os prints exactly the six expanded lines
+#   R1  fly-pool project-6-os prints exactly the eight expanded lines (BH-9287
+#       added the two optional GH_APP_STATUS_* rows)
 #   R2  two projects with one owner: the owner line once, a token line each
 #   R3  placeholder expansion: a.b-c -> A_B_C, owner my-org -> MY_ORG
 #   R4  refused input: rc 2, empty stdout, the line number named for a row
 #   R5  project-6 and project-6-os each expand to their own token name
 #   R6  the real reader over the real list (no fixture list); without the list
 #       it exits 2
-#   S1  --stage-cmd prints one `flyctl secrets import -a lane-run-mk --stage`
-#       and one `# GH_APP_PRIVATE_KEY` line
+#   S1  --stage-cmd prints one `flyctl secrets import -a lane-run-mk --stage`,
+#       one `# GH_APP_PRIVATE_KEY` and one `# GH_APP_STATUS_PRIVATE_KEY` line
 #   S2  the printed command, run against fixture env files and a fake flyctl:
 #       stdin carries the NAME=value lines of every non-file row, argv carries
 #       no value; an empty required variable stops it before any line
@@ -93,9 +94,11 @@ EXP='FLY_API_TOKEN_project-6_OS required fly.env:FLY_API_TOKEN_project-6_OS
 GH_APP_ID required github-app.env:GH_APP_ID
 GH_APP_INSTALLATION_example-org optional github-app.env:GH_APP_INSTALLATION_example-org
 GH_APP_PRIVATE_KEY required file:github-app.pem
+GH_APP_STATUS_ID optional github-app.env:GH_APP_ID
+GH_APP_STATUS_PRIVATE_KEY optional file:github-app.pem
 HARNESS_SECRET required global.env:HARNESS_SECRET
 JOBS_URL required global.env:JOBS_URL'
-[ "$rc" = 0 ] && [ "$(cat "$O")" = "$EXP" ] && ok "R1 fly-pool project-6-os: the six expanded lines" \
+[ "$rc" = 0 ] && [ "$(cat "$O")" = "$EXP" ] && ok "R1 fly-pool project-6-os: the eight expanded lines" \
   || { bad "R1 rc=$rc"; sed 's/^/       /' "$O" "$E"; }
 
 rc=$(run "$O" "$E" fly-pool project-6 project-6-os)
@@ -103,7 +106,7 @@ rc=$(run "$O" "$E" fly-pool project-6 project-6-os)
   && ok "R2 one owner, one installation line; shared names once" || { bad "R2 rc=$rc"; sed 's/^/       /' "$O"; }
 grep -qx 'FLY_API_TOKEN_project-6 required fly.env:FLY_API_TOKEN_project-6' "$O" \
   && grep -qx 'FLY_API_TOKEN_project-6_OS required fly.env:FLY_API_TOKEN_project-6_OS' "$O" \
-  && [ "$(wc -l <"$O")" = 7 ] && ok "R2/R5 a token line for each project (7 lines)" || bad "R2/R5 token lines"
+  && [ "$(wc -l <"$O")" = 9 ] && ok "R2/R5 a token line for each project (9 lines)" || bad "R2/R5 token lines"
 
 rc=$(run "$O" "$E" fly-pool a.b-c)
 [ "$rc" = 0 ] && grep -qx 'FLY_API_TOKEN_A_B_C required fly.env:FLY_API_TOKEN_A_B_C' "$O" \
@@ -172,8 +175,9 @@ printf -- '-----BEGIN FIXTURE KEY-----\nfixture\n-----END FIXTURE KEY-----\n' > 
 export HARNESS_ENV_DIR="$R/env"
 rc=$(run "$O" "$E" --stage-cmd lane-run-mk fly-pool project-6-os)
 [ "$rc" = 0 ] && [ "$(grep -c 'flyctl secrets import -a lane-run-mk --stage$' "$O")" = 1 ] \
-  && [ "$(grep -c '^# GH_APP_PRIVATE_KEY: ' "$O")" = 1 ] && [ "$(wc -l <"$O")" = 2 ] \
-  && ok "S1 one import command and one by-hand line for the PEM" || { bad "S1 rc=$rc"; sed 's/^/       /' "$O" "$E"; }
+  && [ "$(grep -c '^# GH_APP_PRIVATE_KEY: ' "$O")" = 1 ] && [ "$(grep -c '^# GH_APP_STATUS_PRIVATE_KEY: ' "$O")" = 1 ] \
+  && [ "$(wc -l <"$O")" = 3 ] \
+  && ok "S1 one import command and one by-hand line for each PEM" || { bad "S1 rc=$rc"; sed 's/^/       /' "$O" "$E"; }
 cp "$O" "$T/stage.sh"
 
 # S2: run it. The fake flyctl records its argv and stdin.
@@ -190,6 +194,7 @@ rm -f "$T/fly.argv" "$T/fly.stdin"
 WANT_IN="FLY_API_TOKEN_project-6_OS=$VAL
 GH_APP_ID=fixture-app-id-1
 GH_APP_INSTALLATION_example-org=fixture-inst-1
+GH_APP_STATUS_ID=fixture-app-id-1
 HARNESS_SECRET=fixture-harness-secret
 JOBS_URL=https://jobs.example.invalid"
 [ "$src" = 0 ] && [ "$(LC_ALL=C sort "$T/fly.stdin" 2>/dev/null)" = "$WANT_IN" ] \
@@ -204,7 +209,7 @@ LISTN=$(bash "$RD" fly-pool project-6-os | awk '$3 !~ /^file:/ {print $1}' | LC_
 sed -i '/^GH_APP_INSTALLATION_example-org=/d' "$R/env/github-app.env"
 ( unset FLY_API_TOKEN_project-6_OS GH_APP_ID GH_APP_INSTALLATION_example-org JOBS_URL HARNESS_SECRET
   PATH="$FB:$PATH" bash "$T/stage.sh" ) >/dev/null 2>&1
-! grep -q '^GH_APP_INSTALLATION_' "$T/fly.stdin" && [ "$(wc -l <"$T/fly.stdin")" = 4 ] \
+! grep -q '^GH_APP_INSTALLATION_' "$T/fly.stdin" && [ "$(wc -l <"$T/fly.stdin")" = 5 ] \
   && ok "S2 an unset optional variable sends no line" || bad "S2 optional: $(cat "$T/fly.stdin")"
 # A required variable that is empty: no line at all, and the error names it.
 cat > "$R/env/global.env" <<'EOF2'

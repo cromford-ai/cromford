@@ -96,6 +96,14 @@
 # the doorbell used to ask for a PAT. A GET, so the write kill switches do not
 # apply (the --read rule).
 #
+# `--app-slug` prints the App's own slug (BH-9287): GET /app on the JWT,
+# `.slug`, one line, rc 0. rc 1 and NOTHING printed when the App is not
+# configured, jq is missing or GitHub sends no slug, so a caller never names
+# an App it did not hear from. With `--app <profile>` it asks that profile's
+# App. A GET (the --read rule): the write kill switches do not apply, and no
+# token cache or lock is touched. bin/lib/verdict-status.sh (vs_app_name)
+# reads it to name the App in the conductor's status-unpublished alert.
+#
 # `--installation-id <owner/repo>` prints the installation the cached token was
 # minted on, the way --expires-at prints its expiry: bin/fly-pool.sh ships it in
 # the bundle so the #1484 ledger on a builder can name the bucket it spends.
@@ -772,7 +780,7 @@ mint_extra_read() {
 
 PAT_ONLY=0
 XREAD_SET=0; XREAD_CSV=""
-USAGE='usage: gh-token.sh [--app <profile>] [--min-life <sec>|--fresh] [--read|--pat|--extra-read <csv>] <owner/repo> | --expires-at <owner/repo> | --installation-id <owner/repo> | --app-hook | --status [--json] | --warm'
+USAGE='usage: gh-token.sh [--app <profile>] [--min-life <sec>|--fresh] [--read|--pat|--extra-read <csv>] <owner/repo> | --expires-at <owner/repo> | --installation-id <owner/repo> | --app-hook | --app-slug | --status [--json] | --warm'
 JSON_STATUS=0
 # Options come first and are consumed here, so every case below still reads $1 as
 # the subcommand or the slug exactly as it always has.
@@ -832,6 +840,12 @@ case "${1:-}" in
     HOOKJ=$(api_jwt GET /app/hook/config) || exit 1
     printf '%s\t%s\n' "$(printf '%s' "$HOOKJ" | jq -r '.url // ""' 2>/dev/null)" \
       "$(printf '%s' "$APPJ" | jq -r '(.events // []) | join(",")' 2>/dev/null)"
+    exit 0 ;;
+  --app-slug)
+    READ_ONLY=1
+    armed && command -v jq >/dev/null 2>&1 || exit 1
+    APPJ=$(api_jwt GET /app) || exit 1
+    printf '%s' "$APPJ" | jq -er '.slug | select(type == "string" and length > 0)' 2>/dev/null || exit 1
     exit 0 ;;
   --installation-id)
     case "${2:-}" in */*) ;; *) echo "$USAGE" >&2; exit 2 ;; esac

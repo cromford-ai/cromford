@@ -15,3 +15,5 @@ GH_APP_PRIVATE_KEY	required	file:github-app.pem	the App key PEM text; the entryp
 GH_APP_INSTALLATION_<OWNER>	optional	github-app.env:GH_APP_INSTALLATION_<OWNER>	the installation id of the repo owner
 HARNESS_SECRET	required	global.env:HARNESS_SECRET	the lane-fleet ready gate (bin/lane-fleet.sh lf_app_ready)
 JOBS_URL	required	global.env:JOBS_URL	the lane-fleet ready gate (bin/lane-fleet.sh lf_app_ready)
+GH_APP_STATUS_ID	optional	github-app.env:GH_APP_ID	BH-9287: the status App id (the hub App); the entrypoint writes github-app-status.env
+GH_APP_STATUS_PRIVATE_KEY	optional	file:github-app.pem	BH-9287: the status App key PEM text (the hub App); the entrypoint writes it mode 600

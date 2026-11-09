@@ -14,7 +14,11 @@
 #   3. when GH_APP_ID and GH_APP_PRIVATE_KEY (the PEM text) are set, writes the
 #      key to github-app.pem and github-app.env (GH_APP_ID,
 #      GH_APP_PRIVATE_KEY_FILE, every GH_APP_INSTALLATION_* variable), mode 600,
-#      the file bin/gh-token.sh reads;
+#      the file bin/gh-token.sh reads. BH-9287: when GH_APP_STATUS_ID and
+#      GH_APP_STATUS_PRIVATE_KEY are both set, the same for App profile
+#      `status`: github-app-status.pem and github-app-status.env (GH_APP_ID,
+#      GH_APP_PRIVATE_KEY_FILE only), mode 600; bin/lib/verdict-status.sh
+#      mints the commit status from it. Both key variables are then unset;
 #   4. BH-6260 (the operator, 2026-10-17: "definitely let the fly machines have
 #      credentials"): the agent CLI credentials, the same ones a Fly pool
 #      build machine gets (bin/fly-envbundle.sh ships CLAUDE_CODE_OAUTH_TOKEN
@@ -86,7 +90,16 @@ if [ -n "${GH_APP_ID:-}" ] && [ -n "${GH_APP_PRIVATE_KEY:-}" ]; then
   } > "$ENVD/github-app.env" && chmod 600 "$ENVD/github-app.env" \
     || { echo "lane-run-entrypoint: cannot write $ENVD/github-app.env" >&2; exit 78; }
 fi
-unset GH_APP_PRIVATE_KEY
+# BH-9287: the status App profile. No installation line: gh-token.sh unsets
+# GH_APP_INSTALLATION_* for a profile and finds the installation on its JWT.
+if [ -n "${GH_APP_STATUS_ID:-}" ] && [ -n "${GH_APP_STATUS_PRIVATE_KEY:-}" ]; then
+  printf '%s\n' "$GH_APP_STATUS_PRIVATE_KEY" > "$ENVD/github-app-status.pem" && chmod 600 "$ENVD/github-app-status.pem" \
+    || { echo "lane-run-entrypoint: cannot write $ENVD/github-app-status.pem" >&2; exit 78; }
+  printf 'GH_APP_ID=%s\nGH_APP_PRIVATE_KEY_FILE=%s\n' "$GH_APP_STATUS_ID" "$ENVD/github-app-status.pem" > "$ENVD/github-app-status.env" \
+    && chmod 600 "$ENVD/github-app-status.env" \
+    || { echo "lane-run-entrypoint: cannot write $ENVD/github-app-status.env" >&2; exit 78; }
+fi
+unset GH_APP_PRIVATE_KEY GH_APP_STATUS_PRIVATE_KEY
 # %q: a Fly token is `FlyV1 <macaroons>`, with a space, and fly.env is sourced.
 {
   for v in $(compgen -e | grep -E '^FLY_API_TOKEN(_[A-Z0-9_]+)?$'); do printf '%s=%q\n' "$v" "${!v}"; done
