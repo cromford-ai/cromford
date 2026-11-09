@@ -67,7 +67,9 @@ uc U9  performance-8x  16384 1 VM_SIZE=Performance-16x VM_MEMORY_MB=32768
 uc U10 performance-8x  16384 1 VM_SIZE=performance-16x VM_MEMORY_MB=16384
 uc U11 performance-8x  16384 1 VM_SIZE=performance-8x VM_MEMORY_MB=65537
 uc U12 performance-8x  16384 1 VM_SIZE=performance-8x VM_MEMORY_MB=70000
-uc U13 performance-8x  16384 1 VM_SIZE=shared-cpu-8x VM_MEMORY_MB=16384
+# U13: shared-cpu-8x/16384 is a valid pair since BH-9065 (shared class);
+# the refusal case is now a size outside both classes.
+uc U13 performance-8x  16384 1 VM_SIZE=shared-cpu-3x VM_MEMORY_MB=16384
 uc U14 performance-8x  16384 1 VM_SIZE=performance-16x VM_MEMORY_MB=32g
 uc U15 performance-8x  16384 1 "VM_SIZE=performance-8x; rm -rf /" VM_MEMORY_MB=16384
 uc U16 performance-8x  16384 1 VM_SIZE=performance-8x VM_MEMORY_MB=-16384
@@ -189,7 +191,10 @@ reset_case() {
     [ -e "$p" ] && scratch_rm "$p"
   done
   : > "$T/fly.txt"; : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"
-  jq -nc '{ticket_id:"1",key:"BH-1",attempt:1,deferrals:0,deaths:0,enqueued_at:"2026-10-28T00:00:00Z"}' > "$QD/BH-1.json"
+  # stage:"execute" (BH-9065): with no vm_class row a fresh build key is a plan
+  # job on the model class (vm_size_model). The execute job is the compute job
+  # that reads VM_SIZE / VM_MEMORY_MB, the subject of this suite.
+  jq -nc '{ticket_id:"1",key:"BH-1",attempt:1,deferrals:0,deaths:0,enqueued_at:"2026-10-28T00:00:00Z",stage:"execute"}' > "$QD/BH-1.json"
   return 0
 }
 rows() { # rows <size> <mem> -> the settings cache lane_env_apply reads

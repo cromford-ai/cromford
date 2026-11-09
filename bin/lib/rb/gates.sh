@@ -1451,7 +1451,7 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
     # if/elif, not a case: the status map below is the one `case` in this hook
     # (tests/pr-create-failed-owned.bh-614-test.sh pins its arm order).
     if [[ $_tlr == PR_CREATED* || $_tlr == PR_MERGED* ]]; then tl_release "$TL_STATE" pr
-    elif [[ $_tlr == BUILD_DEFERRED* || $_tlr == PLAN_* || $_tlr == DECOMPOSED* || $_tlr == ROLLOUT_FILED* || $_tlr == WEBTASK_QUEUED* ]]; then tl_release "$TL_STATE" skipped
+    elif [[ $_tlr == BUILD_DEFERRED* || $_tlr == PLAN_* || $_tlr == PLANNED* || $_tlr == CAPPED* || $_tlr == DECOMPOSED* || $_tlr == ROLLOUT_FILED* || $_tlr == WEBTASK_QUEUED* ]]; then tl_release "$TL_STATE" skipped
     else tl_release "$TL_STATE" blocked
     fi
     TL_STATE=""; TL_BEAT=""
@@ -1471,6 +1471,9 @@ _job_finish() { # EXIT hook: close the claim with the verdict the RESULT file ca
     # WEBTASK_FAILED reaches `failed` through `*)`.
     WEBTASK_QUEUED*)                      st="done" ;;
     BUILD_DEFERRED*|QUEUED_FLY*|PLAN_BLOCKED*|PLAN_MALFORMED*|PLAN_STALE*) st=parked ;;
+    # BH-9065: a plan hand-off and a soft cap end this machine's part, not the
+    # build: the pool re-offers the key, as it does a deferral.
+    PLANNED*|CAPPED*)                     st=parked ;;
     # Named, not left to `*)` (BH-614): a build that opened no PR is a FAILED row
     # bin/blocked-resolver.sh re-enters, and the word is load-bearing enough (the
     # RESULT ratchet above writes it) to be read here on purpose. The `D` in

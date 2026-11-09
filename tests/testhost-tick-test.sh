@@ -154,9 +154,11 @@ reset
 run
 [ "$RC" = 0 ] && ok || bad "2e a first tick with no row exited $RC"
 case "$(calls)" in *"machine stop"*|*"machine start"*) bad "2f the first tick moved the machine" ;; *) ok ;; esac
-LU=$(cat "$FIX/settings/testhost.last_used" 2>/dev/null)
+# BH-9065: the clock is per machine, so the tick starts the machine's OWN row
+# (testhost.last_used.<mid>), not the shared one.
+LU=$(cat "$FIX/settings/testhost.last_used.873eddb0433018" 2>/dev/null)
 [ -n "$LU" ] && [ "$LU" -ge "$NOW" ] 2>/dev/null && ok \
-  || bad "2g a missing row left the clock unstarted ('$LU') — the host would never be stopped"
+  || bad "2g a missing row left the clock unstarted ('$LU' in testhost.last_used.873eddb0433018) — the host would never be stopped"
 
 # ── 3. idle past the window: stop, and record what the machine now is ───────
 reset; stamp "$((NOW - 3600))"   # an hour idle, window 30 minutes
@@ -226,10 +228,11 @@ run
 case "$(calls)" in *"machine stop"*) bad "10a a host with 35 live runs was stopped because a row said idle" ;; *) ok ;; esac
 case "$(calls)" in *"ssh console"*) ok ;; *) bad "10b the tick never asked the machine what was running: $(calls)" ;; esac
 case "$OUT" in *BUSY*) ok ;; *) bad "10c the tick did not say why it left the host alone: $OUT" ;; esac
-# and it repairs the bookkeeping for the runner that could not write it
-LU=$(cat "$FIX/settings/testhost.last_used" 2>/dev/null)
+# and it repairs the bookkeeping for the runner that could not write it, on
+# the probed machine's own clock (BH-9065: testhost.last_used.<mid>)
+LU=$(cat "$FIX/settings/testhost.last_used.873eddb0433018" 2>/dev/null)
 [ -n "$LU" ] && [ "$LU" -ge "$NOW" ] 2>/dev/null && ok \
-  || bad "10d a busy host did not refresh testhost.last_used ('$LU') — the same stale row would try again in five minutes"
+  || bad "10d a busy host did not refresh testhost.last_used.873eddb0433018 ('$LU') — the same stale row would try again in five minutes"
 
 # A probe that cannot answer is busy, never idle.
 reset; stamp "$((NOW - 7200))"; : > "$FIX/probe-fails"

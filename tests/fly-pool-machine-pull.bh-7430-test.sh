@@ -523,7 +523,11 @@ if [ -n "$BASE" ] && git -C "$DIR" show "$BASE:bin/fly-pool.sh" > "$T/base-fly-p
   run_pool "$T/base-fly-pool.sh" -- PA_NAME=max3
   cat "$T/fly.txt" "$T/ssh.txt" "$T/sleep.txt" > "$T/shim.base"
   reset_case 1; seed_fixtures
-  run_pool -- POOL_MACHINE_PULL=0 PA_NAME=max3
+  # POOL_MACHINE_SOFT_CAP_S=0 and VM_CLASS=build=compute (BH-9065): the soft
+  # cap adds soft_cap_s to the pushed job.json, and the fallback class map
+  # launches a fresh build key's plan job on shared-cpu-2x with stage:"plan".
+  # Neither is this knob's subject. Off, the argv and the job are the base's.
+  run_pool -- POOL_MACHINE_PULL=0 POOL_MACHINE_SOFT_CAP_S=0 VM_CLASS=build=compute PA_NAME=max3
   cat "$T/fly.txt" "$T/ssh.txt" "$T/sleep.txt" > "$T/shim.head"
   [ -s "$T/shim.base" ] && ok || bad "B1 precondition: the base run recorded nothing"
   if diff <(norm "$T/shim.base") <(norm "$T/shim.head") >/dev/null; then ok; else

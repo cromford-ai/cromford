@@ -51,6 +51,13 @@
 // refused-at-claim ...`. The hub reads that row as no-capacity, not as a
 // machine failure (mc_fly_stale_for). No other claim and no other row changes.
 //
+// The claim takes an optional `exclude_lanes` (BH-9065), the shape of
+// `lanes`: a row of one of those lanes is not claimed and stays `queued`,
+// attempts unchanged. REFUSED_SQL does not read it (a skip_prefixes refusal
+// ends rows exactly as before). A fleet machine sends
+// the lanes whose catalog/lanes.d file declares `machine`, so their runs wait
+// for the lane machine bin/lane-fleet.sh starts for them.
+//
 // Fleet groups (BH-7434, lib/lane-fleet-groups.js). A machine of a group
 // sends `only_prefixes` (same shape as skip_prefixes): it claims only a row
 // whose `project || '.'` starts with one of them, so `project-6-os.` names
@@ -137,7 +144,9 @@ const LIVE = "(status='queued' OR (status='claimed' AND lease_until < ?2))";
 // claim binds one of the two, never both) ?13 the project keys a "lane|*" key
 // does not cover, or NULL ?14 the dedicated keys that fall back, or NULL ?15
 // their fallback cutoff (now - lane_run.group_fallback_s), or NULL (BH-7716:
-// a box key may be "lane|*", lib/lane-box-placement.js boxMatch). The subquery spells LIVE as a
+// a box key may be "lane|*", lib/lane-box-placement.js boxMatch) ?16
+// exclude_lanes JSON array or NULL (BH-9065: a fleet machine never takes the
+// run of a lane that has its own lane machine). The subquery spells LIVE as a
 // status IN list and names the index: with table statistics (ANALYZE, 20,000
 // rows) SQLite planned a SCAN of lane_runs for the OR form of LIVE, and for
 // the IN form without INDEXED BY. The skip prefix test is substr, not LIKE:
@@ -147,6 +156,7 @@ export const CLAIM_SQL = `UPDATE lane_runs SET status='claimed', claimed_by=?1, 
   WHERE id=(SELECT id FROM lane_runs INDEXED BY idx_lane_runs_claim
             WHERE status IN ('queued','claimed') AND (status='queued' OR lease_until < ?2)
             AND (?4 IS NULL OR lane IN (SELECT value FROM json_each(?4)))
+            AND (?16 IS NULL OR lane NOT IN (SELECT value FROM json_each(?16)))
             AND (?7 IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(?7) AS s
                                            WHERE substr(project, 1, length(s.value)) = s.value))
             AND (?8 IS NULL OR EXISTS (SELECT 1 FROM json_each(?8) AS o
@@ -366,6 +376,15 @@ export const routes = [
         }
         lanes = JSON.stringify(l);
       }
+      // BH-9065: the lanes a fleet machine must leave to their lane machines.
+      let excl = null;
+      if (body.exclude_lanes !== undefined && body.exclude_lanes !== null) {
+        const l = body.exclude_lanes;
+        if (!Array.isArray(l) || l.length > LANES_FILTER_MAX || !l.every((x) => laneName(x) === x)) {
+          return json(400, { error: `exclude_lanes must be an array of at most ${LANES_FILTER_MAX} lane names` });
+        }
+        if (l.length > 0) excl = JSON.stringify(l);
+      }
       let prefer = null;
       if (body.prefer !== undefined && body.prefer !== null) {
         const p = body.prefer;
@@ -414,7 +433,7 @@ export const routes = [
       }
       const lease = isoPlusSeconds(t, await leaseSeconds(env));
       const row = await env.DB.prepare(CLAIM_SQL).bind(machine, t, lease, lanes, prefer, cutoff, skip,
-        fb.only, fb.gskip, fb.cutoff, boxOnly, boxSkip, ex, fbk, fb.fcut).first();
+        fb.only, fb.gskip, fb.cutoff, boxOnly, boxSkip, ex, fbk, fb.fcut, excl).first();
       if (!row) return new Response(null, { status: 204 });
       // BH-7305: the harness sha this attempt runs, or NULL. A separate PK write
       // so CLAIM_SQL stays as it is; fail-open, the sha is a record, not a gate.

@@ -312,6 +312,15 @@ State lives in D1 settings rows, not in a file on one box: `testhost.last_used`
 (epoch), `testhost.machine_state`, and optionally `testhost.machine_id` to pin
 which machine in the app the lane owns.
 
+Since BH-9065 every machine of the app has its own idle clock,
+`testhost.last_used.<mid>`. `ensure` stamps the machine it picks or starts (and
+the shared row), the busy refresh stamps the probed machine, and `idle <mid>`
+reads that machine's row. The shared `testhost.last_used` row is read only for a
+machine with no row of its own. So one gate run no longer keeps every host
+started: each host stops after its OWN `TESTHOST_IDLE_STOP_MIN` (default 10,
+min 10) idle minutes, never below `TESTHOST_MIN_STARTED` started hosts (default
+0), and `ensure` starts one stopped host when none is started.
+
 ### The stop needs two witnesses
 
 This is the part to understand before changing anything here.

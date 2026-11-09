@@ -60,8 +60,32 @@ PY
   printf '%s\n' "$out"
 }
 
+# fly_size_split <vm-size> -> prints '<cpu_kind> <cpus>' for a Fly size name
+# (performance-8x -> 'performance 8', shared-cpu-2x -> 'shared 2'); rc 1 and
+# nothing on stdout for any other name (BH-9065).
+fly_size_split() {
+  case "${1:-}" in
+    performance-[0-9]*x) local n="${1#performance-}"; n="${n%x}" ;;
+    shared-cpu-[0-9]*x)  local n="${1#shared-cpu-}";  n="${n%x}" ;;
+    *) return 1 ;;
+  esac
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  case "$1" in performance-*) echo "performance $n" ;; *) echo "shared $n" ;; esac
+}
+
+# fly_mid_billed <ledger> <mid> -> rc 0 when the ledger already holds a row for
+# <mid> under any key (BH-9065: the orphan sweep must not bill a machine twice).
+fly_mid_billed() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ -s "$1" ] || return 1
+  awk -F'\t' -v m="$2" '$1==m{f=1; exit} END{exit !f}' "$1" 2>/dev/null
+}
+
 # fly_cost_row_once <csv> <ledger> <project> <box> <mid> <key> <job_id> <run_id>
 #                   <start_ts> <end_epoch> <cpu_kind> <cpus> <mem_mb> <prices>
+#                   [estimated]
+# A 15th argument `estimated` (BH-9065) marks a row whose size came from the
+# pool's own spawn record, or whose interval came from Fly's timestamps rather
+# than a tracked job: a priced row's note is then `fly:<mid>:state=estimated`.
 # Appends ONE 26-column infra row for a pool machine's job to <csv> (BH-4019,
 # split child 2 of #3989), at most once per (mid, key, start_ts): that triple is
 # the <ledger> line, matched whole under flock on <ledger>.lock. Row first, then
@@ -72,7 +96,7 @@ PY
 fly_cost_row_once() {
   local csv="${1:-}" ledger="${2:-}" proj="${3:-}" box="${4:-}" mid="${5:-}" key="${6:-}"
   local job="${7:-}" run="${8:-}" start="${9:-}" end="${10:-}" kind="${11:-}" cpus="${12:-}"
-  local mem="${13:-}" prices="${14:-}" s0 secs
+  local mem="${13:-}" prices="${14:-}" est="${15:-}" s0 secs
   [ -n "$csv" ] && [ -n "$ledger" ] && [ -n "$mid" ] && [ -n "$key" ] && [ -n "$start" ] || return 2
   [[ "$end" =~ ^[0-9]+$ ]] || return 2
   s0=$(date -u -d "$start" +%s 2>/dev/null) || return 2
@@ -87,6 +111,7 @@ fly_cost_row_once() {
     if read -r rate src < <(fly_price_per_s "$prices" "$kind" "$cpus" "$mem") && [ -n "$rate" ]; then
       cost=$(awk -v s="$secs" -v r="$rate" 'BEGIN{printf "%.6f", s*r}')
       note="fly:$mid:prices=$src"
+      [ "$est" = estimated ] && note="fly:$mid:state=estimated"
     else
       cost=""; note="UNPRICED:fly-size-unknown:$mid"
     fi

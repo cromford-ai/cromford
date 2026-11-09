@@ -1,0 +1,12 @@
+{
+  "env": "VM_SIZE_MODEL",
+  "type": "string",
+  "default": "shared-cpu-2x",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-vm-size.sh",
+  "note": "BH-9065. The Fly guest size of a pool machine whose job kind VM_CLASS maps to `model` (a model session: lead review, re-review). Per-project row `lane.fly-pool.<project>.vm_size_model`. Allowed: performance-1x/2x/4x/8x/16x or shared-cpu-1x/2x/4x/8x (exact). A value outside the list, or a pair whose VM_MEMORY_MB_MODEL does not fit the size, launches performance-8x/16384 (class compute) and logs one `VM size row refused` line per spawn. Read only when VM_CLASS names a model kind."
+}

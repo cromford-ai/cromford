@@ -70,9 +70,24 @@
 #                a failed reuse destroys the machine (not found = gone); a run
 #                with no id records nothing and writes one ALERTS line per UTC
 #                day. The next tick retries.
+#   7b. lane     BH-9065: a queued lane whose catalog/lanes.d/<lane>.json has
+#                "machine": {"cpu": "shared"|"performance", "size": <size>}
+#                (validated by bin/lanes-build.sh) gets ONE machine of that
+#                size: `machine run --rm --vm-size <size> --metadata
+#                lane_machine=<lane> -e LANE_RUN_LANES=<lane>`, memory =
+#                vm_memory_mb when it fits the size, else the size's least.
+#                Not in a failed-start hold, at max_machines or in a box group.
+#                A lane machine is not in LIVE, INFLIGHT, the floor or the
+#                reuse list; max_machines counts it. The declared lanes are not
+#                in the W and WORK lf_decide reads, so the fleet's own size
+#                starts nothing for them.
 #   8. stop      last cost rows first, then `machine stop`, then the row is
 #                marked stopped. A failed stop changes no row and writes one
 #                ALERTS line per machine per UTC day.
+#   8b. lane     a lane machine Fly lists started, not busy, not in flight,
+#       stop     idle past idle_stop_s, whose lane has no queued run: cost
+#                rows, `machine stop` (--rm: Fly destroys it), row stopped. No
+#                floor holds it. At most 20 per tick.
 #   9. cost      for each Fly `started` machine with a row: POST
 #                /api/lane-fleet/cost through the current minute, priced by
 #                fly_price_per_s on the listing's config.guest (unknown size =
@@ -386,6 +401,34 @@ case "$W" in none) ;; *[!0-9]*|'') lf_read_fail stats "bad wait '$W'" ;; esac
 WORK=$(jq -r '[.lanes[] | select((.run_p50_s | type) == "number" and (.queued | type) == "number")
   | .queued * .run_p50_s] | add // 0 | floor | tostring' "$STATS")
 case "$WORK" in *[!0-9]*|'') lf_read_fail stats "bad work '$WORK'" ;; esac
+# Lane machines (BH-9065): a queued lane whose catalog/lanes.d/<lane>.json
+# declares `machine` gets its own machine of that size (step 7b). LM_DECL is
+# one "<lane>\t<size>" line per such lane. Its queue is not the fleet's work:
+# WG and WORKG are W and WORK without those lanes, and only lf_decide reads
+# them. A key bin/lanes-build.sh would refuse is one log line and the fleet size.
+LM_DECL=""
+while IFS= read -r ln; do
+  [[ "$ln" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] && [ -f "$H/catalog/lanes.d/$ln.json" ] || continue
+  lsz=$(jq -r 'if has("machine") | not then "" else .machine
+      | if type == "object" and (.size | type) == "string"
+          and ((.cpu == "shared" and (.size | test("^shared-cpu-(1|2|4|8)x$")))
+            or (.cpu == "performance" and (.size | test("^performance-(1|2|4|8|16)x$"))))
+        then .size else "invalid" end end' "$H/catalog/lanes.d/$ln.json" 2>/dev/null) || lsz=invalid
+  case "$lsz" in
+    "") ;;
+    invalid) lf_log "lane $ln: machine key in catalog/lanes.d/$ln.json is not valid; its runs use the fleet size $SIZE" ;;
+    *) LM_DECL+="$ln"$'\t'"$lsz"$'\n' ;;
+  esac
+done < <(jq -r '.lanes[] | select((.queued | type) == "number" and .queued > 0) | .lane' "$STATS")
+LM_LANES=$(printf '%s' "$LM_DECL" | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")[0])')
+WG=$W; WORKG=$WORK
+if [ "$LM_LANES" != "[]" ]; then
+  WG=$(jq -r --argjson d "$LM_LANES" '[.lanes[] | select(.lane as $l | $d | index($l) | not)
+    | .oldest_queued_wait_s | select(type == "number")] | max // "none" | tostring' "$STATS")
+  WORKG=$(jq -r --argjson d "$LM_LANES" '[.lanes[] | select(.lane as $l | $d | index($l) | not)
+    | select((.run_p50_s | type) == "number" and (.queued | type) == "number")
+    | .queued * .run_p50_s] | add // 0 | floor | tostring' "$STATS")
+fi
 if [ -n "$GJ" ]; then
   # Fallback (BH-7434): past group_fallback_s the worker lets lane-run claim
   # this group's rows; say so once per UTC day.
@@ -424,6 +467,9 @@ jq -e 'type == "array"' "$LIST" >/dev/null 2>&1 || lf_read_fail fly-list "not a 
 command -v lfi_log_images >/dev/null 2>&1 && lfi_log_images "$LIST" "$W_DIR/images.tsv" lf_log
 _jobs_req GET "/api/lane-fleet/machines$LF_MQ" > "$ROWS" || lf_read_fail machines "http ${JOBS_HTTP:-none}"
 jq -e '.machines | type == "array"' "$ROWS" >/dev/null 2>&1 || lf_read_fail machines "no machines array"
+# The lane machines (BH-9065): every listed machine whose metadata names a
+# lane (`--metadata lane_machine=<lane>`, step 7b), in any state.
+LM_MIDS=$(jq -c '[.[] | select((.config.metadata.lane_machine // "") | type == "string" and length > 0) | .id]' "$LIST")
 
 # lf_record <mid> <state> [started_at|stopped_at] [cpu_kind cpus memory_mb] [failed] [harness sha]
 #   the third field is started_at for starting|started, stopped_at otherwise.
@@ -570,11 +616,18 @@ INFL_IDS=$(jq -c --slurpfile l "$LIST" --argjson fl "$FAILED_IDS" '
   | [ (.machines[] | select(.in_flight == true and (($fs[.machine_id] // "absent") | IN("stopped","destroyed") | not)) | .machine_id),
       ($l[0][] | select(.state == "created" or .state == "starting") | .id) ]
   | map(select(. as $i | $fl | index($i) | not)) | unique' "$ROWS")
+# LIVE, INFLIGHT and the stop candidates are the fleet's own machines: a
+# lane machine (BH-9065) is counted apart as LM_N (not stopped, not failed),
+# which max_machines still counts.
+LM_N=$(jq --argjson lm "$LM_MIDS" --argjson fl "$FAILED_IDS" '[.[] | select(.id as $i | ($lm | index($i)) and ($fl | index($i) | not))
+  | select(.state | IN("created", "starting", "started"))] | length' "$LIST")
+INFL_IDS=$(jq -c --argjson lm "$LM_MIDS" 'map(select(. as $i | $lm | index($i) | not))' <<<"$INFL_IDS")
+FLY_STARTED_G=$(jq -c --argjson lm "$LM_MIDS" 'map(select(. as $i | $lm | index($i) | not))' <<<"$FLY_STARTED")
 INFLIGHT=$(( $(jq 'length' <<<"$INFL_IDS") + LOST ))
-LIVE=$(jq --argjson inf "$INFL_IDS" --argjson fl "$FAILED_IDS" '[.[] | select(. as $i | ($inf | index($i) | not) and ($fl | index($i) | not))] | length' <<<"$FLY_STARTED")
+LIVE=$(jq --argjson inf "$INFL_IDS" --argjson fl "$FAILED_IDS" '[.[] | select(. as $i | ($inf | index($i) | not) and ($fl | index($i) | not))] | length' <<<"$FLY_STARTED_G")
 LIVE=$(( LIVE - LOST )); [ "$LIVE" -ge 0 ] || LIVE=0
 # The stop candidates: rows Fly reports `started`.
-CANDS=$(jq -c --argjson fs "$FLY_STARTED" --argjson fl "$FAILED_IDS" '[.machines[] | select(.machine_id as $i | ($fs | index($i)) and ($fl | index($i) | not))]' "$ROWS")
+CANDS=$(jq -c --argjson fs "$FLY_STARTED_G" --argjson fl "$FAILED_IDS" '[.machines[] | select(.machine_id as $i | ($fs | index($i)) and ($fl | index($i) | not))]' "$ROWS")
 
 # lf_volume_ready — the box group's volume exists, else ONE create (BH-7716).
 # rc 1 = a failed list or create: no machine run this tick, one ALERTS line per
@@ -599,17 +652,75 @@ lf_volume_ready() {
   lf_log "volume $LF_VOL: created ${gb} GB in $rg"
 }
 
+# Every start is recorded at the tick's decision time, before `machine start`
+# or `machine run`, never at the POST time: a machine that claims a run
+# before the POST lands still counts that claim (re-review finding 2).
+DECIDED_AT=$(date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+
+# lf_lane_mem <size> <mem> — <mem> when it fits <size> under Fly's guest
+# limits (performance: a multiple of 1024 MB, 2048..8192 per CPU; shared: a
+# multiple of 256 MB, 256..2048 per CPU, as bin/lib/pool-vm-size.sh), else
+# the size's smallest memory. Not a tunable: flyctl refuses any other pair.
+lf_lane_mem() {
+  local c=${1##*-} step=1024 lo=2048 hi=8192
+  c=${c%x}
+  case "$1" in shared-cpu-*) step=256 lo=256 hi=2048 ;; esac
+  if [ $(( $2 % step )) = 0 ] && [ "$2" -ge $(( lo * c )) ] && [ "$2" -le $(( hi * c )) ]; then printf '%s' "$2"
+  else printf '%s' $(( lo * c )); fi
+}
+
+# ---- lane machines (BH-9065) ------------------------------------------------
+# 7b. Each declared lane with a queued run and no lane machine of its own
+# (created, starting or started) gets ONE `machine run` of its size, tagged
+# --metadata lane_machine=<lane> and -e LANE_RUN_LANES=<lane>, with --rm so
+# Fly destroys it once it stops: it is never reused as a fleet machine, and no
+# fleet machine is reused for it (a reuse keeps its first size). No start in a
+# failed-start hold, at max_machines, or in a box group (its volume holds one
+# machine). The fleet's own start below reads WG/WORKG, so it starts nothing
+# for a declared lane.
+LM_STARTED=""
+if [ -n "$LM_DECL" ] && [ "$HOLD" = 0 ] && [ -z "$LF_BOX" ]; then
+  while IFS=$'\t' read -r ln lsz; do
+    [ -n "$ln" ] || continue
+    if jq -e --arg l "$ln" 'any(.[]; (.config.metadata.lane_machine // "") == $l and (.state | IN("created", "starting", "started")))' "$LIST" >/dev/null; then
+      continue
+    fi
+    if [ "$MAX" -gt 0 ] && [ $(( LIVE + INFLIGHT + LM_N )) -ge "$MAX" ]; then
+      lf_log "lane $ln: at max_machines $MAX; no lane machine this tick"; break
+    fi
+    lmem=$(lf_lane_mem "$lsz" "$MEM")
+    LSHA=""; command -v lfi_image_commit >/dev/null 2>&1 && LSHA=$(lfi_image_commit "$LIST" "$IMAGE")
+    LF_SHA_ARGS=(); [ -z "$LSHA" ] || LF_SHA_ARGS=(--metadata "harness_sha=$LSHA" -e "HARNESS_SHA=$LSHA")
+    out=$(timeout 180 "$FLY" machine run "$IMAGE" --app "$LF_APP" --detach --restart no --rm \
+            --vm-size "$lsz" --vm-memory "$lmem" --metadata "lane_machine=$ln" -e LANE_RUN=1 -e "LANE_RUN_LANES=$ln" \
+            ${LF_GENV[@]+"${LF_GENV[@]}"} ${LF_SHA_ARGS[@]+"${LF_SHA_ARGS[@]}"} 2>&1)
+    mid=$(printf '%s\n' "$out" | sed -n 's/.*[Mm]achine ID:[[:space:]]*\([0-9a-z]\{8,32\}\).*/\1/p' | head -1)
+    if [ -z "$mid" ]; then
+      lf_log "lane $ln: machine run gave no Machine ID: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+      lf_alert start "flyctl machine run in $LF_APP (lane $ln, $lsz) gave no machine id; nothing recorded, the next tick retries"
+      break
+    fi
+    lkind=""; lcpus=""
+    [[ "$lsz" =~ ^(shared-cpu|performance)-([0-9]+)x$ ]] && { lkind=${BASH_REMATCH[1]%-cpu}; lcpus=${BASH_REMATCH[2]}; }
+    lf_record "$mid" starting "$DECIDED_AT" "$lkind" "$lcpus" "$lmem" "" "$LSHA" || {
+      lf_log "record of start $mid failed (http ${JOBS_HTTP:-none}); Fly's state holds the next tick back"
+      lf_alert record "machine $mid started but its row was not written (http ${JOBS_HTTP:-none})"; }
+    lf_log "lane $ln: start $mid $lsz/${lmem}MB: machine run image=$IMAGE"
+    LM_N=$((LM_N + 1)); LM_STARTED="$LM_STARTED,$mid"
+  done <<<"$LM_DECL"
+fi
+
 # ---- decide -----------------------------------------------------------------
-read -r DEC N WHY <<<"$(lf_decide "$W" "$LIVE" "$INFLIGHT" "$FLOOR" "$UPWAIT" "$MAX" "$HOLD" "$WORK" "$TARGET" "$MAXSTARTS")"
+# max_machines counts the lane machines; 0 stays "no ceiling".
+MAXG=$MAX; [ "$MAX" -gt 0 ] && MAXG=$(( MAX - LM_N ))
+if [ "$MAX" -gt 0 ] && [ "$MAXG" -le 0 ]; then DEC=none; N=at-max; WHY=""
+else read -r DEC N WHY <<<"$(lf_decide "$WG" "$LIVE" "$INFLIGHT" "$FLOOR" "$UPWAIT" "$MAXG" "$HOLD" "$WORKG" "$TARGET" "$MAXSTARTS")"; fi
 [ "$DEC" = start ] || { WHY="$N${WHY:+ $WHY}"; N=0; }
 ACTION="none $WHY"
 STOPPED=""
 if [ "$DEC" = start ]; then
-  # Every start is recorded at the tick's decision time, before `machine start`
-  # or `machine run`, never at the POST time: a machine that claims a run
-  # before the POST lands still counts that claim (re-review finding 2).
-  DECIDED_AT=$(date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
-  mapfile -t REUSES < <(jq -r '[.[] | select(.state == "stopped") | .id] | sort | .[]' "$LIST")
+  # A lane machine is never reused as a fleet machine (BH-9065).
+  mapfile -t REUSES < <(jq -r --argjson lm "$LM_MIDS" '[.[] | select(.state == "stopped" and (.id as $i | $lm | index($i) | not)) | .id] | sort | .[]' "$LIST")
   kind=""; cpus=""
   [[ "$SIZE" =~ ^(shared-cpu|performance)-([0-9]+)x$ ]] && { kind=${BASH_REMATCH[1]%-cpu}; cpus=${BASH_REMATCH[2]}; }
   STARTED=""; K=0; RI=0; FAILWHY=""
@@ -685,9 +796,30 @@ elif [ "$W" = none ]; then
   fi
 fi
 
+# ---- lane machine stop (BH-9065) --------------------------------------------
+# 8b. A lane machine Fly lists `started`, not busy, not in flight, idle past
+# idle_stop_s, whose lane has no queued run: last cost rows, `machine stop`
+# (--rm: Fly destroys it), row stopped. The warm floor never holds one.
+LM_STOPPED=""
+while IFS=$'\t' read -r mid sidle; do
+  [ -n "$mid" ] || continue
+  ln=$(jq -r --arg m "$mid" '.[] | select(.id == $m) | .config.metadata.lane_machine' "$LIST" | head -1)
+  jq -e --arg l "$ln" 'index($l)' <<<"$LM_LANES" >/dev/null && continue
+  lf_cost "$mid"
+  if out=$(timeout 120 "$FLY" machine stop "$mid" -a "$LF_APP" 2>&1); then
+    lf_record "$mid" stopped || lf_log "record of stop $mid failed (http ${JOBS_HTTP:-none})"
+    lf_log "lane $ln: stop $mid idle=$sidle (no queued run of the lane)"; LM_STOPPED="$LM_STOPPED $mid"
+  else
+    lf_log "machine stop $mid failed: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+    lf_alert "stop-$mid" "machine stop $mid in $LF_APP failed; the next tick retries"
+  fi
+done < <(jq -r --argjson lm "$LM_MIDS" --argjson fs "$FLY_STARTED" --argjson fl "$FAILED_IDS" --argjson t "$IDLE" '
+  .machines[] | select(.machine_id as $i | ($lm | index($i)) and ($fs | index($i)) and ($fl | index($i) | not))
+  | select(.busy != true and .in_flight != true and ((.idle_s // 0) > $t)) | [.machine_id, (.idle_s | tostring)] | @tsv' "$ROWS" | head -20)
+
 # ---- cost -------------------------------------------------------------------
 while read -r mid; do
-  [ -n "$mid" ] && [ "$mid" != "$STOPPED" ] && lf_cost "$mid"
+  [ -n "$mid" ] && [ "$mid" != "$STOPPED" ] && [[ " $LM_STOPPED " != *" $mid "* ]] && lf_cost "$mid"
 done < <(jq -r --argjson fl "$FAILED_IDS" '.[] | select(. as $i | $fl | index($i) | not)' <<<"$FLY_STARTED" | head -500)
 
 MAXS=$MAX; [ "$MAX" = 0 ] && MAXS=none

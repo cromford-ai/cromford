@@ -33,7 +33,7 @@
 queue_row_job_file() {
   local project="${1:-}" dest="${2:-}" key="${3:-}" ticket="${4:-}" attempt="${5:-}" meta="${6:-}"
   local h="${HARNESS:-/root/harness}" tag="${QRJ_TAG:-fly-dispatch/${1:-}}"
-  local ts def sb hf fs rb bad bf bv dth tmp brs cb kd rr="" lr="" cp="" fx=""
+  local ts def sb hf fs rb bad bf bv dth tmp brs cb kd rr="" lr="" cp="" fx="" st="" cbr=""
   [ -n "$project" ] && [ -n "$dest" ] && [ -n "$key" ] || return 1
   ts=$(date -u '+%Y-%m-%d %H:%M:%SZ')
   case "${ticket:-}" in -) ticket="" ;; esac
@@ -79,6 +79,12 @@ queue_row_job_file() {
     # remote head. It reaches `git` on the machine as TARGET_BRANCH, so a value
     # outside the stack_base charset is REFUSED, not dropped: a build that lost
     # it would push over the same diverged branch again.
+    # `stage` and `cap_brief` (BH-9065): the pool's re-offer after a plan
+    # hand-off (stage:"execute") or a soft cap (the capped machine's brief).
+    # A stage outside plan|execute drops to "no field": a whole build.
+    st=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then (.stage // "") else "" end' 2>/dev/null)
+    case "${st:-}" in plan|execute) ;; *) st="" ;; esac
+    cbr=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then (.cap_brief // "") else "" end' 2>/dev/null)
     cb=$(printf '%s' "${meta:-}" | jq -r 'if type == "object" then (.continue_branch // "") else "" end' 2>/dev/null)
     case "${cb:-}" in
       *[!A-Za-z0-9._/-]*)
@@ -177,7 +183,10 @@ queue_row_job_file() {
   jq -nc --arg t "$ticket" --arg k "$key" --argjson a "$attempt" --argjson d "$def" \
      --arg ts "$ts" --arg sb "${sb:-}" --arg hf "${hf:-false}" --arg rb "${rb:-}" \
      --arg dx "${dth:-}" --arg fs "${fs:-false}" --arg rbd "${brs:-false}" --arg cb "${cb:-}" --arg rr "${rr:-}" --arg lr "${lr:-}" --arg cp "${cp:-}" --arg fx "${fx:-}" \
+     --arg st "${st:-}" --arg cbr "${cbr:-}" \
        '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,enqueued_at:$ts,source:"db"}
+        + (if $st == "" then {} else {stage:$st} end)
+        + (if $cbr == "" then {} else {cap_brief:$cbr} end)
         + (if $sb == "" then {} else {stack_base:$sb} end)
         + (if $cb == "" then {} else {continue_branch:$cb} end)
         + (if $hf == "true" then {hotfix:true} else {} end)

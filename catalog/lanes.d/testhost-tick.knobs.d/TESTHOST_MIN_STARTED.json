@@ -1,0 +1,11 @@
+{
+  "env": "TESTHOST_MIN_STARTED",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 8,
+  "unit": "machines",
+  "zero_means": null,
+  "read_in": "bin/testhost-tick.sh",
+  "note": "BH-9065. The started count of TESTHOST_APP machines the idle stop never goes below. The tick stops an idle machine only while more machines are started than this, and `testhost-tick.sh idle <mid>` answers 0 (busy) for a started machine at or under this count, so bin/fly-idle-reaper.sh keeps the same machines. 0 (default) lets every idle host stop: the next gate's `ensure` starts one in seconds. Read by bin/testhost-tick.sh as ${TESTHOST_MIN_STARTED:-0}."
+}

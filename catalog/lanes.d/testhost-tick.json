@@ -26,12 +26,12 @@
     {
       "env": "TESTHOST_IDLE_STOP_MIN",
       "type": "int",
-      "default": 30,
-      "min": 25,
+      "default": 10,
+      "min": 10,
       "max": 240,
       "unit": "minutes",
       "zero_means": null,
-      "note": "Minutes since testhost.last_used before the tick considers stopping the machine (the live busy probe still has to agree). The floor is 25 because last_used is stamped when a run STARTS and REMOTE_GATE_SUITE_TIMEOUT lets one suite run for 25 minutes — a shorter window would put the host inside the stop window while a single suite is still going."
+      "note": "Minutes since a machine's own idle clock (settings row testhost.last_used.<machine id>; the shared testhost.last_used row only when the machine has no row of its own) before the tick considers stopping that machine (BH-9065). The live busy probe still has to agree, and a live route row and TESTHOST_MIN_STARTED still hold the stop. The floor is 10, not 25: a suite that runs longer than the window is still protected, because the probe sees its live `bash tests/` process and its fresh run directory and then refreshes the machine's clock."
     },
     {
       "env": "TESTHOST_BUSY_WINDOW_MIN",

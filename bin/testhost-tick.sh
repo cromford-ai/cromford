@@ -15,10 +15,22 @@
 #                                   stop until then, ensure as above, and end
 #                                   with one `ensure-result: <word>` line
 #   bin/testhost-tick.sh used       stamp the use and nothing else
-#   bin/testhost-tick.sh state      print the machine's Fly state, change nothing
+#   bin/testhost-tick.sh state [<id>] print the machine's Fly state, change nothing
 #   bin/testhost-tick.sh busy       ask the host what is running, change nothing
 #   bin/testhost-tick.sh idle [<id>] print the host's idle seconds (0 = busy), or
 #                                   `unknown` with rc 2; change nothing
+#
+# EVERY MACHINE, EACH ON ITS OWN CLOCK (BH-9065). The app holds 4 hosts. The
+# tick used to manage only `.[0]` and read one shared `testhost.last_used` row
+# for it, so one gate run per window kept every host "in use": 0 stops in 7
+# days. Now the tick visits every machine of the app. Each machine's idle clock
+# is the settings row `testhost.last_used.<mid>`. The shared row is read only
+# as the fallback for a machine with no row of its own, and the tick then
+# copies that value into the machine's own row, so a later fresh shared row
+# cannot keep that machine alive. `ensure` stamps the machine it picks or
+# starts; a busy probe stamps the machine it probed. The stop needs, per
+# machine: idle >= TESTHOST_IDLE_STOP_MIN, the probe says idle, no live route,
+# and more machines started than TESTHOST_MIN_STARTED.
 #
 # WHY IT EXISTS. `bin/remote-gate.sh` runs the suite on one performance-16x
 # machine shared by every agent in a drain (app `bh-testhost-example-org`, org
@@ -67,7 +79,9 @@
 #
 # Knobs (registry: catalog/lanes.json, lane `testhost-tick`):
 #   TESTHOST_APP             the Fly app             (bh-testhost-example-org)
-#   TESTHOST_IDLE_STOP_MIN   minutes of idle before the stop   (30)
+#   TESTHOST_IDLE_STOP_MIN   minutes of idle before the stop   (10)
+#   TESTHOST_MIN_STARTED     the tick never stops below this many started
+#                            machines                           (0)
 #   TESTHOST_SIZE            the size the lane expects; a machine that is not
 #                            that size is logged, never resized  (performance-16x)
 #   TESTHOST_BUSY_WINDOW_MIN how recent a run root's mtime must be to count as
@@ -81,8 +95,9 @@
 #                            registry default — no literal here, BH-1597)
 #   TESTHOST_UNKNOWN_ALERT_TICKS consecutive ticks that read state=unknown
 #                            before testhost-state-unknown is raised  (3)
-# Machine: `testhost.machine_id` (a settings row) if there is one, else the
-# first machine in the app.
+# Machines: every machine of the app (BH-9065). `testhost.machine_id` (a
+# settings row), if there is one, is the machine `ensure` prefers and the one
+# `state` reads with no id; else the first machine in the app.
 #
 # THE SECOND THING THIS TICK DOES (BH-1210). Harness CI runs on the Fly `bh-ci`
 # pool with NO GitHub-hosted fallback: when the machines are gone the jobs QUEUE
@@ -119,7 +134,12 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit testhost-tick
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    testhost-tick
 
 APP="${TESTHOST_APP:-bh-testhost-example-org}"
-IDLE_MIN="${TESTHOST_IDLE_STOP_MIN:-30}"
+# Fallback 10 = the registry default of TESTHOST_IDLE_STOP_MIN
+# (catalog/lanes.d/testhost-tick.json, settings row lane.testhost-tick.testhost_idle_stop_min).
+IDLE_MIN="${TESTHOST_IDLE_STOP_MIN:-10}"
+# Fallback 0 = the registry default of TESTHOST_MIN_STARTED
+# (catalog/lanes.d/testhost-tick.knobs.d/TESTHOST_MIN_STARTED.json).
+MIN_STARTED="${TESTHOST_MIN_STARTED:-0}"
 WANT_SIZE="${TESTHOST_SIZE:-performance-16x}"
 BUSY_WINDOW_MIN="${TESTHOST_BUSY_WINDOW_MIN:-120}"
 VERB="${1:-tick}"
@@ -130,7 +150,8 @@ CI_HOLD_MIN="${CI_RUNNERS_ALERT_HOLD_MIN:-10}"
 # library on this box) it is empty, and the disk check logs and alerts nothing.
 DISK_ALERT_PCT="${TESTHOST_DISK_ALERT_PCT:-}"
 
-case "$IDLE_MIN" in ''|*[!0-9]*) IDLE_MIN=30 ;; esac
+case "$IDLE_MIN" in ''|*[!0-9]*) IDLE_MIN=10 ;; esac
+case "$MIN_STARTED" in ''|*[!0-9]*) MIN_STARTED=0 ;; esac
 case "$BUSY_WINDOW_MIN" in ''|*[!0-9]*) BUSY_WINDOW_MIN=120 ;; esac
 case "$CI_HOLD_MIN" in ''|*[!0-9]*) CI_HOLD_MIN=10 ;; esac
 UNKNOWN_TICKS="${TESTHOST_UNKNOWN_ALERT_TICKS:-3}"
@@ -215,22 +236,35 @@ _th_fail_cause() {
 # _th_machine_load — set MID, rc 1 (TH_CAUSE says why) when the app has none
 # we can see. It sets a global rather than printing so the cause survives;
 # _th_machine is the printing form for callers inside $(…).
+# _th_list_ids — set TH_IDS to every machine id of $APP (one per line, in the
+# order Fly lists them), rc 1 (TH_CAUSE says why) when the list fails or is
+# empty. An id that is not [a-z0-9] is dropped: it goes into flyctl argv and a
+# settings key.
+TH_IDS=""
+_th_list_ids() {
+  local out rc errf
+  TH_IDS=""
+  errf=$(mktemp) || errf=/dev/null
+  out=$(_th_fly machine list -a "$APP" --json 2>"$errf"); rc=$?
+  if [ "$rc" != 0 ]; then
+    _th_fail_cause "$(cat "$errf" 2>/dev/null; printf '%s' "$out")" "no machine id: machine list failed"
+    [ "$errf" = /dev/null ] || rm -f "$errf"
+    return 1
+  fi
+  [ "$errf" = /dev/null ] || rm -f "$errf"
+  TH_IDS=$(printf '%s' "$out" | jq -r '.[]? | .id // empty | select(test("^[a-z0-9]+$"))' 2>/dev/null)
+  [ -n "$TH_IDS" ] || { TH_CAUSE="no machine id: $APP lists no machine"; return 1; }
+  return 0
+}
+
 MID=""
 _th_machine_load() {
-  local id out rc errf
+  local id
   [ -n "$MID" ] && return 0
   id=$(_th_get testhost.machine_id) || id=""
   if [ -z "$id" ]; then
-    errf=$(mktemp) || errf=/dev/null
-    out=$(_th_fly machine list -a "$APP" --json 2>"$errf"); rc=$?
-    if [ "$rc" != 0 ]; then
-      _th_fail_cause "$(cat "$errf" 2>/dev/null; printf '%s' "$out")" "no machine id: machine list failed"
-      [ "$errf" = /dev/null ] || rm -f "$errf"
-      return 1
-    fi
-    [ "$errf" = /dev/null ] || rm -f "$errf"
-    id=$(printf '%s' "$out" | jq -r '.[0].id // empty' 2>/dev/null)
-    [ -n "$id" ] || { TH_CAUSE="no machine id: $APP lists no machine"; return 1; }
+    _th_list_ids || return 1
+    id=$(head -n 1 <<<"$TH_IDS")
   fi
   MID="$id"
 }
@@ -253,14 +287,18 @@ _th_machine() { # print the machine id, rc 1 when the app has none we can see
 #
 # Every unknown sets TH_CAUSE (BH-6061): an unknown with no cause is what let the
 # cron PATH bug run for 13 days as a quiet "nothing to stop".
+# _th_read_state [<id>] reads <id>, or with no id the machine _th_machine_load
+# names.
 TH_STATE=unknown
 OBSERVED_SIZE=""
 _th_read_state() {
-  local id out norm kind vcpu state
+  local id="${1:-}" out norm kind vcpu state
   TH_STATE=unknown; OBSERVED_SIZE=""; TH_CAUSE=""
-  _th_machine_load || return 0
-  id="$MID"
-  out=$(_th_fly machine status "$id" -a "$APP" 2>&1) || { _th_fail_cause "$out" "API error"; return 0; }
+  if [ -z "$id" ]; then
+    _th_machine_load || return 0
+    id="$MID"
+  fi
+  out=$(_th_fly machine status "$id" -a "$APP" </dev/null 2>&1) || { _th_fail_cause "$out" "API error"; return 0; }
   case "$out" in *"was not found in app"*) TH_STATE=purged; return 0 ;; esac
   state=$(printf '%s\n' "$out" | awk -F': *' '/^State:/{print $2; exit}' | tr -d '[:space:]')
   [ -n "$state" ] || { TH_CAUSE="no State: line in flyctl output"; return 0; }
@@ -275,17 +313,21 @@ _th_read_state() {
 # _th_size_note — one line when the machine is not the size the lane says it is.
 # It is a NOTE, never a resize: changing the shape of a machine other agents are
 # connected to is not something a */5 cron gets to decide.
-_th_size_note() {
+_th_size_note() { # _th_size_note [<id>]
+  local m="${1:+ $1}"
   [ -n "$OBSERVED_SIZE" ] || return 0
   if [ "$OBSERVED_SIZE" = "$WANT_SIZE" ]; then
-    log "size ok: $OBSERVED_SIZE"
+    log "size ok${m}: $OBSERVED_SIZE"
   else
-    log "size drift: the machine is $OBSERVED_SIZE, TESTHOST_SIZE says $WANT_SIZE (not resized — flyctl machine update --vm-size $WANT_SIZE -a $APP, when nobody is on it)"
+    log "size drift: the machine${m} is $OBSERVED_SIZE, TESTHOST_SIZE says $WANT_SIZE (not resized — flyctl machine update --vm-size $WANT_SIZE${1:+ $1} -a $APP, when nobody is on it)"
   fi
 }
 
-_th_stamp_use() { # rc 0 written, rc 1 the worker did not take it
-  _th_set testhost.last_used "$(date -u '+%s')"
+# _th_stamp_use [<id>] — with an id, that machine's own clock
+# (testhost.last_used.<id>, BH-9065); with none, the shared row. rc 0 written,
+# rc 1 the worker did not take it.
+_th_stamp_use() {
+  _th_set "testhost.last_used${1:+.$1}" "$(date -u '+%s')"
 }
 
 # _th_route_max_s — the longest a route hold may reach past now: the registry
@@ -743,78 +785,169 @@ cmd_disk() {
 # AND the machine itself saying nothing is running. Either one alone has been
 # wrong in the field — the row because a Mac cannot write it, the probe because
 # "nothing this second" is also what the gap between two suites looks like.
+#
+# PER MACHINE (BH-9065). The tick reads every machine's state, then decides
+# each started machine on its own clock. The order of the witnesses: the clock
+# and the window first (no Fly call), then the route row, then
+# TESTHOST_MIN_STARTED, then the busy probe (one ssh), then the stop. A stop is
+# counted (and logged `stopped after`) only when a state read after it says
+# stopped.
+
+# _th_clock <mid> <shared> — set TH_LU to the machine's idle-clock epoch and
+# TH_LU_SRC to own|shared. <shared> is the shared row's value ("" = no row).
+#   rc 0 TH_LU is set
+#   rc 1 the worker did not answer (no action on this machine)
+#   rc 2 no row anywhere: the machine's own clock was started now (no action)
+#   rc 3 a row that is not an epoch (no action)
+TH_LU=""; TH_LU_SRC=""
+_th_clock() {
+  local mid="$1" shared="$2" key v rc
+  TH_LU=""; TH_LU_SRC=""
+  key="testhost.last_used.$mid"
+  v=$(_th_get "$key"); rc=$?
+  if [ "$rc" = 1 ]; then
+    say "the worker did not answer for $key — no action on $mid this tick"
+    return 1
+  fi
+  if [ "$rc" = 0 ] && [ -n "$v" ]; then
+    case "$v" in *[!0-9]*) say "$key is not an epoch ('$v') — no action on $mid"; return 3 ;; esac
+    TH_LU="$v"; TH_LU_SRC=own
+    return 0
+  fi
+  if [ -n "$shared" ]; then
+    case "$shared" in *[!0-9]*) say "testhost.last_used is not an epoch ('$shared') — no action on $mid (it has no row of its own)"; return 3 ;; esac
+    # THE FALLBACK IS READ ONCE. The shared value goes into the machine's own
+    # row, so from the next tick on a fresh shared row (any gate run) cannot
+    # keep this machine started. That was the defect.
+    _th_set "$key" "$shared" || log "the worker would not take $key — $mid reads the shared row again next tick"
+    TH_LU="$shared"; TH_LU_SRC=shared
+    return 0
+  fi
+  # SELF-HEALING, not silence. With no row the old lane did nothing for ever,
+  # so the machine it exists to stop was never stopped. Starting the clock here
+  # costs one settings write and still stops nothing this tick.
+  say "no testhost.last_used row for $mid — starting its clock now, no action on $mid this tick"
+  _th_stamp_use "$mid" || say "the worker would not take the first stamp of $mid either — its idle stop stays off"
+  return 2
+}
+
+# _th_states — read the state of every id in TH_IDS. Sets TH_ST (lines
+# `<mid> <state>`), TH_STARTED (count), TH_ANY_UNKNOWN (0|1, TH_UNKNOWN_CAUSE).
+TH_ST=""; TH_STARTED=0; TH_ANY_UNKNOWN=0; TH_UNKNOWN_CAUSE=""
+_th_states() {
+  local mid
+  TH_ST=""; TH_STARTED=0; TH_ANY_UNKNOWN=0; TH_UNKNOWN_CAUSE=""
+  while IFS= read -r mid; do
+    [ -n "$mid" ] || continue
+    _th_read_state "$mid"
+    _th_size_note "$mid"
+    TH_ST="${TH_ST}${mid} ${TH_STATE}"$'\n'
+    case "$TH_STATE" in
+      started) TH_STARTED=$((TH_STARTED + 1)) ;;
+      unknown) [ "$TH_ANY_UNKNOWN" = 1 ] || TH_UNKNOWN_CAUSE="$mid: ${TH_CAUSE:-no cause recorded}"; TH_ANY_UNKNOWN=1 ;;
+    esac
+  done <<<"$TH_IDS"
+}
+
+# _th_record_app_state — the one `testhost.machine_state` row: started when any
+# machine is started, else the first known state.
+_th_record_app_state() {
+  local agg="" mid st
+  while read -r mid st; do
+    [ -n "$mid" ] || continue
+    [ "$st" = started ] && { agg=started; break; }
+    [ -z "$agg" ] && [ "$st" != unknown ] && agg="$st"
+  done <<<"$TH_ST"
+  _th_record_state "${agg:-unknown}" || true
+}
+
 cmd_tick() {
-  local lu rc now idle brc rrc
+  local shared rc now idle brc rrc="" mid st crc
   # FIRST, and on purpose: every branch below this returns early (a worker
   # outage, no row, a machine that is not started, a use inside the idle
   # window), so a pool check placed after them would almost never run.
   cmd_ci_runners
-  lu=$(_th_get testhost.last_used); rc=$?
+  shared=$(_th_get testhost.last_used); rc=$?
   if [ "$rc" = 1 ]; then
     say "the worker did not answer for testhost.last_used — no machine action this tick"
     return 0
   fi
+  [ "$rc" = 0 ] || shared=""
   # Every machine's disk, before any branch below can return (BH-1597). After
   # the worker check on purpose: a tick that cannot reach the worker makes no
   # Fly call at all, which tests/testhost-tick-test.sh section 2 pins.
   cmd_disk
-  if [ "$rc" = 2 ] || [ -z "$lu" ]; then
-    # SELF-HEALING, not silence. With no row the old lane did nothing for ever,
-    # so the machine it exists to stop was never stopped and the cost promise
-    # quietly did not happen. Starting the clock here costs one settings write
-    # and still stops nothing this tick: the stop is a full window away and has
-    # to get past the live probe as well.
-    say "no testhost.last_used row — starting the clock now, no machine action this tick"
-    _th_stamp_use || say "the worker would not take the first stamp either — the idle stop stays off"
+  if ! _th_list_ids; then
+    TH_STATE=unknown
+    _th_unknown_note
+    log "state=unknown — nothing to stop ($TH_CAUSE)"
     return 0
   fi
-  case "$lu" in ''|*[!0-9]*) say "testhost.last_used is not an epoch ('$lu') — no machine action"; return 0 ;; esac
-  now=$(date -u '+%s'); idle=$(( now - lu ))
-  _th_read_state
-  _th_size_note
-  _th_record_state "$TH_STATE" || true
+  _th_states
+  _th_record_app_state
+  # The unknown streak is one per tick, not one per machine: unknown when the
+  # state of any machine could not be read.
+  if [ "$TH_ANY_UNKNOWN" = 1 ]; then TH_STATE=unknown; TH_CAUSE="$TH_UNKNOWN_CAUSE"; else TH_STATE="read ($TH_STARTED started)"; fi
   _th_unknown_note
-  if [ "$TH_STATE" != started ]; then
-    log "state=$TH_STATE idle=${idle}s — nothing to stop${TH_CAUSE:+ ($TH_CAUSE)}"
-    return 0
-  fi
-  if [ "$idle" -lt "$(( IDLE_MIN * 60 ))" ]; then
-    log "in use ${idle}s ago (window ${IDLE_MIN}m) — left started"
-    return 0
-  fi
-  # A shipped pool route holds the stop until it expires (BH-8659).
-  _th_route_live; rrc=$?
-  if [ "$rrc" = 0 ]; then
-    log "a pool test-host route is live until $(date -u -d "@$TH_ROUTE_UNTIL" '+%Y-%m-%dT%H:%MZ' 2>/dev/null || printf '%s' "$TH_ROUTE_UNTIL") — left started"
-    return 0
-  fi
-  if [ "$rrc" = 2 ]; then
-    say "could not read testhost.route_until — NOT stopping; a route we cannot see is treated as live"
-    return 0
-  fi
-  # The row says idle. Ask the machine before believing it.
-  _th_busy; brc=$?
-  if [ "$brc" = 0 ]; then
-    # Real work, and nobody recorded it — so record it. This is what keeps a Mac
-    # drain (which cannot write the row) from being stopped 30 minutes into
-    # itself, and it is why the row is advisory rather than authoritative.
-    say "the row said idle ${idle}s but the host is BUSY ($BUSY_N live run(s)/process(es)) — not stopping, and refreshing testhost.last_used"
-    _th_stamp_use || true
-    return 0
-  fi
-  if [ "$brc" = 2 ]; then
-    say "could not ask $APP what is running (ssh probe failed) — NOT stopping; a host we cannot see is treated as busy"
-    return 0
-  fi
-  say "idle ${idle}s (window ${IDLE_MIN}m) and the host reports no live runs — stopping $APP"
-  if _th_fly machine stop "$(_th_machine)" -a "$APP" >/dev/null 2>&1; then
-    _th_read_state
-    _th_record_state "$TH_STATE" || true
-    log "stopped after ${idle}s idle (state now $TH_STATE)"
-  else
-    say "flyctl could not stop the machine — it is still running and will be tried again next tick"
-    log "stop FAILED after ${idle}s idle"
-  fi
+  now=$(date -u '+%s')
+  while read -r mid st; do
+    [ -n "$mid" ] || continue
+    if [ "$st" != started ]; then
+      log "$mid state=$st — nothing to stop"
+      continue
+    fi
+    _th_clock "$mid" "$shared"; crc=$?
+    [ "$crc" = 0 ] || continue
+    idle=$(( now - TH_LU ))
+    if [ "$idle" -lt "$(( IDLE_MIN * 60 ))" ]; then
+      log "$mid in use ${idle}s ago (window ${IDLE_MIN}m, $TH_LU_SRC row) — left started"
+      continue
+    fi
+    # A shipped pool route holds the stop until it expires (BH-8659). One read
+    # per tick: the row is the app's, not a machine's.
+    if [ -z "$rrc" ]; then _th_route_live; rrc=$?; fi
+    if [ "$rrc" = 0 ]; then
+      log "a pool test-host route is live until $(date -u -d "@$TH_ROUTE_UNTIL" '+%Y-%m-%dT%H:%MZ' 2>/dev/null || printf '%s' "$TH_ROUTE_UNTIL") — $mid left started"
+      continue
+    fi
+    if [ "$rrc" = 2 ]; then
+      say "could not read testhost.route_until — NOT stopping $mid; a route we cannot see is treated as live"
+      continue
+    fi
+    if [ "$TH_STARTED" -le "$MIN_STARTED" ]; then
+      log "$mid idle ${idle}s but only $TH_STARTED machine(s) started and TESTHOST_MIN_STARTED=$MIN_STARTED — left started"
+      continue
+    fi
+    # The row says idle. Ask the machine before believing it.
+    _th_busy "$mid"; brc=$?
+    if [ "$brc" = 0 ]; then
+      # Real work, and nobody recorded it — so record it, on THIS machine's
+      # clock. This is what keeps a Mac drain (which cannot write the row) from
+      # being stopped a window into itself.
+      say "the row said $mid idle ${idle}s but the host is BUSY ($BUSY_N live run(s)/process(es)) — not stopping, and refreshing testhost.last_used.$mid"
+      _th_stamp_use "$mid" || true
+      continue
+    fi
+    if [ "$brc" = 2 ]; then
+      say "could not ask $APP machine $mid what is running (ssh probe failed) — NOT stopping; a host we cannot see is treated as busy"
+      continue
+    fi
+    say "$mid idle ${idle}s (window ${IDLE_MIN}m) and the host reports no live runs — stopping it ($APP)"
+    if _th_fly machine stop "$mid" -a "$APP" </dev/null >/dev/null 2>&1; then
+      _th_read_state "$mid"
+      if [ "$TH_STATE" = stopped ]; then
+        TH_STARTED=$(( TH_STARTED - 1 ))
+        TH_ST=$(printf '%s\n' "$TH_ST" | sed "s/^$mid started\$/$mid stopped/")
+        log "stopped after ${idle}s idle: $mid (state now $TH_STATE)"
+      else
+        say "flyctl accepted the stop of $mid but its state reads $TH_STATE — not counted as stopped; the next tick tries again"
+      fi
+    else
+      say "flyctl could not stop $mid — it is still running and will be tried again next tick"
+      log "stop FAILED for $mid after ${idle}s idle"
+    fi
+  done <<<"$TH_ST"
+  _th_record_app_state
   return 0
 }
 
@@ -824,48 +957,96 @@ cmd_tick() {
 # `ensure-result: was-started|started-now|unknown|start-failed` that
 # bin/lib/pool-testhost-route.sh reads. Without the flag the output is as it
 # was (bin/remote-gate.sh's caller reads it).
+#
+# WHICH MACHINE (BH-9065). A started machine, if there is one: the
+# `testhost.machine_id` row's machine first, else the first started one in list
+# order. That machine's own clock is stamped. With none started, ONE stopped
+# machine is started (the pinned one first, else the first in list order) and
+# stamped. The shared row is stamped too: it is the fallback clock of a machine
+# that has no row yet.
 cmd_ensure() {
-  local route="" res rc=0
+  local route="" res rc=0 pref pick="" cand="" mid st
   if [ "${1:-}" = --route-until ]; then route=1; _th_hold_route "${2:-}"; fi
   _th_stamp_use || say "the worker did not answer — this run is not recorded in testhost.last_used"
-  _th_read_state
-  _th_size_note
-  case "$TH_STATE" in
-    started) _th_record_state "$TH_STATE" || true; res=was-started ;;
-    unknown) say "Fly did not answer with a machine state for $APP — not starting anything blind"; res=unknown ;;
-    *)
-      say "starting $APP (state was $TH_STATE)"
-      if _th_fly machine start "$(_th_machine)" -a "$APP" >/dev/null 2>&1; then
-        _th_read_state
-        _th_record_state "$TH_STATE" || true
-        log "started on demand (state now $TH_STATE)"
-        res=started-now
-      else
-        say "flyctl could not start the machine — the run that asked for it will fail to connect"
-        log "start FAILED"
-        res=start-failed; rc=1
-      fi ;;
-  esac
+  pref=$(_th_get testhost.machine_id) || pref=""
+  case "$pref" in *[!a-z0-9]*) pref="" ;; esac
+  if _th_list_ids; then
+    _th_states
+  elif [ -n "$pref" ]; then
+    TH_IDS="$pref"; _th_states
+  else
+    TH_ST=""
+  fi
+  while read -r mid st; do
+    [ -n "$mid" ] || continue
+    case "$st" in
+      started) { [ -z "$pick" ] || [ "$mid" = "$pref" ]; } && pick="$mid" ;;
+      unknown|purged|destroyed|destroying) ;;
+      *) { [ -z "$cand" ] || [ "$mid" = "$pref" ]; } && cand="$mid" ;;
+    esac
+  done <<<"$TH_ST"
+  if [ -n "$pick" ]; then
+    _th_record_state started || true
+    _th_stamp_use "$pick" || log "the worker did not take testhost.last_used.$pick"
+    res=was-started
+  elif [ -z "$cand" ]; then
+    say "Fly did not answer with a machine state for $APP — not starting anything blind"
+    res=unknown
+  else
+    st=$(printf '%s\n' "$TH_ST" | awk -v m="$cand" '$1 == m {print $2; exit}')
+    # The stdout words are the contract bin/remote-gate.sh relays (BH-8659 E5);
+    # the machine id goes to the log only.
+    say "starting $APP (state was $st)"; log "starting machine $cand"
+    if _th_fly machine start "$cand" -a "$APP" </dev/null >/dev/null 2>&1; then
+      _th_stamp_use "$cand" || log "the worker did not take testhost.last_used.$cand"
+      _th_read_state "$cand"
+      _th_record_state "$TH_STATE" || true
+      log "started $cand on demand (state now $TH_STATE)"
+      res=started-now
+    else
+      say "flyctl could not start the machine — the run that asked for it will fail to connect"
+      log "start FAILED for $cand"
+      res=start-failed; rc=1
+    fi
+  fi
   [ -n "$route" ] && printf 'ensure-result: %s\n' "$res"
   return "$rc"
 }
 
 # cmd_idle [<machine-id>] — READ-ONLY, for bin/fly-idle-reaper.sh: it stamps
-# nothing and stops nothing. Prints the idle seconds (now - testhost.last_used),
+# nothing and stops nothing. Prints the idle seconds (now minus the machine's
+# own testhost.last_used.<id> row; the shared row when it has none, BH-9065),
 # 0 when the machine says it is busy, or `unknown` with rc 2 when either witness
-# cannot answer. It needs the same two witnesses as the stop, so the reaper and
+# cannot answer. It needs the same witnesses as the stop, so the reaper and
 # this tick can never disagree about whether the host is in use. A live pool
-# route (testhost.route_until in the future, BH-8659) is busy: 0.
+# route (testhost.route_until in the future, BH-8659) is busy: 0. With
+# TESTHOST_MIN_STARTED > 0, a started machine at or under that count is busy
+# (0) too, so the reaper never stops what the tick keeps.
 cmd_idle() {
-  local mid="${1:-}" lu now idle brc
+  local mid="${1:-}" lu now idle brc rc m st
   case "$mid" in *[!a-z0-9]*) echo unknown; return 2 ;; esac
-  lu=$(_th_get testhost.last_used) || { echo unknown; return 2; }
+  rc=2
+  if [ -n "$mid" ]; then
+    lu=$(_th_get "testhost.last_used.$mid"); rc=$?
+    [ "$rc" = 1 ] && { echo unknown; return 2; }
+  fi
+  if [ "$rc" != 0 ] || [ -z "$lu" ]; then
+    lu=$(_th_get testhost.last_used) || { echo unknown; return 2; }
+  fi
   case "$lu" in ''|*[!0-9]*) echo unknown; return 2 ;; esac
   _th_route_live
   case "$?" in
     0) echo 0; return 0 ;;
     2) echo unknown; return 2 ;;
   esac
+  if [ "$MIN_STARTED" -gt 0 ] && [ -n "$mid" ]; then
+    _th_list_ids || { echo unknown; return 2; }
+    _th_states
+    st=""
+    while read -r m st; do [ "$m" = "$mid" ] && break; st=""; done <<<"$TH_ST"
+    [ "$TH_ANY_UNKNOWN" = 1 ] && { echo unknown; return 2; }
+    if [ "$st" = started ] && [ "$TH_STARTED" -le "$MIN_STARTED" ]; then echo 0; return 0; fi
+  fi
   _th_busy "$mid"; brc=$?
   case "$brc" in
     0) echo 0 ;;
@@ -882,7 +1063,7 @@ case "$VERB" in
   # `exit 0` below threw that away — the file said one thing and did another.
   ensure)   cmd_ensure "${2:-}" "${3:-}"; RC=$? ;;
   used)     _th_stamp_use || { say "the worker did not answer — use not recorded"; RC=0; } ;;
-  state)    _th_read_state; printf '%s\n' "$TH_STATE" ;;
+  state)    case "${2:-}" in *[!a-z0-9]*) echo unknown; RC=2 ;; *) _th_read_state "${2:-}"; printf '%s\n' "$TH_STATE" ;; esac ;;
   # A READ, and the one an operator actually wants before touching the host:
   # "is anybody on it right now?". It is also how the probe that decides the
   # stop gets exercised against the live machine without stopping anything.
@@ -894,11 +1075,11 @@ case "$VERB" in
             esac ;;
   idle)     cmd_idle "${2:-}"; RC=$? ;;
   -h|--help|help)
-    echo "usage: testhost-tick.sh [tick|ensure [--route-until <epoch>]|used|state|busy|idle [<machine-id>]]"
+    echo "usage: testhost-tick.sh [tick|ensure [--route-until <epoch>]|used|state [<machine-id>]|busy|idle [<machine-id>]]"
     echo "  tick    check the bh-ci runner pool (alert after CI_RUNNERS_ALERT_HOLD_MIN minutes"
     echo "          empty or unreadable), log every started machine's disk (alert above"
-    echo "          TESTHOST_DISK_ALERT_PCT), then stop the shared test host once it has been"
-    echo "          idle TESTHOST_IDLE_STOP_MIN minutes"
+    echo "          TESTHOST_DISK_ALERT_PCT), then stop each test host once it has been idle"
+    echo "          TESTHOST_IDLE_STOP_MIN minutes on its own clock (never below TESTHOST_MIN_STARTED)"
     echo "  ensure  stamp the use and start the host if it is stopped (bin/remote-gate.sh calls this)"
     echo "          --route-until <epoch>: first hold the idle stop until <epoch> (a pool route"
     echo "          ship), then end with one 'ensure-result: <word>' line"

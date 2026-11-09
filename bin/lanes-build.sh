@@ -94,9 +94,25 @@ TMP=$(mktemp "${TMPDIR:-/tmp}/lanes-build.XXXXXX"); trap 'rm -f "$TMP" "$TMP.ids
 # say" used to be proved by a file in git, and since BH-1247 there is no such
 # file, so the property that remains provable is that the parts compose to one
 # answer rather than to whichever answer the machine felt like.
+# LANE_MACHINE_JQ — BH-9065. A lane that needs CPU declares
+#   "machine": {"cpu": "shared"|"performance", "size": "<Fly size>"}
+# The size must be of the cpu class: shared-cpu-1x/2x/4x/8x for shared,
+# performance-1x/2x/4x/8x/16x for performance (Fly's own guest sizes, the
+# list bin/lane-fleet.sh accepts too). No other key. The filter prints `ok`
+# (an absent key is ok) or why the key is refused; the lane loop reads it in
+# the same jq call as the id, so the check adds no fork per lane file.
+LANE_MACHINE_JQ='if has("machine") | not then "ok" else .machine
+  | if type != "object" then "is not an object"
+    elif (keys - ["cpu", "size"]) != [] then "has the unknown key(s) \(keys - ["cpu", "size"] | join(", "))"
+    elif (.cpu | IN("shared", "performance")) | not then "cpu \(.cpu | tojson) is not shared or performance"
+    elif (.size | type) != "string" then "size \(.size | tojson) is not a string"
+    elif .cpu == "shared" and (.size | test("^shared-cpu-(1|2|4|8)x$") | not) then "size \(.size | tojson) is not one of shared-cpu-1x/2x/4x/8x (cpu shared)"
+    elif .cpu == "performance" and (.size | test("^performance-(1|2|4|8|16)x$") | not) then "size \(.size | tojson) is not one of performance-1x/2x/4x/8x/16x (cpu performance)"
+    else "ok" end end'
+
 N=0
 compose() {
-  local dst="$1" f bn id composed dupes ids
+  local dst="$1" f bn id why composed dupes ids
   ids="$TMP.ids"; : > "$ids"
   local -a lane_files=()
   N=0
@@ -114,8 +130,11 @@ compose() {
     [ "$bn" = "_registry" ] && continue
     case "$bn" in _lib|_lib.*) continue ;; esac
     jq -e . "$f" >/dev/null 2>&1 || { echo "lanes-build.sh: $f is not valid JSON" >&2; return 1; }
-    id=$(jq -r '.id // ""' "$f")
+    { IFS= read -r id; IFS= read -r why; } < <(jq -r "(.id // \"\" | tostring), ($LANE_MACHINE_JQ)" "$f" 2>/dev/null)
     [ "$id" = "$bn" ] || { echo "lanes-build.sh: $f holds lane id '$id' — a lane file is named for its id" >&2; return 1; }
+    # BH-9065: the optional `machine` key, the Fly guest bin/lane-fleet.sh
+    # starts for this lane's runs. Absent = the fleet's size.
+    [ "$why" = ok ] || { echo "lanes-build.sh: $f: machine ${why:-cannot be read} — the key is {\"cpu\": \"shared\"|\"performance\", \"size\": \"<size of that class>\"}" >&2; return 1; }
     printf '%s\n' "$bn" >> "$ids"
     lane_files+=("$f")
     N=$((N+1))

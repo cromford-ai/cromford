@@ -936,6 +936,18 @@ _run_job() {
   # hotfix through to the extra slot (BH-5021).
   local hotfix=""
   [ "$(jq -r '.hotfix // false' "$JOB" 2>/dev/null)" = true ] && hotfix=1
+  # BH-9065: the pool's stage and soft cap for this job. `stage:"plan"` ends the
+  # build after its plan (bin/lib/pool-stage.sh); `soft_cap_s` caps this
+  # machine's uptime; `cap_brief` is the brief of the machine that hit the cap
+  # before this one. Absent = today's invocation.
+  local rb_stage="" soft_cap="" brief_f=""
+  rb_stage=$(jq -r '.stage // ""' "$JOB" 2>/dev/null); [ "$rb_stage" = plan ] || rb_stage=""
+  soft_cap=$(jq -r '.soft_cap_s // ""' "$JOB" 2>/dev/null); [[ "$soft_cap" =~ ^[0-9]+$ ]] || soft_cap=""
+  if [ -n "$(jq -r '.cap_brief // ""' "$JOB" 2>/dev/null)" ]; then
+    brief_f="/run/harness/cap-brief-$key.md"
+    jq -r '.cap_brief' "$JOB" > "$brief_f" 2>/dev/null || brief_f=""
+  fi
+  [ -n "$rb_stage$soft_cap" ] && log "job carries stage=${rb_stage:-all} soft_cap_s=${soft_cap:-off}"
 
   # --- a held build slot refuses before anything is spent (BH-5021) ----------
   slot_preflight "$key" "$hotfix" || return 1
@@ -1020,7 +1032,8 @@ _run_job() {
   # whose harness predates it simply ignores the variable.
   [ -n "$hotfix" ] && log "job is a HOTFIX — passing HOTFIX=1 to run-build.sh"
   log "invoking run-build.sh (BUILDER_EXEC=1 BUILDER_NO_MERGE=1)"
-  BUILDER_EXEC=1 BUILDER_NO_MERGE=1 HARNESS_CHECKOUT="$HARNESS" TARGET_BRANCH="$adopt_head" STACK_BASE="$stack_base" HOTFIX="$hotfix" "$HARNESS/bin/run-build.sh" "$PROJECT" "$ticket" "$key"
+  BUILDER_EXEC=1 BUILDER_NO_MERGE=1 HARNESS_CHECKOUT="$HARNESS" TARGET_BRANCH="$adopt_head" STACK_BASE="$stack_base" HOTFIX="$hotfix" \
+    RB_STAGE_ONLY="$rb_stage" POOL_SOFT_CAP_S="$soft_cap" RB_CAP_BRIEF_FILE="$brief_f" "$HARNESS/bin/run-build.sh" "$PROJECT" "$ticket" "$key"
 
   # --- assemble RESULT from the newest matching BUILD dir ---------------------
   local bdir rline pr_url parent_pr tier

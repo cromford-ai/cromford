@@ -135,6 +135,17 @@ for MF in "$POOL"/*.json; do
   # The key this machine ran before, when it was handed this job by a reuse
   # (BH-5025.2). Absent = a fresh spawn.
   MREUSED=$(jq -r '.reused_from // ""' "$MF" 2>/dev/null); [ "$MREUSED" = null ] && MREUSED=""
+  # BH-9065: the machine's class and guest, read now: the reap removes $MF
+  # before next_job_or_destroy decides a reuse and re-keys the json.
+  # A machine json with no vm_class predates the classes: `none` (see
+  # next_job_or_destroy).
+  MVCLASS=$(jq -r '.vm_class // "none"' "$MF" 2>/dev/null); [ -n "$MVCLASS" ] || MVCLASS=none
+  MVGUEST=$(jq -c '{vm_class,vm_size,vm_mem} | with_entries(select(.value != null))' "$MF" 2>/dev/null); [ -n "$MVGUEST" ] || MVGUEST='{}'
+  # When this machine BOOTED (BH-9065 soft cap). spawn_one writes booted_at and
+  # the reuse hand-off carries it (spawned_at moves on every hand-off). A
+  # machine json with no booted_at was spawned before the cap existed and is
+  # never capped by age, as its job carries no soft_cap_s either.
+  MBOOT=$(jq -r '.booted_at // ""' "$MF" 2>/dev/null); [ "$MBOOT" = null ] && MBOOT=""
   # The exact line spawn_one (or the reuse handoff) appended to this key's
   # .spawns log when it recorded THIS machine against the per-key cap
   # (BH-1279). Read back here so the BUILD_DEFERRED REFUSED arm below can
@@ -342,7 +353,7 @@ for MF in "$POOL"/*.json; do
                merged-review2.md harness-suite-fix.txt \
                qa.md e2e.md evidence.md changed-files.txt \
                reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt \
-               pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log \
+               pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log brief.md \
                execute-transcript.md stop-reason.txt ticket-meta.json gate.txt gate-run.tail.txt; do
         T=$(mktemp); if mexec "$MID" "base64 -w0 $RB/$A 2>/dev/null" > "$T" && [ -s "$T" ]; then base64 -d "$T" > "$LOCAL/$A" 2>/dev/null; fi; rm -f "$T"
       done
@@ -646,6 +657,11 @@ for MF in "$POOL"/*.json; do
         continue ;;
     esac
     # <<< pool rebase reap
+    # BH-9065: a plan hand-off or a soft cap is re-offered, never judged.
+    if command -v pool_stage_reoffer >/dev/null 2>&1 && pool_stage_reoffer; then
+      next_job_or_destroy
+      continue
+    fi
     # A push reported rejected whose push in fact landed (BH-6821): the hub
     # opens the PR and RLINE becomes PR_CREATED, which the gate below verifies.
     command -v ppr_reap_landed >/dev/null 2>&1 && { ppr_reap_landed || true; }

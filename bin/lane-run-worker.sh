@@ -36,7 +36,15 @@
 #                with no valid row it sends NO claim (one log line per
 #                process), sleeps, and after LW_NOGROUP_POLLS such polls in a
 #                row exits 0, so a `--restart no` group machine stops instead
-#                of idling unpriced once its group row is gone (#7447 F1). 204 = the queue is empty:
+#                of idling unpriced once its group row is gone (#7447 F1).
+#                BH-9065: with LANE_RUN_LANES set (a lane machine, started by
+#                bin/lane-fleet.sh) the claim carries lanes = those names, so
+#                it takes only their rows; a name outside [A-Za-z0-9._-]{1,64}
+#                (or none, or more than 32) sends NO claim, with one log line
+#                per process. Without LANE_RUN_LANES and without --box the claim
+#                carries exclude_lanes = the lanes whose catalog/lanes.d file
+#                declares a valid `machine`, read once per process, so a fleet
+#                machine never takes a lane machine's run. 204 = the queue is empty:
 #                sleep lane_run.poll_s (1..300, fallback 15), or with --once
 #                exit 0. A transport failure logs one line; --once exits 1.
 #   1b. warm     BH-7716, only with LANE_RUN_WARM_CLONES=1 (the dedicated
@@ -204,6 +212,38 @@ lw_only_json() {
 }
 # Polls with no valid group row before a group machine exits (#7447 F1).
 LW_NOGROUP_POLLS=3
+
+# lw_lanes_json — BH-9065: LANE_RUN_LANES (comma- or blank-separated, set by
+# bin/lane-fleet.sh on a lane machine) as a JSON array. rc 1 and nothing
+# printed when a name fails the worker's laneName rule ([A-Za-z0-9._-]{1,64})
+# or the list is empty or longer than the route's 32 (LANES_FILTER_MAX).
+lw_lanes_json() {
+  local n; local -a a=() out=()
+  read -ra a <<<"${LANE_RUN_LANES//,/ }"
+  for n in "${a[@]}"; do [[ "$n" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || return 1; out+=("$n"); done
+  [ "${#out[@]}" -ge 1 ] && [ "${#out[@]}" -le 32 ] || return 1
+  printf '%s\n' "${out[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))'
+}
+# lw_excl_json — BH-9065: the lanes whose catalog/lanes.d/<lane>.json declares
+# a `machine` that bin/lane-fleet.sh accepts (cpu shared|performance, a size of
+# that class), as a JSON array: a fleet machine leaves their runs to the lane
+# machine. Read once per process (a code sync re-execs). An unreadable
+# catalog prints [] (no exclusion, the behaviour before BH-9065). More than 32
+# lanes (the route's cap): the first 32 and one log line.
+lw_excl_json() {
+  local d="$H/catalog/lanes.d" v
+  compgen -G "$d/*.json" >/dev/null || { echo '[]'; return 0; }
+  v=$(jq -cn '[inputs | select(type == "object" and has("machine")) | select(.machine
+      | type == "object" and (.size | type) == "string"
+        and ((.cpu == "shared" and (.size | test("^shared-cpu-(1|2|4|8)x$")))
+          or (.cpu == "performance" and (.size | test("^performance-(1|2|4|8|16)x$")))))
+      | .id | strings | select(test("^[A-Za-z0-9._-]{1,64}$"))] | unique' "$d"/*.json 2>/dev/null) || v='[]'
+  if [ "$(jq 'length' <<<"$v")" -gt 32 ]; then
+    lw_log "catalog declares $(jq 'length' <<<"$v") lane machines; exclude_lanes carries the first 32"
+    v=$(jq -c '.[:32]' <<<"$v")
+  fi
+  printf '%s\n' "$v"
+}
 
 lw_poll_s() {
   local v
@@ -485,6 +525,7 @@ lw_reexec() {
 [ "${LANE_RUN_WARM_CLONES:-}" = 1 ] && [ "${LANE_RUN:-}" = 1 ] && lw_log "clone cache: warm clones on, no eviction"
 
 lrr_enabled && lrr_check
+LW_EXCL0='[]'; [ -z "${LANE_RUN_LANES:-}" ] && [ -z "$LW_BOX" ] && LW_EXCL0=$(lw_excl_json)
 while :; do
   if [ "$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null)" != "$LW_COMMIT0" ]; then
     lw_log "code: HARNESS_COMMIT changed under this loop; re-exec"
@@ -529,13 +570,26 @@ while :; do
     sleep "$(lw_poll_s)" & wait "$!"; continue
   fi
   LW_NOGROUP_N=0
+  # BH-9065: a lane machine claims only its lanes; a bad LANE_RUN_LANES claims
+  # nothing (fail closed). Any other fleet machine excludes the declared lanes.
+  LW_LANES='[]'; LW_EXCL="$LW_EXCL0"
+  if [ -n "${LANE_RUN_LANES:-}" ]; then
+    if ! LW_LANES=$(lw_lanes_json); then
+      [ -n "${LW_BADLANES_LOGGED:-}" ] || lw_log "LANE_RUN_LANES='$LANE_RUN_LANES' is not valid (names [A-Za-z0-9._-]{1,64}, 1..32 of them); no claim"
+      LW_BADLANES_LOGGED=1
+      [ "$ONCE" = 1 ] && exit 0
+      sleep "$(lw_poll_s)" & wait "$!"; continue
+    fi
+  fi
   # The sha the claimed run executes: the code sync above ran first, and a
   # changed HARNESS_COMMIT re-execs this loop before it gets here.
   LW_SHA=$(head -n 1 "$H/HARNESS_COMMIT" 2>/dev/null | tr -d '[:space:]')
   [[ "$LW_SHA" =~ ^[0-9a-f]{7,40}$ ]] || LW_SHA=""
   _jobs_req POST /api/lane-runs/claim "$(jq -nc --arg m "$MACHINE" --argjson p "$(lw_prefer)" --argjson s "$LW_SKIP" \
-    --argjson o "$LW_ONLY" --arg b "$LW_BOX" --arg hc "$LW_SHA" \
+    --argjson o "$LW_ONLY" --arg b "$LW_BOX" --arg hc "$LW_SHA" --argjson ln "$LW_LANES" --argjson xl "$LW_EXCL" \
     '{machine:$m} + (if ($p | length) > 0 then {prefer:$p} else {} end)
+     + (if $ln == [] then {} else {lanes:$ln} end)
+     + (if $xl == [] then {} else {exclude_lanes:$xl} end)
      + (if $hc == "" then {} else {harness_commit:$hc} end)
      + (if $s == [] then {} else {skip_prefixes:$s} end)
      + (if $o == [] then {} else {only_prefixes:$o} end)

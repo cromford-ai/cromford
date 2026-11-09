@@ -76,6 +76,8 @@ if [ -n "${POOL_APP:-}" ]; then
         SW_STOPPED=$(jq -c --arg m "$SID" --arg s "$SST" --argjson a "$SAGE" \
           '. + [{machine:$m,state:$s,age_s:$a}]' <<<"$SW_STOPPED"); NSTOP=$((NSTOP+1)); continue
       fi
+      # Bill it first (BH-9065): after the destroy nothing else knows it ran.
+      command -v pool_fly_orphan_cost_row >/dev/null 2>&1 && pool_fly_orphan_cost_row "$SID"
       if destroy_machine "$SID" "swept: $SST for ${SAGE}s"; then
         SW_DESTROYED=$(jq -c --arg m "$SID" '. + [$m]' <<<"$SW_DESTROYED")
       else

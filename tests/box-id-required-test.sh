@@ -220,7 +220,7 @@ fi
 # that starts the build.
 FP="$DIR/bin/fly-pool.sh"
 OVL=$(grep -n '/data/harness/state/auth-accounts.local.json' "$FP" | head -1 | cut -d: -f1)
-JOB=$(grep -n 'mput "\$MID" "\$JF" /run/harness/job.json' "$FP" | head -1 | cut -d: -f1)
+JOB=$(grep -nE 'mput "\$MID" "\$JF(PUSH)?" /run/harness/job.json' "$FP" | head -1 | cut -d: -f1)
 [ -n "$OVL" ] && [ -n "$JOB" ] \
   && ok || bad "G: could not find the overlay push ($OVL) or the job push ($JOB) in bin/fly-pool.sh"
 if [ -n "$OVL" ] && [ -n "$JOB" ]; then

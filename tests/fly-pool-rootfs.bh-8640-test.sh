@@ -265,7 +265,9 @@ reset_case() { # reset_case <key>: a fresh queue with one job of its own key
   done
   : > "$T/fly.txt"; : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"
   touch "$T/help-has-flag"
-  jq -nc --arg k "$1" --arg id "${1#BH-}" '{ticket_id:$id,key:$k,attempt:1,deferrals:0,deaths:0,enqueued_at:"2026-10-28T00:00:00Z"}' > "$QD/$1.json"
+  # stage:"execute" (BH-9065): with no vm_class row a fresh build key is a plan
+  # job on shared-cpu-2x; this suite pins the argv of the compute job.
+  jq -nc --arg k "$1" --arg id "${1#BH-}" '{ticket_id:$id,key:$k,attempt:1,deferrals:0,deaths:0,enqueued_at:"2026-10-28T00:00:00Z",stage:"execute"}' > "$QD/$1.json"
   return 0
 }
 row() { # row <gb> -> the settings cache lane_env_apply reads

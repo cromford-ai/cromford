@@ -249,6 +249,13 @@ rb_gate_overlap
 [ -r "$HARNESS/bin/lib/route-rules.sh" ] && HARNESS="$HARNESS" timeout 30 bash "$HARNESS/bin/lib/route-rules.sh" shadow \
   "$PROJECT" "$KEY" "$BUILD" "${EXECUTE_MODEL:-}" "${REVIEW_MODEL:-}" "${JOB_ID:-}" </dev/null >/dev/null 2>&1 6>&- 7>&- 8>&- 9>&- || true
 # <<< route shadow
+# >>> pool stage hand-off (BH-9065)
+# A plan-stage job (RB_STAGE_ONLY=plan, a `model`-class pool machine) ends here:
+# its plan is published and the hub re-offers the key as execute on a compute
+# machine (bin/lib/pool-stage.sh). Any other build, or a publish that failed,
+# goes on into EXECUTE on this machine as before.
+if command -v ps_plan_handoff >/dev/null 2>&1 && ps_plan_handoff; then exit 0; fi
+# <<< pool stage hand-off
 rb_execute
 rb_spec_artifact
 rb_execute_gates

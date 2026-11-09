@@ -218,7 +218,7 @@ lenv HARNESS="$EMPTY" bash -c '. "$1/bin/lib/model-route.sh"; model_routes_bundl
 # C. the dispatchers push it, before the job file
 # =============================================================================
 awk '/mput "\$MID" "\$POOL_MR_BUNDLE" \/run\/harness-env\/model-routes\.tsv/{b=NR}
-     /mput "\$MID" "\$JF" \/run\/harness\/job\.json/{j=NR} END{exit !(b && j && b < j)}' "$DIR/bin/fly-pool.sh" \
+     /mput "\$MID" "\$JF(PUSH)?" \/run\/harness\/job\.json/{j=NR} END{exit !(b && j && b < j)}' "$DIR/bin/fly-pool.sh" \
   && ok || bad "C1 fly-pool must push the bundle before the job file"
 awk '/^  pool_mr_bundle$/{b=NR} /^  spawn_one "\$JF"/{s=NR} END{exit !(b && s && b == s - 1)}' "$DIR/bin/fly-pool.sh" \
   && ok || bad "C1 fly-pool must resolve the bundle once, before the first spawn (not inside the concurrent spawns)"

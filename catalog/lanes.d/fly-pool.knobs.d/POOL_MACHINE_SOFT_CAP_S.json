@@ -1,0 +1,12 @@
+{
+  "env": "POOL_MACHINE_SOFT_CAP_S",
+  "type": "int",
+  "default": 7200,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-9065. The soft cap of a pool machine's uptime for a build job. pool_job_stamp writes it on the job file as soft_cap_s at spawn and at reuse; fly/builder-runner.sh hands it to bin/run-build.sh as POOL_SOFT_CAP_S, and CC() (bin/lib/pool-stage.sh) clamps each model session to the time left. At the cap the build checkpoints the branch (bin/lane-checkpoint.sh, pushed), publishes its plan, writes brief.md and answers `CAPPED stage=<s> after=<n>s`; the reap re-offers the key on a fresh machine with the brief and moves no deferral, death, CI-repair, EXECUTE_EMPTY or abandon counter. A checkpoint that does not land is not capped. Per-project row `lane.fly-pool.<project>.pool_machine_soft_cap_s`. A machine whose job carries no soft_cap_s (spawned before this knob) is never capped."
+}

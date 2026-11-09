@@ -1,0 +1,12 @@
+{
+  "env": "VM_MEMORY_MB_MODEL",
+  "type": "int",
+  "default": 4096,
+  "min": 256,
+  "max": 131072,
+  "unit": "MB",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-vm-size.sh",
+  "note": "BH-9065. The memory of a `model`-class pool machine (see VM_CLASS). Per-project row `lane.fly-pool.<project>.vm_memory_mb_model`. shared-cpu sizes: a multiple of 256, 256..2048 MB per CPU (shared-cpu-2x: 512..4096). performance sizes: the VM_MEMORY_MB rule. A pair that breaks the rule launches performance-8x/16384 and logs one `VM size row refused` line."
+}

@@ -85,6 +85,10 @@ CKPT_ACTIVE=0; CKPT_PID=""; CKPT_RESUME_NOTE=""; CKPT_WIP_N="${CKPT_WIP_N:-0}"
 # BH-6705: the check never stops a build. A box without the lib has no check.
 # shellcheck source=../build-tripwire.sh
 command -v tw_check_build >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../build-tripwire.sh" 2>/dev/null || true
+# THE POOL SOFT CAP and the plan hand-off (BH-9065), read by CC() below and by
+# the hand-off block in bin/run-build.sh. A box without the lib has neither.
+# shellcheck source=../pool-stage.sh
+command -v ps_cap_due >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../pool-stage.sh" 2>/dev/null || true
 CKPT_ON() { # read at every call site, so a flag dropped mid-build still lands
   lane_switch lane-checkpoints-off file && return 1
   case "$(printf '%s' "${CHECKPOINTS:-1}" | tr '[:upper:]' '[:lower:]')" in 0|off|false|no) return 1 ;; esac
@@ -320,6 +324,14 @@ $prompt" ;;
       RESULT "BUILD_DEFERRED $(head -1 "$BUILD/BUDGET_DEFER")"
       exit 3
     fi
+    # BH-9065: the machine soft cap. At the cap the build checkpoints and ends
+    # CAPPED before it buys this call; before it, this call ends at the cap.
+    # A fire that did not land keeps the full timeout, and an open PR (RB_PR_OPEN)
+    # turns the cap off: ps_cap_due and ps_cap_clamp read both.
+    if command -v ps_cap_due >/dev/null 2>&1; then
+      ps_cap_due && ps_cap_fire "$stage" && exit 3
+      to=$(ps_cap_clamp "$to")
+    fi
   fi
   # BH-2578: every build call is the fly-pool lane's, so its knobs bind. A prefix,
   # not an export: run-decompose and prebuild-repro launched from here keep theirs.
@@ -331,6 +343,10 @@ $prompt" ;;
   if [ -n "${BUILD:-}" ] && [ -f "$BUILD/BUDGET_STOP" ]; then
     BB budget_stop "" BUDGET_STOP "" false "$(head -c 1200 "$BUILD/BUDGET_STOP")"
     RESULT "BUILD_REFUSED BUDGET_STOP $(head -1 "$BUILD/BUDGET_STOP")"
+    exit 3
+  fi
+  # BH-9065: a session the cap cut short is not a verdict on its output.
+  if [ -n "${BUILD:-}" ] && command -v ps_cap_due >/dev/null 2>&1 && ps_cap_due && ps_cap_fire "$stage"; then
     exit 3
   fi
   # BH-4489: a day budget cap (stage-day / project-day) refused the call, or a

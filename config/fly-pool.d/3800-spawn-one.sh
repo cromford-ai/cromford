@@ -416,8 +416,17 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # that as the id orphans the real machine (2026-08-12, pool-project-3).
   # BH-8318: rows lane.fly-pool.<project>.vm_size / .vm_memory_mb; the literals
   # are their documented fallback (no lib, no row, or a refused row).
-  local PVM_SIZE=performance-8x PVM_MEM=16384 PVM_WHY=""
-  command -v pool_vm_resolve >/dev/null 2>&1 && { pool_vm_resolve || say "$KEY: VM size row refused ($PVM_WHY) — launching performance-8x/16384"; }
+  # BH-9065: the job kind (from the key and the job's stage) picks the class,
+  # row lane.fly-pool.<project>.vm_class (no row: plan, lead review and
+  # re-review are model); a `model` kind reads vm_size_model /
+  # vm_memory_mb_model, a `compute` kind the two rows above, as before.
+  local PVM_SIZE=performance-8x PVM_MEM=16384 PVM_WHY="" PVM_CLASS=compute PVM_KIND=build
+  command -v pool_vm_job_kind >/dev/null 2>&1 && PVM_KIND=$(pool_vm_job_kind "$KEY" "$JF")
+  if command -v pool_vm_resolve_for >/dev/null 2>&1; then
+    pool_vm_resolve_for "$PVM_KIND" || say "$KEY: VM size row refused ($PVM_WHY) — launching performance-8x/16384"
+  elif command -v pool_vm_resolve >/dev/null 2>&1; then
+    pool_vm_resolve || say "$KEY: VM size row refused ($PVM_WHY) — launching performance-8x/16384"
+  fi
   # flyctl's stderr goes to a file in $TMP (removed with it on every exit), so a
   # failed launch logs why. /dev/null when $TMP is gone, so the call still runs.
   local FLYERR=/dev/null; [ -d "${TMP:-}" ] && FLYERR="$TMP/fly-run.err"
@@ -442,6 +451,8 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
                      command -v pool_account_release >/dev/null 2>&1 && pool_account_release "$LEASE_ID"
                      pool_spawn_cap_unrecord "$KEY" "$SPAWNCAPTS"
                      pool_unclaim "$KEY" "fly machine run produced no machine for $KEY"; return 1; }
+  # Said only here, after `machine run` returned a machine id (BH-9065).
+  say "vm class $PVM_CLASS $PVM_SIZE/$PVM_MEM for $KEY ($PVM_KIND)"
   local LAUNCH_T; LAUNCH_T=$(date +%s)
   # BH-5001: the claim above was won before the machine existed; name it now,
   # so "is this key building, and where" is answerable from the row on any hub.
@@ -538,7 +549,10 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
       || say "$MID: model-routes bundle push FAILED — it resolves its own ladders at job start"
   fi
   if [ -s "$TMP/cloudflare.env" ]; then mput "$MID" "$TMP/cloudflare.env" /run/harness-env/cloudflare.env || OK=0; fi
-  mput "$MID" "$JF" /run/harness/job.json || OK=0
+  # BH-9065: the stage and the soft cap ride the job file (pool_job_stamp).
+  JFPUSH=$(pool_job_stamp_path "$JF" "$PVM_KIND")
+  mput "$MID" "$JFPUSH" /run/harness/job.json || OK=0
+  pool_job_stamp_done "$JF" "$JFPUSH"
   fi
   rm -rf "$TMP"
   if [ "$OK" = 1 ]; then
@@ -568,11 +582,16 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     # `spawn_cap_ts` ($SPAWNCAPTS, BH-1279) is the exact line pool_spawn_cap_record
     # appended to this key's .spawns log above. Absent for a RB-* key, which the
     # cap never charges in the first place.
+    # `vm_class`/`vm_size`/`vm_mem` (BH-9065) are the guest this machine was
+    # launched with: next_job_or_destroy reuses it only for a job of the same
+    # class, and pool_fly_cost_row prices a machine the listing no longer has.
+    # `booted_at` (BH-9065) is the soft-cap clock of the reuse check; the reuse
+    # hand-off carries it, while spawned_at moves on each hand-off.
     # `spec_repos` (BH-6576) names the repos this machine's read-only token was
     # asked for by the ticket's `Spec-repo:` line. Absent for every other ticket;
     # next_job_or_destroy never reuses a machine that carries it.
-    jq -nc --arg m "$MID" --arg k "$KEY" --arg t "$TICKET" --argjson a "$ATT" --argjson d "$SDEF" --argjson x "$SDTH" --arg ts "$(STAMP)" --arg sb "$SSB" --arg hf "$SHF" --arg ge "$MEXP" --arg aa "$MACCT" --arg sct "$SPAWNCAPTS" --arg sr "${SPEC_REPOS:-}" \
-      '{machine:$m,key:$k,ticket_id:$t,attempt:$a,deferrals:$d,deaths:$x,spawned_at:$ts}
+    jq -nc --arg m "$MID" --arg k "$KEY" --arg t "$TICKET" --argjson a "$ATT" --argjson d "$SDEF" --argjson x "$SDTH" --arg ts "$(STAMP)" --arg sb "$SSB" --arg hf "$SHF" --arg ge "$MEXP" --arg aa "$MACCT" --arg sct "$SPAWNCAPTS" --arg sr "${SPEC_REPOS:-}" --arg vc "$PVM_CLASS" --arg vs "$PVM_SIZE" --arg vm "$PVM_MEM" \
+      '{machine:$m,key:$k,ticket_id:$t,attempt:$a,deferrals:$d,deaths:$x,spawned_at:$ts,booted_at:$ts,vm_class:$vc,vm_size:$vs,vm_mem:$vm}
        + (if $sb == "" then {} else {stack_base:$sb} end)
        + (if $hf == "true" then {hotfix:true} else {} end)
        + (if $ge == "" then {} else {gh_token_expires_at:$ge} end)

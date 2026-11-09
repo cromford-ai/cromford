@@ -8,5 +8,5 @@
   "zero_means": null,
   "required": false,
   "read_in": "bin/lib/pool-vm-size.sh",
-  "note": "BH-8318 (MKF-3). The Fly guest size of every pool machine of the project: spawn_one passes it as `--vm-size` on `fly machine run`, on the push path and the pull path. Per-project row `lane.fly-pool.<project>.vm_size`. Allowed: performance-1x, performance-2x, performance-4x, performance-8x, performance-16x (exact, case-sensitive). A value outside the list, or a pair whose VM_MEMORY_MB does not fit the size, launches performance-8x/16384 and logs one `VM size row refused` line per spawn in fly-pool.log. No row: performance-8x, the size before this knob."
+  "note": "BH-8318 (MKF-3). The Fly guest size of every pool machine of the project: spawn_one passes it as `--vm-size` on `fly machine run`, on the push path and the pull path. Per-project row `lane.fly-pool.<project>.vm_size`. Allowed: performance-1x, performance-2x, performance-4x, performance-8x, performance-16x, and since BH-9065 shared-cpu-1x/2x/4x/8x with 256..2048 MB per CPU (exact, case-sensitive). This is the `compute` class of VM_CLASS. A value outside the list, or a pair whose VM_MEMORY_MB does not fit the size, launches performance-8x/16384 and logs one `VM size row refused` line per spawn in fly-pool.log. No row: performance-8x, the size before this knob."
 }

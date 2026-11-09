@@ -1,0 +1,12 @@
+{
+  "env": "POOL_CAP_BRIEF_BYTES",
+  "type": "int",
+  "default": 1500,
+  "min": 0,
+  "max": 3000,
+  "unit": "bytes",
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/fly-pool.sh",
+  "note": "BH-9065. How much of a soft-capped machine's brief.md (bin/lib/pool-stage.sh) the reap carries on the re-offer: the brief rides the queue row meta, which the jobs worker caps at 4000 chars, and the next machine's EXECUTE prompt reads it. pool_stage_reoffer cuts the brief to this many bytes. Per-project row `lane.fly-pool.<project>.pool_cap_brief_bytes`. 0 carries no brief."
+}

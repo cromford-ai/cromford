@@ -43,6 +43,13 @@ CKPT_WIP_N=$(CKPT_WIP_COUNT)
 if [ "$CKPT_WIP_N" -gt 0 ]; then
   CKPT_RESUME_NOTE="RESUME FROM CHECKPOINT — DO NOT START OVER. Branch $BRANCH already carries $CKPT_WIP_N 'wip: checkpoint' commit(s) written by an earlier session of this same ticket that died before it could finish (max-turns, timeout, or a reaped machine). That work is real and it is yours. BEFORE YOU EDIT ANYTHING: run \`git log --oneline $BASE..HEAD\` and \`git diff $BASE...HEAD\` and read what is already done, then continue from there — re-implementing it wastes the whole session and usually conflicts with itself. The checkpoint commits are squashed away automatically before the PR, so leave them alone and just commit your own work on top. "
   echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT resume: EXECUTE told to continue from $CKPT_WIP_N wip commit(s) on $BRANCH" >> "$BUILD/pipeline.log"
+  # BH-9065: the machine before this one stopped at its soft cap and wrote a
+  # brief (bin/lib/pool-stage.sh); the pool carried it here on the job, already
+  # cut to POOL_CAP_BRIEF_BYTES by the hub.
+  if [ -s "${RB_CAP_BRIEF_FILE:-}" ]; then
+    cp -f "$RB_CAP_BRIEF_FILE" "$BUILD/cap-brief.md" 2>/dev/null
+    CKPT_RESUME_NOTE+="The earlier machine stopped at its soft cap, not on an error. Its brief: $(tr '\n' ' ' < "$RB_CAP_BRIEF_FILE") "
+  fi
 fi
 echo "$(STAMP) [$PROJECT/$KEY] EXECUTE ($EXECUTE_MODEL)" >> "$BUILD/pipeline.log"
 BB executing

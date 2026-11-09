@@ -34,7 +34,7 @@ POOL_RECORD_FILES=(plan.md review.md security-review.md security-review-run.txt 
   merged-review2.md harness-suite-fix.txt
   qa.md e2e.md evidence.md changed-files.txt
   reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt
-  pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log
+  pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log brief.md
   execute-transcript.md stop-reason.txt ticket-meta.json gate.txt gate-run.tail.txt)
 
 # The machine's own paths. The hub uses them for a skipped file's ssh pull.

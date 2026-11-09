@@ -1,0 +1,12 @@
+{
+  "env": "VM_CLASS",
+  "type": "string",
+  "default": "plan=model leadreview=model rereview=model",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "read_in": "bin/lib/pool-vm-size.sh",
+  "note": "BH-9065. The machine class of each pool job kind. Per-project row `lane.fly-pool.<project>.vm_class`: `<kind>=<class>` pairs, blank- or comma-separated. Kinds: plan (a build key's plan stage, which then hands the key off as execute), execute (the re-offer after a plan hand-off), build (a whole build), leadreview (LR-*), rereview (RR-*), fixround (FXR-*), rebase (RB-*), preview (CP-*). class is `model` (VM_SIZE_MODEL/VM_MEMORY_MB_MODEL) or `compute` (VM_SIZE/VM_MEMORY_MB). A kind the map does not name, or an unknown class, is compute. A reaped machine is reused only for a job of its own class. No row or an empty row: the fallback map `plan=model leadreview=model rereview=model` (POOL_VM_CLASS_FALLBACK in bin/lib/pool-vm-size.sh). A row replaces the whole map: `build=compute` puts every kind on compute, the behaviour before this knob."
+}

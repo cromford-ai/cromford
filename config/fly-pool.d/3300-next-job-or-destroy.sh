@@ -62,6 +62,28 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         say "$MID: its build deferred on a build slot still held on the machine — destroying instead of reusing" ;;
     esac
   fi
+  # ...and never reuse a machine at or past its soft cap (BH-9065). The cap is
+  # the machine's own uptime, so its next build would cap on its first agent
+  # call, do no work and spend one of that key's POOL_SPAWN_CAP_PER_KEY spawns.
+  # A CAPPED RESULT says so outright; otherwise the age is now minus booted_at
+  # (MBOOT, read by the reap loop; the first spawned_at of this machine).
+  # POOL_MACHINE_SOFT_CAP_S is the knob (fallback 7200, 0 = off), as in
+  # pool_job_stamp below.
+  if [ "$REUSE_OK" = 1 ]; then
+    NCAP="${POOL_MACHINE_SOFT_CAP_S:-7200}"; [[ "$NCAP" =~ ^[0-9]+$ ]] || NCAP=7200
+    NCAPPED=0
+    if [ -n "${LOCAL:-}" ] && [ -r "${LOCAL:-}/RESULT" ]; then
+      case "$(head -1 "$LOCAL/RESULT" 2>/dev/null)" in CAPPED*) NCAPPED=1 ;; esac
+    fi
+    if [ "$NCAPPED" = 0 ] && [ "$NCAP" -gt 0 ] && [ -n "${MBOOT:-}" ]; then
+      NBOOT=$(date -u -d "$MBOOT" +%s 2>/dev/null) || NBOOT=""
+      if [ -n "$NBOOT" ] && [ $(( $(date -u +%s) - NBOOT )) -ge "$NCAP" ]; then NCAPPED=1; fi
+    fi
+    if [ "$NCAPPED" = 1 ]; then
+      REUSE_OK=0
+      say "$MID is at its soft cap (${NCAP}s) — destroying instead of reusing (the next job takes a fresh machine)"
+    fi
+  fi
   # ...and never reuse a machine that holds a read token for its ticket's spec
   # repos (BH-6576): the next ticket did not ask for that access.
   if [ "$REUSE_OK" = 1 ] && command -v spec_repos_machine_has >/dev/null 2>&1 && spec_repos_machine_has "$MF"; then
@@ -111,6 +133,21 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
       # ...and never a console preview row (BH-8030): its token is pushed at
       # spawn, so it takes a fresh machine.
       case "$NKEY" in CP-*) continue ;; esac
+      # ...and never a job of the other machine class (BH-9065): a lead review
+      # must not hold a performance-8x, and a build must not land on a
+      # shared-cpu machine. The reap loop read the class (MVCLASS) before it
+      # removed $MF; a suite that sources this function alone has only $MF. A
+      # machine json with no vm_class (`none`) was spawned before the classes:
+      # it keeps the reuse rule it was spawned under and takes any job, so the
+      # deploy does not destroy the machines already running. Every machine
+      # spawn_one launches from now on carries a class.
+      if command -v pool_vm_class_for >/dev/null 2>&1; then
+        NVKIND=$(pool_vm_job_kind "$NKEY" "$NJ")
+        NMCLASS="${MVCLASS:-}"
+        [ -n "$NMCLASS" ] || NMCLASS=$(jq -r '.vm_class // "none"' "$MF" 2>/dev/null)
+        [ -n "$NMCLASS" ] || NMCLASS=none
+        [ "$NMCLASS" = none ] || [ "$(pool_vm_class_for "$NVKIND")" = "$NMCLASS" ] || continue
+      fi
       # pool_key_live (BH-5001) reads the claim too; the bare grep is the
       # fallback for the suites that source this function alone.
       if command -v pool_key_live >/dev/null 2>&1; then pool_key_live "$NKEY" && continue
@@ -281,8 +318,13 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         fi
       fi
       # <<< pool testhost route refresh
-      if mput "$MID" "$NJ" /run/harness/job.json.next \
+      # Guarded like pool_vm_class_for above: with no stamp helper the plain job
+      # file is pushed, never an empty path that turns a reuse into a destroy.
+      NJPUSH="$NJ"
+      command -v pool_job_stamp_path >/dev/null 2>&1 && NJPUSH=$(pool_job_stamp_path "$NJ" "${NVKIND:-build}")
+      if mput "$MID" "$NJPUSH" /run/harness/job.json.next \
          && mexec "$MID" "mv /run/harness/job.json.next /run/harness/job.json" >/dev/null; then
+        [ "$NJPUSH" = "$NJ" ] || pool_job_stamp_done "$NJ" "$NJPUSH"
         rm -f "$NJ"
         # The token rides with the MACHINE, not with the job: a reused machine keeps
         # the credential it booted with, so dropping its expiry here would make the
@@ -293,14 +335,21 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         # the machine's tmpfs and its lease is already counted, so dropping the
         # name here would leave a lease nothing can attribute and a reap that
         # cannot cool the account down when it refuses.
+        # BH-9065: the guest rides with the MACHINE too (MVGUEST, read by the
+        # reap loop before it removed $MF). Unreadable gives {}: compute.
+        NVG="${MVGUEST:-}"
+        [ -n "$NVG" ] || NVG=$(jq -c '{vm_class,vm_size,vm_mem} | with_entries(select(.value != null))' "$MF" 2>/dev/null) || NVG=""
+        [ -n "$NVG" ] || NVG='{}'
         jq -nc --arg m "$MID" --arg k "$NKEY" --arg t "$NTICKET" --argjson a "$NATT" --argjson d "$NDEF" --argjson x "$NDTH" --arg ts "$(STAMP)" --arg prev "$KEY" --arg sb "$NSB" --arg hf "$NHF" --arg ge "${GHEXP:-}" --arg gr "${GHROT:-}" --arg aa "${MACCT:-}" --arg sct "${NHANDOFFTS:-}" \
-          '{machine:$m,key:$k,ticket_id:$t,attempt:$a,deferrals:$d,deaths:$x,spawned_at:$ts,reused_from:$prev}
+          --argjson vg "$NVG" --arg bt "${MBOOT:-}" \
+          '{machine:$m,key:$k,ticket_id:$t,attempt:$a,deferrals:$d,deaths:$x,spawned_at:$ts,reused_from:$prev} + $vg
            + (if $sb == "" then {} else {stack_base:$sb} end)
            + (if $hf == "true" then {hotfix:true} else {} end)
            + (if $ge == "" then {} else {gh_token_expires_at:$ge} end)
            + (if $gr == "" then {} else {gh_token_rotated_at:$gr} end)
            + (if $aa == "" then {} else {auth_account:$aa} end)
-           + (if $sct == "" then {} else {spawn_cap_ts:$sct} end)' > "$MF"
+           + (if $sct == "" then {} else {spawn_cap_ts:$sct} end)
+           + (if $bt == "" then {} else {booted_at:$bt} end)' > "$MF"
         # >>> machines rows (BH-1035)
         # Record the reuse in the machine registry. Guarded because this
         # function is sourced alone by some pool tests.
@@ -326,6 +375,7 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$NKEY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_reused"}')" >/dev/null 2>&1 || true
         REUSED=1
       else
+        [ "$NJPUSH" = "$NJ" ] || pool_job_stamp_done "$NJ" "$NJPUSH"
         say "reuse push FAILED to $MID for $NKEY — destroying, job stays queued"
         # ...and under the flag "stays queued" is only true if the row goes back.
         [ "${ROWS_ONLY:-0}" = 1 ] && command -v queue_release >/dev/null 2>&1 \
@@ -375,3 +425,126 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
   fi
 }
 
+
+# >>> pool stage hand-off and soft cap (BH-9065)
+# The hub half of bin/lib/pool-stage.sh. A build key is one of three job kinds
+# to the pool: `build` (the whole pipeline on one machine, as before),
+# `plan` (only when row lane.fly-pool.<p>.vm_class maps plan=model: the
+# machine plans, publishes the plan and answers PLANNED) and `execute` (the
+# re-offer after a PLANNED: a compute machine that adopts the published plan).
+# pool_vm_job_kind (bin/lib/pool-vm-size.sh) decides it; spawn_one and the
+# reuse hand-off both stamp the job file with pool_job_stamp before the push.
+#
+# pool_job_stamp <job-file> <kind>: adds `stage:"plan"` for a plan job, and
+# `soft_cap_s` (POOL_MACHINE_SOFT_CAP_S, row
+# lane.fly-pool.<p>.pool_machine_soft_cap_s, fallback 7200 s, 0 = off) for every
+# build kind. A machine whose job carries no soft_cap_s is never capped, so a
+# machine spawned before this knob existed runs as it always did.
+# THE QUEUE FILE IS NEVER REWRITTEN: the stamp goes on a private copy (mktemp
+# under ${TMPDIR:-/tmp}), and the function prints the path to push: the copy, or
+# the job file itself when there is nothing to stamp or the stamp failed. rc 0
+# always. The caller removes the copy after the push (pool_job_stamp_done).
+pool_job_stamp() {
+  local jf="${1:-}" kind="${2:-build}" cap stamped
+  [ -s "$jf" ] || { printf '%s\n' "$jf"; return 0; }
+  case "$kind" in build|plan|execute) ;; *) printf '%s\n' "$jf"; return 0 ;; esac
+  # 7200 is the documented fallback of the POOL_MACHINE_SOFT_CAP_S knob
+  # (catalog/lanes.d/fly-pool.knobs.d/POOL_MACHINE_SOFT_CAP_S.json).
+  cap="${POOL_MACHINE_SOFT_CAP_S:-7200}"; [[ "$cap" =~ ^[0-9]+$ ]] || cap=7200
+  # Nothing to add or drop: the job file is pushed as it is.
+  if [ "$kind" = build ] && [ "$cap" = 0 ] && [ "$(jq -r 'has("stage") or has("soft_cap_s")' "$jf" 2>/dev/null)" = false ]; then
+    printf '%s\n' "$jf"; return 0
+  fi
+  stamped=$(mktemp "${TMPDIR:-/tmp}/pool-job-stamp.XXXXXX" 2>/dev/null) || { printf '%s\n' "$jf"; return 0; }
+  if jq -c --arg k "$kind" --argjson c "$cap" \
+       '(if $k == "plan" then .stage = "plan" elif $k == "execute" then .stage = "execute" else del(.stage) end)
+        | (if $c > 0 then .soft_cap_s = $c else del(.soft_cap_s) end)' "$jf" > "$stamped" 2>/dev/null && [ -s "$stamped" ]; then
+    printf '%s\n' "$stamped"
+  else
+    rm -f "$stamped"; printf '%s\n' "$jf"
+  fi
+  return 0
+}
+
+# pool_job_stamp_path <job-file> <kind>: the path to push, one line; the job
+# file itself when pool_job_stamp is absent or prints nothing.
+pool_job_stamp_path() {
+  local out=""
+  command -v pool_job_stamp >/dev/null 2>&1 && out=$(pool_job_stamp "$1" "$2")
+  printf '%s\n' "${out:-$1}"
+}
+
+# pool_job_stamp_done <job-file> <pushed-path>: removes the stamped copy, never
+# the job file.
+pool_job_stamp_done() {
+  [ -n "${2:-}" ] && [ "$2" != "${1:-}" ] || return 0
+  case "$2" in "${TMPDIR:-/tmp}"/pool-job-stamp.*) rm -f -- "$2" ;; esac
+  return 0
+}
+
+# pool_stage_reoffer: the reap's arm for PLANNED / CAPPED on a build key. Reads
+# the reap loop's own variables. rc 0 = handled (the caller hands the machine
+# on and continues), rc 1 = not this arm's RESULT.
+#
+# Neither answer is a verdict, so no counter moves: `attempt`, `deferrals` and
+# `deaths` are carried as they were, and the CI-repair, EXECUTE_EMPTY and
+# abandon counters are never read or written here. PLANNED takes back the plan
+# machine's per-key spawn-cap entry, so a hand-off pair counts once. CAPPED
+# keeps it: a build that is capped again and again is still bounded by
+# POOL_SPAWN_CAP_PER_KEY. The row's reason names the cap, never GATE_RED or
+# EXECUTE_EMPTY.
+pool_stage_reoffer() {
+  local word stage="" brief="" meta why
+  case "$RLINE" in
+    "PLANNED stage=plan"*) word=PLANNED; stage=execute ;;
+    # A cap after the plan re-offers as execute: pool-stage.sh published the
+    # plan, so the next machine adopts it. A cap during the plan re-plans.
+    "CAPPED stage=plan "*) word=CAPPED ;;
+    "CAPPED stage="*)      word=CAPPED; stage=execute ;;
+    *) return 1 ;;
+  esac
+  case "$KEY" in RB-*|RR-*|LR-*|CP-*|FXR-*) return 1 ;; esac
+  # The dir owes the board no close-out: the next machine's build does.
+  : > "$LOCAL/DEFERRED"; : > "$LOCAL/COMMENTED"
+  if [ "$word" = CAPPED ]; then
+    # The brief the capped machine wrote: brief.md is in POOL_RECORD_FILES
+    # (bin/lib/pool-record.sh), so the record path and the ssh arm both bring
+    # it into $LOCAL. It rides the row meta (4000 chars in the worker), so it
+    # is cut to POOL_CAP_BRIEF_BYTES (row lane.fly-pool.<p>.pool_cap_brief_bytes;
+    # 1500 is that knob's documented fallback). No brief: re-offered without one.
+    local bb="${POOL_CAP_BRIEF_BYTES:-1500}"; [[ "$bb" =~ ^[0-9]+$ ]] || bb=1500
+    brief=$(head -c "$bb" "$LOCAL/brief.md" 2>/dev/null)
+    why="cap: $(head -1 "$LOCAL/RESULT" | head -c 100)"
+  else
+    command -v pool_spawn_cap_unrecord >/dev/null 2>&1 && pool_spawn_cap_unrecord "$KEY" "${SPAWNCAPTS:-}"
+    why="stage hand-off: plan done on $MID, re-offered as execute"
+  fi
+  meta=$(jq -nc --argjson d "${DEFC:-0}" --argjson x "${DTHS:-0}" --arg sb "${SBASE:-}" --arg hf "${MHF:-false}" \
+           --arg st "$stage" --arg br "$brief" --arg w "$word" --arg fs "$([ "$word" = CAPPED ] && echo true)" \
+    '{deferrals:$d,deaths:$x,reoffer:$w}
+     + (if $sb == "" then {} else {stack_base:$sb} end)
+     + (if $hf == "true" then {hotfix:true} else {} end)
+     + (if $st == "" then {} else {stage:$st} end)
+     + (if $br == "" then {} else {cap_brief:$br} end)
+     + (if $fs == "true" then {fresh_spawn:true} else {} end)')
+  if QROW requeue "$KEY" "$why" "$ATT" "$meta" "$TICKET"; then
+    # The queue file comes from the same row -> job.json mapping the rows-only
+    # materialise uses (bin/lib/queue-row-job.sh knows `stage` and `cap_brief`),
+    # so the re-offer writes no second copy of that format. Flag-off ticks do
+    # not source the lib at the head, so it is sourced here.
+    command -v queue_row_job_file >/dev/null 2>&1 \
+      || . "$HARNESS/bin/lib/queue-row-job.sh" 2>/dev/null \
+      || . "$(dirname "${BASH_SOURCE[0]}")/lib/queue-row-job.sh" 2>/dev/null || true
+    if ! command -v queue_row_job_file >/dev/null 2>&1; then
+      say "$word $KEY: bin/lib/queue-row-job.sh is missing — the row is requeued, the queue file is not written"
+    elif ! QRJ_TAG="pool/$P" queue_row_job_file "$P" "$QDIR/$KEY.json" "$KEY" "$TICKET" "${ATT:-0}" "$meta" >/dev/null; then
+      say "$word $KEY: the queue file was not written (queue_row_job_file failed) — the row is requeued"
+    fi
+    say "$word $KEY on $MID: $why — requeued, attempt $ATT, deferrals ${DEFC:-0} and deaths ${DTHS:-0} unchanged"
+    "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" --arg s "pool_$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" '{kind:"build",project:$p,ticket_key:$k,stage:$s,detail:$r}')" >/dev/null 2>&1 || true
+  else
+    say "$word $KEY on $MID: abandoned by an operator, not requeued"
+  fi
+  return 0
+}
+# <<< pool stage hand-off and soft cap

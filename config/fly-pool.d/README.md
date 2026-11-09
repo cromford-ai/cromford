@@ -39,7 +39,7 @@ fragments, one per top-level unit (BH-8740). Each one starts at its
 | `3000-pool-full-push.sh` | the pool full push (BH-1041) |
 | `3100-pool-relay-retry.sh` | the pool relay retry (BH-1041) |
 | `3200-pool-custody-sweep.sh` | the pool custody sweep (BH-5006) |
-| `3300-next-job-or-destroy.sh` | `next_job_or_destroy()` |
+| `3300-next-job-or-destroy.sh` | `next_job_or_destroy()`, and `pool_job_stamp()` / `pool_stage_reoffer()` (BH-9065) |
 | `3400-pool-listing-and-reap.sh` | the pool listing (BH-660) and the whole REAP loop |
 | `3500-dead-machine-sweep.sh` | the dead-machine sweep (BH-660) and the SPAWN preamble |
 | `3600-bundle-reason.sh` | the bundle reason (BH-4859) |

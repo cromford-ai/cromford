@@ -243,7 +243,7 @@ grep -q '^MPUT' "$T/calls" && bad "S5: a failed refresh pushed" || ok
 grep -q "^SAY BH-8336: testhost route: not shipped (token mint rc 1) — m-fixture keeps the route it has$" "$T/calls" && ok || bad "S5: refresh failure line: $(grep SAY "$T/calls")"
 NJF=$(awk '/^next_job_or_destroy\(\)/{f=1} f&&/^}/{exit} f' "$POOLSH")
 RL=$(grep -n '# >>> pool testhost route refresh' <<<"$NJF" | cut -d: -f1)
-JL=$(grep -n 'mput "\$MID" "\$NJ" /run/harness/job.json.next' <<<"$NJF" | cut -d: -f1)
+JL=$(grep -nE 'mput "\$MID" "\$NJ(PUSH)?" /run/harness/job.json.next' <<<"$NJF" | cut -d: -f1)
 [ -n "$RL" ] && [ -n "$JL" ] && [ "$RL" -lt "$JL" ] && ok || bad "S5: the refresh is not before the job.json.next mput in next_job_or_destroy (refresh='$RL' job='$JL')"
 
 # S3 (all cases): no say line, stdout, stderr or log file carried the token.
