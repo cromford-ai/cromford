@@ -70,7 +70,7 @@ case "\$1" in
     rc=\$(cat "$T/row.rc" 2>/dev/null || echo 2)
     [ "\$rc" = 0 ] && { cat "$T/row"; echo; }
     exit "\$rc" ;;
-  setting-set) printf '%s' "\$3" > "$T/row"; echo 0 > "$T/row.rc"; exit 0 ;;
+  setting-set) [ "\$2" = deploy.console-ui.sha ] && { printf '%s' "\$3" > "$T/row"; echo 0 > "$T/row.rc"; }; exit 0 ;;
 esac
 exit 1
 EOF
@@ -164,7 +164,7 @@ chk "C6 403/403 logged" 'grep -qF "probes 403/403" "$RUNLOG"'
 reset; echo red > "$T/test.mode"; run
 chk "C3 rc 0" '[ "$RC" = 0 ]'
 chk "C3 red: no npx" '! has "npx "'
-chk "C3 red: no stamp" '! has "setting-set"'
+chk "C3 red: no stamp" '! has "setting-set deploy.console-ui.sha"'
 chk "C3 exactly one red alert" '[ "$(grep -F -- "--id console-pages-deploy-red" "$T/calls.log" | grep -vcF -- "--resolve")" = 1 ]'
 chk "C3 alert names the failing test" 'grep -F -- "--id console-pages-deploy-red" "$T/calls.log" | grep -F "$C7" | grep -F REFUSED | grep -qF "BuildQueuePanel (mounted)"'
 chk "C3 alert names the test's file" 'grep -F -- "--id console-pages-deploy-red" "$T/calls.log" | grep -qF "BuildQueuePanel (mounted): a refused DROP keeps the row [tests/panel.test.js]"'

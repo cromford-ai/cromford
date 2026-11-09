@@ -54,6 +54,7 @@ tests/conductor-rereview-request.bh-9026-test.sh:curl-auth-header:149
 tests/connection-probe.bh-7924-test.sh:generic-api-key:43
 tests/connection-probe.bh-7924-test.sh:generic-api-key:79
 tests/connection-probe.bh-7924-test.sh:generic-api-key:247
+tests/console-pages-deploy.bh-9115-test.sh:generic-api-key:52
 tests/coord-writes-fragments.bh-6487-test.sh:generic-api-key:186
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:54
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:144

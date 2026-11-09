@@ -1,0 +1,11 @@
+{
+  "env": "CONSOLE_PAGES_RED_FILES_MAX",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 200,
+  "zero_means": null,
+  "read_in": "bin/console-pages-deploy.sh",
+  "note": "BH-9115: how many failing console-ui test files the red npm test line in logs/console-pages-deploy.log names before '(+k more)'. Read by bin/console-pages-deploy.sh as ${CONSOLE_PAGES_RED_FILES_MAX:-}, then this settings row, default 20; 0 or a non-number is 20.",
+  "settable": true
+}

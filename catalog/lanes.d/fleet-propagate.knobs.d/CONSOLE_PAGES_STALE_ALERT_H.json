@@ -1,0 +1,11 @@
+{
+  "env": "CONSOLE_PAGES_STALE_ALERT_H",
+  "type": "int",
+  "default": 24,
+  "min": 0,
+  "max": 720,
+  "zero_means": "off",
+  "read_in": "bin/console-pages-deploy.sh",
+  "note": "BH-9115: hours. When a console-pages deploy run does not deploy (a parked or red npm test, npm ci, vite build or wrangler failed) and main's oldest undeployed console-ui commit is at least this old, bin/console-pages-deploy.sh raises one warn alert --id console-pages-stale; a stamped deploy resolves it. Read as ${CONSOLE_PAGES_STALE_ALERT_H:-}, then this settings row, default 24; 0 = off; a non-number falls through to 24.",
+  "settable": true
+}
