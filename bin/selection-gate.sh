@@ -152,6 +152,22 @@ if [ "$BL" = 1 ]; then
   [ "$MTO" -le "$TO" ] || MTO=$TO
 fi
 
+# THE SUITE LEDGER (BH-9177). lane.fly-pool.selection_gate_suite_reuse
+# (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_SUITE_REUSE.json). Unset is
+# 0: the script alone stays the BH-8062 gate (no probe, no `reuse:` line);
+# bin/lib/selection-gate.sh passes the row. With 1, bin/lib/selection-gate-reuse.sh
+# asks the test host for its image after step 2, sends only the suites the
+# ledger has no green for at (tree, image), folds the ledger's reds (with
+# SELECTION_GATE_RERUN_RED=0) into step 4's reds, and records the run before
+# gate.txt, which gets an 11th line `reuse: <ran X reused G green, R red of N
+# (image <id>)[; recorded N result(s)|; record skipped (<why>)]|off (<why>)|->`.
+SGR=0; [ "${SELECTION_GATE_SUITE_REUSE:-0}" = 1 ] && SGR=1
+SGR_REDS=(); SGR_LINE="-"
+if [ "$SGR" = 1 ]; then
+  # shellcheck source=bin/lib/selection-gate-reuse.sh
+  . "$(dirname "$0")/lib/selection-gate-reuse.sh" 2>/dev/null || { SGR=2; SGR_LINE="off (no reuse lib)"; }
+fi
+
 HEAD_SHA=$(git -C "$TREE" rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
 MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"; BRED="-"; BSTAT="-"
 
@@ -161,6 +177,7 @@ write_gate() {
   printf 'head: %s\nbase: %s\nsuites: %s\nrc: %s\nred: %s\nnoted: %s\nmode: %s\nwhy: %s\nquarantine: %s\nhost-noted: %s\n' \
     "${HEAD_SHA:--}" "$MB" "$N" "$RC" "$RED" "$NOTED" "$MODE" "$WHY" "$QSRC" "$HNOTED" > "$t" \
     && { [ "$BL" = 0 ] || printf 'baseline-red: %s\nbaseline: %s\n' "$BRED" "$BSTAT" >> "$t"; } \
+    && { [ "$SGR" = 0 ] || printf 'reuse: %s\n' "$SGR_LINE" >> "$t"; } \
     && mv -f "$t" "$OUT/gate.txt" || { rm -f "$t"; echo "selection-gate: cannot write $OUT/gate.txt" >&2; exit 3; }
   local b=""; [ "$BL" = 0 ] || b=" baseline-red=$BRED"
   echo "selection-gate: rc=$RC suites=$N red=$RED noted=$NOTED mode=$MODE why=$WHY$b"
@@ -359,10 +376,16 @@ MODE=$(sed -n 's/^mode=//p' "$OUT/plan.github-output" 2>/dev/null | tail -n 1); 
 mapfile -t SUITES < <(grep -v '^[[:space:]]*$' "$OUT/selection.txt" 2>/dev/null)
 N=${#SUITES[@]}
 [ "$N" -gt 0 ] || { RC=no-selection; WHY=empty-selection; write_gate; }
+[ "$SGR" = 1 ] && sgr_plan
 
 # ── 3. the run on the test host ──────────────────────────────────────────────
 rrc=0; t0=$SECONDS
-REMOTE_GATE_P="$PAR" timeout -k 30 "$MTO" "$RUNNER" "$TREE" "${SUITES[@]}" > "$OUT/run.txt" 2>&1 || rrc=$?
+if [ "${#SUITES[@]}" -gt 0 ]; then
+  REMOTE_GATE_P="$PAR" timeout -k 30 "$MTO" "$RUNNER" "$TREE" "${SUITES[@]}" > "$OUT/run.txt" 2>&1 || rrc=$?
+else
+  # Every suite was reused green or is red in the suite ledger: nothing to send.
+  echo "selection-gate: every suite is reused or red in the suite ledger; the runner was not called" > "$OUT/run.txt"
+fi
 el=$((SECONDS - t0))
 
 # ── 4. the verdict ───────────────────────────────────────────────────────────
@@ -387,9 +410,13 @@ case "$rrc" in
 esac
 # A suite the host could not run is never a red suite, and never a pass.
 grep -q '^RUNNER-FAILURE ' "$OUT/run.txt" 2>/dev/null && cnr runner-failure
+RUN_RED=$RC; [ "${#SGR_REDS[@]}" -gt 0 ] && RC=1
 if [ "$RC" = 1 ]; then
   mapfile -t REDS < <(sed -nE 's/^FAIL (tests\/[^ ]+\.sh) \(rc [0-9]+\)$/\1/p' "$OUT/run.txt" 2>/dev/null | sort -u)
-  [ "${#REDS[@]}" -gt 0 ] || cnr_why red-without-names
+  [ "$RUN_RED" != 1 ] || [ "${#REDS[@]}" -gt 0 ] || cnr_why red-without-names
+  # A ledger red (BH-9177) is a red of this run: the quarantine, the host
+  # notes and the base run see it like any other.
+  [ "${#SGR_REDS[@]}" -gt 0 ] && mapfile -t REDS < <(printf '%s\n' ${REDS[@]+"${REDS[@]}"} "${SGR_REDS[@]}" | grep -v '^$' | sort -u)
   # ── 5. the flaky quarantine ──────────────────────────────────────────────
   Q=""
   if [ -n "${CI_QUARANTINE+set}" ]; then QSRC=env; Q="${CI_QUARANTINE}"
@@ -412,4 +439,5 @@ if [ "$RC" = 1 ]; then
   [ "$BL" = 1 ] && [ "${#keep[@]}" -gt 0 ] && baseline_pass
   if [ "${#keep[@]}" -gt 0 ]; then RED=$(IFS=,; echo "${keep[*]}"); else RC=0; fi
 fi
+[ "$SGR" = 1 ] && sgr_record
 write_gate

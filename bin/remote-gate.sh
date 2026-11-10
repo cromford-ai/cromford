@@ -5,6 +5,7 @@
 #   bin/remote-gate.sh <dir> tests/a.sh [tests/b.sh …]   suites, in parallel
 #   bin/remote-gate.sh <dir> -- <command…>               one command, one copy
 #   bin/remote-gate.sh --issue-cert [--force]            only the cert, then exit
+#   bin/remote-gate.sh --image-id                        only the host's image ref
 #
 #   --full        print every suite's log, not only the failing ones
 #   --tail N      lines of log per suite (default 80)
@@ -12,6 +13,13 @@
 #   --issue-cert  issue (or keep) the ssh cert and stop (BH-5210); by hand, run
 #                 bin/issue-testhost-cert.sh, which takes --key/--org/--hours
 #   --force       with --issue-cert: issue even when the cert is still fresh
+#   --image-id    reach the host over the same route, run nothing, print ONE
+#                 line `IMAGE <ref>` (the machine's FLY_IMAGE_REF) or `IMAGE -`
+#                 and exit 0; 125 when the host cannot be reached (BH-9177).
+#                 No upload. bin/lib/selection-gate-reuse.sh keys the suite
+#                 ledger by it. The suites job prints the same `IMAGE` line
+#                 once, and `TIME <secs> <suite>` after each suite's
+#                 PASS/FAIL/BLIND line.
 #
 # EXIT CODES, and they do not overlap:
 #   0-124  the number of failing suites (or the command's own exit in `--` mode)
@@ -134,7 +142,7 @@ RG_WAIT_S="${REMOTE_GATE_PROXY_WAIT_S:-25}"
 RG_CERT_MIN_H="${REMOTE_GATE_CERT_MIN_H:-2}"
 RG_ISSUE_H="${REMOTE_GATE_ISSUE_HOURS:-72}"
 RG_SUITE_TIMEOUT="${REMOTE_GATE_SUITE_TIMEOUT:-1500}"
-RG_ISSUE_ONLY=0; RG_FORCE_ISSUE=0; RG_ISSUED=0; RG_ISSUE_TMP=""
+RG_ISSUE_ONLY=0; RG_FORCE_ISSUE=0; RG_ISSUED=0; RG_ISSUE_TMP=""; RG_IMAGE_ONLY=0
 # THE CAP ON WHAT ONE ISSUE MAY PRINT (BH-5210), a code constant on purpose:
 # it is a safety ceiling, like _rg_bounded's 5 s KILL grace. A flyctl that
 # looped for 44 h wrote 596 GB into a redirect. A row could only lower it and
@@ -149,6 +157,7 @@ usage:
   bin/remote-gate.sh [--full] [--tail N] [-P n] <dir> tests/a.sh [tests/b.sh ...]
   bin/remote-gate.sh [--full] [--tail N] [-P n] <dir> -- <command ...>
   bin/remote-gate.sh --issue-cert [--force]     (by hand: bin/issue-testhost-cert.sh)
+  bin/remote-gate.sh --image-id                 (one line: IMAGE <the host's image ref, or ->)
 
 Runs the suites (or the command) on the shared Fly test host, in a fresh copy of
 <dir> per suite. Exit 0-124 = the number of failing suites, or the command's
@@ -173,6 +182,7 @@ while [ $# -gt 0 ]; do
     -P)        [ $# -ge 2 ] || die2 "-P needs a number"; RG_P="$2"; shift 2 ;;
     --issue-cert) RG_ISSUE_ONLY=1; shift ;;
     --force)   RG_FORCE_ISSUE=1; shift ;;
+    --image-id) RG_IMAGE_ONLY=1; shift ;;
     --)        break ;;
     -*)        die2 "unknown flag '$1' (try --help)" ;;
     *)         break ;;
@@ -183,7 +193,11 @@ case "$RG_P"    in ''|*[!0-9]*) die2 "-P wants a whole number, got '$RG_P'" ;; e
 [ "$RG_P" -ge 1 ] || die2 "-P must be at least 1"
 
 MODE=suites
-if [ "$RG_ISSUE_ONLY" = 1 ]; then
+if [ "$RG_IMAGE_ONLY" = 1 ]; then
+  [ "$RG_ISSUE_ONLY" = 0 ] && [ "$RG_FORCE_ISSUE" = 0 ] || die2 "--image-id does not go with --issue-cert or --force"
+  [ $# -eq 0 ] || die2 "--image-id takes no directory or command (got '$1')"
+  MODE=image
+elif [ "$RG_ISSUE_ONLY" = 1 ]; then
   [ $# -eq 0 ] || die2 "--issue-cert takes no directory or command (got '$1')"
   case "$RG_ISSUE_H" in ''|*[!0-9]*) die2 "REMOTE_GATE_ISSUE_HOURS wants a whole number, got '$RG_ISSUE_H'" ;; esac
   [ "$RG_ISSUE_H" -ge 1 ] || die2 "REMOTE_GATE_ISSUE_HOURS must be at least 1"
@@ -233,7 +247,7 @@ if [ "$RG_TRANSPORT" = fly-ssh ]; then
 fi
 
 command -v flyctl >/dev/null 2>&1 || die_infra "flyctl is not on PATH — install it, or use bin/run-tests-in-docker.sh"
-[ "$MODE" = issue ] || command -v rsync >/dev/null 2>&1 || die_infra "rsync is not on PATH"
+case "$MODE" in issue|image) ;; *) command -v rsync >/dev/null 2>&1 || die_infra "rsync is not on PATH" ;; esac
 
 # ── the ssh certificate ─────────────────────────────────────────────────────
 # Fly issues a cert that lives at most 72h. Reissuing on every run costs an API
@@ -877,6 +891,15 @@ _rg_job_lib() {
 # and RG_SWEEP_TMP (the pattern roots) name the test's own fixtures. On the host
 # none of them is set and the baked-in roots above are what is swept.
 RG_SPLIT='@@remote-gate-sweep@@'
+# rg_image_ref — the machine's image ref (BH-9177): FLY_IMAGE_REF, else the one
+# in init's environment (an ssh session may not carry the machine env;
+# RG_PROC_ENVIRON is the test seam), printed only when it is all
+# [A-Za-z0-9._:@+/-]; else `-`.
+rg_image_ref() {
+  local r="${FLY_IMAGE_REF:-}"
+  [ -n "$r" ] || r=$(tr '\0' '\n' < "${RG_PROC_ENVIRON:-/proc/1/environ}" 2>/dev/null | sed -n 's/^FLY_IMAGE_REF=//p' | head -n 1)
+  if [[ "$r" =~ ^[A-Za-z0-9._:@+/-]{1,256}$ ]]; then printf '%s\n' "$r"; else echo -; fi
+}
 rg_live_refs() { # every path a live process holds: cwd, open fds, cmdline args (one per line)
   readlink /proc/[0-9]*/cwd /proc/[0-9]*/fd/* 2>/dev/null
   cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\0' '\n'
@@ -1225,6 +1248,8 @@ _rg_compose_suites_job() { # _rg_compose_suites_job <file> <runroot> <suite...>
     printf '%s\n' "$@"
     echo "RG_SUITES"
     cat <<EOS
+# The image this run ran on, once (BH-9177): the suite ledger keys rows by it.
+echo "IMAGE \$(rg_image_ref)"
 rg_n=\$(grep -c . "\$R/suites")
 if [ "\$rg_n" -lt $RG_P ]; then rg_room "\$rg_n" 1; else rg_room $RG_P 1; fi
 # Once, before any copy, so every suite copy carries the catalogs (BH-8725).
@@ -1264,8 +1289,12 @@ done < "\$R/suites" \\
      # the summary read them — 433 "failures" that were the runner, not the
      # branch. With the copy removed here, at most -P of them exist at a time.
      cd /; rm -rf "\$RG_R/run-\$n" "\$TMPDIR"
-     if grep -qiE "\$RG_BLIND_RE" "\$RG_R/log-\$n" 2>/dev/null; then echo "BLIND \$s (printed no merge base, rc \$rc)"
-     elif [ "\$rc" = 0 ]; then echo "PASS \$s"; else echo "FAIL \$s (rc \$rc)"; fi'
+     # The verdict and its wall time in one write (TIME is read by the suite
+     # ledger, BH-9177; this worker bash started with the suite, so SECONDS is
+     # the suite plus its copy).
+     if grep -qiE "\$RG_BLIND_RE" "\$RG_R/log-\$n" 2>/dev/null; then v="BLIND \$s (printed no merge base, rc \$rc)"
+     elif [ "\$rc" = 0 ]; then v="PASS \$s"; else v="FAIL \$s (rc \$rc)"; fi
+     printf "%s\\nTIME %s %s\\n" "\$v" "\$SECONDS" "\$s"'
 ) &
 RG_WORK=\$!
 wait "\$RG_WORK"
@@ -1333,7 +1362,7 @@ trap '_rg_on_signal INT 130' INT
 trap '_rg_on_signal TERM 143' TERM
 _rg_knobs
 [ "$MODE" = issue ] && { _rg_issue_only; exit $?; }
-_rg_build_context
+[ "$MODE" = image ] || _rg_build_context
 [ "$RG_TRANSPORT" = openssh ] && _rg_ensure_cert
 _rg_wake
 [ "$RG_TRANSPORT" = openssh ] && _rg_ensure_proxy
@@ -1348,6 +1377,18 @@ _rg_remote_bash() {
   # shellcheck disable=SC2086
   ssh $SSH_OPTS "root@localhost" bash -s < "$1"
 }
+# --image-id (BH-9177): the route is up; one tiny job, no prep, no upload.
+if [ "$MODE" = image ]; then
+  JOB=$(mktemp "${TMPDIR:-/tmp}/remote-gate-job.XXXXXX") || die_infra "cannot create a temp file in ${TMPDIR:-/tmp}"
+  { printf 'set -uo pipefail\n'; _rg_job_lib; printf 'echo "IMAGE $(rg_image_ref)"\n'; } > "$JOB"
+  RG_IMG_OUT=$(_rg_remote_bash "$JOB"); RC=$?
+  [ "$RC" = 0 ] || die_infra "the image probe on the test host failed (rc $RC) — no image id"
+  RG_IMG_LINE=$(grep -m 1 -E '^IMAGE [^ ]+$' <<<"$RG_IMG_OUT")
+  [ -n "$RG_IMG_LINE" ] || die_infra "the image probe printed no IMAGE line"
+  printf '%s\n' "$RG_IMG_LINE"
+  exit 0
+fi
+
 # The run id is unique per run so two agents draining at once never share a
 # tree; $$ and the clock are enough, and the host removes the tree at the end.
 RUN_ID="$(date '+%s')-$$"

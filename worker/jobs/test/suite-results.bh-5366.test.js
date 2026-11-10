@@ -19,6 +19,10 @@ const TOKEN = { 'x-suite-ledger-token': 'tok' };
 async function setup(t, envExtra = {}) {
   const o = await openDb();
   if (!o) { t.skip('node:sqlite unavailable on this runtime'); return null; }
+  // These cases pin the class trust rule (the C0 seed, BH-5354 I1). The worker
+  // flips an untouched seed row to image on its first read (BH-9177), so the
+  // row is marked an operator's here and keeps class.
+  o.db.prepare("UPDATE settings SET actor = 'fixture' WHERE key = 'lib.suite-reuse.suite_reuse_trust'").run();
   const env = { DB: o.DB, HARNESS_SECRET: 'SECRET', SUITE_LEDGER_TOKEN: 'tok', ...envExtra };
   const call = async (method, path, body, headers = BEARER) => {
     const res = await worker.fetch(new Request('https://jobs.test' + path, {

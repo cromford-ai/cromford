@@ -50,6 +50,9 @@
 #   HARNESS_PG: could-not-start (<reason>)      the suite runs with no URL
 #   HARNESS_PG: could-not-start (low disk: ...) pgt_start rc 2: the suite does
 #                                               not run (HARNESS_EXIT: could-not-run)
+#   HARNESS_PG: started (locale <l>, collation <c>)  BH-9285, when ci-env.sh is loaded
+#   HARNESS_PG: could-not-start (locale <l> not installed)  pgt_start rc 3: the
+#                                               suite does not run (could-not-run)
 #   HARNESS_PG: torn down
 #   HARNESS_PG_SETUP: npm run <script> (rc=N) | none (<why>) | refused (<why>)
 # (no HARNESS_PG_SETUP line when the start failed: there is nothing to set up)
@@ -106,6 +109,11 @@ pgt_env() {
     esac
   done < <(compgen -e)
   PGT_ENV+=("DATABASE_URL=$PGT_URL" "DIRECT_URL=$PGT_URL")
+  # BH-9285: the CI locale rides with the URL when the caller loaded
+  # bin/lib/ci-env.sh (pgt_start already refused a locale the box does not have).
+  if command -v ce_resolve >/dev/null 2>&1; then
+    ce_resolve .; PGT_ENV+=("LANG=$CE_LOCALE" "LC_ALL=$CE_LOCALE")
+  fi
 }
 
 # _pgt_as <binary> <args...> — as nobody when root (initdb refuses root).
@@ -145,9 +153,22 @@ pgt_root() {
 # pgt_start <outfile> — rc 0: up, PGT_URL and PGT_DIR set. rc 1: not up, the reason is a
 # `HARNESS_PG: could-not-start (...)` line, nothing left behind. rc 2: the same, and
 # the reason is low disk (`could-not-start (low disk: ...)`): the suite must not run.
+# rc 3: the same, and the CI locale (bin/lib/ci-env.sh) is not installed on this box.
 pgt_start() {
-  local out="$1" w port n up=0 ver major have root
+  local out="$1" w port n up=0 ver major have root loc=() locw=""
   PGT_URL=""; PGT_DIR=""
+  # CI LOCALE (BH-9285). When the caller loaded bin/lib/ci-env.sh, the cluster
+  # takes CI's locale and collation, so ORDER BY sorts the way CI's database
+  # sorts. A locale the box does not have is rc 3: a cluster in the box locale
+  # is not evidence. No ci-env.sh: initdb as before (the process locale).
+  if command -v ce_resolve >/dev/null 2>&1; then
+    ce_resolve .
+    for n in "$CE_LOCALE" "$CE_COLLATION"; do
+      ce_locale_installed "$n" || { echo "HARNESS_PG: could-not-start (locale $n not installed)" >> "$out"; return 3; }
+    done
+    loc=("--locale=$CE_LOCALE" "--lc-collate=$CE_COLLATION" "--lc-ctype=$CE_COLLATION")
+    locw=", locale $CE_LOCALE, collation $CE_COLLATION"
+  fi
   for n in postgres initdb pg_ctl; do
     [ -x "$PGT_BIN_DIR/$n" ] || { echo "HARNESS_PG: could-not-start (no $n in $PGT_BIN_DIR)" >> "$out"; return 1; }
   done
@@ -162,7 +183,7 @@ pgt_start() {
   w=$(mktemp -d "$root/pgtest.XXXXXX") || { echo "HARNESS_PG: could-not-start (no temp dir)" >> "$out"; return 1; }
   PGT_DIR="$w"
   [ "$(id -u)" = 0 ] && chown nobody:nogroup "$w"
-  if ! _pgt_as initdb -D "$w/data" -U harness --auth=trust -E UTF8 --no-sync > "$w/initdb.log" 2>&1; then
+  if ! _pgt_as initdb -D "$w/data" -U harness --auth=trust -E UTF8 ${loc[@]+"${loc[@]}"} --no-sync > "$w/initdb.log" 2>&1; then
     echo "HARNESS_PG: could-not-start (initdb failed: $(tail -1 "$w/initdb.log"))" >> "$out"; pgt_stop; return 1
   fi
   # A port in use answers the connect probe and is skipped. A port taken between
@@ -177,6 +198,7 @@ pgt_start() {
   PGT_URL="postgresql://harness@127.0.0.1:$port/postgres"
   pgt_local_url "$PGT_URL" || { echo "HARNESS_PG: could-not-start (refused a non-local url)" >> "$out"; PGT_URL=""; pgt_stop; return 1; }
   echo "HARNESS_PG: up (PostgreSQL ${ver:-unknown}, throwaway, $PGT_URL)" >> "$out"
+  [ -n "$locw" ] && echo "HARNESS_PG: started (${locw#, })" >> "$out"
   return 0
 }
 
@@ -276,7 +298,7 @@ pgt_run_files() {
     fi
     pgt_start "$out"; srs=$?
     if [ "$srs" != 0 ]; then
-      if [ "$srs" = 2 ]; then why="low disk"; else why="postgres could not start"; fi
+      case "$srs" in 2) why="low disk" ;; 3) why="locale not installed" ;; *) why="postgres could not start" ;; esac
       echo "HARNESS_PG_FILE: $f (not run: $why)" >> "$out"
       cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: $why"
       stop="an earlier start failed"; continue

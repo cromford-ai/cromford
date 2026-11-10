@@ -1,0 +1,11 @@
+{
+  "env": "TEST_IMPACT_GATE_RERUN_RED",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9177. 1: bin/test-impact-gate.sh passes --rerun-red to bin/suite-reuse.sh plan, so a suite with a fail row in the suite ledger at its own fingerprint runs again, as before C1. 0: that suite does not run; it is red from the ledger (`impact-gate: red from the suite ledger <suite> (run <id>)`), the verdict is FAILED and --failed names it. 1 by default because a fail row is sticky at its key for every PR that shares the fingerprint, and a fix round needs the suite's log. The --rerun-red flag wins over a 0.",
+  "read_in": "bin/test-impact-gate.sh"
+}

@@ -185,7 +185,7 @@ RB_TOKEN_REDACT() {
 HARNESS_SUITE_RUN() {
   local outfile="$1" phase="$2" script mode rc t0 stage reason prelude pgrc disk
   local pgon serial=0 rc0 n0 prc why rerun=()
-  local pgenv=()
+  local pgenv=() cerc=0
   local sel="$BUILD/test-select-$phase.txt" err="$BUILD/test-select-$phase.err"
   local FILES=()
   # The script pick, unchanged from the three inline sites. A repo with no test
@@ -247,6 +247,16 @@ HARNESS_SUITE_RUN() {
   fi
   echo "HARNESS_PRELUDE: $prelude" >> "$BUILD/$outfile"
   echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase prelude: $prelude" >> "$BUILD/pipeline.log"
+  # CI LOCALE (BH-9285). The suite and its Postgres run with CI's LANG/LC_ALL and
+  # collation (bin/lib/ci-env.sh). A locale this box does not have is
+  # could-not-run before anything starts: a run in the box locale is no evidence.
+  # No lib: nothing here runs, and the suite runs as before.
+  CE_ENV=()
+  if { command -v ce_suite_record >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/ci-env.sh" ] && . "$HARNESS/bin/lib/ci-env.sh"; }; }; then
+    ce_suite_record . "$BUILD/$outfile"; cerc=$?
+    echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase $(grep '^HARNESS_LOCALE: ' "$BUILD/$outfile" | tail -1)" >> "$BUILD/pipeline.log"
+    [ "$cerc" = 0 ] || rc=could-not-run
+  fi
   # THE THROWAWAY POSTGRES (BH-5962). A project with the fly-pool knob
   # POOL_TEST_POSTGRES=1 gets a local Postgres for this run only (bin/lib/pg-test.sh):
   # DATABASE_URL and DIRECT_URL reach the setup script and the suite, never the rest
@@ -259,7 +269,7 @@ HARNESS_SUITE_RUN() {
   # a time, each on its own fresh cluster (pgt_run_files), in place of the single
   # start and run below. A full run names no files, so it runs as before.
   disk=""; pgrc=""; pgon=0
-  if { command -v pgt_enabled >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pg-test.sh" ] && . "$HARNESS/bin/lib/pg-test.sh"; }; } && pgt_enabled; then
+  if [ "$cerc" = 0 ] && { command -v pgt_enabled >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/pg-test.sh" ] && . "$HARNESS/bin/lib/pg-test.sh"; }; } && pgt_enabled; then
     pgon=1
     if command -v pgt_serial >/dev/null 2>&1 && pgt_serial; then
       if [ "${#FILES[@]}" -gt 0 ]; then
@@ -291,12 +301,16 @@ HARNESS_SUITE_RUN() {
       echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: low ($disk) — the suite is not run, could-not-run" >> "$BUILD/pipeline.log"
       rc=could-not-run
     fi
+    # pgt_start rc 3 (BH-9285): CI's locale is not on this box; the suite is not run.
+    [ "$pgrc" = 3 ] && rc=could-not-run
   fi
+  # The CI locale reaches the suite; with the Postgres up, pgt_env already added it.
+  [ "${#CE_ENV[@]}" -gt 0 ] && [ "${#pgenv[@]}" = 0 ] && pgenv=(env "${CE_ENV[@]}")
   # Unpiped, and HARNESS_EXIT written only AFTER the run returns: a pre-stamped
   # exit code is a claim, and 124 (timeout) and 127 (no npm) must land as the
   # numbers they are.
   n0=$(( $(wc -l < "$BUILD/$outfile") + 1 ))
-  if [ "$pgrc" = 2 ] || [ "$serial" = 1 ]; then :
+  if [ "$pgrc" = 2 ] || [ "$pgrc" = 3 ] || [ "$cerc" != 0 ] || [ "$serial" = 1 ]; then :
   elif [ "${#FILES[@]}" -gt 0 ]; then
     ${pgenv[@]+"${pgenv[@]}"} timeout 1500 npm run "$script" -- "${FILES[@]}" >> "$BUILD/$outfile" 2>&1; rc=$?
   else
@@ -308,7 +322,7 @@ HARNESS_SUITE_RUN() {
   # device`, Postgres and coreutils: `No space left on device`); a bare ENOSPC
   # token can be a test's name. rc 0 is never remapped.
   # A serial run already wrote its own record per file, so it is not mapped again.
-  if [ "$pgrc" != 2 ] && [ "$serial" = 0 ] && [ "$rc" != 0 ] && disk=$(grep -m1 -i 'no space left on device' "$BUILD/$outfile"); then
+  if [ "$pgrc" != 2 ] && [ "$serial" = 0 ] && [ "$rc" != 0 ] && [ "$rc" != could-not-run ] && disk=$(grep -m1 -i 'no space left on device' "$BUILD/$outfile"); then
     echo "HARNESS_DISK: ENOSPC (rc=$rc): $(printf '%s' "$disk" | tr -d '\r' | cut -c1-200)" >> "$BUILD/$outfile"
     echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase disk: ENOSPC (rc=$rc) — recorded could-not-run" >> "$BUILD/pipeline.log"
     rc0="$rc"; rc=could-not-run

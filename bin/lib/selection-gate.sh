@@ -34,7 +34,8 @@
 # SELECTION_GATE_CNR_KEEP_DAYS (sg_cnr_alert, r3 F4), SELECTION_GATE_WHY_MAX,
 # SELECTION_GATE_RUN_TAIL_LINES and, BH-8901, SELECTION_GATE_BASELINE_RUN,
 # SELECTION_GATE_BASELINE_TIMEOUT_S and SELECTION_GATE_BASELINE_KEEP_DAYS and,
-# BH-9061, SELECTION_GATE_BASELINE_RESERVE_PAD_S and SELECTION_GATE_MAIN_TIMEOUT_MIN_S (_sg_run).
+# BH-9061, SELECTION_GATE_BASELINE_RESERVE_PAD_S and SELECTION_GATE_MAIN_TIMEOUT_MIN_S and, BH-9177,
+# SELECTION_GATE_SUITE_REUSE, SELECTION_GATE_RERUN_RED and SELECTION_GATE_IMAGE_PROBE_S (_sg_run).
 # A suite red on the merge base too is gate.txt's baseline-red:, not red: the
 # log line gets baseline-red=<n> and SG_MARKER one sentence after the marker.
 #
@@ -181,13 +182,19 @@ _sg_run() {
   rm -rf "$BUILD/selection-gate"
   # lane.fly-pool.selection_gate_baseline_run, lane.fly-pool.selection_gate_baseline_timeout_s,
   # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901),
-  # lane.fly-pool.selection_gate_baseline_reserve_pad_s, lane.fly-pool.selection_gate_main_timeout_min_s (BH-9061)
+  # lane.fly-pool.selection_gate_baseline_reserve_pad_s, lane.fly-pool.selection_gate_main_timeout_min_s (BH-9061),
+  # lane.fly-pool.selection_gate_suite_reuse, lane.fly-pool.selection_gate_rerun_red,
+  # lane.fly-pool.selection_gate_image_probe_s (BH-9177; the suite ledger, bin/lib/selection-gate-reuse.sh)
   SELECTION_GATE_WHY_MAX=$(_sg_knob SELECTION_GATE_WHY_MAX 160) \
     SELECTION_GATE_BASELINE_RUN=$(_sg_knob SELECTION_GATE_BASELINE_RUN 1) \
     SELECTION_GATE_BASELINE_TIMEOUT_S=$(_sg_knob SELECTION_GATE_BASELINE_TIMEOUT_S 900) \
     SELECTION_GATE_BASELINE_KEEP_DAYS=$(_sg_knob SELECTION_GATE_BASELINE_KEEP_DAYS 2) \
     SELECTION_GATE_BASELINE_RESERVE_PAD_S=$(_sg_knob SELECTION_GATE_BASELINE_RESERVE_PAD_S 60) \
     SELECTION_GATE_MAIN_TIMEOUT_MIN_S=$(_sg_knob SELECTION_GATE_MAIN_TIMEOUT_MIN_S 300) \
+    SELECTION_GATE_SUITE_REUSE=$(_sg_knob SELECTION_GATE_SUITE_REUSE 1) \
+    SELECTION_GATE_RERUN_RED=$(_sg_knob SELECTION_GATE_RERUN_RED 1) \
+    SELECTION_GATE_IMAGE_PROBE_S=$(_sg_knob SELECTION_GATE_IMAGE_PROBE_S 60) \
+    SUITE_REUSE_RUN_KEY="$(basename "$BUILD")-selection-$(date +%s)" \
     bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
     > "$BUILD/selection-gate.txt" 2>&1 || rc=$?   # lane.fly-pool.selection_gate_why_max
   if [ -s "$BUILD/selection-gate/gate.txt" ]; then cp -f "$BUILD/selection-gate/gate.txt" "$BUILD/gate.txt"

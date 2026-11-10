@@ -1,0 +1,29 @@
+{
+  "libs": [
+    {
+      "id": "ci-env",
+      "file": "bin/lib/ci-env.sh",
+      "note": "BH-9285: the locale and Postgres collation a box run uses, so a box run sorts the way CI sorts. HARNESS_SUITE_RUN (bin/lib/rb/gates.sh), bin/lib/pg-test.sh (initdb), and bin/ci-local.sh read it. tests/prepr-ci-parity.bh-9285-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "CI_LOCALE",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "LANG and LC_ALL for a box suite run, and the initdb --locale of its throwaway Postgres. Empty = a top-level env LC_ALL (else LANG) in the repo's .github/workflows/ci.yml (else harness-ci.yml), else the code fallback CE_FALLBACK_LOCALE en_US.UTF-8 in bin/lib/ci-env.sh. A value outside ^[A-Za-z0-9_.@-]{1,64}$ is ignored. A locale the box does not have makes the run could-not-run, never a run in the box locale. Read by bin/lib/ci-env.sh (ce_resolve).",
+          "settable": true
+        },
+        {
+          "env": "CI_PG_COLLATION",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "The initdb --lc-collate and --lc-ctype of the throwaway Postgres. Empty = the resolved CI_LOCALE. Set it when the project's CI database image uses a collation other than its job locale. Read by bin/lib/ci-env.sh (ce_resolve).",
+          "settable": true
+        }
+      ]
+    }
+  ]
+}

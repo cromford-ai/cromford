@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_SUITE_REUSE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9177. 1: bin/selection-gate.sh asks the test host for its image (bin/remote-gate.sh --image-id), skips each suite the suite ledger saw pass at the same fingerprint on that image (SUITE_IMAGE_ID = <fly image id>+rg:<remote-gate blob>), and records what the run decided; gate.txt gets a reuse: line. Any trouble is reuse off and every suite runs. bin/lib/selection-gate.sh reads the row and passes it in the env; the script alone falls back to 0.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

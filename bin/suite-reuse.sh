@@ -9,19 +9,30 @@
 # (the merge-queue batch). Doc: docs/notes/2026-10-08-BH-5354-suite-reuse.md.
 #
 #   bin/suite-reuse.sh plan --class ci|builder --repo R --ctx C --suites IN \
-#       --run OUT --reused OUT.tsv --fingerprints OUT.tsv [--rev HEAD]
-#     Always writes all three outputs. --run gets the suites to execute, in
+#       --run OUT --reused OUT.tsv --fingerprints OUT.tsv [--rev HEAD] \
+#       [--reds OUT.tsv [--rerun-red]]
+#     Always writes all three outputs (four with --reds). --run gets the suites to execute, in
 #     IN's order; --reused gets `<suite>\t<run_id>\t<duration_s>\t<class>` per
 #     suite skipped; --fingerprints gets bin/lib/suite-fingerprint.sh's rows,
 #     for `record`. Prints `suite-reuse: image <id>` once the fingerprints are
 #     written (the runner image id in the key, bin/lib/suite-fingerprint.sh),
 #     then `suite-reuse: reused <suite> from <run_id> (<d>s)` per hit and
 #     `suite-reuse: ran X reused R of N (saved ~Ss)`.
+#     REDS (BH-9177). With --reds, a fail row the ledger serves at this run's
+#     own (suite, fingerprint) (the answer's `reds`, C0) goes to --reds as
+#     `<suite>\t<run_id>\t<class>`, leaves --run, prints `suite-reuse: red
+#     <suite> from <run_id>`, and the summary reads `ran X reused R red D of N`:
+#     the caller counts it red without a run. With --rerun-red as well, a red
+#     stays in --run and --reds stays empty (`red 0`). Without --reds (ci-plan)
+#     nothing about reds changes. An answer with no `reds` field (an older
+#     worker) serves none; a `reds` that is not an array is `bad ledger answer`.
+#     `would run nothing` is only a run list AND a reds list that are both empty.
 #     FAIL-SAFE: on ANY failure (SUITE_REUSE not on, no credential, no URL,
 #     a --class the credential does not carry, dirty tree, fingerprint failure,
 #     curl error or timeout, a non-200, unparseable JSON, the server's knob off,
 #     or a filter that would leave nothing to run) --run is IN verbatim,
-#     --reused is empty, ONE `suite-reuse: off (<why>)` line prints, rc 0.
+#     --reused and --reds are empty, ONE `suite-reuse: off (<why>)` line
+#     prints, rc 0.
 #
 #   bin/suite-reuse.sh record --repo R --ctx C --run-key K --fingerprints FP \
 #       (--results TSV | --from-gate-log LOG) [--reused TSV] [--url U]
@@ -94,13 +105,14 @@ sr_call() {
 # ── plan ────────────────────────────────────────────────────────────────────
 plan_off() { # plan_off <why> — everything runs; the fingerprints stay for record
   cp "$IN" "$RUN" && : > "$REUSED"
+  [ -z "$REDS" ] || : > "$REDS"
   echo "suite-reuse: off ($1)"
   exit 0
 }
 
 cmd_plan() {
-  local class="" repo="" ctx="" rev=HEAD
-  IN="" RUN="" REUSED="" FP=""
+  local class="" repo="" ctx="" rev=HEAD rerun=0
+  IN="" RUN="" REUSED="" FP="" REDS=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --class) class="${2:-}"; shift ;;
@@ -111,13 +123,16 @@ cmd_plan() {
       --reused) REUSED="${2:-}"; shift ;;
       --fingerprints) FP="${2:-}"; shift ;;
       --rev) rev="${2:-}"; shift ;;
+      --reds) REDS="${2:-}"; [ -n "$REDS" ] || { echo "suite-reuse: plan: --reds needs a path" >&2; usage; }; shift ;;
+      --rerun-red) rerun=1 ;;
       *) echo "suite-reuse: plan: unknown argument $1" >&2; usage ;;
     esac
     shift
   done
   [ -r "$IN" ] && [ -n "$RUN" ] && [ -n "$REUSED" ] && [ -n "$FP" ] || {
     echo "suite-reuse: plan needs a readable --suites and --run, --reused, --fingerprints" >&2; usage; }
-  cp "$IN" "$RUN" && : > "$REUSED" && : > "$FP" || { echo "suite-reuse: cannot write the outputs" >&2; exit 2; }
+  cp "$IN" "$RUN" && : > "$REUSED" && : > "$FP" && { [ -z "$REDS" ] || : > "$REDS"; } \
+    || { echo "suite-reuse: cannot write the outputs" >&2; exit 2; }
   [ -n "$repo" ] && [ -n "$ctx" ] || plan_off "no --repo or --ctx"
 
   sr_transport
@@ -141,7 +156,7 @@ cmd_plan() {
   # Only suites with a real fingerprint are asked about, 500 to a request; one
   # failed chunk turns the whole run off, never a partial reuse.
   awk -F'\t' '$2 ~ /^[0-9a-f]{64}$/ { print $1 "\t" $2 }' "$FP" > "$SR_W/ask"
-  : > "$SR_W/hits"
+  : > "$SR_W/hits"; : > "$SR_W/redrows"
   local total i=0 n why
   total=$(wc -l < "$SR_W/ask" | tr -d ' ')
   while [ "$i" -lt "$total" ]; do
@@ -160,6 +175,9 @@ cmd_plan() {
     printf '%s' "$SR_BODY" | jq -r '.hits | if type == "array" then .[] else error("hits") end
         | [.suite, .fingerprint, .run_id, (.duration_s | tostring), .class] | @tsv' >> "$SR_W/hits" 2>/dev/null \
       || plan_off "bad ledger answer"
+    printf '%s' "$SR_BODY" | jq -r '(.reds // []) | if type == "array" then .[] else error("reds") end
+        | [.suite, .fingerprint, .run_id, .class] | @tsv' >> "$SR_W/redrows" 2>/dev/null \
+      || plan_off "bad ledger answer"
     i=$((i + SR_CHUNK))
   done
 
@@ -170,15 +188,31 @@ cmd_plan() {
     { split(hit[$1], h, "\t") }
     ($1 in hit) && h[1] == $2 { print $1 "\t" h[2] "\t" h[3] "\t" h[4] }
   ' "$SR_W/hits" "$SR_W/ask" > "$SR_W/reused"
-  awk -F'\t' -v rf="$SR_W/reused" 'FILENAME == rf { r[$1] = 1; next } !($1 in r)' "$SR_W/reused" "$IN" > "$SR_W/run"
-  [ -n "$(grep -v '^$' "$SR_W/run")" ] || plan_off "would run nothing"
-  cp "$SR_W/run" "$RUN" && cp "$SR_W/reused" "$REUSED" || plan_off "cannot write the outputs"
+  # A red counts the same way (its suite AND fingerprint, first row per suite),
+  # only with --reds and without --rerun-red, and never for a suite reused above
+  # (C0 hides a green behind any fail at its key, so both cannot be served).
+  : > "$SR_W/reds"
+  if [ -n "$REDS" ] && [ "$rerun" = 0 ]; then
+    awk -F'\t' -v df="$SR_W/redrows" -v rf="$SR_W/reused" '
+      FILENAME == df { if (!($1 in red) && $3 ~ /^[A-Za-z0-9._:\/-]+$/) red[$1] = $2 "\t" $3 "\t" $4; next }
+      FILENAME == rf { r[$1] = 1; next }
+      { split(red[$1], h, "\t") }
+      ($1 in red) && !($1 in r) && h[1] == $2 { print $1 "\t" h[2] "\t" h[3] }
+    ' "$SR_W/redrows" "$SR_W/reused" "$SR_W/ask" > "$SR_W/reds"
+  fi
+  awk -F'\t' -v rf="$SR_W/reused" -v df="$SR_W/reds" 'FILENAME == rf || FILENAME == df { r[$1] = 1; next } !($1 in r)' \
+    "$SR_W/reused" "$SR_W/reds" "$IN" > "$SR_W/run"
+  [ -n "$(grep -v '^$' "$SR_W/run")" ] || [ -s "$SR_W/reds" ] || plan_off "would run nothing"
+  cp "$SR_W/run" "$RUN" && cp "$SR_W/reused" "$REUSED" && { [ -z "$REDS" ] || cp "$SR_W/reds" "$REDS"; } \
+    || plan_off "cannot write the outputs"
 
   awk -F'\t' '{ print "suite-reuse: reused " $1 " from " $2 " (" $3 "s)" }' "$REUSED"
-  local ran reused all saved
+  awk -F'\t' '{ print "suite-reuse: red " $1 " from " $2 }' "$SR_W/reds"
+  local ran reused all saved red=""
   ran=$(grep -c . "$RUN"); reused=$(grep -c . "$REUSED"); all=$(grep -c . "$IN")
+  [ -z "$REDS" ] || red=" red $(grep -c . "$SR_W/reds")"
   saved=$(awk -F'\t' '{ s += $3 } END { print s + 0 }' "$REUSED")
-  echo "suite-reuse: ran $ran reused $reused of $all (saved ~${saved}s)"
+  echo "suite-reuse: ran $ran reused $reused$red of $all (saved ~${saved}s)"
 }
 
 # ── record ──────────────────────────────────────────────────────────────────

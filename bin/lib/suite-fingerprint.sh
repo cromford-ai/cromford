@@ -38,7 +38,11 @@
 #      fingerprint is written.
 #   2. ImageOS and ImageVersion both set (GitHub-hosted runner variables), each
 #      ^[A-Za-z0-9._-]{1,64}$: `gh:<ImageOS>:<ImageVersion>`.
-#   3. Else `os:<ID>:<VERSION_ID>:<uname -m>` from /etc/os-release when it has
+#   3. FLY_IMAGE_REF (Fly sets it on every machine) through sfp_fly_image_id:
+#      `fly:sha256:<hex>` for a ref ending `@sha256:<64 lower hex>`, else
+#      `fly:<ref>`. A ref that sfp_fly_image_id refuses falls to rule 4
+#      (BH-9177: a pool builder's id is its image, not its OS release).
+#   4. Else `os:<ID>:<VERSION_ID>:<uname -m>` from /etc/os-release when it has
 #      an ID, else `os:<uname -s>:<uname -r>:<uname -m>`; a character outside
 #      the rule-1 set becomes `_`.
 # OS-level facts only, no tool versions: the batch plan job fingerprints with no
@@ -67,6 +71,20 @@ _sfp_sha256() { # _sfp_sha256 <file>... — `<hex>  <file>` lines
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
 }
 
+# sfp_fly_image_id <ref> — a Fly machine's image ref as an image id on stdout:
+# `fly:sha256:<hex>` when <ref> ends `@sha256:<64 lower hex>`, else `fly:<ref>`.
+# rc 1, nothing printed, for an empty ref, a character outside
+# [A-Za-z0-9._:@+/-], or an id over 128 characters. bin/lib/selection-gate-reuse.sh
+# reads the test host's ref through it too.
+sfp_fly_image_id() {
+  local ref="${1:-}" id
+  [[ "$ref" =~ ^[A-Za-z0-9._:@+/-]+$ ]] || return 1
+  if [[ "$ref" =~ @sha256:([0-9a-f]{64})$ ]]; then id="fly:sha256:${BASH_REMATCH[1]}"
+  else id="fly:$ref"; fi
+  [ "${#id}" -le 128 ] || return 1
+  printf '%s\n' "$id"
+}
+
 # sfp_image_id — the runner image id on stdout, rc 0; rc 2 on a bad override.
 sfp_image_id() {
   local id os ver arch
@@ -78,6 +96,7 @@ sfp_image_id() {
   if [[ "${ImageOS:-}" =~ ^[A-Za-z0-9._-]{1,64}$ && "${ImageVersion:-}" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
     printf 'gh:%s:%s\n' "$ImageOS" "$ImageVersion"; return 0
   fi
+  if [ -n "${FLY_IMAGE_REF:-}" ] && sfp_fly_image_id "$FLY_IMAGE_REF"; then return 0; fi
   arch=$(uname -m 2>/dev/null) || arch=""
   os=""; ver=""
   if [ -r /etc/os-release ]; then

@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_RERUN_RED",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9177. With SELECTION_GATE_SUITE_REUSE=1: 1 sends a suite that has a fail row in the suite ledger at its fingerprint to the test host again, as before. 0: the suite is not sent and is a red of the gate (red:, or noted: when quarantined). 1 by default because a fail row is sticky at its key and the builder's fix turn needs the suite's log. bin/lib/selection-gate.sh reads the row; bin/lib/selection-gate-reuse.sh falls back to 1.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

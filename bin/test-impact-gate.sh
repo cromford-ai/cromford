@@ -9,6 +9,7 @@
 #                           [--skip-suites <file>] [--failed <file>]
 #                           [--also <file>] [--trace-hits <file>]
 #                           [--fresh-main on|off] [--fresh-ref <ref>]
+#                           [--rerun-red]
 #
 # WHY THIS EXISTS. BH-1524 counted four lead PRs that each needed an extra
 # review round because a pinned-contract suite went red in CI — T1.32 in
@@ -217,6 +218,17 @@
 # traced clean; another runner prints `suite-reuse: record skipped (class ci
 # records traced runs only)`. On traced, a suite in the hits file is recorded
 # fail whatever its rc.
+#   REDS (BH-9177). The gate also passes --reds: a fail row the ledger holds at
+#   a suite's own fingerprint is a red WITHOUT a run when the fly-pool knob
+#   TEST_IMPACT_GATE_RERUN_RED is 0 (row lane.fly-pool.test_impact_gate_rerun_red;
+#   default 1, so a ledger red runs again, as before). Such a suite leaves the
+#   run list, prints `impact-gate: red from the suite ledger <suite> (run
+#   <run_id>)`, makes the verdict FAILED (rc 1; a 125 stays 125), is listed in
+#   --failed, and its --table row is tagged `(red in ledger <run_id>)`. It is
+#   not recorded (it did not run) and takes no budget. --rerun-red forces a
+#   rerun whatever the knob says. A run list that reuse and reds leave empty
+#   runs no runner. The image id in the key is bin/lib/suite-fingerprint.sh's:
+#   on a Fly pool machine, the machine's own image ref.
 #
 # FRESH MAIN (BH-6459). A whole-repo ratchet (a line ceiling, a registry count,
 # a generated-file check) can be green on HEAD and green on main, and red on the
@@ -274,6 +286,7 @@ FRESH_FLAG=""
 FRESH_REF=""
 ALSO_IN=""
 TRACE_HITS=""
+RERUN_FLAG=0
 
 die2() { echo "impact-gate: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -292,6 +305,7 @@ while [ $# -gt 0 ]; do
     --fresh-ref)  [ $# -ge 2 ] || die2 "--fresh-ref needs a ref"; FRESH_REF="$2"; shift ;;
     --also)    [ $# -ge 2 ] || die2 "--also needs a path"; ALSO_IN="$2"; shift ;;
     --trace-hits) [ $# -ge 2 ] || die2 "--trace-hits needs a path"; TRACE_HITS="$2"; shift ;;
+    --rerun-red) RERUN_FLAG=1 ;;
     -h|--help) awk 'NR > 1 { if ($0 !~ /^#/) exit; print }' "$0"; exit 0 ;;
     *) die2 "unknown argument '$1' (try --help)" ;;
   esac
@@ -718,8 +732,11 @@ fi
 # ── SUITE REUSE (BH-5354.1): drop what the ledger saw pass on these inputs ───
 # Fail-safe both ways: the helper turns itself off on any trouble, and an answer
 # that is not a partition of what it was handed is treated as off here.
-SR_ON=0; SR_R=0; SR_S=0
-: > "$TMP/sr.reused"; : > "$TMP/sr.fp"
+SR_ON=0; SR_R=0; SR_S=0; SR_D=0
+: > "$TMP/sr.reused"; : > "$TMP/sr.fp"; : > "$TMP/sr.reds"
+# lane.fly-pool.test_impact_gate_rerun_red (catalog/lanes.d/fly-pool.knobs.d/TEST_IMPACT_GATE_RERUN_RED.json)
+SR_RERUN=()
+{ [ "$RERUN_FLAG" = 1 ] || [ "$(gate_knob TEST_IMPACT_GATE_RERUN_RED 1)" != 0 ]; } && SR_RERUN=(--rerun-red)
 SR_CLASS="${SUITE_REUSE_CLASS:-builder}"; SR_CTX="${SUITE_REUSE_CTX:-$RUNNER}"
 case "$RUNNER" in local|isolated|traced)
   if [ -x "$ROOT/bin/suite-reuse.sh" ]; then
@@ -746,17 +763,25 @@ case "$RUNNER" in local|isolated|traced)
     if [ -z "$SR_REPO" ]; then
       echo "suite-reuse: off (no repo)"
     else
-      rm -f "$TMP/sr.run"
+      rm -f "$TMP/sr.run" "$TMP/sr.reds"
       ( cd "$ROOT" && SUITE_LEDGER_TOKEN="$SR_TOKEN" bin/suite-reuse.sh plan --class "$SR_CLASS" --repo "$SR_REPO" \
           --ctx "$SR_CTX" --suites "$TMP/sr.in" \
-          --run "$TMP/sr.run" --reused "$TMP/sr.reused" --fingerprints "$TMP/sr.fp" --rev "$HEAD_REF" ) > "$TMP/sr.plan.out"
-      grep -v '^suite-reuse: reused ' "$TMP/sr.plan.out"
-      if ! [ -r "$TMP/sr.run" ] || ! [ -r "$TMP/sr.reused" ] \
-         || [ "$({ cat "$TMP/sr.run"; cut -f1 "$TMP/sr.reused"; } | grep -v '^$' | LC_ALL=C sort)" \
+          --run "$TMP/sr.run" --reused "$TMP/sr.reused" --fingerprints "$TMP/sr.fp" --rev "$HEAD_REF" \
+          --reds "$TMP/sr.reds" ${SR_RERUN[@]+"${SR_RERUN[@]}"} ) > "$TMP/sr.plan.out"
+      grep -v -e '^suite-reuse: reused ' -e '^suite-reuse: red ' "$TMP/sr.plan.out"
+      # The run, the reused and the reds together must be the input, once each.
+      if ! [ -r "$TMP/sr.run" ] || ! [ -r "$TMP/sr.reused" ] || ! [ -r "$TMP/sr.reds" ] \
+         || [ "$({ cat "$TMP/sr.run"; cut -f1 "$TMP/sr.reused"; cut -f1 "$TMP/sr.reds"; } | grep -v '^$' | LC_ALL=C sort)" \
               != "$(grep -v '^$' "$TMP/sr.in" | LC_ALL=C sort)" ]; then
         echo "suite-reuse: off (helper answer did not match its input)"
-        : > "$TMP/sr.reused"; : > "$TMP/sr.fp"
+        : > "$TMP/sr.reused"; : > "$TMP/sr.fp"; : > "$TMP/sr.reds"
       fi
+    fi
+    if [ -s "$TMP/sr.reds" ]; then
+      grep -vxF -f <(cut -f1 "$TMP/sr.reds") "$TMP/run.list" > "$TMP/run.list.kept" || true
+      mv "$TMP/run.list.kept" "$TMP/run.list"
+      awk -F'\t' '{ print "impact-gate: red from the suite ledger " $1 " (run " $2 ")" }' "$TMP/sr.reds"
+      SR_D=$(grep -c . < "$TMP/sr.reds")
     fi
     if [ -s "$TMP/sr.reused" ]; then
       grep -vxF -f <(cut -f1 "$TMP/sr.reused") "$TMP/run.list" > "$TMP/run.list.kept" || true
@@ -793,7 +818,11 @@ else
 fi
 RC=0
 : > "$TMP/progress"
-case "$RUNNER" in
+# Reuse and ledger reds can leave nothing to run: then no runner starts.
+_runner="$RUNNER"
+[ "$RUNNER" != plan ] && ! grep -q . "$TMP/run.list" && [ "$SR_D" -gt 0 ] && _runner=none
+case "$_runner" in
+  none)   echo "impact-gate: nothing left to run after the suite ledger" ;;
   plan)   echo "impact-gate: NOT RUN (--runner plan) — this is a list, not a gate" ;;
   local)  run_segs local_seg "$ROOT"; RC=$? ;;
   traced) run_segs traced_seg "$ROOT"; RC=$? ;;
@@ -809,9 +838,12 @@ case "$RUNNER" in
           [ "$RC" -gt 0 ] && [ "$RC" -lt 125 ] && RC=1 ;;
 esac
 
-# --failed: the suites that ran and went red, by name.
+# A ledger red (BH-9177) is a red without a run: rc 1, unless nothing could run.
+[ "$SR_D" -gt 0 ] && [ "$RC" = 0 ] && RC=1
+# --failed: the suites that ran and went red, by name, then the ledger reds.
 if [ -n "$FAILED_OUT" ]; then
-  awk '$2 != "budget" && $2 != "remote" && $2 ~ /^[0-9]+$/ && $2 != 0 { print $1 }' "$TMP/progress" > "$FAILED_OUT" 2>/dev/null \
+  { awk '$2 != "budget" && $2 != "remote" && $2 ~ /^[0-9]+$/ && $2 != 0 { print $1 }' "$TMP/progress"
+    cut -f1 "$TMP/sr.reds"; } > "$FAILED_OUT" 2>/dev/null \
     || echo "impact-gate: could not write the failed list to $FAILED_OUT" >&2
 fi
 # What the budget left unstarted is left to CI, by name, exactly like the cap's.
@@ -874,7 +906,7 @@ if [ -n "$TABLE_OUT" ]; then
     FM_TAIL=""
     if [ "$FM" = 1 ]; then FM_TAIL=" Ran on HEAD merged with main ${FM_SHA:0:8}: $FM_M."
     elif [ "$FRESH_ON" = 1 ]; then FM_TAIL=" Fresh main: off ($FM_WHY)."; fi
-    echo "${REASON#impact: }. Left to CI: $L by the cap, $B by the budget.$([ "$BN" -gt 0 ] && printf ' Left to the nightly run only (nightly tier, no batch runs them): %s.' "$BN")$([ "$SR_R" -gt 0 ] && printf ' Reused from the suite ledger (not re-run here): %s.' "$SR_R")$FM_TAIL"
+    echo "${REASON#impact: }. Left to CI: $L by the cap, $B by the budget.$([ "$BN" -gt 0 ] && printf ' Left to the nightly run only (nightly tier, no batch runs them): %s.' "$BN")$([ "$SR_R" -gt 0 ] && printf ' Reused from the suite ledger (not re-run here): %s.' "$SR_R")$([ "$SR_D" -gt 0 ] && printf ' Red in the suite ledger (not run here): %s.' "$SR_D")$FM_TAIL"
     echo
     echo "| suite | why |"
     echo "|---|---|"
@@ -884,13 +916,14 @@ if [ -n "$TABLE_OUT" ]; then
     # inside its budget, and with an empty first file NR == FNR is still true
     # for the first row of the second one — which ate the table's first suite.
     awk -F'\t' -v lf="$TMP/budget.all" -v ff="$TMP/fast.list" -v rf="$TMP/sr.reused" -v mf="$TMP/fm.suites" \
-        -v ms="${FM_SHA:0:8}" '
+        -v df="$TMP/sr.reds" -v ms="${FM_SHA:0:8}" '
       FILENAME == lf { left[$1] = 1; next }
       FILENAME == ff { fast[$1] = 1; next }
       FILENAME == rf { ru[$1] = $2; next }
       FILENAME == mf { fm[$1] = 1; next }
-      { tag = (($2 in fast) ? "(fast) " : "") (($2 in fm) ? "(fresh main " ms ") " : "") (($2 in left) ? "(not started: budget) " : "") (($2 in ru) ? "(reused " ru[$2] ") " : "")
-        printf "| `%s` | %s%s |\n", $2, tag, $3 }' "$TMP/budget.all" "$TMP/fast.list" "$TMP/sr.reused" "$TMP/fm.suites" "$TMP/run.ranked"
+      FILENAME == df { rd[$1] = $2; next }
+      { tag = (($2 in fast) ? "(fast) " : "") (($2 in fm) ? "(fresh main " ms ") " : "") (($2 in left) ? "(not started: budget) " : "") (($2 in ru) ? "(reused " ru[$2] ") " : "") (($2 in rd) ? "(red in ledger " rd[$2] ") " : "")
+        printf "| `%s` | %s%s |\n", $2, tag, $3 }' "$TMP/budget.all" "$TMP/fast.list" "$TMP/sr.reused" "$TMP/fm.suites" "$TMP/sr.reds" "$TMP/run.ranked"
     if [ "$((L + B))" -gt 0 ]; then
       echo; echo "<details><summary>Left to CI ($((L + B)))</summary>"; echo
       { cut -f2 "$TMP/left.ranked"; cat "$TMP/budget.left"; } | sed 's/^/- `/; s/$/`/'

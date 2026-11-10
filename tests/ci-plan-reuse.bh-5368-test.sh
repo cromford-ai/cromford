@@ -77,7 +77,12 @@ import { DatabaseSync } from 'node:sqlite';
 const [, , dir, dbfile, method, path, bodyf, cls] = process.argv;
 const fresh = !existsSync(dbfile);
 const db = new DatabaseSync(dbfile);
-if (fresh) db.exec(readFileSync(dir + '/worker/jobs/schema.sql', 'utf8'));
+if (fresh) {
+  db.exec(readFileSync(dir + '/worker/jobs/schema.sql', 'utf8'));
+  // These cases pin the class trust rule (own ctx only), the C0 seed; the
+  // worker flips an untouched seed row to image on its first read (BH-9177).
+  db.exec("INSERT OR REPLACE INTO settings (key,value,note,actor,updated_at) VALUES ('lib.suite-reuse.suite_reuse_trust','class','fixture: class trust','fixture','2026-10-08T00:00:00Z')");
+}
 const { d1 } = await import(dir + '/worker/jobs/test/lib/d1-sqlite.bh-1030.js');
 const worker = (await import(dir + '/worker/jobs/src/index.js')).default;
 const headers = { 'content-type': 'application/json',

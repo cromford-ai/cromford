@@ -49,6 +49,27 @@ anything a suite count can reach.
 `rc 127` from a suite means that suite is not on this branch. The run says so
 rather than counting it as a failure of the code under test.
 
+### The host's image id, and each suite's time (BH-9177)
+
+```sh
+bin/remote-gate.sh --image-id      # one line: IMAGE <ref>, or IMAGE -
+```
+
+`--image-id` takes the same route to the host as a run, then runs one small
+job. It uploads nothing and runs no suite. It prints one line, `IMAGE <ref>`:
+the machine's `FLY_IMAGE_REF`, or `-` when the machine has none or the ref has
+a character outside `[A-Za-z0-9._:@+/-]`. Exit 0 means the line printed, 125
+means the host could not be reached, and 2 means a bad command line. Like any
+gate call, it can start a stopped host and stamps that machine's idle clock.
+
+A suites run prints the same `IMAGE` line once, first. After each suite's
+`PASS`, `FAIL` or `BLIND` line it prints `TIME <secs> <suite>`. The selection
+gate (`bin/lib/selection-gate-reuse.sh`) keys the suite ledger by the probe's
+image, and it records a run's results only when the run's `IMAGE` line equals
+the probe's. Since BH-9065 the app can have more than one machine, so the
+probe and the run can land on two machines. Then the gate records nothing for
+that run. No existing reader of the run output matches `IMAGE ` or `TIME `.
+
 ## Where runs live, and what keeps the disk from filling (#1597)
 
 Runs live under `/srv/tmp/runs`. `/` on each of the four machines

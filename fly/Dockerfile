@@ -109,7 +109,8 @@ RUN set -eux; \
       openssh-client rsync \
       python3 python3-venv python3-pip python3-yaml \
       tini \
-      iproute2 iptables procps; \
+      iproute2 iptables procps locales; \
+    sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen; \
     rm -rf /var/lib/apt/lists/*
 
 COPY bake-pin.sh /opt/fly-boot/bake-pin.sh

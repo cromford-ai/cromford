@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_IMAGE_PROBE_S",
+  "type": "int",
+  "default": 60,
+  "min": 5,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9177. The bound on bin/selection-gate.sh's `bin/remote-gate.sh --image-id` probe (one flyctl ssh round trip, plus a host wake). Past it the probe is killed and suite reuse is off for that run: every suite runs. It is outside the main run's timeout. bin/lib/selection-gate.sh reads the row; bin/lib/selection-gate-reuse.sh falls back to 60.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

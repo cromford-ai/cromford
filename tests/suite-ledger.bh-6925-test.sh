@@ -43,8 +43,8 @@ if [ ! -f "$DIR/catalog/lanes.json" ]; then
 fi
 "$DIR/bin/llm-sites-build.sh" --compose --repo "$DIR" >/dev/null || { echo "FAIL: cannot compose catalog/llm-sites.json"; exit 1; }
 
-# Nothing from the box: no GitHub image variables, no override, no builder credential.
-unset ImageOS ImageVersion SUITE_IMAGE_ID HARNESS_SECRET JOBS_URL SUITE_REUSE GITHUB_ACTIONS \
+# Nothing from the box: no GitHub image variables, no Fly image ref, no override, no builder credential.
+unset ImageOS ImageVersion FLY_IMAGE_REF SUITE_IMAGE_ID HARNESS_SECRET JOBS_URL SUITE_REUSE GITHUB_ACTIONS \
   SUITE_LEDGER_TOKEN_FD SUITE_REUSE_RUN_KEY TEST_IMPACT_GATE_FRESH_MAIN HARNESS_CHECKOUT CI_BATCH_ESCALATE_TSV
 
 # ── the scratch checkout ────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ row() { awk -F'\t' -v s="$2" '$1 == s { print $2 "|" $3 }' "$1"; }
   && ok "L5 fp '-' with the reason: flake, out-of-tree, unknown suite" || bad "L5 fps: $(cat "$T/l5.fp")"
 
 # ── L6: sfp_image_id ───────────────────────────────────────────────────────
-img() { ( unset ImageOS ImageVersion SUITE_IMAGE_ID; for a in "$@"; do export "${a?}"; done
+img() { ( unset ImageOS ImageVersion FLY_IMAGE_REF SUITE_IMAGE_ID; for a in "$@"; do export "${a?}"; done
           . "$DIR/bin/lib/suite-fingerprint.sh" && sfp_image_id ) 2> "$T/img.err"; }
 L6_OS=$(img); L6_RC=$?
 [ "$L6_RC" = 0 ] && [[ "$L6_OS" =~ ^os:[A-Za-z0-9._:@+/-]+:[A-Za-z0-9._:@+/-]*:[A-Za-z0-9._:@+/-]+$ ]] \

@@ -5,5 +5,5 @@
   "default": "class",
   "zero_means": null,
   "required": false,
-  "note": "BH-9063. class|image. Read by the worker from the settings row lib.suite-reuse.suite_reuse_trust on every lookup. class = a lookup matches its own ctx and a ci caller sees ci rows only (BH-5354 I1). image = a lookup matches repo+suite+fingerprint in every class and ctx; the fingerprint carries the runner image id. Any other value turns reuse off."
+  "note": "BH-9063. class|image. Read by the worker from the settings row lib.suite-reuse.suite_reuse_trust on every lookup. class = a lookup matches its own ctx and a ci caller sees ci rows only (BH-5354 I1). image = a lookup matches repo+suite+fingerprint in every class and ctx; the fingerprint carries the runner image id. Any other value turns reuse off. BH-9177 (C1): the worker flips the seed row from class to image once per DB binding (TRUST_FLIP_SQL in suite-trust.js, only value=class AND actor=seed), so prod holds image; this default stays the no-row fallback."
 }

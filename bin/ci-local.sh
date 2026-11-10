@@ -127,6 +127,21 @@ if [ -z "$WORKFLOW" ]; then
 fi
 [ -r "$WORKFLOW" ] || die2 "no workflow $WORKFLOW"
 
+# CI LOCALE (BH-9285). A step gets the locale the knob CI_LOCALE names, or the
+# one the workflow's top-level env names (bin/lib/ci-env.sh); the plan already
+# copies that env into every step. Neither: the caller's LANG, as before, because
+# this job's runner sets its own. A named locale this box does not have makes
+# every step COULD-NOT-RUN, never a step in another locale.
+STEP_LANG="${LANG:-C.UTF-8}" STEP_LC_ALL="${LC_ALL:-}" LOCALE_WHY=""
+# shellcheck source=bin/lib/ci-env.sh
+if [ -r "$HERE/lib/ci-env.sh" ] && . "$HERE/lib/ci-env.sh"; then
+  ce_resolve "$TREE" "$WORKFLOW"
+  if [ "$CE_SOURCE" != fallback ]; then
+    if ce_locale_installed "$CE_LOCALE"; then STEP_LANG="$CE_LOCALE"; STEP_LC_ALL="$CE_LOCALE"
+    else LOCALE_WHY="locale $CE_LOCALE not installed"; fi
+  fi
+fi
+
 case "$BASE" in
   origin/*) BASE_REF="${BASE#origin/}" ;;
   *) BASE_REF="ci-local-base-$$-${RT##*.}"; TMP_REF="refs/remotes/origin/$BASE_REF"
@@ -195,8 +210,8 @@ run_step() {
   : > "$RT/github-output.$n"; : > "$RT/github-env.$n"
   t=$(left); [ "$t" -gt 0 ] || return 124
   # shellcheck disable=SC2086
-  env -i -C "$dir/${wd}" PATH="$PATH" HOME="${HOME:-/root}" USER="${USER:-}" LANG="${LANG:-C.UTF-8}" \
-      LC_ALL="${LC_ALL:-}" TERM="${TERM:-dumb}" TMPDIR="${TMPDIR:-/tmp}" XDG_CACHE_HOME="${XDG_CACHE_HOME:-}" \
+  env -i -C "$dir/${wd}" PATH="$PATH" HOME="${HOME:-/root}" USER="${USER:-}" LANG="$STEP_LANG" \
+      LC_ALL="$STEP_LC_ALL" TERM="${TERM:-dumb}" TMPDIR="${TMPDIR:-/tmp}" XDG_CACHE_HOME="${XDG_CACHE_HOME:-}" \
       BH_SHELLCHECK_CACHE="$BH_SHELLCHECK_CACHE" HARNESS_TEST_SANDBOX=1 \
       CI=true GITHUB_ACTIONS=true GITHUB_WORKSPACE="$dir" GITHUB_EVENT_NAME=pull_request \
       GITHUB_BASE_REF="$BASE_REF" GITHUB_HEAD_REF="$HEAD_REF" GITHUB_SHA="$HEAD_SHA" GITHUB_REPOSITORY="$REPO" \
@@ -243,6 +258,9 @@ while IFS=$'\t' read -r n job step action reason; do
     skip) n_skip=$((n_skip + 1)); record "$n" "$job" "$step" SKIP - 0 "$reason"; continue ;;
     unsupported) n_cnr=$((n_cnr + 1)); record "$n" "$job" "$step" UNSUPPORTED - 0 "$reason"; continue ;;
   esac
+  if [ -n "$LOCALE_WHY" ]; then
+    n_cnr=$((n_cnr + 1)); record "$n" "$job" "$step" COULD-NOT-RUN - 0 "$LOCALE_WHY"; continue
+  fi
   jq -r --argjson n "$n" '.[] | select(.n == $n) | .script' "$RT/plan.json" > "$RT/step-$n.sh"
   coe=$(jq -r --argjson n "$n" '.[] | select(.n == $n) | .continue_on_error' "$RT/plan.json")
   t0=$SECONDS
