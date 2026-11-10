@@ -26,7 +26,9 @@ export const LIFECYCLE_TRANSITIONS = {
   planned:      ["building", "plan_blocked", "closed"],
   plan_blocked: ["triaged", "planned", "closed"],
   building:     ["pr_open", "plan_blocked", "abandoned", "closed"],
-  pr_open:      ["in_queue", "merged", "abandoned", "closed"],
+  // building: a resolver rebuild-fresh over an open PR phase (BH-8733), so
+  // the rebuild can reach plan_blocked or pr_open again. Owner: pool.
+  pr_open:      ["building", "in_queue", "merged", "abandoned", "closed"],
   in_queue:     ["merged", "ejected", "closed"],
   ejected:      ["in_queue", "pr_open", "abandoned", "closed"],
   abandoned:    ["triaged", "planned", "closed"],

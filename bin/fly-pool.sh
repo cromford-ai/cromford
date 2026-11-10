@@ -343,8 +343,13 @@ PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # BH-7116: pb_hub_copy, the reap's plan.md copy when the machine is gone.
 # shellcheck source=bin/lib/plan-blocked.sh
 . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null || true
-# BH-8309: pbs_stop_check, the spawn gate for a key whose newest record is
-# PLAN_BLOCKED. Missing, the gate is skipped and the pool spawns as before.
+# BH-8733: pool_phase_set/pool_phase_get/pool_phase_reap, the ticket phase
+# writes through the BH-8731 lifecycle verb. Missing, no phase is written.
+# shellcheck source=bin/lib/pool-lifecycle.sh
+. "$HARNESS/bin/lib/pool-lifecycle.sh" 2>/dev/null || true
+# BH-8309, BH-8733: pbs_stop_check, the spawn gate for a key whose phase is
+# plan_blocked, abandoned, ejected or in_queue. Missing, the gate is skipped
+# and the pool spawns as before.
 # shellcheck source=bin/lib/plan-blocked-stop.sh
 . "$HARNESS/bin/lib/plan-blocked-stop.sh" 2>/dev/null || true
 # BH-8880: dfs_stop_check, the spawn gate for a key whose newest record is a
@@ -2217,6 +2222,18 @@ pool_spawn_decision() {
     return 1
   fi
   # <<< execute-empty stop
+  # >>> plan-blocked stop (BH-8309, BH-8733)
+  # 0a. A key whose ticket phase is plan_blocked is not relaunched into the
+  # same stop, and neither is a key in abandoned, ejected or in_queue: the
+  # pool cannot move those phases, their exits have other owners
+  # (bin/lib/plan-blocked-stop.sh). One phase read; the row stays queued.
+  # Above pool_gates_applicable because it reads only the coordination DB, so
+  # a project whose spawn gates are inactive must not loop either; above the
+  # HOLD gate and the cap, so a refusal costs no spawn-cap count.
+  if command -v pbs_stop_check >/dev/null 2>&1 && ! pbs_stop_check "$P" "$KEY" "$TICKET" "$JF"; then
+    return 1
+  fi
+  # <<< plan-blocked stop
   # 0c. A SIBLING PART WAITS FOR ITS SIBLING (BH-6374). bin/sibling-serial.sh
   # answers rc 3 and one SIBLING_SERIAL line when a part (TK-142.2) shares a
   # planned file with a sibling in flight, an open sibling PR, or a lower
@@ -2262,18 +2279,6 @@ pool_spawn_decision() {
     }
     return 0
   fi
-  # >>> plan-blocked stop (BH-8309)
-  # 0a. A key whose newest hub record is PLAN_BLOCKED is not relaunched into the
-  # same stop (bin/lib/plan-blocked-stop.sh): "already done on main by <sha>"
-  # closes the ticket once, a named prerequisite holds the row until it closes,
-  # and any other reason stops after POOL_PLAN_BLOCKED_MAX in the window with
-  # one NEEDS_HUMAN hold. The row stays queued. Below pool_gates_applicable
-  # because it reads GitHub; above the HOLD gate and the cap, so a refusal
-  # costs no spawn-cap count.
-  if command -v pbs_stop_check >/dev/null 2>&1 && ! pbs_stop_check "$P" "$KEY" "$TICKET" "$JF"; then
-    return 1
-  fi
-  # <<< plan-blocked stop
   # 0b. A ROW WAITING ON A NAMED BLOCKER (BH-5967): held with no machine until
   # the blocker is done, then released in the same tick. Before the HOLD read,
   # because a held row needs no other read.
@@ -2799,7 +2804,11 @@ push_preplan() { # push_preplan <machine-id> <key>
     done
     kf=$(mktemp) || break
     printf '%s\n' "$k" > "$kf"
-    mput "$mid" "$kf" /run/harness/preplan/key && say "relayed pre-plan for $k to $mid (source: $src)"
+    if mput "$mid" "$kf" /run/harness/preplan/key; then
+      say "relayed pre-plan for $k to $mid (source: $src)"
+      # BH-8733: the ticket is planned (bin/lib/pool-lifecycle.sh).
+      command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$k" planned "pre-plan relayed (source: $src)" || true; }
+    fi
     rm -f "$kf"
     break
   done
@@ -3644,6 +3653,9 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         [ "${ROWS_ONLY:-0}" = 1 ] || \
           { command -v queue_claim >/dev/null 2>&1 && queue_claim "$P" fly "$NKEY" >/dev/null 2>&1; }
         say "reused $MID for $NKEY (was $KEY)"
+        # >>> lifecycle phase: reused (BH-8733)
+        command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$NKEY" building "machine $MID reused" || true; }
+        # <<< lifecycle phase: reused
         "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$NKEY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_reused"}')" >/dev/null 2>&1 || true
         REUSED=1
       else
@@ -4928,6 +4940,13 @@ for MF in "$POOL"/*.json; do
       *)                                                QROW done   "$KEY" "$(head -c 200 "$LOCAL/RESULT")" ;;
     esac
     # <<< reap row close
+    # >>> lifecycle phase (BH-8733)
+    # After the row close, so a failed phase write never changes the row; after
+    # the PR_CREATED verify, so RESULT_UNVERIFIED writes no pr_open. It reads
+    # only this record ($LOCAL) (bin/lib/pool-lifecycle.sh). $TICKET is the
+    # issue a refused plan_blocked on a merged/closed key is held on.
+    command -v pool_phase_reap >/dev/null 2>&1 && { pool_phase_reap "$P" "$KEY" "$LOCAL" "$TICKET" || true; }
+    # <<< lifecycle phase
     say "reaped $KEY from $MID: $(head -c 80 "$LOCAL/RESULT")"
     beat_json=$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_result",detail:$r}')
     "$HARNESS/bin/beat.sh" "$beat_json" >/dev/null 2>&1 || true
@@ -6449,6 +6468,9 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     # The live count is the DIRECTORY, and with spawns running concurrently it is
     # the only honest answer: this subshell cannot see its siblings' increments.
     say "spawned $MID for $KEY (${PULL_TAG}live=$(ls "$POOL" 2>/dev/null | wc -l | tr -d ' ')/$CAPTXT, budget $BUDGET this tick)"
+    # >>> lifecycle phase: spawned (BH-8733)
+    command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$KEY" building "machine $MID spawned" || true; }
+    # <<< lifecycle phase: spawned
     "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_spawned"}')" >/dev/null 2>&1 || true
   else
     say "env/job push FAILED to $MID — destroying, job stays queued"

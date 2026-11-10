@@ -57,7 +57,11 @@ push_preplan() { # push_preplan <machine-id> <key>
     done
     kf=$(mktemp) || break
     printf '%s\n' "$k" > "$kf"
-    mput "$mid" "$kf" /run/harness/preplan/key && say "relayed pre-plan for $k to $mid (source: $src)"
+    if mput "$mid" "$kf" /run/harness/preplan/key; then
+      say "relayed pre-plan for $k to $mid (source: $src)"
+      # BH-8733: the ticket is planned (bin/lib/pool-lifecycle.sh).
+      command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$k" planned "pre-plan relayed (source: $src)" || true; }
+    fi
     rm -f "$kf"
     break
   done

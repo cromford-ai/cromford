@@ -79,7 +79,7 @@ const TABLE = {
   planned: 'building plan_blocked closed',
   plan_blocked: 'triaged planned closed',
   building: 'pr_open plan_blocked abandoned closed',
-  pr_open: 'in_queue merged abandoned closed',
+  pr_open: 'building in_queue merged abandoned closed',
   in_queue: 'merged ejected closed',
   ejected: 'in_queue pr_open abandoned closed',
   abandoned: 'triaged planned closed',

@@ -619,6 +619,9 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
     # The live count is the DIRECTORY, and with spawns running concurrently it is
     # the only honest answer: this subshell cannot see its siblings' increments.
     say "spawned $MID for $KEY (${PULL_TAG}live=$(ls "$POOL" 2>/dev/null | wc -l | tr -d ' ')/$CAPTXT, budget $BUDGET this tick)"
+    # >>> lifecycle phase: spawned (BH-8733)
+    command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$KEY" building "machine $MID spawned" || true; }
+    # <<< lifecycle phase: spawned
     "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_spawned"}')" >/dev/null 2>&1 || true
   else
     say "env/job push FAILED to $MID — destroying, job stays queued"

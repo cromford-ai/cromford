@@ -7,6 +7,6 @@
   "unit": "switch",
   "zero_means": "off",
   "read_in": "bin/lib/plan-blocked-stop.sh",
-  "note": "BH-8309: 1 = pool_spawn_decision runs pbs_stop_check on a key whose newest hub build record is PLAN_BLOCKED (GitHub-Issues projects only): 'already done on main by <ancestor sha>' closes the ticket once, a named prerequisite holds the row until it closes, any other reason stops after POOL_PLAN_BLOCKED_MAX in POOL_PLAN_BLOCKED_WINDOW_S with one NEEDS_HUMAN hold. 0 = off, the pool spawns as before. Read as ${POOL_PLAN_BLOCKED_STOP:-1}.",
+  "note": "BH-8309, BH-8733: 1 = the pool does not spawn a key whose build_queue phase is plan_blocked, abandoned, ejected or in_queue (pbs_stop_check in pool_spawn_decision, one phase read, every project). The reap writes plan_blocked and the question (bin/lib/pool-lifecycle.sh). The row stays queued; re-entry is the lifecycle owner's move. 0 = off, the pool spawns as before. Read as ${POOL_PLAN_BLOCKED_STOP:-1}.",
   "settable": true
 }

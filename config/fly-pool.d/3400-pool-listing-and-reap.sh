@@ -1106,6 +1106,13 @@ for MF in "$POOL"/*.json; do
       *)                                                QROW done   "$KEY" "$(head -c 200 "$LOCAL/RESULT")" ;;
     esac
     # <<< reap row close
+    # >>> lifecycle phase (BH-8733)
+    # After the row close, so a failed phase write never changes the row; after
+    # the PR_CREATED verify, so RESULT_UNVERIFIED writes no pr_open. It reads
+    # only this record ($LOCAL) (bin/lib/pool-lifecycle.sh). $TICKET is the
+    # issue a refused plan_blocked on a merged/closed key is held on.
+    command -v pool_phase_reap >/dev/null 2>&1 && { pool_phase_reap "$P" "$KEY" "$LOCAL" "$TICKET" || true; }
+    # <<< lifecycle phase
     say "reaped $KEY from $MID: $(head -c 80 "$LOCAL/RESULT")"
     beat_json=$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$(head -c 120 "$LOCAL/RESULT")" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_result",detail:$r}')
     "$HARNESS/bin/beat.sh" "$beat_json" >/dev/null 2>&1 || true

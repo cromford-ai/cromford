@@ -372,6 +372,9 @@ next_job_or_destroy() { # hand this machine the next queued job, or destroy it
         [ "${ROWS_ONLY:-0}" = 1 ] || \
           { command -v queue_claim >/dev/null 2>&1 && queue_claim "$P" fly "$NKEY" >/dev/null 2>&1; }
         say "reused $MID for $NKEY (was $KEY)"
+        # >>> lifecycle phase: reused (BH-8733)
+        command -v pool_phase_set >/dev/null 2>&1 && { pool_phase_set "$P" "$NKEY" building "machine $MID reused" || true; }
+        # <<< lifecycle phase: reused
         "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$NKEY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_reused"}')" >/dev/null 2>&1 || true
         REUSED=1
       else

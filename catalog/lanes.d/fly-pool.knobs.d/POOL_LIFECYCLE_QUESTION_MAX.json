@@ -1,0 +1,12 @@
+{
+  "env": "POOL_LIFECYCLE_QUESTION_MAX",
+  "type": "int",
+  "default": 2000,
+  "min": 1,
+  "max": 2000,
+  "unit": "bytes",
+  "zero_means": null,
+  "read_in": "bin/lib/pool-lifecycle.sh",
+  "note": "BH-8733: the most bytes of a PLAN_BLOCKED question pool_phase_reap stores in the build_queue row (cut on a line end). The max is the lifecycle route's QUESTION_MAX (2000), so a stored question never gets a 400. Read as ${POOL_LIFECYCLE_QUESTION_MAX:-2000}; a value outside 1..2000 is the default.",
+  "settable": true
+}
