@@ -15,7 +15,7 @@ import { stageProgress, stageLabel, STEPS } from '../lib/stages.js';
 import { plainLabel, tierLabel } from '../lib/labels.js';
 import {
   runOutcome, outcomeRank, OUTCOME_LABEL, OUTCOME_TONE, rcLabel,
-  tickWork, parseTickSummary, diskPercent, diskTone, buildingNow, staleBuilds, JOBS_READ_CAP
+  tickWork, parseTickSummary, diskPercent, diskTone, buildingNow, staleBuilds, needsSplit, JOBS_READ_CAP
 } from '../lib/cockpit.js';
 
 // NOW is the port of the old console's home, "Now · Harness". FLEET next door
@@ -54,7 +54,9 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
   const stale = staleBuilds(builds, jobs.data, nowMs);
   const buildingValue = bn ? (bn.capped ? `${bn.count}+` : bn.count)
     : jobs.loading && !jobs.data ? '…' : countOrNull(null);
-  const needsTotal = needs.total === null || needs.total === undefined ? null : needs.total + stale.length;
+  // BH-9117: the NEEDS count split by kind; its total is the NEEDS A HUMAN value.
+  const split = needsSplit(nowData.data ? needs : null, jobs.data ? stale.length : null);
+  const needsTotal = split.total;
   const oldest = runs.length ? runs[runs.length - 1] : null;
 
   // Every stat gates on the DATA, never on the loading flag: an errored useApi
@@ -94,6 +96,8 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
         <${Stat} label=${`FAILED OF LAST ${runs.length} TICKS`} value=${nowData.data ? failing : '…'}
           tone=${failing ? 'warn' : null} to="/history?outcome=failed"/>
       </div>
+
+      <${NeedsSplitLine} split=${split} loaded=${!!nowData.data}/>
 
       ${nowData.error && !nowData.data
         ? html`<${ErrorBox} error=${nowData.error} onRetry=${nowData.reload}/>` : null}
@@ -167,6 +171,19 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
         <span class="footnote__spacer"></span>
         <${Cursor}/>
       </div>
+    </div>`;
+}
+
+// One wrapping line under the stats: what NEEDS A HUMAN is made of, each part a
+// link to its list. `…` until /now answers, `—` for a part whose read failed.
+function NeedsSplitLine({ split, loaded }) {
+  return html`
+    <div class="section__note" data-testid="needs-split"
+      style="display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin:6px 0 10px">
+      <span style="letter-spacing:1px">NEEDS</span>
+      ${split.parts.map((p) => html`
+        <span key=${p.key}>${'· '}<${Link} to=${p.to} data-kind=${p.key}>${
+          !loaded ? '…' : p.value === null ? '—' : p.value} ${p.label}<//></span>`)}
     </div>`;
 }
 

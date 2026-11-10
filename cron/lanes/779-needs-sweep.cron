@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── NEEDS-SWEEP LANE (BH-9117) ──────────────────────────────────────────────
+# Daily at 05:35Z, 40 minutes after sweep-stale-builds. Closes console build
+# rows in a parked stage or pr_created that are over: a newer row for the same
+# ticket, the PR merged or closed, the github-issues ticket closed, or older
+# than the settings row console.needs.max_age_days. Expires dead_letter
+# commands older than the same window. Dry while console.needs.sweep_dry_run
+# is 1 (the seed). One line per changed row in logs/needs-sweep.log.
+# Off: flags/lane-off-needs-sweep (bin/harness-ctl.sh off needs-sweep).
+35 5 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/needs-sweep.sh >> /root/harness/logs/needs-sweep-cron.log 2>&1

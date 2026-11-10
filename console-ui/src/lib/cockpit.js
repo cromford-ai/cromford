@@ -244,6 +244,27 @@ export function summariseNeeds(payload, stale = []) {
   return { total: rows.length, high, byKind, byProject };
 }
 
+// NEEDS A HUMAN on NOW, split by kind, each part a link to the list that shows
+// exactly those rows. `needs` is the /now payload's server counts; staleCount
+// is the client's stale builds (staleBuilds().length), or null while the jobs
+// read is unknown. A part whose read is unknown is null (rendered as a dash),
+// never an invented 0. The total keeps the rule NOW always had: server total
+// plus the stale builds the client can see, so an unread jobs read adds none.
+export function needsSplit(needs, staleCount) {
+  const known = !!needs && needs.total !== null && needs.total !== undefined;
+  const num = (v) => (known && v !== null && v !== undefined && Number.isFinite(Number(v)) ? Number(v) : null);
+  const stale = staleCount === null || staleCount === undefined ? null : Number(staleCount);
+  const parts = [
+    { key: 'alerts', label: 'open alerts', value: num(needs && needs.alerts), to: '/alerts' },
+    { key: 'builds', label: 'parked builds', value: num(needs && needs.builds), to: '/needs?kind=build' },
+    { key: 'stale', label: 'stale builds', value: stale, to: '/needs?kind=stale' },
+    { key: 'commands', label: 'failed commands', value: num(needs && needs.commands), to: '/needs?kind=command' },
+    { key: 'proposals', label: 'ideas at the gate', value: num(needs && needs.proposals), to: '/ideas?status=gate_pending' }
+  ];
+  const total = known ? Number(needs.total) + (stale || 0) : null;
+  return { parts, total };
+}
+
 export const NEED_LABEL = {
   alert: 'ALERT',
   command: 'COMMAND',

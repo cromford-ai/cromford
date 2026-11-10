@@ -1,0 +1,54 @@
+{
+  "id": "needs-sweep",
+  "name": "NEEDS sweep",
+  "scope": "hub",
+  "script": "bin/needs-sweep.sh",
+  "cadence": "35 5 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-needs-sweep",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "NS_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/needs-sweep.sh",
+      "note": "BH-9117 test seam: epoch seconds used as the clock. Only all-digit values are used. NOT settable from the control plane. The window, dry-run mode, rows-per-run and GitHub reads-per-run limits are settings rows (console.needs.max_age_days, console.needs.sweep_dry_run, console.needs.sweep_max_rows, console.needs.sweep_max_reads; transport bounds console.needs.sweep_page_size, console.needs.sweep_apply_chunk, console.needs.sweep_http_timeout_s) the script reads with setting_get, not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "NS_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/needs-sweep.sh",
+      "note": "BH-9117 test seam: 1 = load the decision functions (ns_epoch, ns_rule, ns_decide) and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "MC_CLOSED_SETTLE",
+      "type": "int",
+      "default": 180,
+      "unit": "s",
+      "zero_means": "off",
+      "read_in": "bin/lib/mc/settle.sh",
+      "note": "BH-9117: needs-sweep writes pr_closed only for a closure older than this window (mc_closed_settled), the same window reconcile-prs and merge-sweep use. A younger closure is kept as pr_unsettled and re-read on the next run. 0 turns the window off: every closure is treated as settled.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/needs-sweep.log"
+  }
+}
