@@ -21,10 +21,23 @@
 # (ml_apply) -> one sha-bound merge per fully applied member (ml_merge_members).
 #
 # Records: logs/migration-lane.log (`#N applied <file>`, `#N merged <sha>`,
-# `#N dropped: <why>`, `#N skipped: <why>`, `batch <id> <status>`), and the jobs
-# ledger kind migration-lane: key `batch <project>` (status
-# ci|applying|merging|done|red|timeout|failed|lost, detail JSON) and key
-# `pr <project>#<n>` (status solo|red|concurrent|changed, detail `<head> <why>`).
+# `#N dropped: <why>`, `#N skipped: <why>`, `batch <id> <status>`, and from the
+# row-count judge `#N empty: <file> statement <k> (<COMMAND>, line <L>) changed
+# 0 rows`, `#N may-be-empty: <file> statement <k> (<reason>)`, `#N <file>: ...
+# row counts not checked`), and the jobs ledger kind migration-lane: key
+# `batch <project>` (status ci|applying|merging|done|red|timeout|failed|lost,
+# detail JSON) and key `pr <project>#<n>` (status
+# solo|red|concurrent|changed|empty|held, detail `<head> <why>`).
+#
+# ROW COUNTS (BH-8914). After migrations/status proves a member file applied,
+# ml_judge_rows reads the apply CLI's `migration-rows:` report lines for it
+# (bin/lib/migration-rowcount.py). A data statement that changed 0 rows with
+# no `-- may-be-empty: <reason>` marker holds the member (ledger `empty
+# <head>`, one PR comment); a file with no report line is proved as before.
+# A report that does not match the file (unaligned) or a judge that fails
+# holds the member too (ledger `held <head>`, no comment): the next tick's
+# apply CLI skips the file production already holds, so without the row the
+# judge would read it as unreported and merge it (lead review lr-9192).
 #
 # SEAMS. Every call to GitHub, the verdict readers, the app status endpoint,
 # the alert path and the clock's sleep goes through one mlx_* function below.
@@ -252,6 +265,8 @@ ml_gate_pr() {
   case "$row" in
     "red $head") ML_WHY="its solo batch was red on ${head:0:8}; waits for a new head"; return 1 ;;
     "changed $head") ML_WHY="a file changed since staging on ${head:0:8}; waits for a new head"; return 1 ;;
+    "empty $head") ML_WHY="a data statement changed 0 rows on ${head:0:8}; waits for a new head"; return 1 ;;
+    "held $head") ML_WHY="row counts could not be checked on ${head:0:8}; waits for a new head"; return 1 ;;
   esac
   return 0
 }
@@ -497,6 +512,65 @@ ml_out_rotate() {
   return 0
 }
 
+# ml_judge_rows <n> <path> <staged-file> <apply-out> — judge the row report of
+# one proved member file (bin/lib/migration-rowcount.py; the report line and
+# the verdicts are in its header). rc 0 = the file stays proved; rc 1 = it
+# holds the member, already logged. Each empty statement adds
+# "<path>\t<k>\t<COMMAND>\t<line>" to $ML_TMP/empty-<n>.tsv.
+ml_judge_rows() {
+  local n="$1" p="$2" b="${2##*/}" py res rc=0 v k cmd cnt ln why unal=0
+  # No report line for this file: the CLI does not print counts (or skipped
+  # the file). Proved as before, without starting python.
+  if ! awk -v pre="migration-rows: $b " 'index($0, pre) == 1 { f = 1; exit } END { exit !f }' "$4" 2>/dev/null; then
+    ml_log "#$n $p: the apply output has no migration-rows lines; row counts not checked"
+    return 0
+  fi
+  py="$(dirname "${BASH_SOURCE[0]}")/migration-rowcount.py"
+  res=$(python3 -I "$py" judge "$3" "$b" "$4" 2>/dev/null) || rc=$?
+  case "$rc" in
+    0|1) ;;
+    3) ml_log "#$n $p: the apply output has no migration-rows lines; row counts not checked"; return 0 ;;
+    *) ml_log "#$n not merged: row-count judge failed on $p (rc $rc)"
+       printf '%s\tjudge rc %s\n' "$p" "$rc" >> "$ML_TMP/held-$n.tsv"
+       printf '#%s not merged: row-count judge failed on %s\n' "$n" "$p" >> "$ML_TMP/summary.txt"
+       return 1 ;;
+  esac
+  while IFS=$'\t' read -r v k cmd cnt ln why; do
+    case "$v" in
+      marked) ml_log "#$n may-be-empty: $p statement $k ($(ml_flat "$why"))" ;;
+      empty)
+        ml_log "#$n empty: $p statement $k ($cmd, line $ln) changed 0 rows"
+        printf '%s\t%s\t%s\t%s\n' "$p" "$k" "$cmd" "$ln" >> "$ML_TMP/empty-$n.tsv"
+        printf '#%s empty: %s statement %s changed 0 rows\n' "$n" "$p" "$k" >> "$ML_TMP/summary.txt" ;;
+      unaligned) unal=1 ;;
+    esac
+  done <<<"$res"
+  if [ "$unal" = 1 ]; then
+    ml_log "#$n not merged: $p row report does not match its statements"
+    printf '%s\tunaligned\n' "$p" >> "$ML_TMP/held-$n.tsv"
+    printf '#%s not merged: %s row report does not match its statements\n' "$n" "$p" >> "$ML_TMP/summary.txt"
+  fi
+  [ "$rc" = 0 ]
+}
+
+# ml_empty_comment <n> <head> — the one PR comment for a member held by an
+# empty statement ($ML_TMP/empty-<n>.tsv).
+ml_empty_comment() {
+  local n="$1" head="$2" body="$ML_TMP/empty-body-$1.md" p k cmd ln
+  read -r p k cmd ln < <(head -1 "$ML_TMP/empty-$n.tsv" | tr '\t' ' ')
+  {
+    printf 'The migration lane did not merge this PR: `%s` statement %s (%s, line %s) changed 0 rows.\n\n' "$p" "$k" "$cmd" "$ln"
+    printf 'Batch `%s` at head `%s`. Each data statement that matched nothing:\n\n' "$ML_ID" "${head:0:12}"
+    while IFS=$'\t' read -r p k cmd ln; do printf -- '- `%s` statement %s (%s, line %s) changed 0 rows\n' "$p" "$k" "$cmd" "$ln"; done < "$ML_TMP/empty-$n.tsv"
+    printf '\nThe file IS applied in production: the project ledger holds it with this checksum. Two ways forward:\n\n'
+    printf '1. If 0 rows is wrong, push a NEW migration file with the fixed statement. Leave this file as it is: production holds its checksum, and the lane refuses a changed file.\n'
+    printf '2. If 0 rows is correct, an operator merges this PR. A marker added now changes a file that production already holds.\n\n'
+    printf 'Next time, mark a statement that may match nothing on the line above it: `-- may-be-empty: <reason>`.\n'
+  } > "$body"
+  mlx_comment "$SLUG" "$n" "$body" || ml_log "#$n empty comment failed"
+  rm -f "$body"
+}
+
 # ml_apply — re-check, refuse changed files, run the project's ledger CLI from a
 # main tree, prove each file. Writes $ML_TMP/applied.tsv ("<n>\t<head>\t<paths>")
 # for each member whose EVERY file is proved. rc 1 = the batch failed (some
@@ -579,17 +653,33 @@ ml_apply() {
     return 1
   fi
   while IFS=$'\t' read -r n head f; do
-    local all=1 got=""
+    local all=1 got="" held=0
     for p in $f; do
       want=$(jq -r --argjson n "$n" --arg p "$p" '.[] | select(.n == $n) | .files[] | select(.path == $p) | .sha256' <<<"$ML_MEMBERS_JSON")
       if [ "$(ml_status_has "$st_file" "${p##*/}" "$want")" = applied ]; then got="$got $p"; else all=0; fi
     done
     for p in $got; do ml_log "#$n applied $p"; done
-    if [ "$all" = 1 ]; then printf '%s\t%s\t%s\n' "$n" "$head" "$f" >> "$ML_TMP/applied.tsv"
+    if [ "$all" = 1 ]; then
+      # A proved file still holds the member when a data statement changed 0
+      # rows. ml_gate_pr skips an `empty <head>` row before any apply, so the
+      # comment posts once per head.
+      : > "$ML_TMP/empty-$n.tsv"; : > "$ML_TMP/held-$n.tsv"
+      for p in $f; do ml_judge_rows "$n" "$p" "$apply/$p" "$out" || held=1; done
+      if [ -s "$ML_TMP/empty-$n.tsv" ]; then
+        ml_pr_put "$n" empty "$head" "$(head -1 "$ML_TMP/empty-$n.tsv" | cut -f1,2 | sed 's/\t/ statement /')"
+        ml_empty_comment "$n" "$head"
+      elif [ "$held" = 1 ]; then
+        # Every held member gets a row, whatever the cause: the hold must
+        # outlast this tick (ml_gate_pr skips `held <head>`).
+        ml_pr_put "$n" held "$head" "$(head -1 "$ML_TMP/held-$n.tsv" | tr '\t' ' ')"
+      fi
+    fi
+    if [ "$all" = 1 ] && [ "$held" = 0 ]; then printf '%s\t%s\t%s\n' "$n" "$head" "$f" >> "$ML_TMP/applied.tsv"
+    elif [ "$all" = 1 ]; then failed=1
     else ml_log "#$n not merged: not every file is in the production ledger"; failed=1; fi
   done < "$ML_TMP/apply2.tsv"
   if [ "$failed" = 1 ] || [ "$rc" != 0 ]; then
-    mlx_alert critical "migration-lane-$P-$ML_ID" "$P migration batch $ML_ID failed: not every migration was proved applied (apply rc $rc); only the proved members merge"
+    mlx_alert critical "migration-lane-$P-$ML_ID" "$P migration batch $ML_ID failed: a member was not proved applied, or a data statement changed 0 rows (apply rc $rc); only the proved members merge"
     failed=1
   fi
   [ -e "$ML_TMP/lease-lost" ] && { ml_log "batch $ML_ID lost: the lease was lost during the apply; nothing merged"; return 2; }

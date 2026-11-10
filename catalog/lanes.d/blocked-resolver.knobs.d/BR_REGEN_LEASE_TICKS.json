@@ -1,0 +1,11 @@
+{
+  "env": "BR_REGEN_LEASE_TICKS",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 50,
+  "unit": "ticks",
+  "zero_means": "off",
+  "read_in": "bin/lib/br/ladder.sh",
+  "note": "BH-9340: the regenerate rung (br_regen_rung, rung 1b) retries an mc_rebase rc 3 (lease rejected, or a hold refused the push) with no rung spent. When rc 3 answers this many times in a row on the SAME head, that tick records regen-noop on head8, sends one warn alert that names the PR, and runs the fix round. A new head restarts the count (sidecar state/blocked-resolver/<project>/<cap-key>.regen-lease). 0 = off: rc 3 retries for ever, as before BH-9340. The Mergify queue refusal is rc 9 and does not wait for this count."
+}

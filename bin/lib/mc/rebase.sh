@@ -1395,7 +1395,7 @@ mc_rebase_restamp() {
 }
 
 mc_rebase() {
-  local slug="$1" project="$2" br="$3" head="$4" url="$5" base="${6:-main}"
+  local slug="$1" project="$2" br="$3" head="$4" url="$5" base="${6:-main}" mqdist="${7:-}"
   local repo="${MC_REPOS:-/root/repos}/$project" wt cloned="" rc=0 conf csz new remote ferr hv
   # A HELD TICKET'S BRANCH IS NOT MERGED INTO (BH-2504). #2493, #2552 and #2586
   # took "Merge remote-tracking branch 'origin/main' into HEAD" pushes while a
@@ -1574,13 +1574,19 @@ mc_rebase() {
   # Mergify holds the PR now, the result is dropped and nothing is pushed:
   # rc 3, the caller's "come back next tick". A read that fails does not stop
   # the push; the land arm already read it before the spawn.
+  # rc 9 instead of rc 3 when the caller passes `distinct` as arg 7 (BH-9340).
+  # The refusal is stable while the PR stays queued, so a caller that retries
+  # rc 3 for ever (the resolver's regenerate rung) needs to tell it apart from
+  # a lease race. Every other caller passes no arg 7 and keeps rc 3.
   if [ "$base" = main ] && command -v mc_mergify_holds >/dev/null 2>&1 \
      && [ "$(mc_queue_provider "$slug" 2>/dev/null)" = mergify ]; then
     local mqwhy mqrc
     mqwhy=$(mc_mergify_holds "$slug" "$url" "$head"); mqrc=$?
     case "$mqrc" in
       0) mc_log "$url rebase: SKIP_PUSH mergify-queue: $mqwhy on ${head:0:8} — the rebase result ${new:0:8} is dropped, nothing pushed (BH-8021)"
-         mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3 ;;
+         mc_rebase_cleanup "$repo" "$wt" "$cloned"
+         [ "$mqdist" = distinct ] && return 9
+         return 3 ;;
       2) mc_log "$url rebase: the Mergify check runs on ${head:0:8} could not be read at the push — pushing as before (BH-8021)" ;;
     esac
   fi

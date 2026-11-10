@@ -288,7 +288,7 @@ br_reason_of() {
 # tick, so this rung can only ever cost a merge.
 br_regen_rung() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" next="${7:-fix-round}"
-  local ck st n slug br head out rc ref ckey rvw mark=0 why=""
+  local ck st n slug br head out rc ref ckey rvw mark=0 why="" lf lh lk lt
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck")
   # The displaced answer, dispatched by name. Everything below that cannot take
@@ -351,10 +351,16 @@ br_regen_rung() {
   fi
   br_event resolver_rung "$p" "$ck" "$reason" "rung 1b regenerate: mc_rebase on $br at ${head:0:8}"
   [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
-  out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
+  # `distinct` (BH-9340): the BH-8021 Mergify push refusal answers rc 9, not
+  # the rc 3 a lease race answers. It is stable while the PR stays queued.
+  out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url" main distinct); rc=$?
   # Same as rung 1: the setup alert is cleared the moment the rung RAN. rc 4 is
   # the setup arm below and must not clear it.
-  case "$rc" in 0|1|2|3|5|6) rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null ;; esac
+  case "$rc" in 0|1|2|3|5|6|9) rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null ;; esac
+  # THE rc 3 COUNT PER HEAD (BH-9340), one line `<head40>\t<n>`. Only the rc 3
+  # arm writes it, and every answer but rc 3 and rc 7 ends the episode.
+  lf="$ST/$p/$ck.regen-lease"
+  [ "$rc" = 3 ] || [ "$rc" = 7 ] || rm -f "$ST/$p/$ck.regen-lease" 2>/dev/null
   case "$rc" in
     0|5)
       if [ -n "$out" ] && [ "$out" != "$head" ]; then
@@ -374,11 +380,45 @@ br_regen_rung() {
       br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=$rc left head8=${head:0:8} in place — $next now"
       say "$p/$rkey [$reason]: the regenerate rung could not land (mc_rebase rc=$rc) — $next"
       br_regen_next; return 0 ;;
-    3|7)
-      # The head moved under the lease, or the pool queue refused it. Nothing is
-      # spent and nothing is said twice — the next tick reads the new head.
+    9)
+      # Mergify holds the head (BH-8021 refused the push). That does not change
+      # by next tick, so it is an rc 1/2: nothing landed, the head is recorded
+      # so the rung is never offered on it again, and the fix round runs now.
+      br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc=9 (Mergify queue check on head8=${head:0:8}) left it in place — $next now"
+      say "$p/$rkey [$reason]: the regenerate rung could not push: mc_rebase rc=9 (Mergify queue check on ${head:0:8}) — $next"
+      br_regen_next; return 0 ;;
+    7)
+      # The pool queue refused it. Nothing is spent and nothing is said twice.
       say "$p/$rkey [$reason]: the regenerate rung's lease was rejected or the pool queue was unreachable (mc_rebase rc=$rc) — no rung spent, retried next tick"
       return 0 ;;
+    3)
+      # The head moved under the lease, or a hold refused the push. A real race
+      # clears by next tick; a refusal that repeats on the SAME head is stable
+      # (BH-9340: #9317, #8979, #9221, #9273 retried for ever). So rc 3 retries
+      # with no rung spent until it has answered BR_REGEN_LEASE_TICKS times on
+      # one head, then falls through to $next once, with one alert.
+      # Knob row: catalog/lanes.d/blocked-resolver.knobs.d/BR_REGEN_LEASE_TICKS.json
+      # (3 is the documented fallback; 0 = off, retry for ever).
+      lt="${BR_REGEN_LEASE_TICKS:-3}"
+      case "$lt" in ''|*[!0-9]*) lt=3 ;; esac
+      lh=""; lk=""
+      [ -f "$lf" ] && IFS=$'\t' read -r lh lk < "$lf" 2>/dev/null
+      case "$lk" in ''|*[!0-9]*) lk=0 ;; esac
+      if [ "$lh" = "$head" ]; then lk=$((10#$lk + 1)); else lk=1; fi
+      # A sidecar that cannot be written restarts the count: k=0 never falls
+      # through, which is the behavior before BH-9340.
+      printf '%s\t%s\n' "$head" "$lk" > "$lf" 2>/dev/null || lk=0
+      if [ "$lt" -eq 0 ] || [ "$lk" -eq 0 ] || [ "$lk" -lt "$lt" ]; then
+        say "$p/$rkey [$reason]: the regenerate rung's lease was rejected or the pool queue was unreachable (mc_rebase rc=$rc) — no rung spent, retried next tick ($lk of $lt on this head)"
+        return 0
+      fi
+      if br_record "$p" "$ck" regen-noop "$reason" "mc_rebase rc 3 for $lk ticks on head8=${head:0:8} left it in place — $next now"; then
+        "$H/bin/lane-alert.sh" --id "br-regen-lease:$p:$ck:${head:0:8}" --severity warn blocked-resolver \
+          "$url: mc_rebase rc 3 on head8=${head:0:8} for $lk ticks — the fix round runs instead (BH-9340)" >/dev/null 2>&1 || true
+      fi
+      rm -f "$ST/$p/$ck.regen-lease" 2>/dev/null
+      say "$p/$rkey [$reason]: mc_rebase rc 3 for $lk ticks on head8=${head:0:8} — the regenerate rung stops retrying, $next"
+      br_regen_next; return 0 ;;
     6)
       # The pool took it: a queue row exists and a machine is rebasing this
       # branch, so the rung RAN, and the conductor row leaves the park the same
