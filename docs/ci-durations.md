@@ -26,6 +26,7 @@ Every PR that added an always-run suite had to add a row. Two such PRs added row
 | `decisions` job | `bin/ci-durations.sh merge` over `ci-durations` and every `suite-timings-*` | `ci-durations-next` (30 days) |
 | `lint` job (PRs) | `bin/ci-durations.sh fetch`, then `FAST_LINTS_DURATIONS` on the fast-lints step | none |
 | `ci-timings` job (green Mergify batch) | `bin/ci-durations.sh post` over every `suite-timings-*` | the jobs worker's `ci_suite_durations` (BH-5653) |
+| `harness-nightly.yml` plan + shards | `bin/ci-durations.sh fetch` (`CI_WORKFLOW=Harness CI`); the shard re-plan reads it as `CI_PLAN_DURATIONS_FILE`, the traced scan as `SUITE_DURATIONS_FILE` (BH-9384) | `nightly-durations` (3 days) |
 
 `fetch` reads the jobs worker FIRST (BH-5653): `GET /api/ci/suite-durations`, when `JOBS_URL` and a token (`CI_DURATIONS_TOKEN` or `HARNESS_SECRET`) are set. A usable answer is written under `# source: api` and copied to the cache (`CI_DURATIONS_CACHE`). An unusable answer (an HTTP error, `{}`, no rows, `truncated`, a bad row) prints one `::warning::` and the cache is used under `# source: cache`. With no cache, `fetch` goes on to the chain below. The plan job gets the token only on a push, a dispatch or a Mergify batch. The lint job never gets it.
 
