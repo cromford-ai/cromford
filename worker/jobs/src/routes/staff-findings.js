@@ -17,6 +17,15 @@
 // refusal writes nothing. A claim that wrote nothing and has no row to explain
 // it is a 500 claim_unresolved, never a success.
 //
+// SEEN COUNT (BH-9187): a claim that resolves to a row (200 claimed, or 409
+// already_claimed) upserts staff_finding_seen for that fingerprint: 1 on the
+// new row, +1 on every repeat, last_checked_at = now. A repeat with no seen
+// row (a finding claimed before BH-9187) starts at 2 with first_seen_at =
+// the finding's claimed_at. The agent is the row owner, never the caller. The answer carries seen_count, first_seen_at and
+// last_checked_at as the upsert returned them. A failed upsert leaves the
+// claim answer as it was and adds seen: "unrecorded". A suppressed or
+// staff-filed claim writes no seen row.
+//
 // POST /api/staff/suppressions records a human-approved, expiring mute for one
 // fingerprint, status 'active'. A 'pending' row (a noise proposal) never
 // matches a claim until a human approves it. The approver is a human: archie or a staff
@@ -56,6 +65,35 @@ const readFinding = (env, fp) => env.DB.prepare(`SELECT * FROM staff_findings WH
 const activeSuppression = (env, fp, t, familyFp) => env.DB.prepare(
   `SELECT * FROM staff_suppressions WHERE fingerprint IN (?1, ?3) AND status='active' AND expires_at > ?2 ORDER BY expires_at DESC LIMIT 1`
 ).bind(fp, t, familyFp).first();
+// One statement per claim: the upsert returns the row it wrote. Two constant
+// statements, chosen by whether the claim is a repeat, so no SQL text is built
+// at run time. SEEN_NEW runs on a new finding row: it starts the count at 1 and
+// resets a seen row a deleted finding left behind. SEEN_REPEAT runs on a 409:
+// it adds 1; a repeat with no seen row yet (a finding claimed before BH-9187)
+// starts at 2, because a 409 proves one earlier claim, and dates first_seen_at
+// to that claim (?4 = the finding's claimed_at).
+const SEEN_NEW = `INSERT INTO staff_finding_seen (fingerprint, agent, seen_count, first_seen_at, last_checked_at)
+  VALUES (?1, ?2, 1, ?3, ?3)
+  ON CONFLICT(fingerprint) DO UPDATE SET seen_count = 1, agent = excluded.agent,
+    first_seen_at = excluded.first_seen_at, last_checked_at = excluded.last_checked_at
+  RETURNING seen_count, first_seen_at, last_checked_at`;
+const SEEN_REPEAT = `INSERT INTO staff_finding_seen (fingerprint, agent, seen_count, first_seen_at, last_checked_at)
+  VALUES (?1, ?2, 2, ?4, ?3)
+  ON CONFLICT(fingerprint) DO UPDATE SET seen_count = seen_count + 1,
+    last_checked_at = excluded.last_checked_at
+  RETURNING seen_count, first_seen_at, last_checked_at`;
+const recordSeen = async (env, fp, owner, t, claimedAt = null) => {
+  try {
+    const stmt = claimedAt === null
+      ? env.DB.prepare(SEEN_NEW).bind(fp, owner, t)
+      : env.DB.prepare(SEEN_REPEAT).bind(fp, owner, t, claimedAt);
+    const r = await stmt.first();
+    if (!r) return { seen: "unrecorded" };
+    return { seen_count: r.seen_count, first_seen_at: r.first_seen_at, last_checked_at: r.last_checked_at };
+  } catch (e) {
+    return { seen: "unrecorded", seen_error: String((e && e.message) || e).slice(0, 200) };
+  }
+};
 const rosterNames = async (env) => {
   const { results } = await env.DB.prepare(`SELECT name FROM staff_agents`).all();
   return (results || []).map((r) => r.name);
@@ -109,7 +147,7 @@ export const routes = [
         if (changesOf(res) === 1) {
           const row = await readFinding(env, fp);
           if (!row) return json(500, { error: "claim_unresolved", fingerprint: fp });
-          return json(200, { claimed: true, fingerprint: fp, finding: findingOut(row) });
+          return json(200, { claimed: true, fingerprint: fp, finding: findingOut(row), ...(await recordSeen(env, fp, row.agent, t)) });
         }
         const s = await activeSuppression(env, fp, t, familyFp);
         if (s) {
@@ -120,7 +158,10 @@ export const routes = [
         }
         const existing = await readFinding(env, fp);
         if (existing) {
-          return json(409, { claimed: false, error: "already_claimed", fingerprint: fp, finding: findingOut(existing) });
+          return json(409, {
+            claimed: false, error: "already_claimed", fingerprint: fp, finding: findingOut(existing),
+            ...(await recordSeen(env, fp, existing.agent, t, existing.claimed_at)),
+          });
         }
         return json(500, { error: "claim_unresolved", fingerprint: fp });
       });

@@ -73,6 +73,17 @@
 #      state/staff/<agent>/held/<fp>.json, and later ticks retry the filing
 #      from it with no model call until it files. A GitHub outage never buys a
 #      second model call and never ends as `failed`.
+#      CONTRACT GATE (BH-9187), before every filing, held retries too: the
+#      level row staff.<agent>.level (bin/lib/staff-contract.sh staff_level,
+#      read once per tick after the roster row; no row, an outage or a bad
+#      value is observe) must be file or act, and the filings today (acted
+#      files with outcome `filed` in the UTC day) must be under
+#      staff.<agent>.file_max_day (fallback 3). Else, for a new decision, one
+#      digest line (verdict=level or verdict=file-cap), the item is recorded
+#      digested and GitHub is not called. A HELD filing the gate stops stays
+#      held: one log line `held filing <fp12> waits: contract <why>`, no
+#      digest line, no state write; a later tick files it when the gate
+#      allows. The summary line carries contract_level=<l>.
 #  12. The outcome goes to state/staff/<agent>/acted/<fp>.json first, then to
 #      POST /api/staff/findings/record.
 #  13. One summary line in logs/staff.log per tick that had work.
@@ -86,7 +97,8 @@
 #      The EXIT trap runs chat_release (5a) first, then the tick record.
 #
 # OFF: STAFF_ENABLED=0, staff-off-all, staff-kill-all, staff-off-<agent>,
-# staff-kill-<agent>.
+# staff-kill-<agent>. Filing only: staff.<agent>.level = observe (the seed);
+# held filings then stay held until the level is file or act again.
 # Registry: catalog/lanes.d/staff.json. Cron: cron/lanes/729-staff.cron.
 # Note: docs/notes/2026-10-10-BH-5561-staff-heartbeat.md.
 set -uo pipefail
@@ -115,6 +127,7 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/lane-model.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest-list.sh" 2>/dev/null || true
+  . "$SELF/lib/staff-contract.sh" 2>/dev/null || true
 }
 # The suite's seam. Sandbox only, and settable:false in the registry.
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -n "${STAFF_FIXTURE:-}" ]; then
@@ -231,6 +244,16 @@ LEVEL=$(jq -r '.agent.autonomy // ""' <<<"$row" 2>/dev/null)
 CAP=$(jq -r '.agent.cap // ""' <<<"$row" 2>/dev/null)
 SOUL=$(jq -r '.agent.soul // ""' <<<"$row" 2>/dev/null)
 [ "$STATUS" = active ] || exit 0
+# BH-9187: the contract level gates every filing (step 11). A missing lib is
+# observe, so a half-synced bin/ never files.
+CONTRACT_FB=0
+if command -v staff_level >/dev/null 2>&1; then
+  CONTRACT_LEVEL=$(staff_level "$AGENT") || CONTRACT_FB=1
+else
+  CONTRACT_LEVEL=observe; CONTRACT_FB=1
+fi
+NOW_E=$(date -u +%s)
+[ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${STAFF_NOW:-} =~ ^[0-9]+$ ]] && NOW_E=$STAFF_NOW
 
 PHASE=soul
 command -v node >/dev/null 2>&1 || { log "node is not installed; the soul cannot be read; nothing ran"; exit 0; }
@@ -309,7 +332,7 @@ DIGESTED=0; FILED=0; REFUSED=0; UNSUPPORTED=0; FAILED=0; HELD=0
 # A tick that claimed nothing of its own writes no line.
 summary() {
   [ $((NEWN + PENDN + DEFERRED + BADN + NOTES_N)) -gt 0 ] || return 0
-  log "level=$LEVEL collected=$COLLECTED new=$NEWN pending=$PENDN replayed=$REPLAYED deferred=$DEFERRED model_calls=$CALLS digested=$DIGESTED filed=$FILED refused=$REFUSED unsupported=$UNSUPPORTED failed=$FAILED held=$HELD notes=$NOTES_N replied=$REPLIED"
+  log "level=$LEVEL collected=$COLLECTED new=$NEWN pending=$PENDN replayed=$REPLAYED deferred=$DEFERRED model_calls=$CALLS digested=$DIGESTED filed=$FILED refused=$REFUSED unsupported=$UNSUPPORTED failed=$FAILED held=$HELD contract_level=$CONTRACT_LEVEL$([ "$CONTRACT_FB" = 1 ] && printf ' contract_level_fallback=1') notes=$NOTES_N replied=$REPLIED"
 }
 : > "$TMPD/new"
 while IFS= read -r line; do
@@ -408,15 +431,53 @@ hold() {
   HELD=$((HELD+1))
 }
 
+# contract_allows (BH-9187): rc 0 = the filing may go. rc 1 = it may not, and
+# CONTRACT_REFUSAL says why: `level` when the level is not file or act,
+# `file-cap` when FILE_MAX_DAY filings are already in today's acted files.
+# A check only: no output, no state write. The count is read once, then kept
+# by this tick. Call it in this shell, never in a $( ).
+FILED_TODAY=""
+CONTRACT_REFUSAL=""
+contract_allows() {
+  CONTRACT_REFUSAL=""
+  case "$CONTRACT_LEVEL" in
+    file|act) ;;
+    *) CONTRACT_REFUSAL=level; return 1 ;;
+  esac
+  if [ -z "$FILED_TODAY" ]; then
+    # Row staff.<agent>.file_max_day (seeded 3); 3 is its fallback.
+    FILE_MAX_DAY=$(staff_knob "$AGENT" file_max_day 3)
+    FILED_TODAY=$(staff_filed_today "$STATE" "$NOW_E")
+    if ! [[ $FILED_TODAY =~ ^[0-9]+$ ]]; then
+      log "filings today unreadable; the day cap $FILE_MAX_DAY counts as reached"; FILED_TODAY=$FILE_MAX_DAY
+    fi
+  fi
+  if [ "$FILED_TODAY" -ge "$FILE_MAX_DAY" ]; then CONTRACT_REFUSAL=file-cap; return 1; fi
+  return 0
+}
+# contract_gate <fp> <action> <title> <url>: contract_allows, plus one digest
+# line (verdict=level or verdict=file-cap) on a refusal. The act loop uses it.
+contract_gate() {
+  contract_allows && return 0
+  digest "$CONTRACT_REFUSAL" "$2" "$1" "$3" "$4"
+  return 1
+}
+
 # ═════ held filings: the filing again, never the model ═════════════════════
 : >> "$TMPD/held"
 while IFS= read -r fp; do
   hf="$STATE/held/$fp.json"
   r=$(jq -c '.row // empty' "$hf" 2>/dev/null)
   if [ -z "$r" ]; then log "held filing ${fp:0:12} unreadable; removed, the next tick asks the model"; rm -f "$hf"; continue; fi
-  if file_issue "$r"; then
+  # BH-9187: a held filing the contract stops STAYS held. No digest line, no
+  # acted file, no GitHub call: the held file is the record, and a later tick
+  # files it when the level is file or act and the day cap has room.
+  if ! contract_allows; then
+    log "held filing ${fp:0:12} waits: contract $CONTRACT_REFUSAL"
+    HELD=$((HELD+1))
+  elif file_issue "$r"; then
     finish "$fp" filed "$(jq -r .class "$hf")" "$(jq -r .ftitle "$hf")" "$ISSUE_URL" "$(jq -r .mode "$hf")" && rm -f "$hf"
-    FILED=$((FILED+1))
+    FILED=$((FILED+1)); FILED_TODAY=$((FILED_TODAY+1))
   else
     HELD=$((HELD+1))
   fi
@@ -539,8 +600,10 @@ while IFS= read -r r; do
     finish "$fp" digested "$class" "$ftitle"; DIGESTED=$((DIGESTED+1))
   elif [ "$(jq -r '.executable // false' <<<"$v")" = true ]; then
     [ "$verdict" = allow ] && mode=auto || mode=ask
-    if file_issue "$r"; then
-      finish "$fp" filed "$class" "$ftitle" "$ISSUE_URL" "$mode"; FILED=$((FILED+1))
+    if ! contract_gate "$fp" "$action" "$ftitle" "$(jq -r .url <<<"$r")"; then
+      finish "$fp" digested "$class" "$ftitle"; DIGESTED=$((DIGESTED+1))
+    elif file_issue "$r"; then
+      finish "$fp" filed "$class" "$ftitle" "$ISSUE_URL" "$mode"; FILED=$((FILED+1)); FILED_TODAY=$((FILED_TODAY+1))
     else
       hold "$fp" "$r" "$mode" "$class" "$ftitle"
     fi

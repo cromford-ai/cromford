@@ -111,6 +111,9 @@ _jobs_req() {
     "GET /api/staff/agents")
       [ -f "$FXT/roster.fail" ] && return 1
       cat "$FXT/agents.json"; return 0 ;;
+    # TEST-CHANGE (BH-9187): filing now also needs the contract level row
+    # staff.<agent>.level = file or act; the fixture answers file.
+    "GET /api/settings/staff."*".level") printf '{"setting":{"value":"file"}}'; return 0 ;;
   esac
   return 1
 }

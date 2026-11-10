@@ -120,6 +120,9 @@ _jobs_req() {
     "GET /api/staff/agent?name="*)
       printf '{"agent":{"name":"watchman","autonomy":"augmentation","cap":"augmentation","status":"active","soul":"prompts/staff/watchman-soul.md"}}'
       return 0 ;;
+    # TEST-CHANGE (BH-9187): filing now also needs the contract level row
+    # staff.<agent>.level = file or act; the fixture answers file.
+    "GET /api/settings/staff."*".level") printf '{"setting":{"value":"file"}}'; return 0 ;;
   esac
   return 1
 }

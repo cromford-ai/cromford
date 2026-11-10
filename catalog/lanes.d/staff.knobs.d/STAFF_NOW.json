@@ -1,0 +1,9 @@
+{
+  "env": "STAFF_NOW",
+  "read_in": "bin/staff.sh",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "Test seam (BH-9187): epoch seconds bin/staff.sh uses as now for the contract day cap, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+  "settable": false
+}

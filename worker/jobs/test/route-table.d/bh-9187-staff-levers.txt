@@ -1,0 +1,5 @@
+# STAFF LEVERS (BH-9187): the staff agent contract's outcome ledger. A lever
+# action, a metric sample that settles due actions, and the per-agent scorecard.
+POST /api/staff/levers/actions
+POST /api/staff/levers/metric
+GET /api/staff/levers/scorecard
