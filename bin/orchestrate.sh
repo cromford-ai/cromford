@@ -22,7 +22,7 @@ HARNESS=/root/harness
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$HARNESS")
 ORC=/root/orchestrator
 MSGF="${1:?message file}"
-ORIGIN=""; CMD_ID=""; META_TRANSPORT=telegram; RELAY=0; META_FROM_USER=""
+ORIGIN=""; CMD_ID=""; META_TRANSPORT=telegram; RELAY=0; META_FROM_USER=""; META_FROM_NAME=""
 if [ -f "$MSGF.meta" ]; then
   ORIGIN=$(jq -r '.origin // ""' "$MSGF.meta" 2>/dev/null)
   CMD_ID=$(jq -r '.command_id // ""' "$MSGF.meta" 2>/dev/null)
@@ -40,6 +40,9 @@ if [ -f "$MSGF.meta" ]; then
   # WHO ASKED (BH-5751): the Telegram username bin/box-request.sh maps to an
   # owner email (BOX_CHAT_OWNERS) before it queues a box command.
   META_FROM_USER=$(jq -r '.from_username // ""' "$MSGF.meta" 2>/dev/null)
+  # The asker's display name (BH-9127): a turn a person asked for carries one,
+  # a cron or alert beat does not. It sets the turn's trigger on /staff.
+  META_FROM_NAME=$(jq -r '.from_name // ""' "$MSGF.meta" 2>/dev/null)
   # The message's own ids (BH-5336): a reply inside an in-flight turn's thread
   # waits for that turn (orct_gate). Absent fields never make a turn wait.
   META_MSG_ID=$(jq -r '.message_id // "" | tostring' "$MSGF.meta" 2>/dev/null)
@@ -88,6 +91,14 @@ orc_on_exit() {
   # It is not answered, so it drops its own claim with no .done marker: a
   # re-delivered copy then runs at once (BH-5336 lead review NOTE).
   [ -n "${ORCT_KEY:-}" ] && type orct_release >/dev/null 2>&1 && orct_release "$ORCT_KEY"
+  # A turn that got past its claim and stopped before its reply is one stopped
+  # row on /staff (BH-9127). The exits before the claim are not turns.
+  if [ -n "${ORCT_KEY:-}" ] && [ -n "${ARCHIE_TURN_KEY:-}" ] && [ "${_LEDGER_DONE:-0}" = 0 ] \
+     && type archie_hb_turn >/dev/null 2>&1; then
+    archie_hb_tick turn "$ARCHIE_TURN_T0" act 0 1 0 || true
+    archie_hb_turn "$ARCHIE_TURN_KEY" "$ARCHIE_TURN_T0" "$ARCHIE_TURN_TRIGGER" stopped \
+      <(printf '%s\n' '(the turn stopped before answering)') "staff-turn:$ARCHIE_TURN_KEY" || true
+  fi
   if [ -n "$CMD_ID" ] && [ "${_LEDGER_DONE:-0}" = 0 ]; then
     ledger_reply "(the turn stopped before answering) $(orc_last_error)" no_reply
     cmd_status "no_reply:$(date -u +%FT%TZ)"
@@ -283,6 +294,23 @@ fi
 if [ -n "${CMD_ID:-}" ]; then ORC_TURN_FP="orc:c${CMD_ID}"
 else ORC_TURN_FP="orc:d${_DKEY}:$(date -u +%s)"; fi
 # <<< turn fp
+# >>> archie turn key (BH-9127; tests/archie-heartbeat.bh-9127-test.sh runs this block)
+# THE TURN'S ROW ON /staff. The key names the turn's heartbeat, its activity
+# row and its cost rows (COST_RUN_ID=staff-turn:<key> on every orc-monitor
+# call below; bin/claude-cost.sh and bin/agent-call.sh keep it out of the
+# session's env, so a build the turn starts keeps its own run id). The
+# trigger: dash, slack or telegram when a person asked, beat for a cron or
+# alert turn (bin/lib/archie-hb.sh, archie_hb_trigger).
+# Fail open: no lib is no key, and a turn with no key posts nothing.
+ARCHIE_TURN_KEY=""; ARCHIE_TURN_T0=""; ARCHIE_TURN_TRIGGER=beat
+# shellcheck source=bin/lib/archie-hb.sh
+. "$HARNESS/bin/lib/archie-hb.sh" 2>/dev/null || true
+if type archie_hb_key >/dev/null 2>&1; then
+  ARCHIE_TURN_T0=$(archie_hb_now)
+  ARCHIE_TURN_KEY=$(archie_hb_key turn "$ARCHIE_TURN_T0")
+  ARCHIE_TURN_TRIGGER=$(archie_hb_trigger "${ORIGIN:-}" "${META_TRANSPORT:-}" "${META_FROM_NAME:-}")
+fi
+# <<< archie turn key
 # >>> archie intercept (BH-4062; tests/archie-initiative-tracer-test.sh runs this block)
 # ARCHIE'S COMMANDS NEVER COST A TURN. `Archie, track <goal>` and `Archie
 # approve|change|drop I<n>` are parsed by bin/archie.sh, which writes the jobs
@@ -683,7 +711,7 @@ run_turn() { # run_turn <model>; sets OUT/RC
     # compose_v2_prompt made every rung exit 1. The here-string is written in
     # full before claude runs. Stdin, not argv: one argv string caps at 128 KiB.
     local prompt; prompt=$(compose_v2_prompt)
-    OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions ${ORC_TURN_SID:+--session-id "$ORC_TURN_SID"} \
+    OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor ${ARCHIE_TURN_KEY:+COST_RUN_ID=staff-turn:$ARCHIE_TURN_KEY} AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions ${ORC_TURN_SID:+--session-id "$ORC_TURN_SID"} \
       --max-budget-usd "$ORC_BUDGET" --model "$m" "${IRON_LAW_ARM[@]}" <<<"$prompt" 2>&1)
     RC=$?
     # THE DEFAULT PATH MUST BE CHECKED TOO. This `return` skipped budget_check
@@ -702,12 +730,12 @@ run_turn() { # run_turn <model>; sets OUT/RC
     budget_check "$t0"
     return
   fi
-  OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p -c --dangerously-skip-permissions \
+  OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor ${ARCHIE_TURN_KEY:+COST_RUN_ID=staff-turn:$ARCHIE_TURN_KEY} AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p -c --dangerously-skip-permissions \
     --max-budget-usd "$ORC_BUDGET" --model "$m" "${IRON_LAW_ARM[@]}" "$TEXT" 2>&1)
   RC=$?
   # First turn ever: no conversation to continue — start fresh.
   if [ $RC -ne 0 ] && grep -qi "no conversation" <<<"$OUT"; then
-    OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions \
+    OUT=$(timeout 3600 env IS_SANDBOX=1 HARNESS="$HARNESS" AGENT_CALL_LANE=orc-monitor ${ARCHIE_TURN_KEY:+COST_RUN_ID=staff-turn:$ARCHIE_TURN_KEY} AGENT_CALL_FP="${ORC_TURN_FP:-}" AGENT_CALL_GUARD_STAGE=orchestrator HARNESS_LANE=orchestrator HARNESS_LANE_PROJECT=fleet ${ORC_TOKEN:+CLAUDE_CODE_OAUTH_TOKEN=$ORC_TOKEN} "$ORC_CLAUDE" -p --dangerously-skip-permissions \
       --max-budget-usd "$ORC_BUDGET" --model "$m" "${IRON_LAW_ARM[@]}" "$TEXT" 2>&1)
     RC=$?
   fi
@@ -845,7 +873,7 @@ run_survival() { # run_survival <runner>; sets OUT/RC
   # wallet there exactly as it did here (XAI_API_KEY is unset unless =api).
   # rc 74-79 = nothing was called and nothing was billed.
   env RUNNER_ORCHESTRATOR="$r" RUNNER_ORCHESTRATOR_FALLBACK= AGENT_CALL_RUNNERS="$r" \
-      AGENT_CALL_LANE=orc-monitor AGENT_SYSTEM_APPEND= \
+      AGENT_CALL_LANE=orc-monitor ${ARCHIE_TURN_KEY:+COST_RUN_ID=staff-turn:$ARCHIE_TURN_KEY} AGENT_SYSTEM_APPEND= \
     "$HARNESS/bin/agent-call.sh" orchestrator orchestrator "$r" 1800 "$tmp" "@$tmp.prompt" \
     </dev/null >/dev/null 2>"$tmp.err"
   RC=$?
@@ -1105,6 +1133,17 @@ deliver_reply "$OUT" "$REPLY_ERR"
 # >>> reply status (tests/orchestrate-reply-ledger.bh-4995-test.sh runs this block)
 if [ -n "${REPLY_ERR:-}" ]; then cmd_status "no_reply:$(date -u +%FT%TZ)"; else cmd_status "answered:$(date -u +%FT%TZ)"; fi
 # <<< reply status
+# >>> archie heartbeat (tests/archie-heartbeat.bh-9127-test.sh runs this block)
+# ARCHIE ON /staff (BH-9127): one heartbeat and one activity row for this turn.
+# AFTER the reply and its status, so a post can never delay, block or change a
+# reply. BEFORE `turn done`, which deletes the turn directory that holds
+# $ORC_REPF. A failed post is one line in logs/archie-heartbeat.log and rc 0.
+if [ -n "${ARCHIE_TURN_KEY:-}" ] && type archie_hb_turn >/dev/null 2>&1; then
+  if [ -n "${REPLY_ERR:-}" ]; then _hb_out=no_reply; else _hb_out=answered; fi
+  archie_hb_tick turn "$ARCHIE_TURN_T0" done 0 1 0 || true
+  archie_hb_turn "$ARCHIE_TURN_KEY" "$ARCHIE_TURN_T0" "$ARCHIE_TURN_TRIGGER" "$_hb_out" "$ORC_REPF" "staff-turn:$ARCHIE_TURN_KEY" || true
+fi
+# <<< archie heartbeat
 # >>> turn done (tests/orchestrate-parallel-turns.bh-5336-test.sh runs this block)
 # The command is answered: mark it done and drop the claim, so a re-delivered
 # copy exits before a model call (BH-5336). The duplicate, empty-message and

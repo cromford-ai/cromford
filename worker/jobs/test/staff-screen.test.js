@@ -54,7 +54,7 @@ test('BH-5567 staff screen read routes', async (t) => {
     }
   });
 
-  await t.test('W1 roster: 8 rows, archie first from settings, open counts, null precision and spend', async () => {
+  await t.test('W1 roster: 8 rows, archie first from settings, open counts, null precision, spend read', async () => {
     const { DB, db } = await openDb();
     await seed(DB, db);
     const r = await call(DB, '/api/staff/roster');
@@ -74,7 +74,10 @@ test('BH-5567 staff screen read routes', async (t) => {
     for (const n of ['archie', ...STAFF.filter((s) => s !== 'watchman')]) assert.equal(open[n], 0, n);
     for (const a of rows) {
       assert.equal(a.precision, null, `${a.name} precision is null, never 0`);
-      assert.equal(a.spend_usd, null, `${a.name} spend is null, never 0`);
+      // TEST-CHANGE (BH-9127): spend has a source now (cost rows); an agent with no
+      // row is 0 because the read happened. null stays for a failed read
+      // (test/staff-spend.bh-9127.test.js S8).
+      assert.equal(a.spend_usd, 0, `${a.name} spend is 0 when the read found no row`);
     }
     const qm = rows.find((a) => a.name === 'quartermaster');
     assert.equal(qm.role, 'cost');
@@ -82,7 +85,7 @@ test('BH-5567 staff screen read routes', async (t) => {
     assert.equal(qm.cap, 'augmentation');
     assert.equal(qm.status, 'active');
     assert.match(r.body.sources.precision, /BH-5563/);
-    assert.match(r.body.sources.spend, /BH-5561/);
+    assert.equal(r.body.sources.spend, 'cost_rows');
   });
 
   await t.test('W1b roster: an absent archie settings row is null, never a code fallback', async () => {

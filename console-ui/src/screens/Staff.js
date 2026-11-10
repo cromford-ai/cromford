@@ -28,6 +28,7 @@ import { AgentAutonomy } from './staff/agent-autonomy.js';
 import { activityRows, mergePages, heartbeatText, tickHref } from '../lib/staff-activity.js';
 import { AgentChat } from './staff/agent-chat.js';
 import { AgentLearning } from './staff/agent-learning.js';
+import { spendCell, spendFacts } from '../lib/staff-spend.js';
 
 const loadRoster = () => api.staffRoster();
 const loadKillFlags = () => api.coordFlagsAll({ prefix: 'staff-kill-' });
@@ -142,7 +143,7 @@ export function rosterColumns({ flagsData, sources, onKill, busy }) {
       cell: (r) => html`<${Link} to=${`/staff/${encodeURIComponent(r.name)}`}>${na(r.open_findings)}<//>`
     },
     { key: 'precision', label: 'PRECISION', cell: (r) => naCell(r.precision, sources.precision) },
-    { key: 'spend_usd', label: 'SPEND', unit: '$', cell: (r) => naCell(r.spend_usd, sources.spend) },
+    { key: 'spend_usd', label: 'SPEND', unit: '$', cell: (r) => spendCell(r, sources) },
     {
       key: 'kill', label: 'KILL', sort: (r) => (r.name === ARCHIE ? ARCHIE_KILL_FLAG : stateOf(r)),
       cell: (r) => {
@@ -171,7 +172,7 @@ const LEGEND = [
   { term: 'KILL', text: 'ON means the staff-kill flag for that agent is set; unknown means the flags read failed' },
   { term: 'OPEN FINDINGS', text: 'findings the agent claimed that are not merged, rejected, noise or closed' },
   { term: 'PRECISION', text: 'n/a until BH-5563 records outcomes' },
-  { term: 'SPEND', text: 'n/a until BH-5561 records spend per agent' },
+  { term: 'SPEND', text: 'today (UTC) from cost rows of the agent\'s lanes and its own heartbeat calls; click for COSTS filtered to the agent' },
   { term: 'ARCHIE', text: 'the Overlooker; lane-off-archie stops it, and STOP ALL STAFF does not' }
 ];
 
@@ -299,9 +300,11 @@ const FINDING_COLUMNS = [
 
 const fmtDuration = (s) => (s === null || s === undefined ? 'n/a' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
 const usd4 = (v) => (v === null || v === undefined ? null : fmtUsd(v, { decimals: 4 }));
+// BH-9127: an Archie turn carries a duration and a cost, the same as a tick.
+const COSTED = new Set(['tick', 'turn']);
 const costCell = (r) => {
-  if (r.kind !== 'tick') return html`<span class="na">—</span>`;
-  if (r.cost === null) return html`<span class="na" title="no cost row for this tick">${r.unpriced ? `${r.unpriced} unpriced` : 'n/a'}</span>`;
+  if (!COSTED.has(r.kind)) return html`<span class="na">—</span>`;
+  if (r.cost === null) return html`<span class="na" title=${`no cost row for this ${r.kind}`}>${r.unpriced ? `${r.unpriced} unpriced` : 'n/a'}</span>`;
   return html`<span>${usd4(r.cost)}${r.unpriced ? html` <span class="na">+${r.unpriced} unpriced</span>` : null}</span>`;
 };
 
@@ -316,7 +319,7 @@ const ACTIVITY_COLUMNS = [
       ${r.ext ? html` <a href=${r.ext} target="_blank" rel="noopener">${ticketLabel(r.ext)}</a>` : null}`
   },
   { key: 'result', label: 'RESULT', cell: (r) => naCell(r.result) },
-  { key: 'duration_s', label: 'DURATION', align: 'right', cell: (r) => (r.kind === 'tick' ? fmtDuration(r.duration_s) : html`<span class="na">—</span>`) },
+  { key: 'duration_s', label: 'DURATION', align: 'right', cell: (r) => (COSTED.has(r.kind) ? fmtDuration(r.duration_s) : html`<span class="na">—</span>`) },
   { key: 'cost', label: 'COST', unit: '$', align: 'right', cell: costCell }
 ];
 
@@ -383,10 +386,11 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
       <dl class="lanekv">
         ${facts.map(([k, v]) => html`<dt key=${`t-${k}`}>${k}</dt><dd key=${`d-${k}`}>${na(v)}</dd>`)}
         <dt key="t-beat">LAST HEARTBEAT</dt><dd key="d-beat">${lastBeat(activity)}</dd>
+        ${row ? spendFacts(row, rr.sources).map(([k, v]) => html`<dt key=${`t-${k}`}>${k}</dt><dd key=${`d-${k}`}>${v}</dd>`) : null}
       </dl>
       <${AgentChat} agent=${name} row=${row || null}/>
       ${autonomySlot ? html`<${Section} title="AUTONOMY">${autonomySlot}<//>` : null}
-      <${Section} title="ACTIVITY" note="ticks, findings, outcomes and decisions, newest first">
+      <${Section} title="ACTIVITY" note="ticks, turns, findings, outcomes and decisions, newest first">
         <${ActivityBody} activity=${activity} older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>
       <//>
       <${Section} title="OPEN FINDINGS">${body}<//>

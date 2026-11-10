@@ -172,6 +172,10 @@ _jobs_req() {
   JOBS_HTTP=$code; JOBS_BODY="$out"; printf '%s' "$out"; return 0
 }
 lane_role_model() { [ -f "$FXT/noroute" ] && return 75; [ "$1" = stage.archie ] || return 75; echo test-model; }
+# TEST-CHANGE (BH-9127): a tick that gets its lock now posts one Archie
+# heartbeat (bin/lib/archie-hb.sh) through _jobs_req_file. It is not an
+# initiatives request: it goes to its own log, never to reqlog or the network.
+_jobs_req_file() { printf '%s %s\n' "$1" "$2" >> "$FXT/hblog"; JOBS_HTTP=201; return 0; }
 SH
 
 export HARNESS="$H" FXT="$T" PATH="$T/fakebin:$PATH" JOBS_URL=https://jobs.invalid HARNESS_SECRET=test

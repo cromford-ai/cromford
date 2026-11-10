@@ -7,8 +7,9 @@
 // the same body again is a 200 replay, another body under the same key is 409.
 //
 // GET /api/staff/agent/:name/activity?before=&limit= is one agent's timeline,
-// newest first, merged from five sources by (ts DESC, kind DESC, id DESC):
-//   tick              staff_ticks.started_at (none for Archie)
+// newest first, merged from six sources by (ts DESC, kind DESC, id DESC):
+//   tick              staff_ticks.started_at (Archie's too, BH-9127)
+//   turn              staff_turns.started_at (BH-9127; Archie writes them)
 //   finding.claimed   staff_findings.claimed_at
 //   finding.recorded  staff_findings.updated_at, for a status past the claim
 //                     that is not an outcome (the table keeps only the current
@@ -19,7 +20,7 @@
 // the merged page is exact. `before` is the opaque cursor <ts>~<kind>~<id> of
 // the last event of the previous page; `next` is null on the last page. A page
 // then makes two batched lookups, never one per row: the cost rows of its ticks
-// (cost_rows.run_id = the tick's cost_run_id) and the findings its outcomes and
+// and turns (cost_rows.run_id = the event's cost_run_id) and the findings its outcomes and
 // staff:<fp> decisions point at. A failed cost read keeps the events and says
 // cost_status "unread". An unpriced cost row is counted, never read as $0.
 //
@@ -28,8 +29,8 @@
 import { json, d1Guarded } from "../lib/http.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
-const KEY_RE = /^[a-z0-9][a-z0-9:._-]{0,119}$/;
-const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+export const KEY_RE = /^[a-z0-9][a-z0-9:._-]{0,119}$/;
+export const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
 // Stored times are ISO-Z; a cursor echoes a stored time, so it may carry millis.
 const CURSOR_TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$/;
 const ID_RE = /^[1-9]\d{0,15}$/;
@@ -49,7 +50,7 @@ const TICK_COLS = `id, tick_key, agent, started_at, ended_at, duration_s, phase,
 const NOT_RECORDED = "'claimed','merged','rejected','noise'";
 
 // THE agent identity: the same rule as staff.js and staff-screen.js.
-const agentOf = (v) => {
+export const agentOf = (v) => {
   if (typeof v !== "string") return null;
   const a = v.trim().toLowerCase();
   return AGENT_RE.test(a) ? a : null;
@@ -92,7 +93,7 @@ const SAME_FIELDS = ["agent", "started_at", "ended_at", "phase", "collector_rc",
 
 // ── the timeline ─────────────────────────────────────────────────────────────
 // Kind names sort in this order; the cursor compares kinds by it.
-const KINDS = ["decision", "finding.claimed", "finding.recorded", "outcome", "tick"];
+const KINDS = ["decision", "finding.claimed", "finding.recorded", "outcome", "tick", "turn"];
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 // The total order, newest first: ts DESC, kind DESC, id DESC.
 const order = (x, y) => cmp(y.ts, x.ts) || cmp(y.kind, x.kind) || (y.id - x.id);
@@ -117,11 +118,12 @@ function cursorCond(kind, tsCol, c, n) {
 function sources(name) {
   const archie = name === ARCHIE;
   const list = [];
-  if (!archie) {
-    list.push({ kind: "tick", table: "staff_ticks", ts: "started_at",
-      sql: (w) => `SELECT ${TICK_COLS}, started_at AS ts FROM staff_ticks
-                    WHERE agent=?1${w} ORDER BY started_at DESC, id DESC LIMIT ?2` });
-  }
+  list.push({ kind: "tick", table: "staff_ticks", ts: "started_at",
+    sql: (w) => `SELECT ${TICK_COLS}, started_at AS ts FROM staff_ticks
+                  WHERE agent=?1${w} ORDER BY started_at DESC, id DESC LIMIT ?2` });
+  list.push({ kind: "turn", table: "staff_turns", ts: "started_at",
+    sql: (w) => `SELECT id, turn_key, trigger, summary, link_url, outcome, ended_at, cost_run_id, started_at AS ts FROM staff_turns
+                  WHERE agent=?1${w} ORDER BY started_at DESC, id DESC LIMIT ?2` });
   list.push({ kind: "finding.claimed", table: "staff_findings", ts: "claimed_at",
     sql: (w) => `SELECT id, title, status, ticket_url, claimed_at AS ts FROM staff_findings
                   WHERE agent=?1${w} ORDER BY claimed_at DESC, id DESC LIMIT ?2` });
@@ -154,6 +156,11 @@ function eventOf(kind, r) {
     for (const f of COUNTS) ev[f] = r[f];
     return ev;
   }
+  if (kind === "turn") {
+    const d = (Date.parse(r.ended_at) - Date.parse(r.ts)) / 1000;
+    return { ...base, trigger: r.trigger, summary: r.summary, link_url: r.link_url, outcome: r.outcome,
+      duration_s: Number.isFinite(d) ? d : null, cost_run_id: r.cost_run_id, cost: null };
+  }
   if (kind === "finding.claimed" || kind === "finding.recorded") {
     return { ...base, finding_id: Number(r.id), title: r.title, status: r.status, ticket_url: r.ticket_url };
   }
@@ -165,7 +172,7 @@ function eventOf(kind, r) {
     chosen_at: r.chosen_at, finding_id: null, fingerprint: fp };
 }
 
-async function knownAgent(env, name) {
+export async function knownAgent(env, name) {
   if (name === ARCHIE) return null;
   return d1Guarded("staff_agents", async () => {
     const row = await env.DB.prepare(`SELECT name FROM staff_agents WHERE name=?1`).bind(name).first();
@@ -241,9 +248,10 @@ export const routes = [
       const page = events.slice(0, limit);
       const next = events.length > limit ? cursorOf(page[page.length - 1]) : null;
 
-      // Cost per tick: one grouped read over the page's run ids.
+      // Cost per tick and turn: one grouped read over the page's run ids.
       let costStatus = "ok";
-      const runIds = [...new Set(page.filter((e) => e.kind === "tick" && e.cost_run_id).map((e) => e.cost_run_id))];
+      const costed = (e) => (e.kind === "tick" || e.kind === "turn") && e.cost_run_id;
+      const runIds = [...new Set(page.filter(costed).map((e) => e.cost_run_id))];
       if (runIds.length) {
         try {
           const { results } = await env.DB.prepare(
@@ -252,7 +260,7 @@ export const routes = [
           ).bind(JSON.stringify(runIds)).all();
           const byRun = new Map((results || []).map((r) => [r.run_id, r]));
           for (const e of page) {
-            const c = e.kind === "tick" && e.cost_run_id ? byRun.get(e.cost_run_id) : null;
+            const c = costed(e) ? byRun.get(e.cost_run_id) : null;
             if (c) e.cost = { cost_usd: c.cost_usd === null ? null : Number(c.cost_usd), rows: Number(c.rows), unpriced: Number(c.unpriced) };
           }
         } catch {
@@ -275,15 +283,13 @@ export const routes = [
       for (const e of page) { delete e.fingerprint; e.cursor = cursorOf(e); }
 
       let lastTick = null;
-      if (name !== ARCHIE) {
-        const fail = await d1Guarded("staff_ticks", async () => {
-          lastTick = await env.DB.prepare(
-            `SELECT id, started_at, ended_at, phase FROM staff_ticks WHERE agent=?1 ORDER BY started_at DESC, id DESC LIMIT 1`
-          ).bind(name).first() || null;
-          return null;
-        });
-        if (fail) return fail;
-      }
+      const lastFail = await d1Guarded("staff_ticks", async () => {
+        lastTick = await env.DB.prepare(
+          `SELECT id, started_at, ended_at, phase FROM staff_ticks WHERE agent=?1 ORDER BY started_at DESC, id DESC LIMIT 1`
+        ).bind(name).first() || null;
+        return null;
+      });
+      if (lastFail) return lastFail;
       return json(200, { agent: name, events: page, next, last_tick: lastTick, cost_status: costStatus, as_of: t });
     },
   ],

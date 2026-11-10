@@ -131,6 +131,7 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/lane-switch.sh" 2>/dev/null || true
   . "$SELF/lib/archie-wake.sh" 2>/dev/null || true
   . "$SELF/lib/archie-repo-activity.sh" 2>/dev/null || true
+  . "$SELF/lib/archie-hb.sh" 2>/dev/null || true
 }
 # The suite's seam. Sandbox only, and settable:false in the registry.
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -n "${ARCHIE_FIXTURE:-}" ]; then
@@ -559,6 +560,31 @@ check_row() {
   fi
 }
 
+# _archie_tick_line: the tick's summary, the line logs/archie.log gets.
+_archie_tick_line() {
+  printf 'due=%s checked=%s beats=%s model_calls=%s skipped=%s\n' \
+    "${ARCHIE_TICK_DUE:-0}" "${CHECKED:-0}" "${BEATS:-0}" "${MODEL_CALLS:-0}" "${SKIPPED:-0}"
+}
+# >>> archie sweep heartbeat (BH-9127; tests/archie-heartbeat.bh-9127-test.sh)
+# _archie_tick_exit: the EXIT trap of a tick that got its lock. One heartbeat
+# (POST /api/staff/ticks, agent archie), and one activity row when the tick
+# acted (a beat or a model call). The trigger is follow-up when a follow-up
+# woke an initiative this tick (an AW_PENDING followup:<key> entry, from
+# archie_wake_collect), else sweep. Fail open: bin/lib/archie-hb.sh
+# returns 0 and writes only its own log.
+_archie_tick_exit() {
+  type archie_hb_tick >/dev/null 2>&1 || return 0
+  archie_hb_tick sweep "$NOWISO" done "${CHECKED:-0}" "${MODEL_CALLS:-0}" "${BEATS:-0}" || true
+  [ $(( ${BEATS:-0} + ${MODEL_CALLS:-0} )) -gt 0 ] || return 0
+  local trig=sweep p
+  for p in ${AW_PENDING[@]+"${AW_PENDING[@]}"}; do
+    case "$p" in followup:*) trig=follow-up; break ;; esac
+  done
+  archie_hb_turn "$(archie_hb_key sweep "$NOWISO")" "$NOWISO" "$trig" acted <(_archie_tick_line) "" || true
+  return 0
+}
+# <<< archie sweep heartbeat
+
 tick() {
   command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit archie
   command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply archie
@@ -569,6 +595,7 @@ tick() {
   esac
   exec 9>"$H/locks/archie.lock" || exit 0
   flock -n 9 || exit 0
+  trap '_archie_tick_exit' EXIT
 
   local max resp rc n row
   max=$(knob_int ARCHIE_MAX_PER_TICK "${ARCHIE_MAX_PER_TICK:-3}" 3 1 20)
@@ -595,6 +622,7 @@ tick() {
     exit 0
   fi
   n=$(jq '.initiatives | length' <<<"$resp")
+  ARCHIE_TICK_DUE=$n
   # A quiet tick still writes one line (BH-8417): bin/log-freshness.sh judges
   # logs/archie.log by its newest line, and silence must mean "not running".
   [ "$n" -gt 0 ] || { log "tick due=0: no active initiative is due; nothing checked"; exit 0; }
@@ -605,7 +633,7 @@ tick() {
   while IFS= read -r row; do
     check_row "$row"
   done < <(jq -c '.initiatives[]' <<<"$resp")
-  log "due=$n checked=$CHECKED beats=$BEATS model_calls=$MODEL_CALLS skipped=$SKIPPED"
+  log "$(_archie_tick_line)"
   exit 0
 }
 

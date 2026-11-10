@@ -1,0 +1,24 @@
+{
+ "ticket": "BH-9127",
+ "note": "The two cost_rows reads of the /staff roster SPEND column (src/routes/staff-screen.js agentSpend). Both are bounded to the staff.spend.window_days window, at most 60 days (the cost_rows hot floor, COST_ARCHIVE_FLOOR_DAYS), so they stay on the hot store. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/staff-screen.js",
+   "line_hint": 135,
+   "match": "FROM m LEFT JOIN cost_rows ON cost_rows.lane_id = m.lane AND cost_rows.ts >= ?3",
+   "table": "cost_rows",
+   "window": "today and the last staff.spend.window_days days (1..60, fallback 7)",
+   "class": "poll",
+   "status": "hot-only"
+  },
+  {
+   "file": "src/routes/staff-screen.js",
+   "line_hint": 143,
+   "match": "FROM staff_ticks INDEXED BY idx_staff_ticks_started JOIN cost_rows ON cost_rows.run_id = staff_ticks.cost_run_id",
+   "table": "cost_rows",
+   "window": "today and the last staff.spend.window_days days (1..60, fallback 7)",
+   "class": "poll",
+   "status": "hot-only"
+  }
+ ]
+}

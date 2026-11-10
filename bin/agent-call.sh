@@ -100,6 +100,14 @@ set -uo pipefail
 # `export -n` keeps the value for the gate and the cost row in THIS process and
 # stops it at the process boundary.
 export -n AGENT_CALL_LANE 2>/dev/null || true
+# THE RUN ID IS THIS CALL'S TOO (BH-9127). A caller sets COST_RUN_ID to name
+# the run its own call belongs to (staff-turn:<key>, staff-tick:<key>,
+# pm-flesh:<id>). Kept exported, a build the session starts would inherit it,
+# and that build's rows would take the caller's run id in place of their build
+# dir, the unit bin/cost-rollup.sh joins to a PR. The value stays readable here
+# (the run_id default below, cost_row_tags, cost_live_row) and stops at the
+# process boundary.
+export -n COST_RUN_ID 2>/dev/null || true
 # Codex lane default model (ChatGPT OAuth): the `codex.default` model_routes row
 # (BH-1510.1), read by codex_model below when the lane runs. The pin also lives
 # in each box's /root/.codex/config.toml (hub-local file, not rendered by the

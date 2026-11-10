@@ -119,7 +119,8 @@ test('S4 every id read and delete of the staff rules uses an index', async (t) =
   // TEST-CHANGE (BH-6823): staff_chat.age is the ninth.
   // TEST-CHANGE (BH-9187): staff_metric_samples.age, staff_lever_actions.settled
   // and staff_finding_seen.orphan are the tenth to twelfth; each is checked below.
-  assert.equal(staff.length, 12);
+  // TEST-CHANGE (BH-9127): staff_turns.age is the thirteenth.
+  assert.equal(staff.length, 13);
   for (const r of staff) {
     for (const sql of [r.ids, ...(r.pre || []), r.del]) {
       const lines = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...(sql === r.ids ? [ago(30), 10] : ['[1]'])).map((x) => x.detail);

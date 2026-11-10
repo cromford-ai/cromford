@@ -61,6 +61,10 @@ set -uo pipefail
 # shell variable for the gate and the cost row, and never reaches the claude
 # session or anything that session launches.
 export -n AGENT_CALL_LANE 2>/dev/null || true
+# The run id is this call's by the same rule (BH-9127): cost_row_tags reads it
+# below as a shell variable, and a build the claude session starts does not
+# inherit it, so that build's rows keep their build dir as run_id.
+export -n COST_RUN_ID 2>/dev/null || true
 HARNESS="${HARNESS:-/root/harness}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HARNESS/logs/claude-cost.log"

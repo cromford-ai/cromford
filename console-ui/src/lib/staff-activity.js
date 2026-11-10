@@ -1,9 +1,10 @@
 // BH-6822: the agent detail page's pure half. The timeline comes from the jobs
 // worker's GET /api/staff/agent/:name/activity (routes/staff-activity.js):
-// events of five kinds, newest first by (ts, kind, id), paged by an opaque
+// events of six kinds, newest first by (ts, kind, id), paged by an opaque
 // cursor. Each row links to its record: a tick to /staff/tick/<id>, a finding
 // event to /staff/finding/<id>, an outcome to its finding and its ticket, a
-// decision to its finding when it has one (no decision screen exists).
+// decision to its finding when it has one (no decision screen exists), a turn
+// (BH-9127) out to the PR or issue its reply names.
 
 import { agoFromMinutes, safeHttpsUrl } from './format.js';
 
@@ -11,7 +12,7 @@ export const tickHref = (id) => `/staff/tick/${encodeURIComponent(id)}`;
 const findingHref = (id) => `/staff/finding/${encodeURIComponent(id)}`;
 
 const KIND_LABEL = {
-  tick: 'tick', 'finding.claimed': 'claimed', 'finding.recorded': 'recorded', outcome: 'outcome', decision: 'decision'
+  tick: 'tick', 'finding.claimed': 'claimed', 'finding.recorded': 'recorded', outcome: 'outcome', decision: 'decision', turn: 'turn'
 };
 
 function tickResult(e) {
@@ -31,6 +32,15 @@ function rowOf(e) {
     return {
       ...base, summary: tickSummary(e), href: tickHref(e.id), result: tickResult(e), duration_s: e.duration_s,
       cost: e.cost && typeof e.cost.cost_usd === 'number' ? e.cost.cost_usd : null,
+      unpriced: e.cost ? Number(e.cost.unpriced) || 0 : 0
+    };
+  }
+  // BH-9127: one Archie turn (staff_turns): its trigger, the reply's first
+  // line, the PR or issue it names, and the turn's cost rows.
+  if (e.kind === 'turn') {
+    return {
+      ...base, kindLabel: `turn · ${e.trigger}`, summary: e.summary, ext: safeHttpsUrl(e.link_url), result: e.outcome,
+      duration_s: e.duration_s, cost: e.cost && typeof e.cost.cost_usd === 'number' ? e.cost.cost_usd : null,
       unpriced: e.cost ? Number(e.cost.unpriced) || 0 : 0
     };
   }

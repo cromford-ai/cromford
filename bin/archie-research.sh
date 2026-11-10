@@ -120,6 +120,7 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/cost-row.sh" 2>/dev/null || true
   . "$SELF/lib/archie.sh" 2>/dev/null || true
   . "$SELF/lib/archie-research.sh" 2>/dev/null || true
+  . "$SELF/lib/archie-hb.sh" 2>/dev/null || true
 }
 # The Ideas ledger's rows. Without the lib a proposal is not recorded (the
 # stubs answer 1) and the next scan retries it, as every product lane does.
@@ -803,6 +804,14 @@ case "${ARCHIE_RESEARCH_ENABLED:-1}" in
 esac
 exec 9>"$H/locks/archie-research.lock" || exit 0
 flock -n 9 || exit 0
+# A run that got its lock is one heartbeat on /staff (BH-9127,
+# bin/lib/archie-hb.sh; fail open), then the scratch dir goes as before.
+_ar_heartbeat() {
+  type archie_hb_tick >/dev/null 2>&1 || return 0
+  archie_hb_tick research "$NOWISO" done "${FINDS:-0}" \
+    "$(( ${X_CALLS:-0} + ${WEB_CALLS:-0} + ${SCORE_CALLS:-0} ))" 0 || true
+}
+trap '_ar_heartbeat; rm -rf "$W"' EXIT
 
 CAP=$(knob_num ARCHIE_RESEARCH_USD_CAP_DAY "${ARCHIE_RESEARCH_USD_CAP_DAY:-3.00}" 3.00 100)
 MAX_ATT=$(knob_int ARCHIE_RESEARCH_MAX_ATTEMPTS "${ARCHIE_RESEARCH_MAX_ATTEMPTS:-3}" 3 1 10)

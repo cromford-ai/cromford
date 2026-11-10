@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'preact/hooks';
-import { html, Link } from '../router.js';
+import { html, Link, useSearchParam } from '../router.js';
 import { PageHeadline } from '../ui/line.js';
 import { TicketKey } from '../ui/TicketKey.js';
 import { api, fetchLog, HUB_LOG_KINDS } from '../api.js';
@@ -22,6 +22,7 @@ import { LaneDedupSection } from './LaneDedup.js';
 import { CostBreakerSection } from './CostBreaker.js';
 import { CostCapsSection } from './CostCaps.js';
 import { LaneSpendSection } from './LaneSpend.js';
+import { AgentLaneSpendSection } from './AgentSpend.js';
 import { CostCapHistorySection } from './CostCapHistory.js';
 
 // The title row, with the LLM SITES link beside it (BH-2556). Its own
@@ -44,6 +45,7 @@ export function CostsHeader({ windowDays }) {
 export function CostsScreen() {
   const c = useApi(() => api.costs(), [], { intervalMs: 60000 });
   const [which, setWhich] = useState('cost');
+  const agent = useSearchParam('agent'); // BH-9127: /costs?agent=<name> from the /staff SPEND links
 
   // Fleet-level logs are addressed to the literal `hub`, never to a project and
   // never to "fleet" (which the fetch validator rejects).
@@ -72,6 +74,7 @@ export function CostsScreen() {
         line1=${`${totalRuns} ${totalRuns === 1 ? 'run' : 'runs'} in ${data.window_days} days. ${totalTickets} ${totalTickets === 1 ? 'ticket' : 'tickets'} built.`}
         line2=${`${totalFailed} failed ${totalFailed === 1 ? 'run' : 'runs'}.${gaps.length ? ` ${gaps.length} ${gaps.length === 1 ? 'caveat' : 'caveats'} from the API.` : ''}`}/>
       <${CostsHeader} windowDays=${data.window_days}/>
+      ${agent ? html`<${AgentLaneSpendSection} agent=${agent}/>` : null}
 
       <${SpendSection} costs=${data}/>
       <${CostBreakdownSection}/>

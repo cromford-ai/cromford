@@ -1,0 +1,4 @@
+# STAFF TURNS (BH-9127): the writer of Archie's activity rows on the team
+# screen. bin/lib/archie-hb.sh posts one row per turn after the reply.
+# No earlier route matches this path.
+POST /api/staff/turns
