@@ -70,8 +70,14 @@ GATE="$HARNESS/state/$PROJECT.gate.json"
 # Builder results waiting is ALWAYS a run reason (2026-08-02: three Fly results
 # sat unswept 7h — close-outs and child launches starved behind a "no-change" board).
 # (--signal is a per-ticket read and never answers RUN/SKIP, BH-2542.)
+# BH-9324: one exception. A json whose rr-consumed row says this box already
+# staged it (or saw it as a duplicate) is a re-send staging consumes anyway, so
+# when EVERY json is settled that way it is no run reason. The decision waits
+# until the libs below are sourced (tgr_relay_run). Any unknown answer (no row,
+# an outage, no client, no lib, over the cap) still answers RUN.
+RR_JSON_PENDING=0
 if [ "$MODE" != "--signal" ] && [ "$MODE" != "--thread" ] && [ "$MODE" != "--buildable-strict" ] && ls "$HARNESS/state/remote-results/$PROJECT/"*.json >/dev/null 2>&1; then
-  echo "RUN remote-results-pending"; exit 0
+  RR_JSON_PENDING=1
 fi
 PENDING="$HARNESS/state/$PROJECT.gate.pending"
 META="$HARNESS/state/$PROJECT.gate-meta"
@@ -138,6 +144,16 @@ for _P in "$(dirname "$0")/lib/rr-cursor.sh" "$HARNESS/bin/lib/rr-cursor.sh"; do
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-9324: the relay json check above, decided by the rr-consumed rows.
+for _P in "$(dirname "$0")/lib/triage-gate-relay.sh" "$HARNESS/bin/lib/triage-gate-relay.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
+if [ "$RR_JSON_PENDING" = 1 ]; then
+  if ! command -v tgr_relay_run >/dev/null 2>&1 || tgr_relay_run "$PROJECT" "$HARNESS/state/remote-results/$PROJECT"; then
+    echo "RUN remote-results-pending"; exit 0
+  fi
+fi
 # BH-8859: a PR_MERGED close-out waits while production is red, so step 3
 # buys no results-sweep for it. No lib = step 3 as before.
 for _P in "$(dirname "$0")/lib/prod-red-defer.sh" "$HARNESS/bin/lib/prod-red-defer.sh"; do

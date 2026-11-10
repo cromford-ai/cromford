@@ -114,7 +114,8 @@ export const routes = [
   // state twice is not a failure, so it is never an error.
   [
     "POST", "/api/pr-state-events",
-    async ({ env, t, body }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_state_events", async ({ env, t, body }) => {
       // The belt, before anything else in the handler (BH-658/BH-1000): a D1
       // the schema apply never reached would otherwise throw `no such table`
       // and the shell side would read that as an outage rather than a missing
@@ -147,14 +148,15 @@ export const routes = [
         event: { repo, number, state, since, alerted, at: t },
         recorded, duplicate: !recorded, as_of: t,
       });
-    },
+    }),
   ],
 
   // The event LOG, newest first. An empty page is a 200 with `rows: []` — a
   // real answer, which `pr_state_events_page` turns into its own rc 2.
   [
     "GET", "/api/pr-state-events",
-    async ({ env, url, t }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_state_events", async ({ env, url, t }) => {
       await ensureTable(env, "pr_state_events");
       const where = [], binds = [];
       const repo = qp(url, "repo");
@@ -193,7 +195,7 @@ export const routes = [
         + ` ORDER BY id DESC LIMIT ?${binds.length}`
       ).bind(...binds).all();
       return json(200, { rows: rows.results || [], as_of: t });
-    },
+    }),
   ],
 
   // The CURRENT state of each PR: the MAX(id) event per (repo, number), the
@@ -207,7 +209,8 @@ export const routes = [
   // outage — and `before` is an id CURSOR, never a timestamp.
   [
     "GET", "/api/pr-state",
-    async ({ env, url, t }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_state_events", async ({ env, url, t }) => {
       await ensureTable(env, "pr_state_events");
       const where = [], binds = [];
       const repo = qp(url, "repo");
@@ -230,7 +233,7 @@ export const routes = [
       const results = rows.results || [];
       if (!results.length) return json(404, { error: "no rows" });
       return json(200, { rows: results, as_of: t });
-    },
+    }),
   ],
 
   // ── PR gate facts (BH-4953) ────────────────────────────────────────────
@@ -267,7 +270,8 @@ export const routes = [
   // is a 200 that says `duplicate`, and the FIRST attempt's actor stands.
   [
     "PUT", "/api/pr-attempts",
-    async ({ env, t, body }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_attempts", async ({ env, t, body }) => {
       await ensureTable(env, "pr_attempts");
       if (sentButNotInt(body.number)) return json(400, NOT_AN_INT);
       const repo = str(body.repo, 128);
@@ -287,7 +291,7 @@ export const routes = [
         attempt: { repo, number, kind, sha, at: t },
         recorded, duplicate: !recorded, as_of: t,
       });
-    },
+    }),
   ],
 
   // With a `sha`: one row or a 404, which is what `mc_attempt_has` reads —
@@ -303,7 +307,8 @@ export const routes = [
   // half.
   [
     "GET", "/api/pr-attempts",
-    async ({ env, url, t }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_attempts", async ({ env, url, t }) => {
       await ensureTable(env, "pr_attempts");
       const repo = qp(url, "repo");
       const number = qp(url, "number");
@@ -330,7 +335,7 @@ export const routes = [
         `SELECT * FROM pr_attempts${clause} ORDER BY at DESC, rowid DESC LIMIT 1000`
       ).bind(...binds).all();
       return json(200, { attempts: rows.results || [], count: (n && n.n) || 0, as_of: t });
-    },
+    }),
   ],
 
   // FORGET one attempt — the row half of `mc_attempt_clear`, and the reason
@@ -346,7 +351,8 @@ export const routes = [
   // DELETE with a shorter WHERE.
   [
     "DELETE", "/api/pr-attempts",
-    async ({ env, url, t }) => {
+    // BH-9325: a D1 overload give-up is a 503 retryable, not a Sentry throw.
+    overloadGuardedRoute("pr_attempts", async ({ env, url, t }) => {
       await ensureTable(env, "pr_attempts");
       const repo = qp(url, "repo");
       const number = qp(url, "number");
@@ -365,6 +371,6 @@ export const routes = [
       return res.meta.changes
         ? json(200, { deleted: true, as_of: t })
         : json(404, { error: "not found" });
-    },
+    }),
   ],
 ];

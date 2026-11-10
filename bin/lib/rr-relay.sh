@@ -16,6 +16,7 @@
 #   bin/fleet-status-push.sh   rrr_consumed: is a pending json consumed?
 #   bin/pipeline-health.sh     rrr_consumed: a stale hub json is no page
 #   bin/lib/rt/staging.sh      rrr_consumed: a json consumed before is not staged twice
+#   bin/triage-gate.sh         rrr_consumed: a json consumed before buys no run (bin/lib/triage-gate-relay.sh)
 #   bin/builds-retention.sh    rrr_open: a pool dir whose sent json is owed is kept
 #   bin/fleet-slo.sh           rrr_list: remote lanes the hub holds no copy of
 #

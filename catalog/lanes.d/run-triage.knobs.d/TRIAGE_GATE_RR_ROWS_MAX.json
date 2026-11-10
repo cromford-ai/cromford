@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_GATE_RR_ROWS_MAX",
+  "read_in": "bin/lib/triage-gate-relay.sh",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 200,
+  "unit": "relay jsons",
+  "zero_means": "off",
+  "note": "BH-9324. bin/triage-gate.sh makes one rr-consumed GET per relay json present in state/remote-results/<p>/ at gate time; when every json is staged or duplicate, the json check buys no run. 0 = every json runs as before (no read). More jsons than the cap run as before with no read. Code fallback 20 in _tgr_cap; a value that is not a non-negative integer is 20."
+}
