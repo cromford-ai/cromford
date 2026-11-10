@@ -6,6 +6,7 @@
 # A wave that moves a file onto the seam removes its line; nothing adds one.
 bin/apply-migrations.sh
 bin/batch-resolve.sh
+bin/blocked-resolver.d/bh-9282-decline-next.sh
 bin/blocked-resolver.sh
 bin/board-closeout.sh
 bin/board-conformance.sh

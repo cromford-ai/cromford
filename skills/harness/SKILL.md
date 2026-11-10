@@ -39,8 +39,8 @@ Verify: the summary line, then `ssh root@<box> 'crontab -l | grep <project>'`.
 
 **Browser QA wiring — a load is NOT done until all five are set** (project-6-os
 merged 47 PRs with zero browser QA because these were missing; cromford #6254
-makes load-project check them). Check with
-`ssh root@10.0.0.9 'cd /root/harness; bin/postmerge-qa.sh <project> --dry-run'`:
+makes load-project check them). Check on the hub (bh-hub-2; it moved from box-hub on 2026-10-23) with
+`ssh root@bh-hub-2 'cd /root/harness; bin/postmerge-qa.sh <project> --dry-run'`:
 1. `vercel.conf` row `<project> <teamId> <projectId> <prod-domain>` (preview QA).
 2. A real prod URL in the registry (`--prod`; `bin/prod-url.sh <project>`), never `-`.
 3. A Clerk QA test account on the PROD instance: create a user, record its id in
