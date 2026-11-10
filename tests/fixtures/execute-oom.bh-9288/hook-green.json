@@ -1,0 +1,1 @@
+{"session_id":"s","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm test"},"tool_response":{"stdout":"Tests 137 passed (137)\nExit code 0","stderr":"","interrupted":false,"isImage":false}}

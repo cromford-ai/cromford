@@ -15,7 +15,8 @@
     "## Review levels (BH-7123)",
     "## Scalable tests (BH-7563)",
     "## User flows (BH-8029)",
-    "## Security audit (2026-10-21)"
+    "## Security audit (2026-10-21)",
+    "## Build resources (BH-9288)"
   ],
   "watcher": [],
   "plan": [

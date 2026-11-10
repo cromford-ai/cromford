@@ -1,0 +1,11 @@
+{
+  "env": "REVIEW_TMP_TOP_N",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 20,
+  "unit": "entries",
+  "zero_means": null,
+  "read_in": "bin/lib/review-prs-tmp.sh",
+  "note": "BH-9035: how many of the largest top-level /tmp entries the review-prs-tmp-capped event and log line carry. Settings row lane.review-prs.review_tmp_top_n."
+}

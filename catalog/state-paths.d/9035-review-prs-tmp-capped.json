@@ -1,0 +1,3 @@
+[
+    {"path": "review-prs-tmp-capped", "class": "box-local", "authority": "the review lane's /tmp cap report marker and capped-tick streak (BH-6130, BH-9035)", "note": "state/review-prs-tmp-capped.last (`<epoch> <concurrency>` of the last cap report), .streak (`<count> <first_epoch>` of consecutive capped ticks) and their .lock and .tmp siblings: bin/lib/review-prs-tmp.sh. Free /tmp space is a fact about this box, so the report window and the streak are per box and every project on the box shares them. Each file is overwritten tmp+mv under one flock, and rp_tmp_episode_end removes .last and .streak when /tmp recovers. Losing them costs one repeated cap report or a streak that counts from 1 again. No growth, no retention job. Machine-local, never carried"}
+]

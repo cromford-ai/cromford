@@ -155,7 +155,8 @@ run_rp() { # run_rp <tag> [project] — one tick; env REVIEW_CONCURRENCY etc. pa
       REVIEW_POOL_MEMINFO="$T/meminfo" REVIEW_POOL_POLL_S=0.05 TMPDIR="$T/tmp-$1" \
       REVIEW_POOL_TMP_PATH="$FT" REVIEW_POOL_TMP_SWEEP='' \
       HARNESS_SENTRY_DSN=https://k-fixture@sentry.invalid/1 HARNESS_SENTRY_CURL="$T/fakebin/curl" \
-      SENTRY_MAX_PER_FP_HOUR=6 SENTRY_REPORT_NOW="${RP_TMP_REPORT_NOW:-$N}" LANE_GATE_CACHE_S=0
+      SENTRY_MAX_PER_FP_HOUR=6 SENTRY_REPORT_NOW="${RP_TMP_REPORT_NOW:-$N}" LANE_GATE_CACHE_S=0 \
+      REVIEW_TMP_CAPPED_MIN_TICKS=1 REVIEW_TMP_TOP_N=3  # BH-9035: these suites pin the first-capped-tick rules
     mkdir -p "$TMPDIR"
     unset JOB_ID JOB_BEAT JOB_INFLIGHT JOB_REFUSED REVIEW_BOX_MAX REVIEW_TMP_MIN_MB REVIEW_WORKER_TMP_MB
     bash "$H/bin/review-prs.sh" "${2:-$PROJECT}" > "$T/out.$1" 2>&1 )

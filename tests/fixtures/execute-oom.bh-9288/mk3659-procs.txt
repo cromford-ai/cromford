@@ -1,0 +1,6 @@
+# oom-procs v1 at=1793750000 mem_total_kb=33554432 signal=Exit code 137
+4101	7987200	node	node /repo/node_modules/typescript/bin/tsc --noEmit
+4210	1126400	node	node /repo/node_modules/vitest/dist/workers/forks.js
+4211	921600	node	node /repo/node_modules/vitest/dist/workers/forks.js
+3050	61440	postgres	postgres -D /var/lib/postgresql/data
+2990	20480	bash	bash -c npm run typecheck

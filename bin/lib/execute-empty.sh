@@ -23,6 +23,10 @@
 #       lane.fly-pool.<project>.vm_memory_mb, and ONE bin/alert-line.sh line
 #       (--id execute-oom:<project>:<key>) says the same; <build-dir>/oom.alerted
 #       keeps it to one per build dir. PROJECT and KEY come from the caller.
+#       BH-9288: the advice comes from ep_oom_cause (bin/lib/exec-procs.sh)
+#       over <build-dir>/oom-procs.txt: concurrent processes -> "Run one heavy
+#       check at a time"; one process used most -> "Raise the row"; no
+#       snapshot -> "Cause unknown, no snapshot"; else "Cause unknown".
 #   ee_oom <transcript>       `<signal>\t<command>` when the result of the NEWEST
 #       typecheck or test command (npm run typecheck, npm test, tsc, vitest,
 #       jest) in a rendered transcript holds FatalProcessOutOfMemory, heap out
@@ -73,6 +77,7 @@
 # The root is ${HARNESS:-${H:-}}; with none, every function is a no-op.
 
 _ee_root() { printf '%s' "${HARNESS:-${H:-}}"; }
+_EE_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)
 _ee_now() { if [ -n "${EE_NOW:-}" ]; then printf '%s' "$EE_NOW"; else date -u +%s; fi; }
 _ee_int() { # _ee_int <value> <default> -> a non-negative integer, else the default
   case "${1:-}" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$((10#$1))" ;; esac
@@ -171,7 +176,7 @@ ee_oom() { # ee_oom <rendered transcript> -> "<signal>\t<command>" or nothing
 }
 
 ee_on_empty() { # ee_on_empty <build-dir> [label]
-  local b="${1:-}" label="${2:-EXECUTE_EMPTY}" why oom sig cmd mem r
+  local b="${1:-}" label="${2:-EXECUTE_EMPTY}" why oom sig cmd mem r cause
   [ -n "$b" ] && [ -d "$b" ] || return 0
   why=$(ee_reason "$b/execute-run.txt") || why=""
   [ -n "$why" ] && printf '%s\n' "$why" > "$b/stop-reason.txt" 2>/dev/null
@@ -183,12 +188,20 @@ ee_on_empty() { # ee_on_empty <build-dir> [label]
   [ -n "$oom" ] || return 0
   sig="${oom%%$'\t'*}"; cmd="${oom#*$'\t'}"
   mem=$(_ee_mem_mb); mem="${mem:-unknown}"
-  printf 'EXECUTE_OOM: %s ran out of memory (%s) on a machine with %s MB (VM_MEMORY_MB). Raise the row lane.fly-pool.%s.vm_memory_mb. Last message: %s\n' \
-    "$cmd" "$sig" "$mem" "${PROJECT:-<project>}" "${why:-none}" > "$b/stop-reason.txt" 2>/dev/null || true
+  # BH-9288: the cause comes from the processes alive at the kill
+  # (<build-dir>/oom-procs.txt, bin/exec-proc-hook.sh). Raise vm_memory_mb only
+  # when one process used most of the memory; concurrent processes say "one
+  # heavy check at a time"; no snapshot says so.
   r=$(_ee_root)
+  cause=""
+  command -v ep_oom_cause >/dev/null 2>&1 || . "$_EE_LIB/exec-procs.sh" 2>/dev/null || . "$r/bin/lib/exec-procs.sh" 2>/dev/null || true
+  command -v ep_oom_cause >/dev/null 2>&1 && cause=$(ep_oom_cause "$b/oom-procs.txt" "$mem" 2>/dev/null | cut -f2-)
+  [ -n "$cause" ] || cause="Cause unknown, no snapshot (oom-procs.txt missing). Check for concurrent processes before you raise the row lane.fly-pool.${PROJECT:-<project>}.vm_memory_mb."
+  printf 'EXECUTE_OOM: %s ran out of memory (%s) on a machine with %s MB (VM_MEMORY_MB). %s Last message: %s\n' \
+    "$cmd" "$sig" "$mem" "$cause" "${why:-none}" > "$b/stop-reason.txt" 2>/dev/null || true
   if [ ! -e "$b/oom.alerted" ] && [ -x "$r/bin/alert-line.sh" ]; then
     HARNESS="$r" "$r/bin/alert-line.sh" --id "execute-oom:${PROJECT:-?}:${KEY:-?}" ${PROJECT:+--project "$PROJECT"} \
-      "[execute/${PROJECT:-?}] ${KEY:-?}: EXECUTE_OOM — $cmd ran out of memory ($sig); the machine has VM_MEMORY_MB=$mem MB. Raise the row lane.fly-pool.${PROJECT:-<project>}.vm_memory_mb. Record: ${b##*/}/execute-transcript.md" >/dev/null 2>&1 || true
+      "[execute/${PROJECT:-?}] ${KEY:-?}: EXECUTE_OOM — $cmd ran out of memory ($sig); the machine has VM_MEMORY_MB=$mem MB. $cause Record: ${b##*/}/execute-transcript.md" >/dev/null 2>&1 || true
     : > "$b/oom.alerted" 2>/dev/null || true
   fi
   return 0

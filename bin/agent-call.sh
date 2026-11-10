@@ -2862,7 +2862,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         #   2. PER-CALL TOOL POLICY (2026-08-25, tier-2 remediator): AGENT_SETTINGS
         #      is a caller-owned policy file; this lane only carries it.
         #   3. ACT-TIME IRON-LAW GUARD (2026-08-29) — see below.
-        local _sets=() _settings=""
+        local _sets=() _settings="" _eph="" _ephto=""
         [ "${EDIT_FEEDBACK:-}" = "1" ] && [ "$STAGE" = "execute" ] && [ -f "$HARNESS/bin/edit-feedback-settings.json" ] \
           && _sets+=("$HARNESS/bin/edit-feedback-settings.json")
         [ -n "${AGENT_SETTINGS:-}" ] && [ -f "${AGENT_SETTINGS:-}" ] && _sets+=("$AGENT_SETTINGS")
@@ -2874,6 +2874,29 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         #      profile's contract; a caller that needs a plugin sets
         #      SESSION_PROFILE_PLUGINS_OFF=0 or leaves its stage unprofiled.
         [ -n "${SP_SETTINGS:-}" ] && [ -f "$SP_SETTINGS" ] && _sets+=("$SP_SETTINGS")
+        #   5. EXECUTE PROCESS HOOK (BH-9288): a PostToolUse / PostToolUseFailure
+        #      Bash hook (bin/exec-proc-hook.sh). On an out-of-memory result it
+        #      writes $EXEC_PROC_DIR/oom-procs.txt (the processes alive at the
+        #      kill); on an OOM or a timeout it ends orphaned test runners of
+        #      this session. HARNESS_EXEC_TAG rides the `env` in front of claude
+        #      only, so the session's processes carry it and this lane does not;
+        #      bin/lib/rb/execute.sh reaps the tag when the session ends.
+        # >>> exec proc hook (tests/execute-oom-classifier.bh-9288-test.sh drives this block)
+        if [ "$STAGE" = execute ] && [ -n "${EXEC_PROC_TAG:-}" ] && [ -x "$HARNESS/bin/exec-proc-hook.sh" ]; then
+          SP_ENV+=("HARNESS_EXEC_TAG=$EXEC_PROC_TAG")
+          mkdir -p "$HARNESS/state" 2>/dev/null
+          # The CLI's ceiling on the hook: the reap grace knob plus a margin
+          # (ep_hook_timeout_s); 30 is that sum at the default grace of 5 s.
+          _ephto=$( . "$HARNESS/bin/lib/exec-procs.sh" 2>/dev/null && ep_hook_timeout_s 2>/dev/null ) || _ephto=""
+          case "$_ephto" in ''|*[!0-9]*) _ephto=30 ;; esac
+          _eph="$HARNESS/state/exec-proc-hook-settings-$_ephto.json"
+          jq -n --arg c "$HARNESS/bin/exec-proc-hook.sh" --argjson t "$_ephto" \
+            '{hooks:{PostToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$c,timeout:$t}]}],
+                     PostToolUseFailure:[{matcher:"Bash",hooks:[{type:"command",command:$c,timeout:$t}]}]}}' \
+            > "$_eph.tmp.$$" 2>/dev/null \
+            && mv -f "$_eph.tmp.$$" "$_eph" 2>/dev/null && _sets+=("$_eph")
+        fi
+        # <<< exec proc hook
         # ACT-TIME IRON-LAW GUARD (SDLC item 1, 2026-08-29). A PreToolUse hook
         # that mechanically DENIES the five irreversible families on the build
         # and triage lanes — merging a PR, pushing main, prisma at a live DB, a
@@ -2920,8 +2943,18 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           # write byte-identical content, and two that do not get separate
           # files. A fixed per-stage path would let one build's policy land in
           # another build's session.
+          # >>> settings merge (tests/execute-oom-classifier.bh-9288-test.sh drives this block)
           _settings="$HARNESS/state/agent-settings-$STAGE-$(printf '%s' "${_sets[*]}" | cksum | cut -d' ' -f1).json"
-          if jq -s 'reduce .[] as $x ({}; . * $x)' "${_sets[@]}" > "$_settings.tmp.$$" 2>/dev/null \
+          # BH-9288: the hook arrays under .hooks.<Event> CONCATENATE. A plain
+          # deep merge (`. * $x`) replaces an array, so a second PostToolUse
+          # file (the proc hook) silently dropped the edit-feedback hook, and a
+          # caller's PreToolUse hook was dropped by the guard's. Every other
+          # key still deep-merges, later file wins.
+          if jq -s 'reduce .[] as $x ({};
+                (. * ($x | del(.hooks))) as $m
+                | if ($x.hooks | type) == "object" then
+                    $m + {hooks: (reduce ($x.hooks | keys[]) as $k (($m.hooks // {}); .[$k] = ((.[$k] // []) + $x.hooks[$k])))}
+                  else $m end)' "${_sets[@]}" > "$_settings.tmp.$$" 2>/dev/null \
              && [ -s "$_settings.tmp.$$" ] && mv -f "$_settings.tmp.$$" "$_settings" 2>/dev/null; then :
           else
             # Merge failed: fall back to the LAST file rather than to none. The
@@ -2930,6 +2963,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
             _settings="${_sets[${#_sets[@]}-1]}"
             echo "$(STAMP) [$PROJECT] $STAGE: could not merge ${#_sets[@]} settings files — running with $(basename "$_settings") only." >> "$ALERTS"
           fi
+          # <<< settings merge
         fi
         [ -n "$_settings" ] && ARGS+=(--settings "$_settings")
         # AGENT_DISALLOWED_TOOLS is a NEWLINE-separated list of permission specs

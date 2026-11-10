@@ -70,6 +70,15 @@ if [ "${LANE_GATE_DISABLE:-0}" != 1 ]; then
   command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
   command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply agent-call-ledger; lib_env_apply execute-checkpoint-brief; } || true
 fi
+# BH-9288: every process of this execute session carries HARNESS_EXEC_TAG
+# (bin/agent-call.sh puts it on the claude line only), so the reap after each
+# execute call ends exactly this build's leftovers. One tag per build: the
+# relaunch calls below share it. EXEC_PROC_DIR is where bin/exec-proc-hook.sh
+# writes oom-procs.txt; the snapshot is removed before each execute call, so
+# the one ee_on_empty reads belongs to the last call.
+export EXEC_PROC_TAG="${KEY:-key}-$$-$(date -u +%s)" EXEC_PROC_DIR="$BUILD"
+command -v ep_reap >/dev/null 2>&1 || . "$HARNESS/bin/lib/exec-procs.sh" 2>/dev/null || true
+rm -f "$BUILD/oom-procs.txt"
 # >>> execute prompt (tests/run-build-test-home.bh-580-test.sh drives this block)
 # BH-7970: the prompt text lives in prompts/stages/execute.md.
 sp_render execute SP_PROMPT_EXECUTE || {
@@ -89,6 +98,10 @@ CC execute "$EXECUTE_MODEL" "${EXECUTE_TIMEOUT_SECS:-7200}" "$BUILD/execute-run.
 # >>> execute result (tests/run-build-checkpoint-test.sh drives this block)
 EX_RC=$?   # BH-9123: the rc of `CC execute` above. Keep this the first line.
 CKPT_STOP
+# BH-9288: the session is over. Kill the process group of every process it left
+# alive (a backgrounded test suite, a typecheck, their workers). Never fatal;
+# EX_RC is not touched.
+command -v ep_reap >/dev/null 2>&1 && ep_reap "${EXEC_PROC_TAG:-}" 2>>"$BUILD/pipeline.log" || true
 # A TIMEOUT OR A KILL IS A CHECKPOINT, NOT AN END (BH-9123, slice C1 of BH-9064). On rc 124 (the
 # stage timeout), rc 143 (a SIGTERM) or a context kill ($OUT.ctxkill), the
 # work so far is the pushed wip commit (CKPT_STOP above). The brief
@@ -157,10 +170,13 @@ while command -v ecb_write >/dev/null 2>&1; do
   echo "$(STAMP) [$PROJECT/$KEY] EXECUTE resume $((EX_CALLS + 1))/$EX_MAX: call $EX_CALLS ended rc $EX_RC — continue from checkpoint $EX_CK${EX_SID:+ with --resume $EX_SID}" >> "$BUILD/pipeline.log"
   CKPT_START
   EX_RC=0
+  rm -f "$BUILD/oom-procs.txt"
   LADDER_RESUME_SID="$EX_SID" CC execute "$EXECUTE_MODEL" "${EXECUTE_TIMEOUT_SECS:-7200}" "$BUILD/execute-run.txt" "$SP_PROMPT_RESUME" || EX_RC=$?
   CKPT_STOP
+  command -v ep_reap >/dev/null 2>&1 && ep_reap "${EXEC_PROC_TAG:-}" 2>>"$BUILD/pipeline.log" || true
   EX_CALLS=$((EX_CALLS + 1))
 done
+unset EXEC_PROC_TAG EXEC_PROC_DIR
 # A CALL-GUARD REFUSAL IS NOT AN EMPTY SESSION (BH-2305). With execute guarded
 # by default, bin/agent-call.sh can refuse this call before any session runs
 # (rc 74, its marker on line 1 of the outfile). "no changes produced" would be

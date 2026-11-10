@@ -259,7 +259,7 @@
       "unit": "seconds",
       "zero_means": "off",
       "read_in": "bin/lib/review-prs-tmp.sh",
-      "note": "BH-6130, BH-6133: a review pool capped below 3 by /tmp sends its Sentry event (free space, threshold, the count of review-prs dirs, the three largest /tmp entries) once per cap episode, and again each window while the episode lasts, plus once when the cap drops below the last reported value (BH-6132). An episode ends when a tick measures free /tmp at or above TMP_MIN_MB + 3 x WORKER_TMP_MB. 0 turns the window off: every capped tick reports, under the Sentry lib's own per-hour cap. The marker state/review-prs-tmp-capped.last is shared by every project on the box."
+      "note": "BH-6130, BH-6133: a review pool capped below 3 by /tmp sends its Sentry event (free space, threshold, the count of review-prs dirs, the REVIEW_TMP_TOP_N largest /tmp entries) once per cap episode, after REVIEW_TMP_CAPPED_MIN_TICKS consecutive capped ticks, and again each window while the episode lasts, plus once when the cap drops below the last reported value (BH-6132). An episode ends when a tick measures free /tmp at or above TMP_MIN_MB + 3 x WORKER_TMP_MB. 0 turns the window off: every capped tick reports, under the Sentry lib's own per-hour cap. The marker state/review-prs-tmp-capped.last is shared by every project on the box."
     }
   ],
   "stats": {

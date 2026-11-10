@@ -1,0 +1,11 @@
+{
+  "env": "REVIEW_TMP_CAPPED_MIN_TICKS",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 100,
+  "unit": "ticks",
+  "zero_means": null,
+  "read_in": "bin/lib/review-prs-tmp.sh",
+  "note": "BH-9035: the review-prs-tmp-capped event is sent only after this many consecutive review-prs ticks on the box were capped by /tmp (any project on the box counts). A tick that measures free /tmp at or above the threshold resets the count. 1 = report on the first capped tick (the BH-6130 behaviour). The count is state/review-prs-tmp-capped.streak. Settings row lane.review-prs.review_tmp_capped_min_ticks."
+}

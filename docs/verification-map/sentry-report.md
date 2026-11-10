@@ -12,7 +12,13 @@ prints nothing.
   (lane `merge-conductor`, reason `autoenqueue-ledger-unreadable`);
 - `bin/review-prs.sh`, after `rpool_init`, when `RPOOL_CAP_BY=tmp` and
   `RPOOL_K` is below 3 (lane `review-prs`, reason `review-prs-tmp-capped`).
-  `rp_tmp_capped_report` in `bin/lib/review-prs-tmp.sh` decides and measures;
+  `rp_tmp_capped_report` in `bin/lib/review-prs-tmp.sh` decides and measures.
+  It sends only after `REVIEW_TMP_CAPPED_MIN_TICKS` (default 3) consecutive
+  ticks on the box were capped by /tmp (streak file
+  `state/review-prs-tmp-capped.streak` = `<count> <first_epoch>`, any project
+  counts; a tick that measures free /tmp at or above the threshold removes it
+  and logs `capped-tick streak reset`, or `cap episode ended` when a report
+  was sent, BH-9035). Below that it logs `capped tick <n> of <min>, not reported`. Then
   the lane sends at most once per box per
   `REVIEW_TMP_CAPPED_REPORT_S` (default 86400, marker
   `state/review-prs-tmp-capped.last` = `<epoch> <concurrency>`, shared by
@@ -20,9 +26,12 @@ prints nothing.
   drops below the last reported concurrency; the same or a higher cap is not
   sent (BH-6132). `extra` holds `free_mb`, `tmp_min_mb`, `worker_tmp_mb` (knob
   `REVIEW_WORKER_TMP_MB`, default 256), `threshold_mb`, `tmp_path`, `fstype`,
-  `top` (the three largest entries at the top of the tmp path, `{path, mb}`),
-  `concurrency`, `project` (BH-6130), `trigger` (`window` or `cap_lowered`) and
-  `previous_concurrency` (the last reported cap, null when unknown, BH-6132);
+  `top` (the `REVIEW_TMP_TOP_N` largest entries at the top of the tmp path,
+  default 5, `{path, mb}`, largest first: read it to name what fills /tmp),
+  `concurrency`, `project` (BH-6130), `trigger` (`window` or `cap_lowered`),
+  `previous_concurrency` (the last reported cap, null when unknown, BH-6132),
+  `capped_ticks` (the streak at the send, null when the streak file could not
+  be written) and `min_ticks` (BH-9035);
 - `mc_fanin_outcome` in `bin/lib/fanin.sh`, once per (PR, head) on a
   `WORKER_DEADLINE` kill (lane `merge-conductor`, reason
   `conductor-worker-deadline`). `bin/merge-conductor.sh` sources the lib.

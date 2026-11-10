@@ -52,10 +52,12 @@ rp_scratch_reap() {
 # A pool capped below 3 by /tmp is reported to Sentry once per cap episode,
 # and again each REVIEW_TMP_CAPPED_REPORT_S while the episode lasts (registry
 # knob on the review-prs lane, default 86400; 0 = every capped tick), with the
-# free space, the threshold, the count of review-prs dirs and the three largest
-# entries at the top of the tmp path. Inside the window a cap that drops below
-# the last reported concurrency is reported again (BH-6132); the same or a
-# higher cap is not. The window is claimed BEFORE the measure and the send, so
+# free space, the threshold, the count of review-prs dirs and the
+# REVIEW_TMP_TOP_N largest (default 5) entries at the top of the tmp path. It is
+# sent only after REVIEW_TMP_CAPPED_MIN_TICKS (default 3) consecutive capped
+# ticks on the box (BH-9035). Inside the window a cap that drops below the last
+# reported concurrency is reported again (BH-6132); the same or a higher cap is
+# not. The window is claimed BEFORE the measure and the send, so
 # a failed send still counts. The marker `<epoch> <concurrency>` has no project
 # in its name: every project on the box shares it. A BH-6130 marker has no
 # concurrency and only the window applies to it. An episode ends when a tick
@@ -63,6 +65,11 @@ rp_scratch_reap() {
 # (rp_tmp_episode_end removes the marker), so the next cap is due at once
 # (BH-6133). The per-review need is REVIEW_WORKER_TMP_MB (registry knob,
 # default 256), read through _rpool_knob WORKER_TMP_MB.
+# _rp_tmp_state_dir <harness> — make the dir the marker and the streak live in.
+# The one `mkdir` of state/ in this file: the marker and the streak are classed
+# box-local in catalog/state-paths.d/9035-review-prs-tmp-capped.json, and
+# tests/no-state-files.bh-4159-test.sh counts each raw state/ site. Always rc 0.
+_rp_tmp_state_dir() { mkdir -p "$1/state" 2>/dev/null; return 0; }
 # rp_tmp_report_due — rc 0: this tick claimed the window; `<trigger>
 # <previous concurrency>` on stdout, trigger `window` or `cap_lowered`, the
 # previous concurrency empty when unknown. rc 3: not due, `<epoch>
@@ -76,7 +83,7 @@ rp_tmp_report_due() {
   case "$now" in ''|*[!0-9]*) now=$(date -u +%s) ;; esac
   case "$win" in ''|*[!0-9]*) win=86400 ;; esac
   case "$k" in ''|*[!0-9]*) k=0 ;; esac
-  mkdir -p "$h/state" 2>/dev/null
+  _rp_tmp_state_dir "$h"
   ( exec 9>>"$f.lock" || exit 1
     flock -w 2 9 || exit 1
     last=""; lastk=""; trig=window
@@ -96,42 +103,94 @@ rp_tmp_report_due() {
 # pool below 3. It reads the space, not RPOOL_CAP_BY: a tick capped by
 # REVIEW_BOX_MAX, memory or a low REVIEW_CONCURRENCY must not end a box-wide
 # episode while /tmp is still low. An unreadable df or a lock timeout keeps the
-# episode. Always rc 0.
+# episode. It also removes the capped-tick streak (BH-9035), so the next cap
+# counts from 1. With no marker (no report was sent) the log line says
+# `capped-tick streak reset`, not `cap episode ended`. Always rc 0.
 rp_tmp_episode_end() {
-  local h="${HARNESS:-${H:-}}" f free min per thr
+  local h="${HARNESS:-${H:-}}" f s free min per thr had=""
   [ -n "$h" ] || return 0
-  f="$h/state/review-prs-tmp-capped.last"
-  [ -e "$f" ] || return 0
+  f="$h/state/review-prs-tmp-capped.last"; s="$h/state/review-prs-tmp-capped.streak"
+  [ -e "$f" ] || [ -e "$s" ] || return 0
   free=$(_rpool_tmp_free_mb) || return 0
   min=$(_rpool_knob TMP_MIN_MB 1536); per=$(_rpool_knob WORKER_TMP_MB 256)
   thr=$((min + 3 * per))
   [ "$free" -ge "$thr" ] || return 0
+  [ -e "$f" ] && had=1
   ( exec 9>>"$f.lock" || exit 1
     flock -w 2 9 || exit 1
-    rm -f "$f" 2>/dev/null ) 2>/dev/null
-  [ -e "$f" ] || echo "$(STAMP) [$PROJECT] review-prs: /tmp recovered (${free}MB free, threshold ${thr}MB); cap episode ended" >> "$LOG"
+    rm -f "$f" "$s" 2>/dev/null ) 2>/dev/null
+  [ -e "$f" ] || [ -e "$s" ] && return 0
+  if [ -n "$had" ]; then
+    echo "$(STAMP) [$PROJECT] review-prs: /tmp recovered (${free}MB free, threshold ${thr}MB); cap episode ended" >> "$LOG"
+  else
+    echo "$(STAMP) [$PROJECT] review-prs: /tmp recovered (${free}MB free, threshold ${thr}MB); capped-tick streak reset" >> "$LOG"
+  fi
   return 0
 }
-# rp_tmp_top — a JSON array of the 3 largest top-level entries of the tmp path,
-# [{path, mb}]; [] when du times out or reads nothing. No `du -x`: on an
-# overlay root a file reports another device than its dir and -x skips it.
+# rp_tmp_streak_bump — BH-9035: add this tick to the box-wide count of
+# consecutive review-prs ticks capped by /tmp, state/review-prs-tmp-capped.streak
+# (`<count> <first_epoch>`), under the marker's lock. Every project on the box
+# adds to one count; rp_tmp_episode_end removes it. Prints the new count, rc 0.
+# rc 1, nothing printed, when the lock or the write fails.
+rp_tmp_streak_bump() {
+  local h="${HARNESS:-${H:-}}" f s now
+  [ -n "$h" ] || return 1
+  f="$h/state/review-prs-tmp-capped.last"; s="$h/state/review-prs-tmp-capped.streak"
+  now="${RP_TMP_REPORT_NOW:-$(date -u +%s)}"
+  case "$now" in ''|*[!0-9]*) now=$(date -u +%s) ;; esac
+  _rp_tmp_state_dir "$h"
+  ( exec 9>>"$f.lock" || exit 1
+    flock -w 2 9 || exit 1
+    c=""; first=""
+    [ -f "$s" ] && read -r c first _ < "$s" 2>/dev/null
+    case "$c" in ''|*[!0-9]*) c=0 ;; esac
+    case "$first" in ''|*[!0-9]*) first="" ;; esac
+    [ "$c" -gt 0 ] && [ -n "$first" ] || first=$now
+    c=$((c + 1))
+    printf '%s %s\n' "$c" "$first" > "$s.tmp" 2>/dev/null && mv -fT "$s.tmp" "$s" 2>/dev/null \
+      && { printf '%s' "$c"; exit 0; }
+    rm -f "$s.tmp" 2>/dev/null; exit 1 ) 2>/dev/null
+}
+# rp_tmp_top — a JSON array of the REVIEW_TMP_TOP_N largest (default 5)
+# top-level entries of the tmp path, [{path, mb}], largest first; [] when du
+# times out or reads nothing. No `du -x`: on an overlay root a file reports
+# another device than its dir and -x skips it.
 rp_tmp_top() {
-  local base out
+  local base out n="${REVIEW_TMP_TOP_N:-5}" # 5: fallback of the row lane.review-prs.review_tmp_top_n
+  case "$n" in ''|*[!0-9]*) n=5 ;; esac
+  [ "$n" -ge 1 ] && [ "$n" -le 20 ] || n=5
   base=$(rp_tmp_base)
   out=$(timeout "${RP_TMP_DU_TIMEOUT_S:-20}" du -sm -- "$base"/* "$base"/.[!.]* 2>/dev/null \
-    | sort -rn | head -3 \
+    | sort -rn | head -n "$n" \
     | jq -Rsc '[split("\n")[] | select(length > 0) | capture("^(?<mb>[0-9]+)\\s+(?<path>.*)$") | {path, mb: (.mb | tonumber)}]' 2>/dev/null)
   [ -n "$out" ] && printf '%s' "$out" || printf '[]'
 }
 # rp_tmp_capped_report — called by the lane when the pool is capped below 3 by
-# /tmp. rc 0 when this tick claimed the window and must send; the extra then
-# carries `trigger` and `previous_concurrency` (null when unknown). It writes the lane
+# /tmp. It first adds the tick to the streak (BH-9035): below
+# REVIEW_TMP_CAPPED_MIN_TICKS consecutive capped ticks it logs `capped tick <n>
+# of <min>, not reported` and returns 1 without claiming the window. A streak
+# it cannot write is logged (`tmp streak not counted`) and does not hold the
+# report. rc 0 when this tick claimed the window and must send; the extra then
+# carries `trigger`, `previous_concurrency` (null when unknown), `capped_ticks`
+# (null when the streak was not counted) and `min_ticks`. It writes the lane
 # log line and sets RP_TMP_MSG and RP_TMP_EXTRA (the event's extra JSON) for
 # the lane's sentry_report call. rc 1 otherwise, with RP_TMP_MSG empty.
 RP_TMP_MSG=""; RP_TMP_EXTRA=""
 rp_tmp_capped_report() {
-  local base out last lastk trig prevk rc free min per thr fstype top toptxt d dirs=0
+  local base out last lastk trig prevk rc free min per thr fstype top toptxt d dirs=0 ticks="" mint
   RP_TMP_MSG=""; RP_TMP_EXTRA=""
+  mint="${REVIEW_TMP_CAPPED_MIN_TICKS:-3}" # 3: fallback of the row lane.review-prs.review_tmp_capped_min_ticks
+  case "$mint" in ''|*[!0-9]*) mint=3 ;; esac
+  [ "$mint" -ge 1 ] && [ "$mint" -le 100 ] || mint=3
+  if ticks=$(rp_tmp_streak_bump) && [ -n "$ticks" ]; then
+    if [ "$ticks" -lt "$mint" ]; then
+      echo "$(STAMP) [$PROJECT] review-prs: /tmp capped at $RPOOL_K; capped tick $ticks of $mint, not reported" >> "$LOG"
+      return 1
+    fi
+  else
+    ticks=""
+    echo "$(STAMP) [$PROJECT] review-prs: tmp streak not counted: ${HARNESS:-${H:-}}/state/review-prs-tmp-capped.streak not writable" >> "$LOG"
+  fi
   out=$(rp_tmp_report_due); rc=$?
   case "$rc" in
     0) read -r trig prevk <<<"$out" ;;
@@ -153,11 +212,12 @@ rp_tmp_capped_report() {
   RP_TMP_MSG="review-prs concurrency capped at $RPOOL_K by free space under $base: ${free}MB free, threshold ${thr}MB, $dirs review-prs dirs"
   RP_TMP_EXTRA=$(jq -nc --arg p "$PROJECT" --argjson k "$RPOOL_K" --argjson free "$free" --argjson min "$min" \
       --argjson per "$per" --argjson thr "$thr" --arg path "$base" --arg fs "$fstype" --argjson top "$top" \
-      --argjson dirs "$dirs" --arg tr "${trig:-window}" --arg pk "$prevk" \
+      --argjson dirs "$dirs" --arg tr "${trig:-window}" --arg pk "$prevk" --arg ct "$ticks" --argjson mt "$mint" \
       '{project:$p, concurrency:$k, free_mb:$free, tmp_min_mb:$min, worker_tmp_mb:$per, threshold_mb:$thr,
         tmp_path:$path, fstype:$fs, top:$top, review_prs_dirs:$dirs, trigger:$tr,
-        previous_concurrency:(if $pk == "" then null else ($pk | tonumber) end)}' 2>/dev/null) \
-    || RP_TMP_EXTRA=$(jq -nc --arg p "$PROJECT" --argjson k "$RPOOL_K" --arg tr "${trig:-window}" \
-         '{project:$p, concurrency:$k, trigger:$tr}')
+        previous_concurrency:(if $pk == "" then null else ($pk | tonumber) end),
+        capped_ticks:(if $ct == "" then null else ($ct | tonumber) end), min_ticks:$mt}' 2>/dev/null) \
+    || RP_TMP_EXTRA=$(jq -nc --arg p "$PROJECT" --argjson k "$RPOOL_K" --arg tr "${trig:-window}" --arg ct "$ticks" --argjson mt "$mint" \
+         '{project:$p, concurrency:$k, trigger:$tr, capped_ticks:(if $ct == "" then null else ($ct | tonumber) end), min_ticks:$mt}')
   return 0
 }

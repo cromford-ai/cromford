@@ -43,6 +43,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [Scalable tests (BH-7563)](#scalable-tests-bh-7563)
 - [User flows (BH-8029)](#user-flows-bh-8029)
 - [Security audit (2026-10-21)](#security-audit-2026-10-21)
+- [Build resources (BH-9288)](#build-resources-bh-9288)
 
 ## Iron guardrails (this machine)
 
@@ -242,3 +243,12 @@ USER FLOWS (iron law, BH-8029, 2026-10-22). A new feature ties into the user flo
 ## Security audit (2026-10-21)
 
 SECURITY AUDIT (2026-10-21). The whole-repo security audit (cloudflare/security-audit-skill) is a scheduled lane with a dollar cap, never a PR step. A PR gets the risky-file security lens only (auth, money, schema, webhooks, agents), and KIND: copy gets none. A reviewer never asks for a full audit on a PR. The lens receives the attack-class notes for the diff's surface; it does not widen its scope beyond the diff.
+
+## Build resources (BH-9288)
+
+BUILD RESOURCES (BH-9288, 2026-11-09). An execute session shares one machine with its own checks. TK-3659 ran two vitest suites in the background beside the typecheck, and the typecheck was killed (exit 137).
+1. In execute, never background a test suite, a typecheck, a build or an e2e run (`&`, `nohup`, `run_in_background`).
+2. Run one heavy check at a time, and wait for it to finish.
+3. Before you start the next heavy check, make sure the last one has exited.
+4. If a check ends out of memory (exit 137, heap out of memory), stop. Read the cause in `oom-procs.txt` and the stop reason. Do not raise the heap or the machine size first.
+- The harness records the processes alive at an out-of-memory exit in `<build-dir>/oom-procs.txt`. It kills the process groups an execute session leaves alive.

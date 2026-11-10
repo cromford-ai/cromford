@@ -1,0 +1,70 @@
+{
+  "libs": [
+    {
+      "id": "exec-procs",
+      "file": "bin/lib/exec-procs.sh",
+      "note": "BH-9288: the processes of an execute session. bin/exec-proc-hook.sh (a PostToolUse / PostToolUseFailure Bash hook that bin/agent-call.sh loads for stage execute) writes $BUILD/oom-procs.txt when a Bash call ends out of memory (exit 137, heap out of memory), and ends orphaned test runners of the session after an OOM or a timed-out call. bin/lib/execute-empty.sh classifies the snapshot (ep_oom_cause: concurrent / single / no-snapshot / unknown) into the EXECUTE_OOM stop reason. bin/lib/rb/execute.sh kills the process groups of every process the session left alive (ep_reap). Resolved at call time with lib_env_apply exec-procs; tests/execute-oom-classifier.bh-9288-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "EXEC_PROC_REAP",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = kill the process groups an execute session left alive (at the stage end) and orphaned test runners after an OOM or a timed-out Bash call. 0 = off: nothing is signalled. Read by bin/lib/exec-procs.sh as ${EXEC_PROC_REAP:-1}.",
+          "read_in": "bin/lib/exec-procs.sh"
+        },
+        {
+          "env": "EXEC_PROC_REAP_GRACE_S",
+          "type": "int",
+          "default": 5,
+          "min": 0,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": "KILL at once after TERM",
+          "required": false,
+          "note": "Seconds between the TERM and the KILL of the reaped process groups. The hook's CLI timeout is this plus 25 s. Read by bin/lib/exec-procs.sh as ${EXEC_PROC_REAP_GRACE_S:-5}.",
+          "read_in": "bin/lib/exec-procs.sh"
+        },
+        {
+          "env": "EXEC_OOM_HEAVY_RSS_MB",
+          "type": "int",
+          "default": 200,
+          "min": 0,
+          "max": 65536,
+          "unit": "MB",
+          "zero_means": "every node/vitest/tsc/jest/postgres/playwright process is heavy",
+          "required": false,
+          "note": "A process in oom-procs.txt is heavy when it is node, vitest, tsc, jest, postgres or playwright and its RSS is at least this. Two or more heavy processes make the cause 'concurrent processes'. Read by bin/lib/exec-procs.sh as ${EXEC_OOM_HEAVY_RSS_MB:-200}.",
+          "read_in": "bin/lib/exec-procs.sh"
+        },
+        {
+          "env": "EXEC_OOM_SINGLE_PCT",
+          "type": "int",
+          "default": 50,
+          "min": 1,
+          "max": 100,
+          "unit": "percent of machine memory",
+          "zero_means": null,
+          "required": false,
+          "note": "One process at this percent of machine memory or more makes the cause 'one process used most of the memory' (raise vm_memory_mb). Also: when all processes left alive hold less than (100 - this) percent, the killed command is taken to be that process. Read by bin/lib/exec-procs.sh as ${EXEC_OOM_SINGLE_PCT:-50}.",
+          "read_in": "bin/lib/exec-procs.sh"
+        },
+        {
+          "env": "EXEC_OOM_SNAPSHOT_ROWS",
+          "type": "int",
+          "default": 15,
+          "min": 1,
+          "max": 100,
+          "unit": "rows",
+          "zero_means": null,
+          "required": false,
+          "note": "The number of processes (largest RSS first) oom-procs.txt keeps. Read by bin/lib/exec-procs.sh as ${EXEC_OOM_SNAPSHOT_ROWS:-15}.",
+          "read_in": "bin/lib/exec-procs.sh"
+        }
+      ]
+    }
+  ]
+}

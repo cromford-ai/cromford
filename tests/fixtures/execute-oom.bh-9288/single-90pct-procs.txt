@@ -1,0 +1,3 @@
+# oom-procs v1 at=1793750000 mem_total_kb=16777216 signal=Exit code 137
+5101	15099494	node	node /repo/node_modules/typescript/bin/tsc --noEmit
+3050	61440	postgres	postgres -D /var/lib/postgresql/data
