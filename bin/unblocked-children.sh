@@ -1,7 +1,9 @@
 #!/bin/bash
 # bin/unblocked-children.sh <project>  — stdin: gate-diff.sh output; stdout: UNBLOCKED / STACKABLE lines
 #
-# A child ticket carries "Blocked-by: #N" and is launched only when #N closes.
+# A child ticket carries "Blocked-by: #N" and is launched only when #N closes,
+# or when #N is a hand-written epic the epic pass marked met by default
+# (bin/lib/epic-blocker.sh, BH-9289).
 # When the harness itself closes #N (a close-out in a sweep) the same tick
 # launches the child. When #N closes from OUTSIDE a tick — a PR squash-merged
 # by hand, GitHub's "closes #N" — the board-changed tick sees only #N in its
@@ -97,6 +99,11 @@
 # rewritten under it (#5010 under #5053). Such a child comes back as an ordinary
 # UNBLOCKED line once its blocker closes. `off` is the pre-BH-5234 pass; an
 # absent lib is `rollouts`.
+#
+# MET BY DEFAULT (BH-9289). An open hand-written epic counts as met once the
+# epic pass of bin/lib/epic-blocker.sh wrote its .met marker (every child
+# closed, the close question unanswered for EPIC_BLOCKER_DEFAULT_H). The line
+# that releases its dependents says so.
 #
 # GitHub-Issues boards only (in-app boards have no Blocked-by convention yet).
 # Fail-open: any failure prints nothing and exits 0 — the tick must never die
@@ -196,13 +203,22 @@ if [ "$RD_ON" = 1 ]; then
                | grep -E '^[0-9]{1,9}$' | sort -un)
   fi
 fi
+# MET BY DEFAULT (BH-9289). bin/decompose-parent-close.sh (above) runs the epic
+# pass of bin/lib/epic-blocker.sh: a hand-written epic whose children have all
+# closed and whose close question got no reply in EPIC_BLOCKER_DEFAULT_H has a
+# state/epic-blocker/<project>/<N>.met marker. An OPEN blocker with a marker is
+# met, not open, and its dependents come out as UNBLOCKED lines that say so.
+EPIC_MET=""
+# shellcheck source=bin/lib/epic-blocker.sh
+[ -r "$HARNESS/bin/lib/epic-blocker.sh" ] && . "$HARNESS/bin/lib/epic-blocker.sh" 2>/dev/null
+command -v eb_met_list >/dev/null 2>&1 && EPIC_MET=$(eb_met_list "$HARNESS" "$PROJECT" 2>/dev/null | tr '\n' ' ')
 # A closure is the UNBLOCKED class's trigger. STACKABLE has none: the fact it
 # acts on is "the parent PR is open", which no board diff ever mentions, so with
 # the class on the pass runs every tick. The soft class has none either — the
 # fact IT acts on is "the child's pre-plan and the parent's PR disagree about
 # whether this is a real dependency", which no diff mentions either. With both
 # off this is the same early exit the script has always taken.
-[ -n "$CLOSED" ] || [ "$STACK_OK" = 1 ] || [ "$DEP_OK" = 1 ] || exit 0
+[ -n "$CLOSED" ] || [ "$STACK_OK" = 1 ] || [ "$DEP_OK" = 1 ] || [ -n "${EPIC_MET// /}" ] || exit 0
 
 # Whichever token can SEE this repo (bin/lib/gh-repo-token.sh). The hub's
 # default PAT 404s on example-org/project-5, which is the repo this whole lane is
@@ -283,7 +299,7 @@ CLOSED="$CLOSED" MAX_LINES="$MAX_LINES" STACK_OK="$STACK_OK" \
 DEP_OK="$DEP_OK" DEP_SH="$HARNESS/bin/dep-verify.sh" DEP_PROJECT="$PROJECT" \
 DEP_REC="$DEP_REC" DEP_SOFT_FILE="$DEP_SOFT" DEP_TMP="$DEP_TMP" DEP_PRS_FILE="$DEP_PRS_FILE" \
 DEP_REPO="$repo" DEP_MARK_DIR="$MARKDIR" DEP_REMIND_S="$REMIND_S" DEP_UNKNOWN_MODE="$DEP_UNKNOWN" \
-STACK_WAIT="$STACK_WAIT" python3 - "$ISSUES_FILE" "$PRS_FILE" <<'PYEOF' 2>/dev/null
+STACK_WAIT="$STACK_WAIT" EPIC_MET="$EPIC_MET" python3 - "$ISSUES_FILE" "$PRS_FILE" <<'PYEOF' 2>/dev/null
 import json, os, re, subprocess, sys, time
 try:
     with open(sys.argv[1]) as f:
@@ -450,6 +466,21 @@ for b in unseen[:MAX_FETCH]:
     s = fetch_state(b)
     if s:
         state[b] = s
+# BH-9289: a hand-written epic met by default. Only a blocker fetched by number
+# (not in the ai-build list) and read OPEN just now; a closed one is CLOSED.
+met_default = set()
+for b in {int(n) for n in os.environ.get("EPIC_MET", "").split() if n.isdigit()}:
+    if b in unseen and state.get(b) == "OPEN":
+        state[b] = "MET"
+        met_default.add(b)
+
+
+def met_note(bs):
+    m = sorted(bs & met_default)
+    if not m:
+        return ""
+    names = ", ".join("#%d" % b for b in m)
+    return names + (" is a hand-written epic" if len(m) == 1 else " are hand-written epics")
 
 unblocked, softlines, stackable = [], [], []
 records, remind = [], []
@@ -465,17 +496,29 @@ for num, i, blockers in blocked:
     mine = harness_pr_for(num)
     if not still_open:
         fired = sorted(blockers & closed_now)
+        mnote = met_note(blockers)
         if fired:
+            msuf = (" (%s met by default)" % ", ".join("#%d" % b for b in sorted(blockers & met_default))) if mnote else ""
             unblocked.append(
                 f'board issues: UNBLOCKED {num} "{i.get("title", "")}" '
                 f'(Blocked-by #{", #".join(str(b) for b in fired)} is now CLOSED and no other blocker is open — '
-                f'fetch it and launch per the queue rules if no PR or build already covers it)'
+                f'fetch it and launch per the queue rules if no PR or build already covers it){msuf}'
             )
             continue
         # Nothing in THIS diff released it — and for a de-labelled parent
         # nothing ever will, because the fingerprint the diff is computed from
         # only carries ai-build issues. The state IS the release.
         if mine or released_recently(num):
+            continue
+        if mnote:
+            line = (
+                f'board issues: UNBLOCKED {num} "{i.get("title", "")}" '
+                f'(every blocker it names is CLOSED or met by default — {mnote} whose children all closed, '
+                f'and nobody answered the close question on it in time — fetch it and launch per the queue '
+                f'rules if no PR or build already covers it)'
+            )
+            unblocked.append(line)
+            remind.append((line, num))
             continue
         line = (
             f'board issues: UNBLOCKED {num} "{i.get("title", "")}" '

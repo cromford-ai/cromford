@@ -1,0 +1,59 @@
+{
+  "libs": [
+    {
+      "id": "epic-blocker",
+      "file": "bin/lib/epic-blocker.sh",
+      "note": "BH-9289: the epic pass. A Blocked-by target outside the ai-build list that is not a decompose parent may be a hand-written epic. When every child (search for \"Part of #N\" and \"epic #N\", plus the sub-issues API) is closed, eb_pass posts one close question on the epic and one alert; with no human reply in EPIC_BLOCKER_DEFAULT_H it writes state/epic-blocker/<project>/<N>.met and bin/unblocked-children.sh treats the blocker as met. Runs inside bin/decompose-parent-close.sh after its close loop. Resolved once per process with lib_env_apply epic-blocker in a subshell; docs/notes/2026-11-09-BH-9289-epic-blocker.md.",
+      "knobs": [
+        {
+          "env": "EPIC_BLOCKER",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": null,
+          "zero_means": "off",
+          "required": false,
+          "read_in": "bin/lib/epic-blocker.sh",
+          "note": "The kill switch. 0 = off: no epic read, no question, no alert, and eb_met_list prints nothing, so no dependent is released by default. Read as ${EPIC_BLOCKER:-1}."
+        },
+        {
+          "env": "EPIC_BLOCKER_DEFAULT_H",
+          "type": "int",
+          "default": 24,
+          "min": 1,
+          "max": 720,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "read_in": "bin/lib/epic-blocker.sh",
+          "note": "How long after the close question on a hand-written epic the pass waits for a reply before its dependents treat Blocked-by #N as met. A non-number or 0 reads as the fallback 24."
+        },
+        {
+          "env": "EPIC_BLOCKER_MAX",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 20,
+          "unit": "epics",
+          "zero_means": null,
+          "required": false,
+          "read_in": "bin/lib/epic-blocker.sh",
+          "note": "How many candidate epics one pass looks up (5 REST reads each, 2 of them search). The list rotates after state/epic-blocker/<project>/cursor. A non-number or 0 reads as the fallback 5."
+        },
+        {
+          "env": "EPIC_BLOCKER_COMMENTS_MAX",
+          "type": "int",
+          "default": 200,
+          "min": 1,
+          "max": 5000,
+          "unit": "comments",
+          "zero_means": null,
+          "required": false,
+          "read_in": "bin/lib/epic-blocker.sh",
+          "note": "The most comments one pass reads from an epic's thread (gh_rest_issue_comments max). A thread longer than this is a short read: the pass gives no verdict for that epic (SKIP), so it never asks twice or judges a reply it did not see. A non-number or 0 reads as the fallback 200."
+        }
+      ]
+    }
+  ]
+}

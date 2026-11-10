@@ -1,0 +1,3 @@
+[
+    {"path": "epic-blocker", "class": "box-local", "authority": "the epic pass markers (BH-9289)", "note": "state/epic-blocker/<project>/: <N>.met (empty; epic #N is met by default), <N>.stopped (the EPIC_DEFAULT_STOPPED line was logged), cursor (the last candidate looked up). Written and read by bin/lib/epic-blocker.sh; .met is read by bin/unblocked-children.sh. A cache of the epic's thread, recomputed every pass. A marker whose epic no open ticket names in Blocked-by is deleted by the next pass."}
+]

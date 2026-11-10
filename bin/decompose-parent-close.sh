@@ -56,6 +56,12 @@
 # the very pass that called it, so the dependents of a parent closed here come
 # out as UNBLOCKED lines in the same output (docs/EVENTS.md §5.4).
 #
+# HAND-WRITTEN EPICS (BH-9289). After the close loop, bin/lib/epic-blocker.sh
+# runs the epic pass over the Blocked-by targets this list does not carry: an
+# epic whose children (by "Part of #N", "epic #N" or the sub-issues API) have
+# all closed gets one question and one alert, and no reply in
+# EPIC_BLOCKER_DEFAULT_H marks it met. EPIC_BLOCKER=0 turns that pass off.
+#
 # Kill switch: REVDEP_WAKE=0 or flags/revdep-wake-off — the same one that turns
 # off the reverse-dependency wake, because these are two halves of one behaviour.
 #
@@ -824,6 +830,15 @@ for f in "$TMP"/close-*.md; do
     PC_FAILED=1
   fi
 done
+# THE EPIC PASS (BH-9289). A Blocked-by target that is not in the ai-build list
+# and is not a decompose parent may be a hand-written epic, which the loop above
+# cannot see. bin/lib/epic-blocker.sh asks once on its thread whether to close
+# it, and after EPIC_BLOCKER_DEFAULT_H with no reply marks it met for
+# bin/unblocked-children.sh. It never closes the epic and prints nothing on
+# stdout. Its candidates join the wake keys below. An absent lib is today's pass.
+# shellcheck source=bin/lib/epic-blocker.sh
+[ -r "$SELF/lib/epic-blocker.sh" ] && . "$SELF/lib/epic-blocker.sh" 2>/dev/null
+command -v eb_pass >/dev/null 2>&1 && eb_pass "$repo" "$TMP/issues.json" "$TMP" "$PROJECT" "$DRY" >/dev/null
 # The keys file the next --cooled pass's wake gate reads (BH-6976). A failed
 # close adds `retry`, so it is tried again after the cooldown, as before.
 KF="$HARNESS/state/parent-close-$PROJECT.keys"
