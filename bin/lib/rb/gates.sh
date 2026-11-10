@@ -948,13 +948,23 @@ if { { command -v routing_builder >/dev/null 2>&1 && [ "$(routing_builder "$PROJ
   # dedup checks below enforce on the file. Fail-open: no client, no worker, no
   # secret -> no row, no log noise, and this branch behaves byte-for-byte as it
   # did before this block existed.
+  # >>> fly queue enqueue (tests/queue-phase-refusal.bh-9160-test.sh sources this block)
   # shellcheck source=/dev/null
   [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
   QUEUE_ROW_OK=0
   if command -v queue_put >/dev/null 2>&1; then
     # rc 0 covers BOTH "queued" and "duplicate": either way the row exists, which
     # is the only thing the hub needs to find this build.
-    queue_put "$PROJECT" "$KEY" "$TICKET" fly "$ATTEMPT" "$QMETA" >/dev/null 2>&1 && QUEUE_ROW_OK=1
+    QPUT_OUT=$(queue_put "$PROJECT" "$KEY" "$TICKET" fly "$ATTEMPT" "$QMETA" 2>/dev/null); QPUT_RC=$?
+    [ "$QPUT_RC" -eq 0 ] && QUEUE_ROW_OK=1
+    # rc 3 is the worker REFUSING this ticket by its phase (BH-9160): the DB
+    # phase is the one relaunch decider. It is an answer, not an outage, so it
+    # writes no file job on the hub or on a watcher and pages nobody.
+    if [ "$QPUT_RC" -eq 3 ]; then
+      QPHASE="${QPUT_OUT#refused }"
+      echo "$(STAMP) [$PROJECT/$KEY] queue refused: ticket phase $QPHASE; not queued, no file written" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+      RESULT "QUEUED_FLY $KEY (refused: ticket phase $QPHASE; not queued)"; exit 0
+    fi
   fi
   if [ -f "$HENV/fly.env" ]; then
     # On the hub: write locally. Dedup against an already-queued or active job —
@@ -1018,6 +1028,7 @@ if { { command -v routing_builder >/dev/null 2>&1 && [ "$(routing_builder "$PROJ
     echo "$(STAMP) [$PROJECT/$KEY] QUEUE ROW REFUSED OR UNREACHABLE — enqueued to local Fly queue instead (hub pulls over ssh)" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
     RESULT "QUEUED_FLY $KEY"; exit 0
   fi
+  # <<< fly queue enqueue
 fi
 BB() { # BB <stage> [tier] [verdict] [pr_url] [merged] [detail]
   /root/harness/bin/beat.sh "$(jq -nc --arg bkey "$BKEY" --arg p "$PROJECT" --arg t "$KEY" \

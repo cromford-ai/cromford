@@ -1,0 +1,4 @@
+# BH-9160 (the rest of BH-8734): one ticket_events row that moves no phase.
+# bin/jobs-watchdog.sh writes it when it holds a call-guard review row.
+# Bearer-gated.
+POST /api/lifecycle/note

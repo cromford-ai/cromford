@@ -1,0 +1,2 @@
+# tests/jobs-client-modules.d/20-BH-9160.tsv — the shared POST of queue_put that reads the phase refusal (BH-9160).
+queue	_queue_put_send

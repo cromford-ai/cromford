@@ -1,0 +1,3 @@
+[
+    {"path": "jobs-watchdog-cg-noted.txt", "class": "box-local", "authority": "the jobs watchdog's latch for call-guard review rows it already noted (BH-9160)", "note": "state/jobs-watchdog-cg-noted.txt: one line <project>/<key>#cg per RR or LR row whose call-guard refusal bin/jobs-watchdog.sh wrote a ticket_events note for (POST /api/lifecycle/note). The ticket_events row is the record and the route answers a repeat with duplicate:true; the file only saves the verdict read and the POST on later ticks. Losing it costs one duplicate-answered POST per held row. One short line per held review head. Machine-local, never carried"}
+]

@@ -836,9 +836,11 @@ identity.
 ### API
 
 ```
-POST  /api/queue        { project, key, ticket_id, target, attempt, requested_by, meta }
+POST  /api/queue        { project, key, ticket_id, target, attempt, requested_by, meta, actor? }
                         -> 201 { queued, duplicate:false }
                         -> 200 { queued, duplicate:true, reason }   (already queued OR claimed)
+                        -> 409 { error:"phase_refused", phase, project, key, reason }
+                                                     (phase plan_blocked/abandoned; nothing written)
 GET   /api/queue?project=&status=&target=&key=&limit=   -> { queue: [ ... ], as_of }
       ?stale_min=N         rows CLAIMED longer ago than N minutes
       ?reason_deferred=1   rows whose reason says the build STOOD DOWN
@@ -861,6 +863,16 @@ the answer says `capped: true`. The UPDATE is a compare-and-set on
 `status='claimed'`. The orphan release and the jobs-watchdog stale-claim
 release send it through `queue_release_counted`. Every other PATCH is the
 same statement as before.
+
+**The one relaunch decider (BH-9160).** A build enqueue (no `status`, or any
+status but `ready`) of a row whose `phase` is `plan_blocked` or `abandoned` is
+a 409 `phase_refused`, unless `actor` is exactly `lifecycle`. The check runs
+before every other answer and every write. A NULL phase is never refused, and
+a `ready` put keeps its answer. `queue_put` sends `JOBS_QUEUE_ACTOR` as
+`actor` and returns rc 3 + `refused <phase>` on this 409.
+`POST /api/lifecycle/note` (src/routes/lifecycle-note.js) appends one
+`ticket_events` row that moves no phase; bin/jobs-watchdog.sh writes it when it
+holds an RR/LR row the call guard refused on its head.
 
 Statuses: `queued | claimed | done | failed`, checked against `QUEUE_TRANSITIONS`
 the same way jobs and phases are — an unknown TARGET status is a 409, an unknown

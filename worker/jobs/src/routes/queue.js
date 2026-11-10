@@ -60,6 +60,22 @@ export async function queueWake(env, key, event, t) {
   }
 }
 
+// THE ONE RELAUNCH DECIDER (BH-9160, the rest of BH-8734). A BUILD enqueue of
+// a ticket whose lifecycle phase is one of these is refused: only the
+// `lifecycle` actor re-enters it (exact word, no trim, no case fold). The names
+// are lib/lifecycle.js LIFECYCLE_PHASES (#8731). A NULL or absent phase (every
+// row before a lifecycle writer sets one, and a table with no `phase` column
+// at all) is never refused. A `ready` put starts no build and keeps its
+// BH-1033 answer.
+const REFUSED_PHASES = new Set(["plan_blocked", "abandoned"]);
+
+function phaseRefusal(existing, wanted, actor) {
+  if (!existing || wanted !== "queued") return null;
+  if (!REFUSED_PHASES.has(existing.phase)) return null;
+  if (String(actor || "") === "lifecycle") return null;
+  return existing.phase;
+}
+
 export const routes = [
   // ── THE PRE-CLAIM BUILD QUEUE (2026-09-10) ─────────────────────────────
   // Everything above models a job from the moment a box CLAIMS it. These four
@@ -89,6 +105,15 @@ export const routes = [
       const wanted = String(body.status || "") === "ready" ? "ready" : "queued";
       const existing = await env.DB.prepare(
         "SELECT * FROM build_queue WHERE project=?1 AND ticket_key=?2").bind(project, key).first();
+      // BEFORE every other answer and every write (BH-9160): a refused
+      // relaunch writes no row, widens no table and rings no wake.
+      const refusedPhase = phaseRefusal(existing, wanted, body.actor);
+      if (refusedPhase) {
+        return json(409, {
+          error: "phase_refused", phase: refusedPhase, project, key,
+          reason: `${project}/${key} is ${refusedPhase}; only the lifecycle actor re-enters it`,
+        });
+      }
       // Waiting OR in flight is the same answer to the caller: this build is
       // already accounted for. `claimed` matters most — re-enqueueing a key
       // mid-build is exactly what spawned a second TK-70 after the reap.

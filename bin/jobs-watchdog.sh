@@ -781,7 +781,68 @@ fi
 QDEFER_MAX="${JOBS_QUEUE_DEFER_MAX:-6}"
 DEFSEEN="$H/state/jobs-watchdog-deferred.txt"
 touch "$DEFSEEN" 2>/dev/null
-QDEFER=0; QDPARK=0
+QDEFER=0; QDPARK=0; QDCG=0
+
+# A REVIEW ROW THE CALL GUARD REFUSED IS TERMINAL FOR ITS HEAD (BH-9160; the operator's
+# comment 6502199389 on #8734, 2026-10-29). An RR or LR row closed with
+# `AGENT_CALL_REFUSED call-guard repeat` means that head already had its paid
+# review, so a re-queue only buys the same refusal (project-6 RR-3241, RR-3191
+# and five more looped "stand-down 1 of 6"). The key is head-bound
+# (RR-<pr>-<head8>, LR-<pr>-<head8>), so a new head is a new key and is offered
+# as usual. This sweep never re-queues such a row. It writes ONE ticket_events
+# row (POST /api/lifecycle/note, actor watchdog) that names the verdict already
+# on that head, and latches it. A row whose refusal names another head than its
+# key keeps the old path. Nothing here resets the call guard: that would pay
+# twice for one head.
+# The latch is its own file, classed box-local in
+# catalog/state-paths.d/9160-jobs-watchdog-cg-noted.json: the ticket_events row
+# is the record (the route answers a repeat with duplicate:true), and the file
+# only saves the verdict read and the POST on the next tick.
+CGNOTED="$H/state/jobs-watchdog-cg-noted.txt"
+command -v lifecycle_note >/dev/null 2>&1 || . "$H/bin/lib/jobs/lifecycle.sh" 2>/dev/null || true
+command -v vd_standing >/dev/null 2>&1 || . "$H/bin/lib/verdicts.sh" 2>/dev/null || true
+# jw_cg_parse <meta> <reason> — sets JW_CG_SLUG, JW_CG_PR, JW_CG_HEAD from the
+#   row's meta (.rereview // .leadreview // .), else from the refusal's own
+#   fingerprint fp=<stage>:<slug>#<pr>@<sha40>. Each is "" when unread.
+jw_cg_parse() {
+  local slug="" pr="" head=""
+  IFS='|' read -r slug pr head < <(printf '%s' "$1" | jq -r '
+      (if type == "string" then (fromjson? // {}) else . end) as $o
+      | ($o.rereview // $o.leadreview // $o)
+      | if type == "object" then [(.slug // ""), ((.pr // "") | tostring), (.head // "")] | join("|") else empty end' 2>/dev/null)
+  if [ -z "$slug" ] || [ -z "$pr" ] || [ -z "$head" ]; then
+    [[ $2 =~ fp=[a-z-]+:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)#([0-9]+)@([0-9a-fA-F]{40}) ]] \
+      && { slug="${BASH_REMATCH[1]}"; pr="${BASH_REMATCH[2]}"; head="${BASH_REMATCH[3]}"; }
+  fi
+  [[ $pr =~ ^[1-9][0-9]*$ ]] || pr=""
+  JW_CG_SLUG="$slug"; JW_CG_PR="$pr"; JW_CG_HEAD=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+}
+# jw_cg_note <project> <key> — after jw_cg_parse. rc 0 when the event is
+#   written (or was already written); rc 1 when it is not known yet, so the
+#   next tick tries again. Either way the row is not re-queued.
+jw_cg_note() {
+  local p="$1" k="$2" slug="$JW_CG_SLUG" pr="$JW_CG_PR" head="$JW_CG_HEAD" line rc verdict box note
+  verdict="no verdict recorded on this head"
+  if [ -n "$slug" ] && [ -n "$pr" ] && [[ $head =~ ^[0-9a-f]{40}$ ]] && command -v vd_standing >/dev/null 2>&1; then
+    line=$(vd_standing "$slug" "$pr" "$head"); rc=$?
+    if [ "$rc" = 0 ] && [ -n "$line" ]; then
+      verdict="existing verdict $(cut -f1 <<<"$line") ($(cut -f2 <<<"$line"), verdict row $(cut -f3 <<<"$line"))"
+    elif [ "$rc" = 2 ]; then
+      echo "$(STAMP) queue-cg-hold $p/$k: verdicts unreadable for $slug#$pr@${head:0:12}; not re-queued, event owed next tick" >> "$LOG"
+      return 1
+    elif box=$(vd_box_word "$slug" "$pr" "$head" 2>/dev/null) && [ -n "$box" ]; then
+      verdict="existing verdict $box (box)"
+    fi
+  fi
+  note="call guard refused $k on ${slug:-?}#${pr:-?}@${head:0:12}: this head already had its paid review; $verdict. Not re-queued: only a new head re-queues."
+  command -v lifecycle_note >/dev/null 2>&1 || { echo "$(STAMP) queue-cg-hold $p/$k: no lifecycle client; not re-queued, event owed next tick" >> "$LOG"; return 1; }
+  JOBS_ALERT=0 lifecycle_note "$p" "$k" watchdog "${note:0:500}" ${pr:+"$pr"} >/dev/null 2>&1; rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "$(STAMP) queue-cg-hold $p/$k: ticket_events write answered rc $rc; not re-queued, event owed next tick" >> "$LOG"
+    return 1
+  fi
+  echo "$(STAMP) queue-cg-terminal $p/$k: not re-queued; $verdict" >> "$LOG"
+}
 if command -v queue_list >/dev/null 2>&1; then
   for QDST in done failed; do
     QDROWS=$(queue_list "" "$QDST" "" deferred 2>/dev/null) || continue
@@ -799,6 +860,17 @@ if command -v queue_list >/dev/null 2>&1; then
       # are matched: rows enqueued before 2026-09-13 carry the old wording, and
       # ABANDONED is bin/blocked-resolver.sh's terminal, which nothing re-offers.
       case "${DRSN:-}" in *"parked for a human"*|*"parked for the blocked-resolver"*|ABANDONED*|*" ABANDONED "*) continue ;; esac
+      case "$DK:${DRSN:-}" in
+        RR-*:*"call-guard repeat"*|LR-*:*"call-guard repeat"*)
+          jw_cg_parse "${DMETA:-}" "${DRSN:-}"
+          if [ -z "$JW_CG_HEAD" ] || [[ $JW_CG_HEAD == "${DK##*-}"* ]]; then
+            grep -qxF "$DP/$DK#cg" "$CGNOTED" 2>/dev/null && continue
+            if jw_cg_note "$DP" "$DK"; then
+              QDCG=$((QDCG+1)); echo "$DP/$DK#cg" >> "$CGNOTED"
+            fi
+            continue
+          fi ;;
+      esac
       case "${DATT:-}" in ''|*[!0-9]*) DATT=0 ;; esac
       DDEF=$(printf '%s' "${DMETA:-}" | jq -r '.deferrals // 0' 2>/dev/null)
       case "${DDEF:-}" in ''|*[!0-9]*) DDEF=0 ;; esac
@@ -910,7 +982,7 @@ fi
 # An unreachable worker is jobs-client's own daily alert, not this script's — it
 # already says "coordination is degraded". Here it is one log line, because a
 # watchdog that cannot see is not the same event as a job that died.
-echo "$(STAMP) scan: $FOUND stale row(s), $ORPHANED orphaned, $QUEUED queued for retry, $PARKED parked, $QUIET silent (thresholds ${ORPHAN_MIN}m/${SILENT_MIN}m); lanes: $LANES_SEEN seen, $LANES_STALE newly silent, $LANES_BACK resumed; queue: $QRELEASED stale claim(s) released (over ${QUEUE_CLAIM_MIN}m), $QDEFER deferral(s) requeued, $QDPARK parked (cap $QDEFER_MAX); pr-rows: $PRREAPED reaped (TTL ${PR_ROW_TTL_MIN}m); ledger: $TTL_REAPED past TTL ($TTL_REQUEUED requeued, $TTL_PARKED parked at cap $REQUEUE_MAX, $TTL_HELD held), $RECONCILED merged-PR claim(s) closed, $RECLOSED abandoned-PR claim(s) closed (reconcile tick $TICKN, every $RECONCILE_EVERY)" >> "$LOG"
+echo "$(STAMP) scan: $FOUND stale row(s), $ORPHANED orphaned, $QUEUED queued for retry, $PARKED parked, $QUIET silent (thresholds ${ORPHAN_MIN}m/${SILENT_MIN}m); lanes: $LANES_SEEN seen, $LANES_STALE newly silent, $LANES_BACK resumed; queue: $QRELEASED stale claim(s) released (over ${QUEUE_CLAIM_MIN}m), $QDEFER deferral(s) requeued, $QDPARK parked (cap $QDEFER_MAX), $QDCG call-guard review row(s) held terminal; pr-rows: $PRREAPED reaped (TTL ${PR_ROW_TTL_MIN}m); ledger: $TTL_REAPED past TTL ($TTL_REQUEUED requeued, $TTL_PARKED parked at cap $REQUEUE_MAX, $TTL_HELD held), $RECONCILED merged-PR claim(s) closed, $RECLOSED abandoned-PR claim(s) closed (reconcile tick $TICKN, every $RECONCILE_EVERY)" >> "$LOG"
 # LAST, AND DELIBERATELY AFTER THE VERDICTS ABOVE (BH-1031). Every judgement
 # this sweep makes lands on the rows first, so the resume pass reads a ledger
 # this tick has already settled rather than racing it — a dir whose claim was

@@ -9,10 +9,15 @@
 #   POST /api/lifecycle/transition {project, ticket_key, to_phase, actor,
 #   reason, pr?, question?}. pr is sent as a number, and only when given;
 #   question only when given. The worker decides legality and ownership.
+# lifecycle_note <project> <ticket_key> <actor> <reason> [pr]
+#   POST /api/lifecycle/note {project, ticket_key, actor, reason, pr?}
+#   (BH-9160): one ticket_events row that moves no phase. The worker writes the
+#   same (project, ticket_key, actor, reason) once; a repeat answers
+#   duplicate:true.
 # lifecycle_stuck [project]
 #   GET /api/lifecycle/stuck[?project=]: the rows past their phase threshold.
 #
-# Return codes, both verbs (the transport's own map, bin/lib/jobs/req.sh):
+# Return codes, every verb (the transport's own map, bin/lib/jobs/req.sh):
 #   0  200: the body is on stdout
 #   9  409 (illegal move, wrong owner, stale): the body is on stdout
 #   2  404 (no build_queue row for that ticket, or a worker without the route)
@@ -37,6 +42,21 @@ lifecycle_transition() {
      + (if $hasq == "1" then {question:$q} else {} end)' 2>/dev/null) || return 1
   [ -n "$body" ] || return 1
   _jobs_req POST /api/lifecycle/transition "$body"
+  _lifecycle_rc $?
+}
+
+lifecycle_note() {
+  if [ $# -lt 4 ] || [ $# -gt 5 ] || [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ] \
+    || { [ -n "${5:-}" ] && ! [[ $5 =~ ^[1-9][0-9]{0,15}$ ]]; }; then
+    echo "usage: lifecycle_note <project> <ticket_key> <actor> <reason> [pr]" >&2
+    return 3
+  fi
+  local body
+  body=$(jq -nc --arg p "$1" --arg k "$2" --arg a "$3" --arg r "$4" --arg pr "${5:-}" \
+    '{project:$p, ticket_key:$k, actor:$a, reason:$r}
+     + (if $pr == "" then {} else {pr:($pr|tonumber)} end)' 2>/dev/null) || return 1
+  [ -n "$body" ] || return 1
+  _jobs_req POST /api/lifecycle/note "$body"
   _lifecycle_rc $?
 }
 

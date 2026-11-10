@@ -23,22 +23,48 @@
 #   IDEMPOTENT on project+KEY, which is exactly what a filename gave the file
 #   queue: enqueueing a key that is already queued OR already claimed writes
 #   nothing and prints `duplicate`.
+#   JOBS_QUEUE_ACTOR, when set, is sent as `actor`: the worker lets only
+#   `lifecycle` re-enter a plan_blocked or abandoned ticket (BH-9160).
 #   rc 0 -> prints "queued" or "duplicate"
 #   rc 1 -> API unusable. Say nothing; the file queue is still the queue.
+#   rc 3 -> REFUSED by the ticket's phase: prints "refused <phase>". This is
+#           an answer, not an outage, so a caller must NOT fall back to the file
+#           queue on it.
 queue_put() {
   local project="${1:-}" key="${2:-}" ticket="${3:-}" target="${4:-}" attempt="${5:-}" meta="${6:-}"
   [ -n "$project" ] && [ -n "$key" ] || return 1
-  local body resp
+  local body resp rc
   [ -n "$target" ] || target=$(queue_route_target "$(queue_routing_facts "$project" 2>/dev/null)")
   [ -n "$target" ] || target=local
   body=$(jq -nc --arg p "$project" --arg k "$key" --arg t "$ticket" --arg g "$target" \
-    --arg a "$attempt" --arg m "$meta" --arg b "$JOBS_BOX" \
+    --arg a "$attempt" --arg m "$meta" --arg b "$JOBS_BOX" --arg ac "${JOBS_QUEUE_ACTOR:-}" \
     '{project:$p,key:$k,target:$g,requested_by:$b}
      + (if $t == "" then {} else {ticket_id:$t} end)
      + (if ($a|test("^[0-9]+$")) then {attempt:($a|tonumber)} else {} end)
-     + (if $m == "" then {} else {meta:$m} end)' 2>/dev/null) || return 1
-  resp=$(_jobs_req POST /api/queue "$body") || return 1
+     + (if $m == "" then {} else {meta:$m} end)
+     + (if $ac == "" then {} else {actor:$ac} end)' 2>/dev/null) || return 1
+  resp=$(_queue_put_send "$body"); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ "$rc" -eq 3 ] && printf '%s' "$resp"
+    return "$rc"
+  fi
   printf '%s' "$(printf '%s' "$resp" | jq -r 'if .duplicate then "duplicate" else "queued" end' 2>/dev/null)"
+}
+
+# _queue_put_send <body> — POST the body to /api/queue and print the answer.
+#   rc 0 on 2xx (the body on stdout); rc 3 + "refused <phase>" on the
+#   worker's phase 409 (BH-9160); rc 1 on every other answer, a 409 with
+#   another error word included.
+_queue_put_send() {
+  local resp rc phase
+  resp=$(_jobs_req POST /api/queue "$1"); rc=$?
+  if [ "$rc" -eq 0 ]; then printf '%s' "$resp"; return 0; fi
+  if [ "$rc" -eq 9 ] && [ "$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null)" = phase_refused ]; then
+    phase=$(printf '%s' "$resp" | jq -r '.phase // "unknown"' 2>/dev/null)
+    printf 'refused %s' "${phase:-unknown}"
+    return 3
+  fi
+  return 1
 }
 
 # queue_routing_facts <project> — print `builder|halted` (builder local|fly1|pool,
