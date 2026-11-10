@@ -1,0 +1,10 @@
+{
+  "env": "STALEREMOTE_PR_SETTLED_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "off",
+  "note": "BH-9142: the staleremote check does not page a hub backup json whose own result line is PR_CREATED, PR_MERGED or PR_CLOSED with a GitHub pull URL once the json is older than this many days. The record proves the PR exists, so the close-out is no longer a dead staging step. The check costs no ledger read and no gh call; it is counted in the `staleremote: settled <n>` summary line. 0 turns the rule off (those jsons page as before). A non-number or a value over 365 falls back to 7."
+}

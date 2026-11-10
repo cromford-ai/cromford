@@ -6,7 +6,8 @@
 # "custody moved" lives in the build folder, and a pruned folder takes the
 # marker with it. Then only the jobs ledger can say whether the build is over.
 # Two readers use this: the staleremote section of bin/pipeline-health.sh and
-# bin/remote-results-retention.sh.
+# bin/remote-results-retention.sh. rr_json_pr_settled (BH-9142) reads the
+# json's own result line and needs no ledger.
 #
 # Sourced, never run. Needs jq; the ledger read needs _jobs_req
 # (bin/jobs-client.sh). No root path: every function takes its paths, and no
@@ -56,6 +57,22 @@ rr_build_state() {
     terminal|open|absent) printf '%s\n' "$st"; return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# rr_json_pr_settled <json> <json mtime> <now> <min age s> — rc 0 when the
+# json's own `result` (a string; its first line) is `PR_CREATED`, `PR_MERGED`
+# or `PR_CLOSED` followed by a GitHub pull URL, AND the json is older than
+# <min age s> (strict). The record itself proves the PR exists. A min age of
+# 0, a missing, non-string or unparseable result, or any other line is rc 1.
+# No file write, no network call, no ledger read (BH-9142).
+rr_json_pr_settled() {
+  local j="${1:-}" m="${2:-}" now="${3:-}" min="${4:-}" r
+  [ -f "$j" ] || return 1
+  [[ "$m" =~ ^[0-9]+$ ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$min" =~ ^[0-9]+$ ]] || return 1
+  [ "$min" -gt 0 ] && [ $(( now - m )) -gt "$min" ] || return 1
+  r=$(jq -er 'if (.result|type) == "string" then .result else empty end' "$j" 2>/dev/null) || return 1
+  r=${r%%$'\n'*}
+  [[ "$r" =~ ^(PR_CREATED|PR_MERGED|PR_CLOSED)\ https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+([[:space:]]|$) ]]
 }
 
 # The terminal-answer cache. One file per project, `<key>\t<json mtime>\t<marked>`

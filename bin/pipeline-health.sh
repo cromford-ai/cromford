@@ -683,15 +683,22 @@ done
 # is no page and one count in its own `consumed <n>` line. No row, an outage,
 # no lib or a read past the cap pages as before. The read shares the
 # STALEREMOTE_LEDGER_READS cap.
+# SETTLED (BH-9142): before the folder or ledger branch, and with no read, a
+# json does not page when the retention rule already retired it (marked in the
+# cache with the same mtime), or when its own result line names a GitHub pull
+# (rr_json_pr_settled) and it is older than STALEREMOTE_PR_SETTLED_DAYS
+# (0 = off). Both are counted in one `settled <n>` line.
 SR_READ_CAP=${STALEREMOTE_LEDGER_READS:-200}           # fallback of the pipeline-health knob STALEREMOTE_LEDGER_READS
 [[ "$SR_READ_CAP" =~ ^[0-9]+$ ]] || SR_READ_CAP=200
 SR_RET_EVERY=${REMOTE_RESULTS_RETENTION_EVERY_S:-3600} # fallback of the pipeline-health knob REMOTE_RESULTS_RETENTION_EVERY_S
 [[ "$SR_RET_EVERY" =~ ^[0-9]+$ ]] || SR_RET_EVERY=3600
+SR_PRDAYS=${STALEREMOTE_PR_SETTLED_DAYS:-7}            # fallback of the pipeline-health knob STALEREMOTE_PR_SETTLED_DAYS
+{ [[ "$SR_PRDAYS" =~ ^[0-9]+$ ]] && [ "$SR_PRDAYS" -le 365 ]; } || SR_PRDAYS=7
 SR_LIB=0; command -v rr_build_state >/dev/null 2>&1 && SR_LIB=1
 SR_TCD="$H/state/remote-results-terminal"
 for P in $PROJECTS; do
   [ -d "$H/state/remote-results/$P" ] || continue
-  SR_TERM=0; SR_CACHED=0; SR_UNK=0; SR_DEF=0; SR_READS=0; SR_CONS=0
+  SR_TERM=0; SR_CACHED=0; SR_UNK=0; SR_DEF=0; SR_READS=0; SR_CONS=0; SR_PRS=0; SR_RET=0
   [ "$SR_LIB" = 1 ] && rr_terminal_cache_load "$SR_TCD/$P.tsv"
   for J in "$H/state/remote-results/$P/"*.json; do
     [ -f "$J" ] || continue
@@ -702,6 +709,13 @@ for P in $PROJECTS; do
     [ "$RELAYED_SIB" = 1 ] && continue
     JM=$(stat -c %Y "$J") || continue
     [ $(( NOW - JM )) -gt 1800 ] || continue
+    if [ "$SR_LIB" = 1 ] && rr_terminal_cache_marked "$JK" "$JM"; then
+      SR_RET=$((SR_RET+1)); continue
+    fi
+    if [ "$SR_PRDAYS" -gt 0 ] && command -v rr_json_pr_settled >/dev/null 2>&1 \
+       && rr_json_pr_settled "$J" "$JM" "$NOW" "$((SR_PRDAYS*86400))"; then
+      SR_PRS=$((SR_PRS+1)); continue
+    fi
     SR_PAGE=1
     if [ "$SR_LIB" = 1 ] && ! rr_folder_present "$H" "$P" "$JK"; then
       if rr_terminal_cache_has "$JK" "$JM"; then
@@ -730,6 +744,8 @@ for P in $PROJECTS; do
     echo "$(STAMP) $P staleremote: ledger-terminal $SR_TERM, cached $SR_CACHED, unknown $SR_UNK (not paged, ledger unreadable), deferred $SR_DEF (read cap $SR_READ_CAP)" >> "$H/logs/pipeline-health.log"
   [ "$SR_CONS" -gt 0 ] && \
     echo "$(STAMP) $P staleremote: consumed $SR_CONS (the owning box's rr-consumed row; not paged)" >> "$H/logs/pipeline-health.log"
+  [ $((SR_PRS+SR_RET)) -gt 0 ] && \
+    echo "$(STAMP) $P staleremote: settled $((SR_PRS+SR_RET)) (pr older than ${SR_PRDAYS}d $SR_PRS, retired $SR_RET; not paged)" >> "$H/logs/pipeline-health.log"
   # The retention rule for these jsons (bin/remote-results-retention.sh), once
   # per project per REMOTE_RESULTS_RETENTION_EVERY_S. It writes its own audit
   # line; its exit code never changes this lane.
