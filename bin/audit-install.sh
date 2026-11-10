@@ -101,13 +101,48 @@ alert_once() { # alert_once <reason> <what is needed>
   echo "$(STAMP) [audit-install] $1 NEEDED FROM OPERATOR/OPS: $2" >> "$ALERTS"
 }
 
-# The rules file, and nothing else. A pure function of $ROOTS and of which of
-# those dirs exist: no clock, no hostname — that is what makes it byte-stable,
-# and what lets --check compare the installed file against a fresh render.
+# BH-9363: the two box-local state dirs the ticket names as unlink churn. Every
+# other box-local path stays recorded. A path list from the ticket, not a limit.
+AUDIT_UNLINK_BOX_LOCAL="gh-rest-ledger lane-runs"
+
+# cache_state_dirs — the state/ paths whose unlinks are churn (BH-9363), one per
+# line, C-sorted: every path the composed catalog classes `cache`, plus the
+# AUDIT_UNLINK_BOX_LOCAL names it classes `box-local`. The catalog is composed
+# the way bin/state-drain.sh does it, into a temp file removed on every path.
+# A path is kept only when it is a plain relative name (no `.`/`..` segment, no
+# space or shell character) and $HN/state/<path> is a real dir, not a symlink:
+# the kernel refuses `-F dir=` on a missing path, and a link can point anywhere.
+# No builder, no jq, a failed mktemp or a refused compose prints nothing, so
+# the trail records MORE, never less.
+cache_state_dirs() {
+  local tmp p
+  [ -x "$H/bin/state-paths-build.sh" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/audit-install-catalog.XXXXXX" 2>/dev/null) || return 0
+  if "$H/bin/state-paths-build.sh" --repo "$H" --compose --to "$tmp" >/dev/null 2>&1; then
+    jq -r --arg bl " $AUDIT_UNLINK_BOX_LOCAL " \
+      '.paths[] | select(.class == "cache" or (.class == "box-local" and (.path as $p | $bl | contains(" " + $p + " ")))) | .path' \
+      "$tmp" 2>/dev/null | while IFS= read -r p; do
+        [[ "$p" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || continue
+        case "/$p/" in */./*|*/../*) continue ;; esac
+        [ -d "$HN/state/$p" ] && [ ! -L "$HN/state/$p" ] && printf '%s\n' "$p"
+      done | LC_ALL=C sort -u
+  fi
+  rm -f "$tmp"
+  return 0
+}
+
+# The rules file, and nothing else. A pure function of $ROOTS, of which dirs
+# exist and of the catalog fragments: no clock, no hostname — that is what
+# makes it byte-stable, and what lets --check compare the installed file
+# against a fresh render.
 # The `never` rules come FIRST (the kernel takes the first match): the rename
 # churn of atomic tmp+mv writes under state/ logs/ locks/ tmp/, and the unlink
 # churn under locks/ and tmp/. unlink/rmdir under state/ logs/ builds/ bin/ env/
 # prompts/ cron/ stays recorded: a wipe ends in the rmdir of each top-level dir.
+# Then unlink (never rmdir) under each state/ dir from cache_state_dirs
+# (BH-9363): routine cache evictions filled a 50M file in 45 minutes on the hub.
+# flags/ is never excluded: a deleted pause flag is a security event.
 # No `-e 2` and no `-f 2` (immutability is its own ticket), and no chattr.
 render_rules() {
   echo "# /etc/audit/rules.d/harness.rules — written by bin/audit-install.sh (BH-395 / BH-443 / BH-9173)."
@@ -121,7 +156,10 @@ render_rules() {
       done
       for d in locks tmp; do
         [ -d "$HN/$d" ] && echo "-a never,exit -F arch=b64 -S unlink,unlinkat,rmdir -F dir=$HN/$d"
-      done ;;
+      done
+      while IFS= read -r d; do
+        [ -n "$d" ] && echo "-a never,exit -F arch=b64 -S unlink,unlinkat -F dir=$HN/state/$d"
+      done < <(cache_state_dirs) ;;
   esac
   for r in $LIVE_ROOTS; do
     echo "-a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=$r -k harness"

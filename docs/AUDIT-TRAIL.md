@@ -35,6 +35,7 @@ first:
 -a never,exit -F arch=b64 -S rename,renameat,renameat2 -F dir=/root/harness/tmp
 -a never,exit -F arch=b64 -S unlink,unlinkat,rmdir -F dir=/root/harness/locks
 -a never,exit -F arch=b64 -S unlink,unlinkat,rmdir -F dir=/root/harness/tmp
+-a never,exit -F arch=b64 -S unlink,unlinkat -F dir=/root/harness/state/gh-etag
 -a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/root/harness -k harness
 -a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/root/orchestrator -k harness
 -a always,exit -F arch=b64 -S unlink,unlinkat,rmdir,rename,renameat,renameat2,truncate,ftruncate -F dir=/etc/harness -k harness
@@ -49,6 +50,21 @@ paths were atomic tmp+mv writes under `state/` and lock churn under `locks/` and
 `state/`, `logs/`, `builds/`, `bin/`, `env/`, `prompts/` and `cron/` stay
 recorded: a wipe ends in the `rmdir` of each top-level dir. A `never` rule is
 rendered only for a subdir that exists.
+
+Unlinks under the cache dirs of `state/` (BH-9363). After BH-9173 the hub still
+filled one 50M file in about 45 minutes: 45,913 of its 46,080 events were
+`unlinkat`, most of them routine cache evictions under `state/`. So the render
+adds one `-a never,exit ... -S unlink,unlinkat -F dir=/root/harness/state/<path>`
+line for each path that the composed catalog (`catalog/state-paths.d/`) classes
+`cache`, plus `gh-rest-ledger` and `lane-runs` when the catalog classes them
+`box-local`. These lines come after the other `never` lines and before every
+`always` line. A line is rendered only for a path that is a real directory (not
+a file and not a symlink) with a plain name (no `.` or `..` segment). `rmdir`
+stays recorded, so a wipe of `state/` still leaves the `rmdir` of each dir.
+Nothing under `flags/` is excluded: a deleted pause flag is a security event.
+A new `cache` fragment is excluded at the next daily install with no edit to
+the installer. If the catalog cannot be composed (no builder, no `jq`, a
+refused fragment), the render has no such line and the trail records more.
 
 What is no longer recorded: an open with `O_TRUNC` (`> file`). The tailer still
 classes one as `truncate` if a record has one, but the rules do not ask for
