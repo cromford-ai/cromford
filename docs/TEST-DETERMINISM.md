@@ -312,7 +312,7 @@ alert ids (`main-red-prs:<owner>-<repo>:<hash>`).
 
 The streak above needs two consecutive red runs on `main` itself, which it only
 gets once somebody merges into a red main. **The open PRs know first.** For each
-repo in `MAIN_RED_PAIR_REPOS` it reads the open harness PRs
+repo in `MAIN_RED_PAIR_REPOS` (default: every fleet repo, BH-9284) it reads the open PRs
 (`bin/lib/gh-pr-list.sh`), works out what each head sha's newest failing
 **required** run failed on — job name plus the first error-shaped line of that
 job's log — and groups them. For the **Test determinism lint** job that first

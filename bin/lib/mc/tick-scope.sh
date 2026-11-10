@@ -417,7 +417,10 @@ MC_FLEET_SWEEPS=1
 if [ "$MC_FLEET_SWEEPS" = 1 ] && [ "${MC_MAIN_RED_DETECT:-1}" != 0 ] && [ -x "$H/bin/main-red-detector.sh" ]; then
   ( flock -n 9 || { mc_log "main-red detector: another tick holds the lock — skipped (dedupe, never a queue)"; exit 0; }
     mc_log "main-red detector: reading every repo's main before the project ticks"
-    "$H/bin/main-red-detector.sh" >> "$H/logs/main-red-detector.log" 2>&1 || true
+    # --wait-lock (BH-9284): the */5 recheck holds locks/main-red-detector.lock
+    # at minute 00, and a full pass that skipped on it starved for two days.
+    # The full pass waits up to MAIN_RED_FULL_PASS_LOCK_WAIT_S; the recheck never does.
+    "$H/bin/main-red-detector.sh" --wait-lock >> "$H/logs/main-red-detector.log" 2>&1 || true
   ) 9>"$MC_LOCK_DIR/main-red-detect-tick.lock" || true
 fi
 }

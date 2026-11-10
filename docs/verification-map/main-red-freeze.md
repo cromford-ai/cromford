@@ -142,3 +142,13 @@ every 10 on the hub, plus the per-box crons for `bin/merge-queue.sh`,
   `lane.main-red-recheck.main_red_recheck_min`, default 5, 0 = off). It uses the
   same decision code as the hourly pass. A repo with no flag is never read by
   it, and with no flag up it makes no GitHub read at all.
+- **The hourly full pass is never starved, and a starved one is said (BH-9284).**
+  The merge conductor runs `bin/main-red-detector.sh --wait-lock`: it waits up
+  to `lib.main-red-detector.main_red_full_pass_lock_wait_s` (default 90 s) for
+  `locks/main-red-detector.lock` while the recheck holds it. A pass that still
+  loses logs `full pass: reason=lock-held — waited <n>s ...`. If no scheduled
+  pass completes in `lib.main-red-detector.main_red_full_pass_stale_min`
+  (default 120 min), one warn alert `main-red-full-pass-stale` names the last
+  completed pass and the last lock-held line. The stamp is the ledgers row
+  `main_red_full_pass/last` (file `state/main-red/full-pass.last` with no row
+  store). Tests: `tests/main-red-detection.bh-9284-test.sh`.

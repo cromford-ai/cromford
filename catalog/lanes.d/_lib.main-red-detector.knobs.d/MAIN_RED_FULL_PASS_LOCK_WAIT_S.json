@@ -1,0 +1,11 @@
+{
+  "env": "MAIN_RED_FULL_PASS_LOCK_WAIT_S",
+  "read_in": "bin/main-red-detector.sh",
+  "type": "int",
+  "default": 90,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": "no wait",
+  "required": false,
+  "note": "BH-9284. How long the merge conductor's full pass (bin/main-red-detector.sh --wait-lock) waits for locks/main-red-detector.lock before it logs `full pass: reason=lock-held` and exits. The */5 recheck (--flagged-only), --explain and a run with repo arguments never wait. 0 = no wait (flock -n). Code fallback 90 in the detector."
+}

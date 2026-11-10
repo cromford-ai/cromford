@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/main-red-detector.sh [--explain] [--flagged-only] [owner/repo ...] — is MAIN itself red?
+# bin/main-red-detector.sh [--explain] [--flagged-only] [--wait-lock] [owner/repo ...] — is MAIN itself red?
 #
 # THE SILENCE THIS KILLS (2026-09-15). worker/jobs/test/cost-anchored.test.js
 # windowed off the wall clock against fixtures pinned to 2026-09-14. At ~14:00Z
@@ -113,6 +113,33 @@
 # `pass end:` line, `recheck: <n> flagged repo(s), <r> Actions read(s)`
 # (every GitHub Actions GET this pass made). It names no stray flag: the
 # hourly pass does that.
+#
+# THE FULL PASS WAITS (BH-9284). The */5 recheck above fires at minute 00, the
+# same minute the conductor's hourly full pass starts, and both take
+# locks/main-red-detector.lock. With `flock -n` the full pass lost that race
+# every hour: from 2026-11-06 19:00Z to 2026-11-08 no full pass completed, and
+# nothing said so. So the conductor passes --wait-lock, and a scheduled full
+# pass (no repo arguments, not --flagged-only, not --explain) then waits up to
+# MAIN_RED_FULL_PASS_LOCK_WAIT_S (90) seconds for the lock (`flock -w`). This
+# was chosen over a cron change that skips the recheck at minute 00: it changes
+# one call site, it covers a recheck that runs long at any minute, and the
+# recheck keeps its 5-minute cadence. A recheck over a few flagged repos ends in
+# seconds, so the full pass runs right after it. The recheck, --explain, a hand
+# run and the knob at 0 never wait (`flock -n`, dedupe as before). A waited pass
+# that still does not get the lock logs one
+# `full pass: reason=lock-held — waited <n>s for locks/main-red-detector.lock`
+# line, flag up or not, and exits 0.
+# A scheduled full pass that ends exit 0 with no signal stamps the ledgers row
+# main_red_full_pass/last (file state/main-red/full-pass.last with no row
+# store). When a waited pass gives up and no pass has stamped `last` for
+# MAIN_RED_FULL_PASS_STALE_MIN (120) minutes, ONE warn alert
+# (id main-red-full-pass-stale) names the last completed pass and the last
+# reason=lock-held line in logs/main-red.log. The marker row `alerted` is
+# written before the send, so a stale period alerts once. With no `last` at
+# all, the first give-up writes `watch_since` and the clock starts there. The
+# next completed pass sends one resolve and clears the marker. The watch runs
+# only on that give-up path: bin/main-red-recheck.sh never runs it (BH-8195 R4:
+# a recheck with no freeze up writes nothing).
 #
 #   red, and no flag yet  -> write flags/main-red-<owner>-<repo> (sha, workflow,
 #                            since, run url, reason) + ONE --critical alert naming
@@ -271,8 +298,21 @@
 #                              main_red_queue_self_dispatch_min > env > default;
 #                              a non-numeric value is the default
 #
+#   MAIN_RED_FULL_PASS_LOCK_WAIT_S [90]  seconds --wait-lock waits for the
+#                              lock; 0 = no wait. Settings row
+#                              lib.main-red-detector.main_red_full_pass_lock_wait_s
+#                              > env > default (BH-9284, above)
+#   MAIN_RED_FULL_PASS_STALE_MIN [120]  minutes with no completed full pass
+#                              before one warn alert; 0 = off. Settings row
+#                              lib.main-red-detector.main_red_full_pass_stale_min
+#                              > env > default
+#
 #   --flagged-only  judge only the repos in the list whose freeze flag is up
 #               (BH-6502, above). bin/main-red-recheck.sh runs it every 5 min.
+#   --wait-lock wait up to MAIN_RED_FULL_PASS_LOCK_WAIT_S for the lock instead
+#               of skipping (BH-9284, above). The merge conductor's full pass
+#               passes it. Ignored with --flagged-only, --explain and repo
+#               arguments.
 #   --explain   print what this tick WOULD do, and exit. READ-ONLY (BH-997):
 #               takes no lock, writes and clears no flags/main-red-* file,
 #               publishes no pause row, writes no verdict row or file,
@@ -286,12 +326,13 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 export HARNESS="$H"
-EXPLAIN=0; FLAGGED_ONLY=0; ARGS=()
+EXPLAIN=0; FLAGGED_ONLY=0; WAIT_LOCK=0; ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --explain) EXPLAIN=1 ;;
     --flagged-only) FLAGGED_ONLY=1 ;;
-    -h|--help) sed -n '2,284p' "$0"; exit 0 ;;
+    --wait-lock) WAIT_LOCK=1 ;;
+    -h|--help) sed -n '2,324p' "$0"; exit 0 ;;
     -*) echo "main-red-detector.sh: unknown flag $1" >&2; exit 2 ;;
     *) ARGS+=("$1") ;;
   esac
@@ -444,11 +485,13 @@ QUEUE_PAGE="${MAIN_RED_QUEUE_PER_PAGE:-100}"; case "$QUEUE_PAGE" in ''|*[!0-9]*|
 # empty first field would collapse into the second.
 mr_lib_knob_rows() {
   [ -r "$H/bin/lib/lane-gate.sh" ] || return 0
-  ( unset MAIN_RED_QUEUE_ATTR MAIN_RED_QUEUE_SELF_DISPATCH_MIN; export HARNESS="$H"
+  ( unset MAIN_RED_QUEUE_ATTR MAIN_RED_QUEUE_SELF_DISPATCH_MIN MAIN_RED_FULL_PASS_LOCK_WAIT_S MAIN_RED_FULL_PASS_STALE_MIN
+    export HARNESS="$H"
     # shellcheck source=bin/lib/lane-gate.sh
     . "$H/bin/lib/lane-gate.sh" >/dev/null 2>&1
     command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply main-red-detector >/dev/null 2>&1
-    printf '%s\n%s\n' "${MAIN_RED_QUEUE_ATTR:-}" "${MAIN_RED_QUEUE_SELF_DISPATCH_MIN:-}" )
+    printf '%s\n%s\n%s\n%s\n' "${MAIN_RED_QUEUE_ATTR:-}" "${MAIN_RED_QUEUE_SELF_DISPATCH_MIN:-}" \
+      "${MAIN_RED_FULL_PASS_LOCK_WAIT_S:-}" "${MAIN_RED_FULL_PASS_STALE_MIN:-}" )
 }
 # mr_knob <row> <env> <default> — "<value> <from>": row, then env, then the
 # default. A value that is not a whole number is the default, never off.
@@ -459,12 +502,113 @@ mr_knob() {
   case "$v" in *[!0-9]*) v="$3"; from=default ;; esac
   printf '%s %s' "$v" "$from"
 }
-MRK_ATTR=""; MRK_DISP=""
-{ read -r MRK_ATTR; read -r MRK_DISP; } < <(mr_lib_knob_rows)
+MRK_ATTR=""; MRK_DISP=""; MRK_FPW=""; MRK_FPS=""
+{ read -r MRK_ATTR; read -r MRK_DISP; read -r MRK_FPW; read -r MRK_FPS; } < <(mr_lib_knob_rows)
 read -r MR_QUEUE_ATTR MRK_ATTR_FROM <<<"$(mr_knob "$MRK_ATTR" "${MAIN_RED_QUEUE_ATTR:-}" 1)"
 read -r MR_QUEUE_SELF_DISPATCH_MIN MRK_DISP_FROM <<<"$(mr_knob "$MRK_DISP" "${MAIN_RED_QUEUE_SELF_DISPATCH_MIN:-}" 60)"
 export MR_QUEUE_ATTR MR_QUEUE_SELF_DISPATCH_MIN
 log "queue knobs attr=$MR_QUEUE_ATTR (from $MRK_ATTR_FROM) self-dispatch=$MR_QUEUE_SELF_DISPATCH_MIN (from $MRK_DISP_FROM)"
+# THE FULL PASS'S TWO KNOBS (BH-9284), same lib scope, same read.
+# Fallback of lib.main-red-detector.main_red_full_pass_lock_wait_s: 90 seconds.
+read -r MR_FP_WAIT_S MRK_FPW_FROM <<<"$(mr_knob "$MRK_FPW" "${MAIN_RED_FULL_PASS_LOCK_WAIT_S:-}" 90)"
+# Fallback of lib.main-red-detector.main_red_full_pass_stale_min: 120 minutes.
+read -r MR_FP_STALE_MIN MRK_FPS_FROM <<<"$(mr_knob "$MRK_FPS" "${MAIN_RED_FULL_PASS_STALE_MIN:-}" 120)"
+MR_FP_WAIT_S=$((10#$MR_FP_WAIT_S)); MR_FP_STALE_MIN=$((10#$MR_FP_STALE_MIN))
+# MR_FULL: a scheduled full pass — no repo arguments, not a recheck, not a dry
+# run. Only it waits for the lock, stamps a completion or runs the watch.
+MR_FULL=0
+[ "${#ARGS[@]}" -eq 0 ] && [ "$FLAGGED_ONLY" != 1 ] && [ "$EXPLAIN" != 1 ] && MR_FULL=1
+# The knobs line is said only by a pass that can wait, so every other run's log
+# reads as before.
+[ "$WAIT_LOCK" = 1 ] && [ "$MR_FULL" = 1 ] && \
+  log "full-pass knobs wait=$MR_FP_WAIT_S (from $MRK_FPW_FROM) stale=$MR_FP_STALE_MIN (from $MRK_FPS_FROM)"
+
+# THE FULL PASS RECORD (BH-9284). Three ledgers rows, kind main_red_full_pass:
+# `last` (epoch of the last completed full pass), `watch_since` (epoch the
+# watch first ran with no `last`) and `alerted` (the `last` value, or
+# none:<watch_since>, the open alert was sent for). Where there is no row store
+# (rc 2), the files state/main-red/full-pass.<name> are the record. Inline, not
+# a lib: about 30 suites copy this script alone into a scratch bin/.
+# mr_fp_get <name> — prints the value. rc 0 a value, 3 none, 1 unreadable.
+mr_fp_get() {
+  local v="" rc=2 sf="$H/state/main-red/full-pass.$1"
+  command -v _mrs_ledger_get >/dev/null 2>&1 && { v=$(_mrs_ledger_get main_red_full_pass "$1"); rc=$?; }
+  case "$rc" in
+    0) [ -n "$v" ] && [ "$v" != - ] || return 3; printf '%s' "$v"; return 0 ;;
+    3) return 3 ;;
+    2) # The -f test first: bash opens `<` before `2>/dev/null` applies (BH-8195).
+       [ -f "$sf" ] || return 3
+       v=$(tr -d '\n' < "$sf" 2>/dev/null)
+       [ -n "$v" ] || return 3
+       printf '%s' "$v"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# mr_fp_put <name> <value> — rc 0 written, 1 not written. The value `-` clears.
+mr_fp_put() {
+  local rc=2 sf="$H/state/main-red/full-pass.$1"
+  command -v _mrs_ledger_put >/dev/null 2>&1 && { _mrs_ledger_put main_red_full_pass "$1" "$2"; rc=$?; }
+  case "$rc" in
+    0) return 0 ;;
+    2) if [ "$2" = - ]; then rm -f "$sf"; return 0; fi
+       mkdir -p "$H/state/main-red" 2>/dev/null
+       printf '%s\n' "$2" > "$sf" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+mr_fp_iso() { date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "$1"; }
+# mr_fp_stamp <epoch> — a full pass completed: write `last`, resolve an open
+# alert once, clear the marker and watch_since.
+mr_fp_stamp() {
+  local m
+  mr_fp_put last "$1" || { log "full-pass watch: the completed-pass stamp was not written"; return 0; }
+  if m=$(mr_fp_get alerted); then
+    "$H/bin/lane-alert.sh" --resolve --log-only --id main-red-full-pass-stale main-red \
+      "main-red full pass: completed at $(mr_fp_iso "$1"), the full pass runs again" >/dev/null 2>&1
+    log "full-pass watch: resolved — a full pass completed at $(mr_fp_iso "$1") (alert was for $m)"
+    mr_fp_put alerted - || log "full-pass watch: the alert marker was not cleared"
+  fi
+  mr_fp_get watch_since >/dev/null && { mr_fp_put watch_since - || log "full-pass watch: watch_since was not cleared"; }
+  return 0
+}
+# mr_fp_watch <now> — ONE warn alert when no full pass completed in
+# MR_FP_STALE_MIN minutes. Runs only when a waited full pass gives up.
+mr_fp_watch() {
+  local now="$1" last since key age m rc mrc held text
+  [ "$MR_FP_STALE_MIN" = 0 ] && return 0
+  last=$(mr_fp_get last); rc=$?
+  case "$rc" in
+    0) case "$last" in *[!0-9]*) log "full-pass watch: the completed-pass stamp '$last' is not an epoch — no check this tick"; return 0 ;; esac
+       since="$last"; key="$last" ;;
+    3) since=$(mr_fp_get watch_since)
+       case "$?" in
+         0) case "$since" in *[!0-9]*) log "full-pass watch: watch_since '$since' is not an epoch — no check this tick"; return 0 ;; esac ;;
+         3) mr_fp_put watch_since "$now" || log "full-pass watch: the watch start was not written"
+            return 0 ;;
+         *) log "full-pass watch: the watch start row is unreadable — no check this tick"; return 0 ;;
+       esac
+       key="none:$since" ;;
+    *) log "full-pass watch: the completed-pass stamp row is unreadable — no check this tick"; return 0 ;;
+  esac
+  age=$(( now - since ))
+  [ "$age" -ge $(( MR_FP_STALE_MIN * 60 )) ] || return 0
+  m=$(mr_fp_get alerted); mrc=$?
+  case "$mrc" in
+    0) [ "$m" = "$key" ] && return 0 ;;
+    3) ;;
+    *) log "full-pass watch: the alert marker row is unreadable — no alert this tick"; return 0 ;;
+  esac
+  # The marker FIRST: a marker that is not written sends nothing (a missed
+  # alert next tick, never a duplicate).
+  mr_fp_put alerted "$key" || { log "full-pass watch: the alert marker was not written — no alert this tick"; return 0; }
+  held=$(grep -F 'reason=lock-held' "$LOG" 2>/dev/null | tail -1)
+  if [ "$rc" = 0 ]; then text="Last completed pass: $(mr_fp_iso "$last")."
+  else text="Last completed pass: none recorded since $(mr_fp_iso "$since")."; fi
+  text="main-red full pass: no completed pass in $(( age / 60 )) min. $text Last lock-held line: ${held:-none}"
+  "$H/bin/lane-alert.sh" --severity warn --id main-red-full-pass-stale main-red "$text" >/dev/null 2>&1
+  log "full-pass watch: ALERT(warn) sent — no completed full pass in $(( age / 60 )) min (marker $key)"
+  return 0
+}
 # ONE clock read for the whole run: every repo in the loop below is judged
 # against the same NOW, so two repos cannot disagree about what "15 minutes
 # ago" means half a second apart.
@@ -492,12 +636,23 @@ mr_flag_files() {
 }
 if [ "$EXPLAIN" != 1 ] && command -v flock >/dev/null 2>&1; then
   exec 8>"$H/locks/main-red-detector.lock"
-  if ! flock -n 8; then
+  # The scheduled full pass waits for the lock when asked (BH-9284, header);
+  # everything else is dedupe, never a queue.
+  _mrw=0
+  [ "$WAIT_LOCK" = 1 ] && [ "$MR_FULL" = 1 ] && _mrw="$MR_FP_WAIT_S"
+  if [ "$_mrw" -gt 0 ]; then flock -w "$_mrw" 8; else flock -n 8; fi
+  if [ $? -ne 0 ]; then
     # A skipped pass is said for every freeze it leaves up (BH-6352), and only
     # then: with no flag up a held lock stays as quiet as it always was.
     while read -r _mrn; do
       [ -n "$_mrn" ] && log "$_mrn: decision=none reason=lock-held — another pass holds locks/main-red-detector.lock"
     done < <(mr_flag_files)
+    # A full pass that waited and still lost is said always, and the staleness
+    # watch runs: this give-up is the shape that starved it (BH-9284).
+    if [ "$_mrw" -gt 0 ]; then
+      log "full pass: reason=lock-held — waited ${_mrw}s for locks/main-red-detector.lock"
+      mr_fp_watch "$(date +%s)"
+    fi
     exit 0
   fi
 fi
@@ -563,6 +718,9 @@ mr_pass_end() {
     [ -n "${MR_READS_F:-}" ] && rm -f "$MR_READS_F"
   fi
   log "pass end: decided ${#MR_DECIDED[@]} of $(wc -w <<<"$REPOS" | tr -d ' ') repo(s) in $((SECONDS - MR_T0))s, exit $1, signal $MR_SIG, last repo ${MR_CUR:-none}"
+  # A completed scheduled full pass is stamped (BH-9284): exit 0, no signal.
+  [ "$MR_FULL" = 1 ] && [ "$1" = 0 ] && [ "$MR_SIG" = none ] && mr_fp_stamp "$(date +%s)"
+  return 0
 }
 declare -A MR_DECIDED=()
 MR_CUR=""; MR_SIG=none; MR_T0=$SECONDS

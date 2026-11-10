@@ -1,0 +1,11 @@
+{
+  "env": "MAIN_RED_FULL_PASS_STALE_MIN",
+  "read_in": "bin/main-red-detector.sh",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "unit": "minutes",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9284. Minutes with no completed scheduled full pass before ONE warn alert (id main-red-full-pass-stale) that names the last completed pass and the last reason=lock-held line. Checked when a waited full pass gives up on the lock. 0 = the watch is off. Code fallback 120 in the detector."
+}

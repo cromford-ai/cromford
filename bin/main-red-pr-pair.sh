@@ -79,8 +79,14 @@
 #
 # Knobs (env/global.env, documented fallbacks in brackets):
 #   MAIN_RED_PAIR=0 or flags/main-red-pr-pair-off   kill switch (or the `switch.main-red-pr-pair-off` settings row)
-#   MAIN_RED_PAIR_REPOS    [$HARNESS_REPO]  repos this reads. The harness's own
-#                          PRs are the population that inherits a red main.
+#   MAIN_RED_PAIR_REPOS    [every fleet repo]  repos this reads. Unset or empty:
+#                          every repo in fleet.conf (through bin/fleet-conf.sh)
+#                          plus $HARNESS_REPO, the list bin/main-red-detector.sh
+#                          reads (BH-9284). On 2026-11-08 two project-6 PRs
+#                          failed the same job and this lane, reading only
+#                          $HARNESS_REPO, said nothing. No fleet.conf:
+#                          $HARNESS_REPO alone. Repo arguments, then a
+#                          hand-set value, win.
 #   MAIN_RED_PAIR_MAX_PRS  [15]   open PRs read per tick, newest-updated first.
 #                          A cap that bites is LOGGED, never silent, and while
 #                          it bites an open pair resolves only once every PR it
@@ -211,9 +217,18 @@ else
 fi
 
 if [ "${#ARGS[@]}" -gt 0 ]; then
-  REPOS=$(printf '%s\n' "${ARGS[@]}")
+  REPOS=$(printf '%s\n' "${ARGS[@]}"); REPOS_FROM=args
+elif [ -n "${MAIN_RED_PAIR_REPOS:-}" ]; then
+  REPOS=$(printf '%s\n' $MAIN_RED_PAIR_REPOS); REPOS_FROM=env
 else
-  REPOS=$(printf '%s\n' ${MAIN_RED_PAIR_REPOS:-$HARNESS_REPO})
+  # Every fleet repo (BH-9284): the same list as bin/main-red-detector.sh, the
+  # same pipeline. Kept inline because the lane's tests copy this script alone
+  # into a scratch bin/.
+  REPOS=$( { awk '$1!~/^#/ && NF>=2 {print $1}' "$H/fleet.conf" 2>/dev/null | grep -vE "redirect" | while read -r P; do
+              "$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null; done; echo "$HARNESS_REPO"; } \
+            | grep -E '^[^-][^ ]*/[^ ]+$' | awk '!seen[$0]++' )
+  REPOS_FROM=fleet.conf
+  [ -n "$REPOS" ] || { REPOS="$HARNESS_REPO"; REPOS_FROM=default; }
 fi
 
 # DEDUPE, NEVER A QUEUE: two overlapping ticks would both see the same pair and
@@ -227,6 +242,7 @@ if [ "$EXPLAIN" != 1 ] && command -v flock >/dev/null 2>&1; then
   exec 8>"$H/locks/main-red-pr-pair.lock"
   flock -n 8 || { log "another main-red-pr-pair tick holds the lock — skipping this one"; exit 0; }
 fi
+log "repos: $(wc -w <<<"$REPOS" | tr -d ' ') (from $REPOS_FROM)"
 
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh" 2>/dev/null

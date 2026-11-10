@@ -64,7 +64,7 @@
       "type": "string",
       "default": "",
       "zero_means": null,
-      "note": "no static default — the script computes it ($HARNESS_REPO). Read by bin/main-red-pr-pair.sh as ${MAIN_RED_PAIR_REPOS:-$HARNESS_REPO}. Registered by BH-1165 so it is visible; NOT settable from the control plane — it is a command, a host, a path, an identity or a test seam a root lane uses, so only env/global.env on the box moves it; no reviewed min/max yet, so nothing is clamped.",
+      "note": "no static default — the script computes it: every fleet.conf repo (through bin/fleet-conf.sh) plus $HARNESS_REPO, the list bin/main-red-detector.sh reads (BH-9284); $HARNESS_REPO alone when that list is empty. A non-empty value wins. Registered by BH-1165 so it is visible; NOT settable from the control plane — it is a command, a host, a path, an identity or a test seam a root lane uses, so only env/global.env on the box moves it; no reviewed min/max yet, so nothing is clamped.",
       "settable": false
     },
     {

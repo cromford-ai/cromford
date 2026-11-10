@@ -87,7 +87,7 @@ hub, next to `bin/pipeline-health.sh`. Alerts go through `bin/lane-alert.sh`
   truncated the one a live tick was holding.
 
 **Knobs:** `MAIN_RED_PAIR=0` or `flags/main-red-pr-pair-off` (kill switch),
-`MAIN_RED_PAIR_REPOS` [`$HARNESS_REPO`], `MAIN_RED_PAIR_MAX_PRS` [15],
+`MAIN_RED_PAIR_REPOS` [every fleet.conf repo plus `$HARNESS_REPO`, BH-9284], `MAIN_RED_PAIR_MAX_PRS` [15],
 `MAIN_RED_PAIR_WINDOW_S` [3600], `MAIN_RED_PAIR_LEDGER_DAYS` [14],
 `MAIN_RED_PAIR_FREEZE` [1] (0 = alert exactly as before and raise no freeze),
 `MAIN_RED_ERR_RE`, `MAIN_RED_SKIP_RE`. Documented in the script header, in

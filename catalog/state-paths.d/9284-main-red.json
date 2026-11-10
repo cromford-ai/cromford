@@ -1,0 +1,3 @@
+[
+    {"path": "main-red", "class": "box-local", "authority": "the hub main-red lanes' file fallbacks for boxes with no row store (BH-4156, BH-9284)", "note": "state/main-red/ (bin/main-red-detector.sh, bin/main-red-pr-pair.sh, bin/main-red-recheck.sh): <slug>.verdict, <flag>.published, pairs/, pr-errors/, recheck.last and full-pass.{last,watch_since,alerted}. Where JOBS_URL and HARNESS_SECRET are set the ledgers and main-red-state rows are the record and these files are not written. A box with no coordination DB keeps them here. Fixed names per repo, per pair or per stamp, overwritten in place; pr-errors/ is pruned after MAIN_RED_PAIR_LEDGER_DAYS. Hub lanes only, never carried"}
+]

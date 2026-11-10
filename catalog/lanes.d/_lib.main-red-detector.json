@@ -3,7 +3,7 @@
     {
       "id": "main-red-detector",
       "file": "bin/main-red-detector.sh",
-      "note": "BH-3886: the knobs of bin/main-red-detector.sh's merge-queue hooks. The detector resolves both once per tick with lib_env_apply main-red-detector in a subshell with the env names unset (settings row lib.main-red-detector.<env lowercased>, then env, then the default; a value that is not a whole number is the default, never off), exports them as MR_QUEUE_ATTR and MR_QUEUE_SELF_DISPATCH_MIN, and logs one `queue knobs` line. The hooks that consume them live in bin/lib/main-red-queue-attr.sh and bin/lib/main-red-queue-dispatch.sh. tests/main-red-queue-hooks.bh-3886-test.sh drives it.",
+      "note": "BH-3886: the knobs of bin/main-red-detector.sh's merge-queue hooks. The detector resolves both once per tick with lib_env_apply main-red-detector in a subshell with the env names unset (settings row lib.main-red-detector.<env lowercased>, then env, then the default; a value that is not a whole number is the default, never off), exports them as MR_QUEUE_ATTR and MR_QUEUE_SELF_DISPATCH_MIN, and logs one `queue knobs` line. The hooks that consume them live in bin/lib/main-red-queue-attr.sh and bin/lib/main-red-queue-dispatch.sh. tests/main-red-queue-hooks.bh-3886-test.sh drives it. BH-9284: the full pass's lock wait and staleness knobs (MAIN_RED_FULL_PASS_LOCK_WAIT_S, MAIN_RED_FULL_PASS_STALE_MIN, in _lib.main-red-detector.knobs.d/) are read in the same subshell; a --wait-lock full pass logs one `full-pass knobs` line. tests/main-red-detection.bh-9284-test.sh drives them.",
       "knobs": [
         {
           "env": "MAIN_RED_QUEUE_SELF_DISPATCH_MIN",
