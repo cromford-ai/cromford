@@ -1,0 +1,11 @@
+{
+  "env": "MC_BATCH_VICTIM",
+  "read_in": "bin/merge-conductor.d/bh-9253-batch-victim.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9253: 1 = a queue-ejected-twice PR whose newest Mergify dequeue code is in MC_BATCH_VICTIM_CODES, whose own-head CI is green and whose APPROVE is bound to that head is a batch victim: the conductor adds queue-solo and requeues it alone (the solo queue, batch_size 1), once per head, instead of parking it. 0 = off: every batch ejection parks as before. Settings row: lane.merge-conductor.mc_batch_victim."
+}

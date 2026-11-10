@@ -1,0 +1,10 @@
+{
+  "env": "BR_PROJECT_FLOOR",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": null,
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9253-project-floor.sh",
+  "note": "BH-9253: the rungs each project with parked work keeps in one tick. A project that already holds this many rungs does not take the last rungs of the tick while another project with rows still ahead holds fewer; its row waits for the next tick (PROJECT_FLOOR line). Read once per tick at the fleet value. A one-project run is unchanged. 0 = off: the list order alone decides, as before. Settings row: lane.blocked-resolver.br_project_floor."
+}

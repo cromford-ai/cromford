@@ -1744,7 +1744,11 @@ pr_worker() {
     EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
     EJWHY="queue-ejected — push a fix; the next head is enqueued on its own merits"
     command -v ec_head_why >/dev/null 2>&1 && QS2=$(ec_head_why "$SLUG" "$NUM" "$HEAD") && [ -n "$QS2" ] && EJWHY="queue-ejected: $QS2 — push a fix; the next head is enqueued on its own merits"
-    if [ "${EJN:-0}" -ge 2 ]; then
+    # A batch victim requeued solo on this head (BH-9253) is not parked while
+    # the solo run is in the queue: its `reejected` line predates the requeue.
+    if command -v mc_bv_requeue_live >/dev/null 2>&1 && mc_bv_requeue_live "$KEY" "$HEAD"; then
+      STATE=WAIT_CI; WHY="batch-victim: requeued solo on ${HEAD:0:8}, waiting for Mergify to acknowledge — never re-queued twice"
+    elif [ "${EJN:-0}" -ge 2 ]; then
       STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
       command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
     elif [ "$PROVIDER" != mergify ] || [ "${MC_QUEUE_REENTRY:-1}" = 0 ]; then
@@ -3035,7 +3039,22 @@ tick_project() {
             else QLCW="queue ejection ($PROVIDER): checks: ${QEWHY:-not read}"; fi
             mclc_put ejected "$P" "$SLUG" "${QBR:-}" "${QKEY##*#}" "$QHEAD" "$QLCW"
           fi
-          if [ "${EJN:-1}" -ge 2 ]; then
+          # >>> batch victim (BH-9253)
+          # A head already requeued solo that is out again: the solo run
+          # ejected it. `bvreejected` ends mc_bv_requeue_live, so the head reads
+          # as ejected again and mc_bv_solo below answers park:solo-tried.
+          mc_attempt_has "batchvictim $QKEY $QHEAD" 2>/dev/null && { mc_attempt_has "bvreejected $QKEY $QHEAD" 2>/dev/null || mc_attempt_put "bvreejected $QKEY $QHEAD"; }
+          # A second ejection whose Mergify dequeue code is a batch failure
+          # (MC_BATCH_VICTIM_CODES) on a head with green own CI and a bound
+          # APPROVE is a batch victim: mc_bv_solo adds queue-solo, requeues it
+          # alone once per head and moves the row. rc 1 = park as before.
+          QBV=1
+          [ "${EJN:-1}" -ge 2 ] && command -v mc_bv_solo >/dev/null 2>&1 \
+            && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" && QBV=0
+          # <<< batch victim (BH-9253)
+          if [ "$QBV" = 0 ]; then
+            mc_log "$QKEY ejected again on ${QHEAD:0:8} (ejections: $EJN) — a batch victim, requeued solo instead of parked (BH-9253)"
+          elif [ "${EJN:-1}" -ge 2 ]; then
             mc_log "$QKEY EJECTED from the merge queue again on ${QHEAD:0:8} (ejections: $EJN, provider $PROVIDER)"
             mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice${QEWHY:+: $(ec_summary "$SLUG" "${QKEY##*#}")}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
             mc_log "$QKEY BLOCKED_AGENT queue-ejected-twice — its batch build fails against current main, which its own checks never test; handed to bin/blocked-resolver.sh (its ladder: an agent fix round with the failing batch runs when they could be read, else merge main / re-run CI first; then a fresh rebuild): $QURL"
@@ -3078,7 +3097,13 @@ tick_project() {
         # BH-6000 part 5: a queue-ejected-twice park whose hand-over could not
         # read the dequeue comments is asked again here, once a tick, until it
         # is stamped (mc_eject_fix_now returns at once for a stamped head).
-        case "$QWHY" in queue-ejected-twice*) mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" ;; esac
+        # BH-9253: a parked batch victim is requeued solo first; any other
+        # queue-ejected-twice park (rc 1) gets the fix round as before.
+        case "$QWHY" in queue-ejected-twice*)
+          if ! { command -v mc_bv_solo >/dev/null 2>&1 && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; }; then
+            mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
+          fi ;;
+        esac
       fi
       exec 9>&-
     done

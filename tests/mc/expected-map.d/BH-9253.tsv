@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-9253.tsv — BH-9253: mc_label_add puts a label on a PR through the armed issues-labels write; origin=lib because it is a new module function. mc_bv_requeue_live keeps a batch victim's solo requeue out of mc_ejection_live until the solo run ejects it.
+classify	mc_label_add	lib
+classify	mc_bv_requeue_live	lib

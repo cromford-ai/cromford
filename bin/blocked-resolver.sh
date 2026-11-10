@@ -8069,6 +8069,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
     *) ALLSEEN="$ALLSEEN$XPB "; ALLORDER="${ALLORDER:+$ALLORDER }$XPB"; NPROJ=$((NPROJ+1)) ;;
   esac
 done
+command -v brpf_init >/dev/null 2>&1 && brpf_init  # BH-9253 project floor: the rows each project still has ahead
 # VISITED is the same substring-set shape DONE_KEYS and CAPSAID use; VISITLIST is
 # the same thing in visit order, for the line. STOPREASON is decided by the
 # loop's own exit and never inferred afterwards (D9/D13): `budget` only when the
@@ -8093,6 +8094,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   LIDX=$((LIDX+1))
   IFS=$'\t' read -r SRC P RKEY REASON URL REC TKEY PARKED <<<"$LINE"
   [ -n "${RKEY:-}" ] || continue
+  command -v brpf_take >/dev/null 2>&1 && brpf_take "${P:--}"  # BH-9253 project floor
   # THIS PROJECT'S LANE ROWS (BH-7123 wave B): applied as the row's project
   # changes, memoised, the tick budgets kept fleet-wide (br_env_for_project).
   br_env_for_project "$P"
@@ -8178,6 +8180,8 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
     br_note_untouched "${PARKED:--}" "$PB"
     continue
   fi
+  # BH-9253: a project at its floor leaves the last rungs to a project with rows ahead that holds fewer (BR_PROJECT_FLOOR).
+  if command -v brpf_skip >/dev/null 2>&1 && brpf_skip "$PB"; then br_note_untouched "${PARKED:--}" "$PB"; continue; fi
   # THIS TICK IS NOW LOOKING AT THIS PROJECT (BH-980). Stamped BEFORE the rung
   # runs, not after: a fix round holds the subshell for up to 90 minutes and a
   # tick killed inside one must still have moved its project to the back of the
@@ -8543,5 +8547,6 @@ command -v br_pool_terminal_pass >/dev/null 2>&1 && br_pool_terminal_pass "$ONLY
 exec 8>&-
 # THE HAND-OFF SWEEP (BH-5125), after everything above has had its say.
 [ "$BHW_ON" = 1 ] && bhw_sweep "$STOPREASON"
+command -v brpf_zero_alert >/dev/null 2>&1 && brpf_zero_alert  # BH-9253: 0 rungs while own hand-offs got no ack = one alert
 hb_done blocked-resolver
 exit "$BR_EXIT"

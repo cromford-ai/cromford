@@ -1896,6 +1896,16 @@ mc_label_remove() {
   prr_write "$(mc_slug_of_url "$url")" "$(mc_num_of_url "$url")" labels - gh api -X DELETE "repos/$(mc_slug_of_url "$url")/issues/$(mc_num_of_url "$url")/labels/$label" >/dev/null 2>&1
 }
 
+# mc_label_add <slug> <num> <label> — put a label on a PR through the issues
+#   labels endpoint (REST, the BH-2199 reason in mc_enqueue). rc is gh's own.
+#   Lives here, in the armed lib, so a merge-conductor.d fragment that needs a
+#   label write goes out on the conductor's App token (BH-9253).
+mc_label_add() {
+  local slug="${1:-}" num="${2:-}" label="${3:-}"
+  [ -n "$slug" ] && [ -n "$num" ] && [ -n "$label" ] || return 2
+  prr_write "$slug" "$num" labels - gh api -X POST "repos/$slug/issues/$num/labels" -f "labels[]=$label" >/dev/null 2>&1
+}
+
 # The once-per-(PR, head) marker. Same key shape as the stuck detector's.
 mc_handoff_human_file() { printf '%s/%s_%s' "$MC_HANDOFF_HUMAN_DIR" "$(mc_handoff_id "$1")" "$(mc_handoff_id "${2:0:12}")"; }
 
@@ -2552,8 +2562,19 @@ mc_requeued_record() { mc_attempt_put "requeued $1 $2 $(mc_now)"; }
 mc_ejection_live() {
   local key="$1" head="$2"
   mc_attempt_has "ejected $key $head" 2>/dev/null || return 1
+  # A batch victim's solo requeue (BH-9253) puts back a head that already has
+  # its `reejected` line, so that line cannot say "out again" for it.
+  mc_bv_requeue_live "$key" "$head" && return 1
   [ -n "$(mc_requeued_mark "$key" "$head")" ] || return 0
   mc_attempt_has "reejected $key $head" 2>/dev/null
+}
+# mc_bv_requeue_live <key> <head> -> rc 0 while a batch victim's solo requeue
+#   of this head (`batchvictim`, written by mc_bv_solo, BH-9253) is in the
+#   queue: no `bvreejected` line yet. The settle pass writes `bvreejected` when
+#   the solo run ejects the head; from then on mc_ejection_live is live again.
+mc_bv_requeue_live() {
+  mc_attempt_has "batchvictim $1 $2" 2>/dev/null || return 1
+  ! mc_attempt_has "bvreejected $1 $2" 2>/dev/null
 }
 mc_rerun_record() { mc_attempt_put "cirerun $1 $2 $(mc_now)"; }
 

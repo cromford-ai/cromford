@@ -1,0 +1,10 @@
+{
+  "env": "BR_ZERO_DISPATCH_ALERT",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9253-project-floor.sh",
+  "note": "BH-9253: 1 = a tick that ran 0 rungs while at least one of its own candidates got no dispatched, lock-held, held or acted ack writes ONE alert line (bin/alert-line.sh --id br-zero-dispatch:<scope>) and one ZERO_DISPATCH log line. Observe mode logs only. 0 = no line. Settings row: lane.blocked-resolver.br_zero_dispatch_alert."
+}

@@ -313,6 +313,10 @@ qr_enqueue_step() {
     [[ ",$labels," == *",$label,"* ]] && return 0
     err=$(gh api -X POST "repos/$slug/issues/$num/labels" -f "labels[]=$label" 2>&1 >/dev/null) \
       || _qr_log "QRISK $slug#$num: label $label could not be added ($(head -1 <<<"$err")) — it queues in default"
+  elif [[ ",$labels," == *",$label,"* ]] && [ "${QR_KEEP_SOLO:-0}" = 1 ]; then
+    # BH-9253: a batch victim's solo requeue (mc_bv_solo) put this label on
+    # just now; a batch route must not take it off again.
+    _qr_log "QRISK $slug#$num: keeps label $label (a batch-victim solo requeue, BH-9253)"
   elif [[ ",$labels," == *",$label,"* ]]; then
     enc=$(jq -rn --arg l "$label" '$l | @uri')
     err=$(gh api -X DELETE "repos/$slug/issues/$num/labels/$enc" 2>&1 >/dev/null) \

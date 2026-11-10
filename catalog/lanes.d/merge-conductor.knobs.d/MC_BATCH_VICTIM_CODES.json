@@ -1,0 +1,11 @@
+{
+  "env": "MC_BATCH_VICTIM_CODES",
+  "read_in": "bin/merge-conductor.d/bh-9253-batch-victim.sh",
+  "type": "string",
+  "default": "BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9253: the Mergify dequeue_reason.code values that make a green own-head PR a batch victim, comma separated, exact match. CHECKS_FAILED is left out on purpose: there Mergify named the PR's own failing checks, and the BH-9229 fix round takes it. Settings row: lane.merge-conductor.mc_batch_victim_codes."
+}
