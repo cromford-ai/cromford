@@ -44,8 +44,10 @@ grep -qx 'SIZE_VERDICT: over' <<<"$OUT" && ok || bad "S2 verdict: $OUT"
 
 # ── S3: no DIFF_KB = the output the gate printed before this axis, byte for byte ──
 plan "$T/s3.md"; run "$GATE" "$T/s3.md"
+# TEST-CHANGE (BH-8739): the gate prints SIZE_SLICES_EXPECTED after SIZE_LIMITS
+# on every sized path; still byte for byte otherwise.
 printf '%s\n' 'SIZE_DECLARED: files=4 lines=200' 'SIZE_FILES: 4' 'SIZE_LINES: 200' 'SIZE_LIMITS: lines=700 files=20' \
-  'SIZE_TOLERANCE: 15% (lines<=805 files<=23 build whole)' 'SIZE_VERDICT: within' > "$T/s3.want"
+  'SIZE_SLICES_EXPECTED: 1' 'SIZE_TOLERANCE: 15% (lines<=805 files<=23 build whole)' 'SIZE_VERDICT: within' > "$T/s3.want"
 [ "$RC" = 0 ] && printf '%s\n' "$OUT" | cmp -s - "$T/s3.want" && ok || bad "S3 rc=$RC out=[$OUT]"
 
 # ── S4: inside the band ──

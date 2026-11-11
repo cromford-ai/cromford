@@ -97,6 +97,13 @@ run() {
 byte_equal() { # byte_equal <kind>
   local k=$1
   run old "$k" "$T/old-$k.txt"; run new "$k" "$T/new-$k.txt"
+  # TEST-CHANGE (BH-8739): a later ticket that edits a template on purpose
+  # names its edit in $FX/edits.d/<KEY>.sed.txt (a sed script; .txt so the share leakcheck can audit it); the old render gets exactly those
+  # edits, in file-name order, and must then equal the new render byte for byte.
+  local e
+  for e in "$FX"/edits.d/*.sed.txt; do
+    [ -r "$e" ] && [ -s "$T/old-$k.txt" ] && sed -i -f "$e" "$T/old-$k.txt"
+  done
   if [ -s "$T/old-$k.txt" ] && cmp -s "$T/old-$k.txt" "$T/new-$k.txt"; then
     ok; casepass "byte-equal-$k"
   else

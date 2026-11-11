@@ -38,7 +38,8 @@ LAWS_DIR="$DIR/prompts/iron-laws.d"
 # list gained `scalable-tests`.
 # TEST-CHANGE (BH-7945): the review-levels fragment's class list gained hardcoded-knob, so the block sha moved.
 # TEST-CHANGE (BH-8029): the plan stage also carries prompts/iron-laws.d/20261022-user-flows.md, and the review-levels class list gained user-flows, so the block sha moved.
-TICKET_SHA="9e23394f05a38999""f32787e3878d6706""b1e4ca0c4c873d83""e4da14583c836fd9"
+# TEST-CHANGE (BH-8739): the review-levels fragment says "At most one follow-up ticket per area, never per screen", so the block sha moved.
+TICKET_SHA="bf18492c863b6ca0""762a31136a64587a""3bb76649e63a588b""a43553e759d5960a"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
 T3='REVIEW LEVELS (iron law, BH-7123'

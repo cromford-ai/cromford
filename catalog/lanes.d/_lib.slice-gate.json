@@ -1,0 +1,55 @@
+{
+  "libs": [
+    {
+      "id": "slice-gate",
+      "file": "bin/lib/slice-gate.sh",
+      "note": "BH-8739. The fewest children a decompose spec files. bin/run-decompose.sh merges every proposed slice that has no reason to stand alone (file overlap, the build-execute context ceiling, or a real merge order) and asks a person on the parent before it files more than SLICE_CONFIRM_OVER children. Read per project with lib_env_apply slice-gate <project> (sr_knob), so a row lib.slice-gate.<project>.<env lowercased> wins for that project.",
+      "knobs": [
+        {
+          "env": "SLICE_GATE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 (the default): bin/run-decompose.sh coalesces the spec and asks before a split above SLICE_CONFIRM_OVER. 0: the decomposer files the spec as the model wrote it, as before BH-8739.",
+          "read_in": "bin/lib/slice-gate.sh"
+        },
+        {
+          "env": "SLICE_TOKENS_PER_LINE",
+          "type": "int",
+          "default": 400,
+          "min": 1,
+          "max": 100000,
+          "zero_means": null,
+          "required": false,
+          "note": "The context a child costs per product line it plans (est_lines). est_lines x this, summed over a child, is compared with the build-execute ceiling: past it, the next slice starts a new child (reason context-ceiling). 400 puts a 700-line child at about 280K, under the 500K ceiling.",
+          "read_in": "bin/lib/slice-gate.sh"
+        },
+        {
+          "env": "SLICE_CONFIRM_OVER",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 100,
+          "zero_means": null,
+          "required": false,
+          "note": "Above this many children (the larger of the size gate's SIZE_SLICES_EXPECTED and the merged spec), the decomposer posts the proposed grouping on the parent and files nothing until a person replies (HUMAN-STEP-DONE: on an issues board, any reply by another author on an in-app board).",
+          "read_in": "bin/lib/slice-gate.sh"
+        },
+        {
+          "env": "SLICE_CEILING_TOKENS",
+          "type": "int",
+          "default": 500000,
+          "min": 1000,
+          "max": 10000000,
+          "zero_means": null,
+          "required": false,
+          "note": "Used only when catalog/context-budgets.json (lane build-execute, ceiling_tokens) cannot be read. Equal to that row today. Read by sr_ceiling_tokens.",
+          "read_in": "bin/lib/slice-gate.sh"
+        }
+      ]
+    }
+  ]
+}

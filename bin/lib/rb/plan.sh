@@ -2075,17 +2075,23 @@ if [ -n "$SG_SPLIT" ]; then
   # still splits — it just splits blind.
   # rc 3 is the splitter refusing a HELD ticket (BH-1526): not a failed split,
   # a deferral, so it is never paged as DECOMPOSE_FAILED.
+  # rc 4 is the slice gate (BH-8739): no slice had a reason to stand alone,
+  # so the split is one child and the parent builds whole, right here.
   "$HARNESS/bin/run-decompose.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" "$SG_MAXL" "$SG_MAXF"; SG_DRC=$?
-  if [ "$SG_DRC" = 0 ]; then
-    # The parent's ledger row ends here, not at `planning` (BH-3481.1). Fail-open: BB never blocks RESULT.
-    BB decomposed "" "" "" false "split into $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
-    RESULT "DECOMPOSED $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
-  elif [ "$SG_DRC" = 3 ]; then
-    RESULT "BUILD_DEFERRED held at split — $(grep -m1 '^DECOMPOSE_HELD' "$BUILD/decompose-run.txt" 2>/dev/null)"; exit 3
+  if [ "$SG_DRC" = 4 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] SIZE: DECOMPOSE_NOT_NEEDED — no slice has a reason to stand alone, building whole" >> "$BUILD/pipeline.log"
   else
-    RESULT "DECOMPOSE_FAILED see $BUILD/decompose-run.txt"
+    if [ "$SG_DRC" = 0 ]; then
+      # The parent's ledger row ends here, not at `planning` (BH-3481.1). Fail-open: BB never blocks RESULT.
+      BB decomposed "" "" "" false "split into $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
+      RESULT "DECOMPOSED $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
+    elif [ "$SG_DRC" = 3 ]; then
+      RESULT "BUILD_DEFERRED held at split — $(grep -m1 '^DECOMPOSE_HELD' "$BUILD/decompose-run.txt" 2>/dev/null)"; exit 3
+    else
+      RESULT "DECOMPOSE_FAILED see $BUILD/decompose-run.txt"
+    fi
+    exit 0
   fi
-  exit 0
 fi
 # <<< size gate
 # >>> child plan tripwire (BH-3478)

@@ -386,7 +386,7 @@ ONE SEAM FILE PER LATER CHILD. The contract creates one seam file for each later
 
 Siblings do NOT wait for the contract to merge. The moment the contract's pull request is open this harness builds them on its branch (STACK_BASE, docs/BUILD-CONCURRENCY.md), and GitHub retargets their pull requests when the contract merges. So blocking every sibling on the contract costs minutes, not a chain level, and it is the expected path.
 
-Then design the siblings, 1 to 4 of them. Each sibling adds ONE CAPABILITY END TO END (for example list, create, edit, export) and touches whatever layers that capability needs. Each one MUST be: UNDER THE BUDGET (at most $MAXL lines of product code across at most $MAXF files — count source only, not tests, docs, the plan, lockfiles or generated code; if a slice cannot fit, slice it again rather than declaring an exception), independently shippable (the app works after the contract and that one child merge), and file-disjoint from every other sibling (list each child's intended files/dirs explicitly in its body). A sibling imports THE TRACER, not another sibling: if two siblings need the same symbol or file, it belongs in the tracer, so move it there rather than chaining them. Declaring an import from a sibling is allowed and it is honest, but it costs that child its place in the wave, because the filer blocks it on that sibling too.
+Then propose the siblings: ONE OBJECT PER UNIT OF WORK (a screen, an endpoint, a capability), each with its est_lines and its owns, as many as the work has. Do not merge them yourself: this harness merges every slice that has no reason to stand alone into the child before it. A slice stands alone for one of three reasons only: file overlap (it edits a path an earlier slice owns), the build-execute context ceiling (the child it would join gets too big for one build), or a real merge order (it imports a sibling's code, declared in 'after'). So 12 small proposals in one area can file as 1 child, and then the parent builds whole. Each sibling adds ONE CAPABILITY END TO END (for example list, create, edit, export) and touches whatever layers that capability needs. Each one MUST be: UNDER THE BUDGET (at most $MAXL lines of product code across at most $MAXF files — count source only, not tests, docs, the plan, lockfiles or generated code; if a slice cannot fit, slice it again rather than declaring an exception), independently shippable (the app works after the contract and that one child merge), and file-disjoint from every other sibling (list each child's intended files/dirs explicitly in its body). A sibling imports THE TRACER, not another sibling: if two siblings need the same symbol or file, it belongs in the tracer, so move it there rather than chaining them. Declaring an import from a sibling is allowed and it is honest, but it costs that child its place in the wave, because the filer blocks it on that sibling too.
 
 CHAINS ARE A DECOMPOSITION FAILURE, NOT A DEPENDENCY. At most 2 levels beyond the contract, and a spec that declares more is refused outright and this ticket comes back unsplit.
 
@@ -394,16 +394,17 @@ A LAYER SPLIT IS A DECOMPOSITION FAILURE, the same as a chain: a 'UI child', 'AP
 
 YOU DO NOT FILE ANYTHING. $DCP_NOFILE Your ONLY output is a spec file.
 
-Write $SPEC — a JSON array, 2 to 5 objects, THE TRACER FIRST and then the siblings, no prose around it and no code fence:
+Write $SPEC — a JSON array, one object per slice, THE TRACER FIRST and then the siblings, no prose around it and no code fence:
 [
-  {\"title\": \"scan tracer\", \"contract\": \"src/api/scan.ts: GET /scan; src/lib/scan/store.ts: readScan(), writeScan()\", \"owns\": [\"src/api/scan.ts\", \"src/lib/scan/store.ts\", \"src/lib/scan/list.ts\", \"src/lib/scan/export.ts\"], \"after\": [], \"body\": \"markdown for the child issue\\n\\n## Observable outcome\\nPOST a scan, then GET /scan returns it\"},
-  {\"title\": \"scan list\", \"owns\": [\"src/lib/scan/list.ts\", \"src/app/scans/page.tsx\"], \"after\": [], \"body\": \"...\\n\\n## Observable outcome\\nthe /scans page lists the stored scans\"},
-  {\"title\": \"scan export\", \"owns\": [\"src/lib/scan/export.ts\", \"src/api/scan-export.ts\"], \"after\": [\"2: listScans()\"], \"body\": \"...\\n\\n## Observable outcome\\nGET /scan/export returns a CSV of them\"}
+  {\"title\": \"scan tracer\", \"contract\": \"src/api/scan.ts: GET /scan; src/lib/scan/store.ts: readScan(), writeScan()\", \"owns\": [\"src/api/scan.ts\", \"src/lib/scan/store.ts\", \"src/lib/scan/list.ts\", \"src/lib/scan/export.ts\"], \"est_lines\": 60, \"after\": [], \"body\": \"markdown for the child issue\\n\\n## Observable outcome\\nPOST a scan, then GET /scan returns it\"},
+  {\"title\": \"scan list\", \"owns\": [\"src/lib/scan/list.ts\", \"src/app/scans/page.tsx\"], \"est_lines\": 120, \"after\": [], \"body\": \"...\\n\\n## Observable outcome\\nthe /scans page lists the stored scans\"},
+  {\"title\": \"scan export\", \"owns\": [\"src/lib/scan/export.ts\", \"src/api/scan-export.ts\"], \"est_lines\": 90, \"after\": [\"2: listScans()\"], \"body\": \"...\\n\\n## Observable outcome\\nGET /scan/export returns a CSV of them\"}
 ]
   contract — ON THE FIRST OBJECT ONLY, and REQUIRED: the exported names and the paths the tracer really lands, the working code the siblings import, and every shared seam it pre-creates (path: what it is for). The filer turns it into the child's 'CONTRACT:' line and titles that child '$KEY.0: contract — <slice name>'. No contract, no split: the spec is refused.
   title — the slice, a few words. Do NOT prefix it with a key; the filer writes '$KEY.<n>: ' itself.
   after — LAST RESORT, and it is the thing to design away: the 1-based positions IN THIS ARRAY WHOSE CODE THIS CHILD IMPORTS, written as \"<position>: <the symbol>\" so the reason is on the record. Position 1 is the contract and is never listed — the filer blocks every sibling on it. Naming a sibling here is not a hint: the filer makes that sibling a HARD BLOCKER on the same line, so this child waits for it (or stacks on its branch) exactly as it waits for the contract. Prefer [] and prefer moving the shared symbol into the contract: file-disjoint children that build at the same time are the entire point of the split, and an over-declared 'after' is a child that sits idle for an hour it did not owe. An ordering PREFERENCE is not a dependency. Never name a position at or after this child's own.
   owns — the repo paths this child creates or edits, as a JSON array of strings: its seam file(s) plus files no sibling lists. The filer writes them as the child's 'Owns:' line. Two children never own the same path unless the later one names the earlier in 'after'.
+  est_lines — REQUIRED on every object, the tracer included: the product lines this slice adds or changes, as a number, counted the way the budget counts them. The harness sums them per child against the build-execute context ceiling. A spec where some objects carry it and some do not is refused.
   imports_contract — siblings only, optional, default true. Write false ONLY when this slice uses no name on the contract's CONTRACT: line and edits no file the contract lands. Such a sibling is filed with no blocker and builds on main in parallel with the contract. If you are not sure, leave it out.
   body  — everything a builder needs and nothing it does not: the exact scope, the intended file list, the acceptance tests this slice owns from the parent plan, and any context from the thread. EVERY body, the tracer's included, carries a '## Observable outcome' section: the one acceptance test that exercises that child's path end to end, or for KIND infra/migration the real row or log line it produces, plus the QA screens when there is UI. A child with no Observable outcome section is refused and the ticket comes back unsplit. Do NOT write 'Part of', 'Order:', 'Blocked-by:', 'CONTRACT:', 'DEPENDS:', 'Owns:' or a size budget line — the filer appends those.
 
@@ -429,9 +430,37 @@ Final output line: exactly 'DECOMPOSE_SPEC_READY' or 'DECOMPOSE_FAILED: <reason>
   fi
   N=$(jq 'length' "$SPEC" 2>/dev/null)
   case "${N:-}" in ''|*[!0-9]*) FAIL "children.json is not a JSON array (see $SPEC)" ;; esac
+  # >>> slice gate (BH-8739)
+  # THE FEWEST CHILDREN (the operator, 2026-10-28). The model proposes one slice per
+  # unit of work; bin/lib/slice-gate.sh merges every slice with no reason to
+  # stand alone (file overlap, the build-execute context ceiling, a real merge
+  # order) and writes the reason into each child. Above SLICE_CONFIRM_OVER it
+  # posts the grouping on the parent and files nothing until a person replies
+  # (rc 3, as a held ticket). One child left is no split: rc 4, and the size
+  # gate builds the parent whole. A spec whose filing started is not re-gated.
+  SR_UPPER=5
+  if [ -s "$BUILD/children.txt" ]; then
+    LOG "SLICE_GATE: filing already started (children.txt), the spec is not re-gated"
+  else
+    # shellcheck source=bin/lib/slice-gate.sh
+    command -v sr_gate >/dev/null 2>&1 || . "$(dirname "$0")/lib/slice-gate.sh" 2>/dev/null \
+      || . "$HARNESS/bin/lib/slice-gate.sh" 2>/dev/null || true
+    if command -v sr_gate >/dev/null 2>&1; then
+      SR_LOG_FN=LOG sr_gate "$PROJECT" "$KEY" "$LANE" "$BUILD" "$SPEC" "$GH_REPO" "${ISSUE:-}" "$TICKET" "$DRY"; SR_RC=$?
+      case "$SR_RC" in
+        0) N=$(jq 'length' "$SPEC") ;;
+        1) FAIL "$SR_MSG" ;;
+        3|4) LOG "$SR_MSG"; echo "$SR_MSG" >> "$BUILD/decompose-run.txt"; exit "$SR_RC" ;;
+      esac
+    else
+      LOG "SLICE_GATE: bin/lib/slice-gate.sh is missing, the spec files as written"
+    fi
+  fi
+  # <<< slice gate
   # 2-5 is the contract in the prompt. One child is not a split, and past five
-  # the coordination cost is worse than the review cost being avoided.
-  { [ "$N" -ge 2 ] && [ "$N" -le 5 ]; } || FAIL "a split is 2-5 children, the spec has $N"
+  # the coordination cost is worse than the review cost being avoided. A split
+  # a person confirmed above five (the slice gate) files as confirmed.
+  { [ "$N" -ge 2 ] && [ "$N" -le "$SR_UPPER" ]; } || FAIL "a split is 2-$SR_UPPER children, the spec has $N"
   jq -e 'all(.[]; ((.title? // "") | length) > 0 and ((.body? // "") | length) > 0)' "$SPEC" >/dev/null 2>&1 \
     || FAIL "every child needs a non-empty title and body"
 

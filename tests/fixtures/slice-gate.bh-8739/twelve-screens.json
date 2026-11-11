@@ -1,0 +1,111 @@
+[
+  {
+    "title": "finance screen 1",
+    "owns": [
+      "src/finance/screen1.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 1.\n\n## Observable outcome\nThe /finance/screen1 page renders its rows.",
+    "contract": "src/finance/screen1.tsx: FinanceScreen1; src/finance/layout.tsx: FinanceLayout"
+  },
+  {
+    "title": "finance screen 2",
+    "owns": [
+      "src/finance/screen2.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 2.\n\n## Observable outcome\nThe /finance/screen2 page renders its rows."
+  },
+  {
+    "title": "finance screen 3",
+    "owns": [
+      "src/finance/screen3.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 3.\n\n## Observable outcome\nThe /finance/screen3 page renders its rows."
+  },
+  {
+    "title": "finance screen 4",
+    "owns": [
+      "src/finance/screen4.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 4.\n\n## Observable outcome\nThe /finance/screen4 page renders its rows."
+  },
+  {
+    "title": "finance screen 5",
+    "owns": [
+      "src/finance/screen5.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 5.\n\n## Observable outcome\nThe /finance/screen5 page renders its rows."
+  },
+  {
+    "title": "finance screen 6",
+    "owns": [
+      "src/finance/screen6.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 6.\n\n## Observable outcome\nThe /finance/screen6 page renders its rows."
+  },
+  {
+    "title": "finance screen 7",
+    "owns": [
+      "src/finance/screen7.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 7.\n\n## Observable outcome\nThe /finance/screen7 page renders its rows."
+  },
+  {
+    "title": "finance screen 8",
+    "owns": [
+      "src/finance/screen8.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 8.\n\n## Observable outcome\nThe /finance/screen8 page renders its rows."
+  },
+  {
+    "title": "finance screen 9",
+    "owns": [
+      "src/finance/screen9.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 9.\n\n## Observable outcome\nThe /finance/screen9 page renders its rows."
+  },
+  {
+    "title": "finance screen 10",
+    "owns": [
+      "src/finance/screen10.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 10.\n\n## Observable outcome\nThe /finance/screen10 page renders its rows."
+  },
+  {
+    "title": "finance screen 11",
+    "owns": [
+      "src/finance/screen11.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 11.\n\n## Observable outcome\nThe /finance/screen11 page renders its rows."
+  },
+  {
+    "title": "finance screen 12",
+    "owns": [
+      "src/finance/screen12.tsx"
+    ],
+    "after": [],
+    "est_lines": 40,
+    "body": "Build the finance screen 12.\n\n## Observable outcome\nThe /finance/screen12 page renders its rows."
+  }
+]

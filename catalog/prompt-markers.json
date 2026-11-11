@@ -11,7 +11,7 @@
     "## Token discipline (fleet-wide, 2026-08-22)",
     "## Claim discipline (the operator, 2026-08-30 — \"it said done but it wasn't\")",
     "## Reports & explanations: Simplified Technical English (the operator, 2026-10-07)",
-    "## QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)",
+    "## Findings and splits: the fewest tickets, one per area or flow (the operator, 2026-10-28)",
     "## Review levels (BH-7123)",
     "## Scalable tests (BH-7563)",
     "## User flows (BH-8029)",

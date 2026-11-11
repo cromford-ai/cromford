@@ -1,0 +1,5 @@
+# BH-8739: the deliberate template edits since the BH-7970 capture. The old
+# builders stay verbatim (fixture-provenance); byte_equal applies these to the
+# old render before cmp, so the new render must equal old + exactly these edits.
+s#ONE follow-up ticket per screen or flow#ONE follow-up ticket per area or flow#g
+s#take ai-build off it\.#take ai-build off it. Slice only for one of three reasons: two slices would edit the same files in parallel, one slice would pass the build-execute context ceiling in catalog/context-budgets.json, or one slice must merge before another can start. Write the reason on its own line as 'SLICE-REASON: <file-overlap|context-ceiling|ordering>: <why>'. No reason, no slice.#

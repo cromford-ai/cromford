@@ -187,10 +187,13 @@ TWENTY=$(
 B=$(mkbuild b-d "$TWENTY")
 "$GATE" "$B/plan.md" 300 12 "$B/planned-files.txt" > "$T/d.out" 2>&1; GRC=$?
 [ "$GRC" = 0 ] && ok || bad "20 mentions against a 12-file limit (under 2x) must proceed (rc=$GRC): $(cat "$T/d.out")"
+# TEST-CHANGE (BH-8739): the gate prints SIZE_SLICES_EXPECTED (ceil(500/300) = 2)
+# after SIZE_LIMITS on the estimated path; still byte for byte otherwise.
 cat > "$T/d.expected" <<'EXP'
 SIZE_GATE_WARNING: the plan carries no '## Size' section with both FILES: and LINES: — size estimated from its file list, building on
 SIZE_ESTIMATED: files=20 lines=500 (from the plan's file list, 20 product file(s); lines = files x 300/12)
 SIZE_LIMITS: lines=300 files=12
+SIZE_SLICES_EXPECTED: 2
 SIZE_VERDICT: estimated
 EXP
 if diff -u "$T/d.expected" "$T/d.out" >"$T/d.diff" 2>&1; then ok

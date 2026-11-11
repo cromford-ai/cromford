@@ -70,7 +70,11 @@
 #         tolerated file limit; informational) / SIZE_OVER (when over) /
 #         SIZE_VERDICT. With no declaration: SIZE_GATE_WARNING /
 #         SIZE_ESTIMATED / SIZE_LIMITS / SIZE_OVER (past 2x) / SIZE_VERDICT
-#         (estimated, or over).
+#         (estimated, or over). SIZE_SLICES_EXPECTED on both of those paths
+#         (BH-8739): max(1, ceil(lines/max-lines), ceil(files/max-files)), the
+#         number of one-build slices the size implies. bin/lib/slice-gate.sh
+#         reads it; above SLICE_CONFIRM_OVER the decomposer asks a person
+#         before it files children. `undeclared` prints none.
 #
 # exit 0  within both limits, or no declaration and an estimate within 2x
 # exit 2  over at least one limit, or an estimate past 2x  (the decomposable case)
@@ -104,6 +108,16 @@ case "$TOL" in ''|*[!0-9]*) TOL=15 ;; esac
 [ "$TOL" -le 100 ] || TOL=100
 MAXL_TOL=$(( (MAXL * (100 + TOL)) / 100 ))
 MAXF_TOL=$(( (MAXF * (100 + TOL)) / 100 ))
+
+# slices <lines> <files> — the expected slice count (BH-8739), at least 1.
+slices() {
+  local l="$1" f="$2" n=1 a=1 b=1
+  [ "$MAXL" -gt 0 ] && a=$(( (l + MAXL - 1) / MAXL ))
+  [ "$MAXF" -gt 0 ] && b=$(( (f + MAXF - 1) / MAXF ))
+  [ "$a" -gt "$n" ] && n="$a"
+  [ "$b" -gt "$n" ] && n="$b"
+  echo "SIZE_SLICES_EXPECTED: $n"
+}
 
 undeclared() { # undeclared <why>
   echo "SIZE_GATE_UNAVAILABLE $1"
@@ -172,6 +186,7 @@ if [ -z "$FILES" ] || [ -z "$LINES" ]; then
   if [ -n "$PLANNED" ]; then ESRC="$PLANNED product file(s)"; else ESRC="none readable"; fi
   echo "SIZE_ESTIMATED: files=$EF lines=$EL (from the plan's file list, $ESRC; lines = files x $MAXL/$MAXF)"
   echo "SIZE_LIMITS: lines=$MAXL files=$MAXF${LSRC:+ src=$LSRC}"
+  slices "$EL" "$EF"
   EOVER=""
   [ "$EF" -gt $(( 2 * MAXF )) ] && EOVER="files=$EF>2x$MAXF (estimated)"
   [ "$EL" -gt $(( 2 * MAXL )) ] && EOVER="${EOVER:+$EOVER; }lines=$EL>2x$MAXL (estimated)"
@@ -190,6 +205,7 @@ echo "SIZE_FILES: $FILES"
 [ -n "$PLANNED" ] && echo "SIZE_FILES_PLANNED: $PLANNED"
 echo "SIZE_LINES: $LINES"
 echo "SIZE_LIMITS: lines=$MAXL files=$MAXF${LSRC:+ src=$LSRC}"
+slices "$LINES" "$FILES"
 [ -n "$DIFFKB" ] && { echo "SIZE_DIFF_KB: $DIFFKB"; echo "SIZE_DIFF_LIMIT_KB: $DLIM"; }
 
 [ "$TOL" -gt 0 ] && echo "SIZE_TOLERANCE: ${TOL}% (lines<=$MAXL_TOL files<=$MAXF_TOL build whole)"

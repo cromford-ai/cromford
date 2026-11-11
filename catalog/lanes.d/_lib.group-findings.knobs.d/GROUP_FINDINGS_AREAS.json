@@ -1,0 +1,9 @@
+{
+  "env": "GROUP_FINDINGS_AREAS",
+  "read_in": "bin/lib/group-findings.sh",
+  "type": "string",
+  "default": "{}",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-8739: settings row lib.group-findings.<board>.group_findings_areas. A JSON object that maps a route prefix to a product area name, for example {\"/portal\":\"member portal\"}. gf_run groups a finding under `area:<name>` of the longest prefix that matches on a `/` segment boundary, else under the first path segment of its route. A value that is not a JSON object of names counts as {} and writes one `areas-invalid` ledger row. Empty or {} (the default) groups by first path segment. Read by gf_run through _gf_knob."
+}

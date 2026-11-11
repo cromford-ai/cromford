@@ -32,6 +32,17 @@
 # not relayed, ppr_plan_from_branch reads .harness/specs/<KEY>/plan.md from the
 # branch before the PR body is written.
 #
+# A PR the hub opened on a branch behind main gets a pool rebase at once
+# (BH-9483, project-6 TK-3738). Before the PR create, ppr_reap_landed reads
+# compare/main...<branch> once into PPR_BEHIND (base main only). After the open
+# and BEFORE the review hand-off, ppr_rebase_behind queues the conductor's
+# PR-keyed pool rebase (mc_pool_rebase_enqueue, RB-<pr>-<head8>) when the branch
+# is behind and REBASE_ON_POOL is on for the project. The RB-* reap arm and
+# mc_pool_rebase_apply apply the result, unchanged. It writes one line to
+# $LOCAL/prepr-rebase.txt: queued, not-queued, skipped, current or unknown. A
+# compare that does not read keeps the old path: the PR opens, nothing queued.
+# POOL_PUSH_LANDED_REBASE=0 turns it off.
+#
 # It reads the reap loop's globals (P KEY TICKET LOCAL RLINE PDIR QDIR POOL_SLUG
 # POOL_SLUG_TOK ATT DEFC DTHS SBASE MHF) and calls its functions (pool_rest_read,
 # branch_head_rest, pool_key_branch, QROW, say, STAMP). The harness root is
@@ -39,7 +50,7 @@
 # the answer is the terminal.
 
 PPR_KEY=""; PPR_CMP=""; PPR_STATUS=""; PPR_BUILT=""; PPR_REMOTE=""; PPR_BR=""; PPR_SECOND=0
-PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""
+PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""; PPR_BEHIND=""
 
 # ppr_rejected_line <rline> — rc 0 when the line is a push-rejected deferral.
 ppr_rejected_line() {
@@ -76,6 +87,20 @@ ppr_compare() {
     404) printf 'diverged 404\n' ;;
     *) printf 'unknown http=%s\n' "${code:-none}" ;;
   esac
+}
+
+# ppr_behind_main <slug> <base> <branch> [token] — one REST read of
+# compare/<base>...<branch>; prints the integer behind_by. rc 1, nothing
+# printed, on any other answer.
+ppr_behind_main() {
+  local out code n
+  command -v pool_rest_read >/dev/null 2>&1 || return 1
+  out=$(pool_rest_read "repos/$1/compare/$2...$3" "${4:-}")
+  code=$(head -n 1 <<<"$out")
+  [ "$code" = 200 ] || return 1
+  n=$(tail -n +2 <<<"$out" | jq -r '.behind_by // empty' 2>/dev/null)
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$n"
 }
 
 # ppr_decide — the reads, once per reaped RESULT, into PPR_*.
@@ -184,7 +209,7 @@ ppr_body() {
 # rc 0: the PR is open and RLINE/RESULT now say PR_CREATED <url>. rc 1: nothing
 # changed (not a push rejection, not landed, held, or the open failed).
 ppr_reap_landed() {
-  PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""
+  PPR_PR_URL=""; PPR_PR_KEY=""; PPR_PR_BASE=""; PPR_BEHIND=""
   ppr_rejected_line "${RLINE:-}" || return 1
   [ "${POOL_PUSH_LANDED_OPEN:-1}" = 0 ] && return 1
   ppr_decide
@@ -215,6 +240,13 @@ ppr_reap_landed() {
     pr_trailers_apply "$bf" "$(pr_trailers_job_for "$LOCAL" 2>/dev/null || echo none)" "$KEY" >/dev/null 2>&1 || true
   fi
   base="${SBASE:-${BASE_BRANCH:-main}}"
+  # How far the branch is behind main, read before the open (BH-9483).
+  if [ "${POOL_PUSH_LANDED_REBASE:-1}" != 0 ] && [ "$base" = main ]; then
+    PPR_BEHIND=$(ppr_behind_main "$POOL_SLUG" "$base" "$PPR_BR" "${POOL_SLUG_TOK:-}") || {
+      PPR_BEHIND=""
+      say "push-rejected $KEY: the compare of $PPR_BR with $base did not read — the PR opens, no pool rebase is queued"
+    }
+  fi
   url=$(GH_TOKEN="${POOL_SLUG_TOK:-${GH_TOKEN:-}}" gh_pr_create_ladder "$POOL_SLUG" "$PPR_BR" "$base" "$title" "$bf" \
           "$LOCAL/gh-stderr.log" "$LOCAL/pipeline.log" "pool/$P/$KEY")
   case "$url" in
@@ -235,6 +267,38 @@ ppr_reap_landed() {
   return 0
 }
 
+# ppr_rebase_behind — for a PR ppr_reap_landed opened on this reap: queue the
+# conductor's pool rebase when the branch is behind main (BH-9483). Writes one
+# line to $LOCAL/prepr-rebase.txt and one say line. Always rc 0. A not-queued
+# spends nothing and pages nobody: land_rebase_arm still owns the open PR.
+ppr_rebase_behind() {
+  [ -n "${PPR_PR_URL:-}" ] && [ "${PPR_PR_KEY:-}" = "$KEY" ] || return 0
+  [ "${POOL_PUSH_LANDED_REBASE:-1}" != 0 ] && [ "${PPR_PR_BASE:-}" = main ] || return 0
+  local w d rc
+  if [ -z "${PPR_BEHIND:-}" ]; then w=unknown; d="compare did not read"
+  elif [ "$PPR_BEHIND" = 0 ]; then w=current; d="behind_by=0"
+  else
+    if ! command -v mc_pool_rebase_enqueue >/dev/null 2>&1; then
+      if command -v fp_mc_lib_load >/dev/null 2>&1; then fp_mc_lib_load >/dev/null 2>&1 || true
+      else ppr_lib merge-conductor-lib.sh >/dev/null 2>&1 || true; fi
+    fi
+    if ! command -v mc_pool_rebase_enqueue >/dev/null 2>&1; then w=not-queued; d="conductor lib missing"
+    elif ! mc_pool_rebase_enabled "$P" >/dev/null 2>&1; then w=skipped; d="rebase-on-pool off for $P"
+    else
+      mc_pool_rebase_enqueue "$POOL_SLUG" "$P" "$PPR_BR" "$PPR_REMOTE" "$PPR_PR_URL" >/dev/null 2>&1; rc=$?
+      if [ "$rc" = 6 ]; then w=queued; d="$(mc_pool_rebase_key "$(mc_num_of_url "$PPR_PR_URL")" "$PPR_REMOTE") behind_by=$PPR_BEHIND"
+      else w=not-queued; d="rc=$rc"; fi
+    fi
+  fi
+  [ -n "${LOCAL:-}" ] && printf '%s %s\n' "$w" "$d" > "$LOCAL/prepr-rebase.txt" 2>/dev/null
+  case "$w" in
+    queued)  say "push-rejected $KEY: $PPR_BR is $PPR_BEHIND behind main — pool rebase queued as ${d%% *} for $PPR_PR_URL" ;;
+    current) say "push-rejected $KEY: $PPR_BR is current with main — no pool rebase" ;;
+    *)       say "push-rejected $KEY: no pool rebase for $PPR_PR_URL ($w: $d)" ;;
+  esac
+  return 0
+}
+
 # ppr_after_reap — called once per reaped RESULT, after the pool_result beat.
 # Only a PR ppr_reap_landed opened on this reap gets the hand-off
 # (bin/lib/ppr-review.sh). Always rc 0.
@@ -247,6 +311,7 @@ ppr_after_reap() {
     PPR_PR_URL=""; PPR_PR_KEY=""
     return 0
   fi
+  ppr_rebase_behind || true
   ppr_review_handoff || true
   PPR_PR_URL=""; PPR_PR_KEY=""
   return 0

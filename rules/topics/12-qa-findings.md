@@ -1,10 +1,12 @@
-## QA findings: collect first, one ticket per screen or flow (the operator, 2026-10-15)
+## Findings and splits: the fewest tickets, one per area or flow (the operator, 2026-10-28)
 
-When the factory tests, it must act like one engineer who reads every problem before opening a ticket. Ten tickets for one screen is ten PRs that collide on one file.
+When the factory tests or splits work, it must act like one engineer who reads every problem before opening a ticket. Ten tickets for one area is ten PRs that collide on the same files.
 
-1. A QA pass never files a ticket per finding. It writes every finding to one ledger for the run, grouped by screen or flow (route or flow name), with severity, repro and cause.
-2. After the pass, the lane files ONE ticket per screen or flow, with all its items as a checklist. One PR then fixes the whole screen or flow.
-3. Before it files, the lane reads the open issues and open PRs of that board for the same screen or flow. If one exists, the lane adds the new items to it as a comment. It never adds scope to a ticket whose PR is already approved: those items go to a new follow-up ticket, `Blocked-by:` that PR.
+1. A QA pass never files a ticket per finding. It writes every finding to one ledger for the run, grouped by area or flow, with severity, repro and cause. An area is a product area (for example finance, members, events, operations, marketing, member portal). A screen is never the unit.
+2. After the pass, the lane files ONE ticket per area or flow, with every item as a checklist line. One PR then fixes the whole area or flow.
+3. Before it files, the lane reads the open issues and open PRs of that board for the same area or flow. If one exists, the lane adds the new items to it as a comment. It never adds scope to a ticket whose PR is already approved: those items go to a new follow-up ticket, `Blocked-by:` that PR.
 4. Exceptions. A HIGH that blocks a launch flow or leaks data is filed (or alerted) at once, and it still goes in the ledger and in its group. If two groups edit one file, the second group's ticket gets `Blocked-by:` the first.
-- A build or review files a follow-up only for a core-flow defect a user would notice, one per screen or flow with every item as a checklist; smoke-level findings stay as [NOTE] lines in the review, and a follow-up ticket's own review files no follow-up (BH-7123).
-- In cromford, lanes call `bin/lib/group-findings.sh` (`gf_run`) and never file per finding. The switch is the settings row `lib.group-findings.<board>.group_findings` (default 0, off).
+5. Slicing. The planner and the decomposer slice a parent ticket only for one of three reasons: two slices would edit the same files in parallel (file-overlap); one slice would pass the lane's context ceiling in `catalog/context-budgets.json` (context-ceiling); one slice must merge before another can start (ordering). The reason goes into the child ticket. No reason, no slice.
+6. The sizer reports an expected slice count. If the count is above 5 (knob `SLICE_CONFIRM_OVER`), the lane posts the proposed grouping on the parent ticket and files no child until a human replies.
+- A build or review files a follow-up only for a core-flow defect a user would notice, one per area or flow with every item as a checklist; smoke-level findings stay as [NOTE] lines in the review, and a follow-up ticket's own review files no follow-up (BH-7123).
+- In cromford, lanes call `bin/lib/group-findings.sh` (`gf_run`) and never file per finding. `gf_run` groups by `gf_area`. The switch is the settings row `lib.group-findings.<board>.group_findings` (default 0, off). The row `lib.group-findings.<board>.group_findings_areas` maps route prefixes to area names. The decompose gate is `bin/lib/slice-gate.sh`.

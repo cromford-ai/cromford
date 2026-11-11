@@ -1,16 +1,17 @@
 #!/bin/bash
 # bin/lib/group-findings.sh — a QA run collects its findings FIRST, then files
-# ONE issue per screen or flow. Sourced, never executed.
+# ONE issue per area or flow. Sourced, never executed.
 #
 # THE RULE (the operator, 2026-10-15; rules/topics/12-qa-findings.md). A QA pass never
 # files a ticket per finding. Every finding goes to one ledger for the run; then
-# each screen or flow gets one issue with all its items as a checklist, so one
-# PR fixes the whole screen. An open issue for the same screen or flow gets a
+# each area or flow gets one issue with all its items as a checklist, so one
+# PR fixes the whole area. An open issue for the same area or flow gets a
 # comment instead, unless its PR is already approved: then a follow-up issue,
 # Blocked-by that PR. A high data-leak or launch-blocker is filed at once and
 # still stays in its group.
 #
 #   gf_key <screen_or_flow>                      the one key normaliser
+#   gf_area <screen_or_flow> [areas-json]        the area a screen belongs to
 #   gf_from_observed <board> <observed.json>...  qa-drive output -> findings JSONL
 #   gf_run <findings.jsonl> <run_dir> <owner/repo> [--dry-run]
 #
@@ -36,8 +37,9 @@
 # filed blind (rows `deferred`); 2 bad arguments.
 #
 # Knobs (catalog/lanes.d/_lib.group-findings.json, per board through
-# lib_env_apply group-findings <board>): GROUP_FINDINGS (0 off, the default)
-# and GROUP_FINDINGS_URGENT_RANK (1 low .. 4 critical, default 3).
+# lib_env_apply group-findings <board>): GROUP_FINDINGS (0 off, the default),
+# GROUP_FINDINGS_URGENT_RANK (1 low .. 4 critical, default 3) and
+# GROUP_FINDINGS_AREAS (a JSON object, route prefix -> area name, default {}).
 #
 # gh-rest: no-graphql
 #
@@ -64,6 +66,36 @@ _GF_JQ_KEY='def gfkey: ((. // "") | tostring | gsub("^\\s+|\\s+$"; "") | ascii_d
 
 gf_key() { # gf_key <screen_or_flow>
   jq -rn --arg k "${1:-}" "$_GF_JQ_KEY"' $k | gfkey'
+}
+
+# THE AREA, NOT THE SCREEN (BH-8739, the operator 2026-10-28). A screen is never the
+# unit: the group is the product area. The input is a gfkey output. A `flow:`
+# key and "" stay as they are. Otherwise the longest route prefix in $areas
+# (the settings row lib.group-findings.<board>.group_findings_areas, each key
+# normalised with gfkey) that equals the key or ends on a `/` segment boundary
+# of it gives `area:<name>`, lowercased. With no match, the area is the first
+# path segment: `/finance/invoices/12` -> `/finance`. A single-segment key is
+# unchanged, so an open issue with a marker from before this change still
+# matches.
+_GF_JQ_AREA='def gfarea($areas): . as $k
+  | if $k == "" or ($k | startswith("flow:")) then $k
+    else ([ ($areas | to_entries[]) | {p: (.key | gfkey), n: (.value | tostring | ascii_downcase)}
+            | . as $e | select($e.p != "" and ($e.p == $k or $e.p == "/" or ($k | startswith($e.p + "/")))) ]
+          | sort_by(.p | length) | last) as $m
+      | if $m != null then "area:" + $m.n
+        else ($k | capture("^(?<a>/[^/]*)") .a // $k) end
+    end;'
+
+# _gf_areas_ok <json> — rc 0 when the value is a JSON object of string values.
+_gf_areas_ok() {
+  jq -e 'type == "object" and all(.[]; type == "string")' <<<"${1:-}" >/dev/null 2>&1
+}
+
+gf_area() { # gf_area <screen_or_flow> [areas-json]
+  local a="${2:-}"
+  [ -n "$a" ] || a='{}'
+  _gf_areas_ok "$a" || a='{}'
+  jq -rn --arg k "${1:-}" --argjson a "$a" "$_GF_JQ_KEY$_GF_JQ_AREA"' $k | gfkey | gfarea($a)'
 }
 
 # gf_from_observed <board> <observed.json>... — one finding per failing check of
@@ -243,9 +275,10 @@ _gf_sum() { printf '%s\n' "$1" >> "$_GF_SUMMARY_BODY"; }
 #   never   file no group ticket (an urgent data-leak / launch-blocker is filed
 #           by _gf_urgent before the groups and is not a group ticket: the
 #           ALWAYS-BLOCK floor never comes off)
-#   core    file only a group with a high|critical row, or whose screen or flow
+#   core    file only a group with a high|critical row, or whose area or flow
 #           is a core flow of the board (review.core_flows.<board>: a comma list;
-#           a token is a core flow when the group key contains it)
+#           a token is a core flow when the group key, or the screen key of
+#           one of its findings (BH-8739: the group key is the area), contains it)
 #   always  every group, as before
 # The row is read through rl_knob (bin/lib/review-level.sh) with the jobs
 # client sourced in a subshell when the caller did not; no row readable means
@@ -263,7 +296,7 @@ _gf_rl() { # _gf_rl <base> <board> <default> <regex>
 # _gf_under_floor <gk> <board> <key> — rc 0 when the group may not be filed;
 # _GF_FLOOR_WHY says why.
 _gf_under_floor() {
-  local gk="$1" board="$2" key="$3" lvl top flows tok lk
+  local gk="$1" board="$2" key="$3" lvl top flows tok lk sk
   lvl=$(_gf_rl review.followup_min_level "$board" always '^(always|core|never)$')
   _GF_FLOOR_WHY=""
   case "$lvl" in
@@ -274,10 +307,15 @@ _gf_under_floor() {
   [ "${top:-0}" -ge 3 ] && return 1
   flows=$(_gf_rl review.core_flows "$board" "" '.*')
   lk=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
-  while IFS= read -r tok; do
+  # The screens of the group's findings too: a core-flow token deeper than the
+  # area (`/clients/new` in area `/clients`) still lifts the group.
+  sk=$(jq -r --arg g "$gk" '[.[] | select(.gid == $g) | (.screen // "")] | unique | join(" ")' "$_GF_NORM" | tr '[:upper:]' '[:lower:]')
+  # `|| [ -n "$tok" ]`: the list has no final newline, so the last token
+  # was dropped before BH-8739 (a one-token row never matched).
+  while IFS= read -r tok || [ -n "$tok" ]; do
     tok=$(printf '%s' "$tok" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr '[:upper:] ' '[:lower:]-')
     [ -n "$tok" ] || continue
-    case "$lk" in *"$tok"*) return 1 ;; esac
+    case "$lk $sk" in *"$tok"*) return 1 ;; esac
   done < <(printf '%s' "$flows" | tr ',' '\n')
   _GF_FLOOR_WHY="level core: highest severity $(jq -r --argjson t "${top:-0}" -n '{"0":"none","1":"low","2":"medium"}[$t|tostring]'), not a core flow"
   return 0
@@ -375,7 +413,7 @@ _gf_group() {
     if [ -n "$first" ]; then act=followup; printf '<!-- findings-followup-of: #%s -->\n' "$first"; fi
     printf 'QA findings for `%s` on %s, from run %s.' "$key" "$board" "$_GF_RUN"
     if [ "$act" = followup ]; then printf ' #%s already has an approved PR, so these items wait here.' "$first"; fi
-    printf ' One PR fixes this %s.\n\n' "$(case "$key" in flow:*) echo flow ;; *) echo screen ;; esac)"
+    printf ' One PR fixes this %s.\n\n' "$(case "$key" in flow:*) echo flow ;; *) echo area ;; esac)"
     _gf_items "$gk"
     { for ap in $approved; do printf 'Blocked-by: #%s\n' "$ap"; done; [ -n "$blk" ] && printf '%s\n' "$blk"; } | sort -u > "$_GF_TMP/blk"
     [ -s "$_GF_TMP/blk" ] && { printf '\n'; cat "$_GF_TMP/blk"; }
@@ -412,7 +450,7 @@ _gf_urgent() {
     [ -n "$num" ] || num="$prior"
     if [ -z "$num" ]; then
       { printf '<!-- findings-urgent: %s -->\n<!-- findings-run: %s -->\n' "$fp" "$_GF_RUN"
-        jq -r --argjson i "$i" '.[$i] | "Urgent QA finding on `\(.gk)` (\(.board)): \(.severity), \(.class).\n\n- Title: \(.title)\n- Repro: \(.repro)\n- Cause: \(.cause)\n\nIt is also listed in the group issue for this screen or flow."' "$_GF_NORM"
+        jq -r --argjson i "$i" '.[$i] | "Urgent QA finding on `\(.gk)` (\(.board)): \(.severity), \(.class).\n\n- Title: \(.title)\n- Repro: \(.repro)\n- Cause: \(.cause)\n\nIt is also listed in the group issue for this area or flow."' "$_GF_NORM"
       } > "$bf"
       if [ "$_GF_DRY" = 1 ]; then
         _gf_row "$(jq -c --argjson i "$i" '.[$i] | {line, board, group_key:.gk, fp, severity, title, action:"would_urgent"}' "$_GF_NORM")"
@@ -469,8 +507,23 @@ gf_run() { # gf_run <findings.jsonl> <run_dir> <owner/repo> [--dry-run]
     jq -e -s --argjson l "$(jq '.line' <<<"$g")" 'any(.[]; .action == "invalid" and .line == $l)' "$_GF_LEDGER" >/dev/null 2>&1 \
       || _gf_row "$(jq -c '{line, action:"invalid", note:.invalid, raw}' <<<"$g")"
   done
+  # 1b. The area of each finding (BH-8739): the areas row is read once per
+  #     board. A value that is not a JSON object of names counts as {} and
+  #     writes one `areas-invalid` note row per board per run.
+  local areas='{}' av
+  for b in $(jq -r '[.[] | select(.invalid | not) | .board] | unique[]' "$_GF_TMP/parsed.json"); do
+    av=$(_gf_knob "$b" GROUP_FINDINGS_AREAS '{}')
+    [ -n "$av" ] || av='{}'
+    if ! _gf_areas_ok "$av"; then
+      jq -e -s --arg b "$b" 'any(.[]; .action == "note" and .note == "areas-invalid" and .board == $b)' "$_GF_LEDGER" >/dev/null 2>&1 \
+        || _gf_row "$(jq -nc --arg b "$b" '{board:$b, action:"note", note:"areas-invalid"}')"
+      av='{}'
+    fi
+    areas=$(jq -c --arg b "$b" --argjson a "$av" '. + {($b): $a}' <<<"$areas")
+  done
   # 2. fp per finding (sha256 of board|key|title|repro), group id, first-seen index.
-  jq -c '[.[] | select(.invalid | not)]' "$_GF_TMP/parsed.json" > "$_GF_NORM"
+  jq -c --argjson areas "$areas" "$_GF_JQ_KEY$_GF_JQ_AREA"'
+    [.[] | select(.invalid | not) | .board as $b | . + {screen: .gk} | .gk |= gfarea($areas[$b] // {})]' "$_GF_TMP/parsed.json" > "$_GF_NORM"
   local fps="$_GF_TMP/fps"; : > "$fps"
   while IFS= read -r g; do
     printf '%s' "$g" | sha256sum | cut -c1-16 >> "$fps"
