@@ -74,7 +74,10 @@
 #         PLAN_SPEC_TRACE: ok | missing | n/a | unread, with PLAN_GATE_TICKET:
 #         one "UNTRACED: coverage — <rows vs items>" line when short and
 #         PLAN_COVERAGE: ok (...) | short | unread (no line when the ticket
-#         body has no Scope list), PLAN_OUTCOME_REPLAY:
+#         body has no Scope list), with a shared-contracts file: one
+#         "UNTRACED: shared contract — <id>: <requires> (triggered by
+#         <path>)..." line per unlisted id and PLAN_CONTRACTS: ok (...) |
+#         unlisted | unread (no line without the file), PLAN_OUTCOME_REPLAY:
 #         ok | missing | n/a with one "UNTRACED: outcome replay — <gap>"
 #         line per gap, and last
 #         PLAN_TRACE: ok | untraced | unavailable
@@ -173,7 +176,7 @@ REPORT=$(awk -v maxlist="$MAXLIST" '
       # ...plus "## Verification checklist", which the plan prompt asks for by
       # name and which is a list of commands, not of tasks: every line in it
       # carries a check and none of them delivers a client criterion.
-      if (tolower(strip(line)) ~ /^(system invariants|requirements coverage|acceptance tests|qa screens|verification|shared files|spec changes from comments|spec trace)/) {
+      if (tolower(strip(line)) ~ /^(system invariants|requirements coverage|acceptance tests|qa screens|verification|shared files|shared contracts|spec changes from comments|spec trace)/) {
         flush(); skiplvl = lvl; next
       }
       start(line, istask(line)); headtask = task; if (task) tasklvl = lvl
@@ -245,6 +248,20 @@ fi
 CR_LIB="$(cd "$(dirname "$0")" && pwd)/lib/coverage-rows.sh"
 if [ -n "${PLAN_GATE_TICKET:-}" ] && [ -r "$CR_LIB" ] && . "$CR_LIB"; then
   cr_plan_check "$PLAN" "$PLAN_GATE_TICKET"
+  [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
+fi
+
+# ---- the shared contracts (BH-9498, prompts/plan-contract.md §18) -------------
+# PLAN_GATE_CONTRACTS=<file>, else shared-contracts.tsv beside the plan when it
+# exists (bin/verification-map.sh render --contracts-out writes it from the
+# build's worktree). A contract the plan's paths trigger must be named under
+# `## Shared contracts`; an unlisted one refuses the plan (rc 2, the same repair
+# pass). No file, or no lib on this box: no line, and the trace decides.
+SC_FILE="${PLAN_GATE_CONTRACTS:-}"
+[ -z "$SC_FILE" ] && [ -f "$(dirname "$PLAN")/shared-contracts.tsv" ] && SC_FILE="$(dirname "$PLAN")/shared-contracts.tsv"
+SC_LIB_PATH="$(cd "$(dirname "$0")" && pwd)/lib/shared-contracts.sh"
+if [ -n "$SC_FILE" ] && [ -r "$SC_LIB_PATH" ] && . "$SC_LIB_PATH"; then
+  sc_plan_check "$PLAN" "$SC_FILE"
   [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
 fi
 

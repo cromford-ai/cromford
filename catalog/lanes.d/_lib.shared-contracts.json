@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "shared-contracts",
+      "file": "bin/lib/shared-contracts.sh",
+      "note": "BH-9498. The plan gate reads the build's shared-contracts.tsv (bin/verification-map.sh render --contracts-out, from the repo's catalog/shared-contracts.d/) and checks that each contract the plan's paths trigger is named under `## Shared contracts`. Resolved by sc_conf through lib_env_apply in a subshell, then the env, then SC_DEFAULT_ENFORCE in bin/lib/shared-contracts.sh, which equals the default here (tests/shared-contracts.bh-9498-test.sh K4).",
+      "knobs": [
+        {
+          "env": "SHARED_CONTRACTS_ENFORCE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "log only",
+          "required": true,
+          "note": "1: a plan that triggers a shared contract and does not name its id under `## Shared contracts` is refused (rc 2, the plan gate's repair pass, then PLAN_MALFORMED). 0: the gate writes a NOTE line and `PLAN_CONTRACTS: unlisted (not enforced, ...)` only. Applies only to repos with a catalog/shared-contracts.d/ dir."
+        }
+      ]
+    }
+  ]
+}

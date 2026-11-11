@@ -250,7 +250,7 @@ echo "$(STAMP) [$PROJECT/$KEY] $(head -1 <<<"$CG_ORIENT")" >> "$BUILD/pipeline.l
 # building. A render failure costs one pipeline.log line, and orient degrades to
 # a NOT AVAILABLE line — never to silence, which a planner cannot tell apart
 # from "nobody looked" and will go hunting to resolve.
-"$HARNESS/bin/verification-map.sh" render "$PROJECT" --repo "$WT" --hotspots-out "$BUILD/hotspots.txt" >> "$BUILD/pipeline.log" 2>&1 \
+"$HARNESS/bin/verification-map.sh" render "$PROJECT" --repo "$WT" --hotspots-out "$BUILD/hotspots.txt" --contracts-out "$BUILD/shared-contracts.tsv" >> "$BUILD/pipeline.log" 2>&1 \
   || echo "$(STAMP) [$PROJECT/$KEY] verification-map render failed — building without a primer" >> "$BUILD/pipeline.log"
 # Computed ONCE here and reused by every stage: a build that edits routes and
 # the map in its own working tree will still see the line as it stood at build

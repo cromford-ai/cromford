@@ -1,0 +1,2 @@
+# Fixture contract (tests/verification-map-test.sh: a fully-sourced repo renders no ABSENT line).
+fixture-route-entry	new	src/app/*/page.tsx	a new route adds its docs/verification-map entry	the verification-map freshness check

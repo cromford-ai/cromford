@@ -256,7 +256,8 @@ chmod +x "$T/p8/bin/verification-map.sh"
 ( HARNESS="$T/p8" PROJECT=demo-os KEY=DM-1 WT="$T/full" BUILD="$T/p8/build"
   STAMP() { echo TS; }
   . "$T/vmblock.sh" ) >/dev/null 2>&1
-grep -qxF "render demo-os --repo $T/full --hotspots-out $T/p8/build/hotspots.txt" "$T/p8/argv.log" \
+# A later flag may follow (BH-9498 adds --contracts-out); the hotspots flag and its path stay exact.
+grep -qE "^render demo-os --repo $T/full --hotspots-out $T/p8/build/hotspots\.txt( |\$)" "$T/p8/argv.log" \
   && ok || bad "P8 the build's render call must pass --hotspots-out \$BUILD/hotspots.txt: $(cat "$T/p8/argv.log" 2>&1)"
 
 # ---- P9. the primer invariant holds in every state ------------------------------------

@@ -313,6 +313,14 @@ PLAN_MALFORMED). The lead review checks each answer against the diff.
 - The knobs are in `catalog/lanes.d/_lib.spec-trace.json`: `SPEC_TRACE_ENFORCE` (default 1; 0 logs only), `SPEC_TRACE_SECTION_MAX_BYTES` (12000), `SPEC_TRACE_TOTAL_MAX_BYTES` (40000), `REFERENCE_SHOTS_KEEP_DAYS` (30), `REFERENCE_SHOTS_PRUNE` (dry), `REFERENCE_SHOTS_PRUNE_MAX` (20).
 - A body with none of these lines changes nothing: no prompt text, no gate, no row.
 
+## 18. Shared contracts (BH-9498)
+- A repo declares its shared contracts in `catalog/shared-contracts.d/*.tsv`, one row per contract: `<id> <when> <path-glob> <requires> <enforced-by>`, TAB-separated. `when` is `new` (the path does not exist yet) or `any`. `bin/lib/shared-contracts.sh` holds the one reader.
+- The primer (`state/<project>-context.md`) lists the repo's contracts under `--- SHARED CONTRACTS`, each with its `<file>:<line>` citation. A repo with no such directory gets an `ABSENT:` line and no check.
+- A plan path triggers a contract when it matches the glob (and, for `new`, is absent from the repo). Paths in fences, under `## Sibling claims`, under `## Verify` and on a VALIDATE line do not trigger.
+- The plan carries a `## Shared contracts` section with one line per triggered id and the file that satisfies it. EXECUTE adds each contract the section lists, in the same diff.
+- `bin/plan-gate.sh` refuses a plan that omits a triggered id (`UNTRACED: shared contract — <id>: <requires> (triggered by <path>)`, `PLAN_CONTRACTS: unlisted`, rc 2). The repair pass runs once, then PLAN_MALFORMED. The gate never scores `## Shared contracts` lines as tasks.
+- The knob is `SHARED_CONTRACTS_ENFORCE` in `catalog/lanes.d/_lib.shared-contracts.json` (default 1; 0 logs only).
+
 <!-- client-questions:begin (BH-9028) -->
 ## Client questions: recommend, give reasons, state the default (the operator, 2026-11-03)
 

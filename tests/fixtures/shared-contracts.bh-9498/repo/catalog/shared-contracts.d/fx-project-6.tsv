@@ -1,0 +1,2 @@
+# A project-6-shaped contract: every new migration under prisma/sql/ declares its tenancy class.
+migration-tenancy-header	new	prisma/sql/*.sql	every new prisma/sql migration starts with a -- tenancy: <class> header line	the tenancy-class check (DT-1)

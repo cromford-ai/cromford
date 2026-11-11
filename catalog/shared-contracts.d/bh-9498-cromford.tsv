@@ -1,0 +1,4 @@
+# Shared contracts of cromford (bin/lib/shared-contracts.sh, prompts/plan-contract.md §18).
+# One contract per line, 5 TAB-separated fields: id, when (new|any), path-glob, requires, enforced-by.
+lane-registry	any	cron/*.cron	a cron line runs a lane that has its catalog/lanes.d/<lane-id>.json fragment (add the fragment in the same diff when the lane is new)	tests/lanes-registry-test.sh
+schema-fragment	new	worker/*/schema.d/*.sql	a new schema fragment is a new file (never an edit of schema.sql), and each CREATE TABLE in it has a CREATE INDEX on that table in the same diff	bin/schema-build.sh --check and bin/rules-pack.sh index-on-create-table

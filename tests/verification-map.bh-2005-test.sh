@@ -9,7 +9,7 @@
 #   A1  a flat entry's two bullets are printed under `<map>/<entry>:<line>`
 #   A2  an entries/ layout entry is cited as `<map>/entries/<entry>:<line>`
 #   A3  an entry without the field is named once, on one `ABSENT: n of m` line
-#   A4  headers: MAP, CONVENTIONS, LIES, CONTRACT, ARCHITECTURE, HOTSPOTS, in that order,
+#   A4  headers: MAP, CONVENTIONS, LIES, CONTRACT, ARCHITECTURE, SHARED CONTRACTS, HOTSPOTS, in that order,
 #       and every one of them is cited or opens with ABSENT / COULD NOT READ
 #   A5  a repo with no map: the block holds exactly one ABSENT line
 #   A6  VMAP_LIES_CAP_BYTES bites with the [TRUNCATED ...] tail; the default does
@@ -113,8 +113,8 @@ grep -q 'TRUNCATED' <<<"$B" && bad "A6 the default cap must not bite on a small 
 
 # A4
 HDRS=$(grep '^--- ' <<<"$P" | sed -E 's/^--- ([A-Z ]+[A-Z]).*/\1/')
-# CONFLICT HOTSPOTS (BH-5269) closes the primer; no JOBS_URL here, so it is COULD NOT READ.
-WANT=$'VERIFICATION MAP\nDRIVING CONVENTIONS\nWHAT USUALLY LIES\nVERIFICATION CONTRACT\nAGENT ARCHITECTURE\nCONFLICT HOTSPOTS'
+# SHARED CONTRACTS (BH-9498) comes before it. CONFLICT HOTSPOTS (BH-5269) closes the primer; no JOBS_URL here, so it is COULD NOT READ.
+WANT=$'VERIFICATION MAP\nDRIVING CONVENTIONS\nWHAT USUALLY LIES\nVERIFICATION CONTRACT\nAGENT ARCHITECTURE\nSHARED CONTRACTS\nCONFLICT HOTSPOTS'
 [ "$HDRS" = "$WANT" ] && ok || bad "A4 header order: got [$(tr '\n' '|' <<<"$HDRS")]"
 UNCITED=$(awk '
   /^--- / && !/^--- END/ { hdr=$0; cited=(index($0,"source:")>0); getline nxt;

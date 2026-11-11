@@ -1,0 +1,6 @@
+# fixture rows: 4 fields, a bad when, a bad id, a tool-registry-shaped good row, a duplicate
+short-row	new	src/*.ts	only four fields
+bad-when	sometimes	src/*.ts	x	y
+Bad_Id	new	src/*.ts	x	y
+
+tool-registry	new	src/runtime/tools/*.ts	a new runtime tool adds its registry fragment	the tool-registry test

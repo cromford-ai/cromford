@@ -2,6 +2,7 @@
 # bin/verification-map.sh — the per-project verification map, made consumable.
 #
 #   verification-map.sh render <project> [--repo <path>] [--hotspots-out <path>]
+#                              [--contracts-out <path>]
 #   verification-map.sh orient <project> [--repo <path>]
 #
 # WHAT THIS FILLS. Since July, run-build.sh's PLAN prompt and run-preplan.sh have
@@ -45,6 +46,12 @@
 # --hotspots-out <path>, writes their paths one per line for bin/plan-gate.sh.
 # The file is removed whenever no measurement was read. A hotspot read never
 # changes the render's rc.
+#
+# SHARED CONTRACTS. render also prints the repo's own catalog/shared-contracts.d/
+# rows (bin/lib/shared-contracts.sh) with a citation each, and with
+# --contracts-out <path> writes them for bin/plan-gate.sh (`# repo:` line, then
+# one row per contract). The file is removed whenever the lib did not load. A
+# contract read never changes the render's rc.
 set -uo pipefail
 HARNESS="${HARNESS:-/root/harness}"
 # Relative to this script, not $HARNESS: a test points HARNESS at a scratch
@@ -55,16 +62,19 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/vmap-entry.sh" 2>/dev/null && VMAP_LIB=ok || VMAP_LIB=missing
 # shellcheck source=lib/hotspot-context.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/hotspot-context.sh" 2>/dev/null && HC_LIB=ok || HC_LIB=missing
+# shellcheck source=lib/shared-contracts.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/shared-contracts.sh" 2>/dev/null && SC_LIB=ok || SC_LIB=missing
 
 VERB="${1:-}"; PROJECT="${2:-}"
 case "$VERB" in render|orient) ;; *) echo "usage: verification-map.sh <render|orient> <project> [--repo <path>]" >&2; exit 2 ;; esac
 [ -n "$PROJECT" ] || { echo "usage: verification-map.sh $VERB <project> [--repo <path>]" >&2; exit 2; }
 shift 2
-REPO=""; HOTSPOTS_OUT=""
+REPO=""; HOTSPOTS_OUT=""; CONTRACTS_OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:-}"; shift 2 ;;
     --hotspots-out) HOTSPOTS_OUT="${2:-}"; shift 2 ;;
+    --contracts-out) CONTRACTS_OUT="${2:-}"; shift 2 ;;
     *) echo "unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -319,6 +329,22 @@ render() {
     # may pass as current (lib missing OR the mktemp above failed).
     [ -n "$HOTSPOTS_OUT" ] && rm -f "$HOTSPOTS_OUT"
   fi
+  # SHARED CONTRACTS, composed up front for the same reason: the Sources:
+  # line carries its state (yes/no/bad/unknown).
+  local SC_BLK has_sc=unknown
+  SC_BLK=$(mktemp "$(dirname "$STATE")/.vmap-sc.XXXXXX") || SC_BLK=""
+  if [ "$SC_LIB" = ok ] && [ -n "$SC_BLK" ]; then
+    sc_section "$REPO" > "$SC_BLK" 2>/dev/null || true
+    has_sc="${SC_STATE:-unknown}"
+    if [ -n "$CONTRACTS_OUT" ] && ! sc_write "$REPO" "$CONTRACTS_OUT"; then
+      rm -f "$CONTRACTS_OUT"
+      echo "verification-map: could not write $CONTRACTS_OUT — the plan gate checks no shared contract" >&2
+    fi
+  else
+    # No contract was read, so no file from an earlier render may pass as
+    # current (lib missing OR the mktemp above failed).
+    [ -n "$CONTRACTS_OUT" ] && rm -f "$CONTRACTS_OUT"
+  fi
   # Composed into a temp file and moved into place: a planner reading a
   # half-written primer is a worse failure than reading none.
   {
@@ -369,7 +395,7 @@ render() {
     echo "Every section below is copied out of a real file in that checkout and names it. A section that"
     echo "reports its source missing is stating a fact about this repo — it is not a gap to fill in with"
     echo "something plausible, and it is not an invitation to go hunting for the file elsewhere."
-    echo "Sources: verification-map=$has_map driving-conventions=$has_conv claude-md-verification=$has_vc what-usually-lies=$has_lies agent-architecture=$has_arch conflict-hotspots=$has_hot"
+    echo "Sources: verification-map=$has_map driving-conventions=$has_conv claude-md-verification=$has_vc what-usually-lies=$has_lies agent-architecture=$has_arch shared-contracts=$has_sc conflict-hotspots=$has_hot"
 
     # ---- the map index -----------------------------------------------------
     echo
@@ -482,6 +508,20 @@ render() {
       echo "--- AGENT ARCHITECTURE ---"
       echo "ABSENT: no AGENT_ARCHITECTURE.md in $REPO (the architecture-contract audit has not run here yet)."
     fi
+
+    # ---- shared contracts (bin/lib/shared-contracts.sh) --------------------
+    echo
+    if [ "$SC_LIB" = ok ] && [ -n "$SC_BLK" ] && [ -s "$SC_BLK" ]; then
+      cap_file "$SC_BLK"
+    else
+      echo "--- SHARED CONTRACTS ---"
+      if [ "$SC_LIB" != ok ]; then
+        echo "COULD NOT READ: bin/lib/shared-contracts.sh is not beside this script (tool failure, not \"no contracts\")."
+      else
+        echo "COULD NOT READ: the shared-contracts section came back empty (tool failure, not \"no contracts\")."
+      fi
+    fi
+    [ -n "$SC_BLK" ] && rm -f "$SC_BLK"
 
     # ---- conflict hotspots (bin/lib/hotspot-context.sh) --------------------
     echo
