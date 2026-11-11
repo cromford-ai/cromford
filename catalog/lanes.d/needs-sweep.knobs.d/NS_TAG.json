@@ -1,0 +1,10 @@
+{
+  "env": "NS_TAG",
+  "type": "string",
+  "default": "",
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/needs-sweep.sh",
+  "note": "BH-9420: an optional run tag (^[a-z0-9][a-z0-9:_.-]{0,63}$) added as ` tag=<tag>` to the summary line and the ledger row detail; any other value is dropped with one log line. Set by bin/staff/clerk-lever.sh (clerk:<action key 12>). NOT settable from the control plane.",
+  "settable": false
+}

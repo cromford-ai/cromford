@@ -1,0 +1,14 @@
+# @hub-lanes
+
+# ── STAFF CLERK LEVER (BH-9420, C2 of #9187) ────────────────────────────────
+# Hourly at :47. Samples the NEEDS count (GET /api/needs-sweep/count) as the
+# clerk staff agent's metric needs_count; the sample settles the clerk's due
+# lever actions. At staff.clerk.level = act (seed: observe) and NEEDS at or
+# above staff.clerk.target, records ONE lever action per
+# staff.clerk.lever_every_hours window, then runs bin/needs-sweep.sh, dry while
+# console.needs.sweep_dry_run is 1. One line per run in
+# logs/staff-clerk-lever.log.
+# Off: flags/lane-off-staff-clerk-lever (bin/harness-ctl.sh off staff-clerk-lever),
+# or the staff kill flags (staff-off-all, staff-kill-all, staff-off-clerk,
+# staff-kill-clerk).
+47 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/clerk-lever.sh >> /root/harness/logs/staff-clerk-lever-cron.log 2>&1

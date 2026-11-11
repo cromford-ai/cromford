@@ -1,0 +1,54 @@
+{
+  "id": "staff-clerk-lever",
+  "name": "Staff clerk lever (samples the NEEDS count as the clerk's metric; at level act and NEEDS at or above target, runs the NEEDS sweep once per window)",
+  "scope": "hub",
+  "script": "bin/staff/clerk-lever.sh",
+  "cadence": "47 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-clerk-lever",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CLERK_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/clerk-lever.sh",
+      "note": "BH-9420 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The level, target, lever window and dry mode are settings rows (staff.clerk.level, staff.clerk.target, staff.clerk.lever_every_hours, console.needs.sweep_dry_run), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "CLERK_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/clerk-lever.sh",
+      "note": "BH-9420 test seam: 1 = load clerk_action_verdict and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/clerk-lever.sh",
+      "note": "Test seam gate: bin/staff/clerk-lever.sh honors CLERK_NOW only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-clerk-lever.log"
+  }
+}

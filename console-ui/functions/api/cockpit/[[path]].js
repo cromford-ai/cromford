@@ -30,6 +30,8 @@
 // Without it every call answers 503 saying that, rather than 401ing as though
 // the operator were signed out.
 
+import { NEEDS_STAGES, NEWEST_PER_TICKET, needCounts } from '../../_lib/needs-count.js';
+
 const CONSOLE = 'https://harness-console.operator.workers.dev';
 const AUTH_PROBE = '/api/dash/fleet';
 
@@ -100,8 +102,9 @@ const TERMINAL_STAGES = ['pr_merged', 'tier2_sweep_merged', 'stale', 'superseded
 // Stopped, not progressing: these are the stages that ask for a human.
 const PARKED_STAGES = ['plan_blocked', 'plan_deferred', 'plan_stale', 'plan_malformed'];
 // A build waiting on a merge is waiting on a person too, so `pr_created` joins
-// the parked stages on NEEDS.
-const NEEDS_STAGES = [...PARKED_STAGES, 'pr_created'];
+// the parked stages on NEEDS. NEEDS_STAGES, NEWEST_PER_TICKET and needCounts
+// live in _lib/needs-count.js (BH-9420): the clerk's /api/needs-sweep/count
+// reads the same count NOW shows.
 // What is left, neither finished nor waiting, is the UNFINISHED build rows. They
 // are not "building now": rows are never closed when a build is abandoned,
 // parked, superseded or restarted (BH-3479 read "planning 40m" after
@@ -158,42 +161,6 @@ async function now(db, url) {
     needs: counts,
     generated_at: new Date().toISOString()
   });
-}
-
-// One build row per ticket: the newest (highest id) row of each (project,
-// ticket_key). A ticket is a parked build only when that newest row is parked
-// or pr_created; older attempts behind it never count. A row with no ticket key
-// is its own group. The subquery is not correlated (SQLite runs it once as a
-// LIST SUBQUERY) and carries no project scope: MAX(id) per (project, ticket) is
-// the same answer scoped or not, so the binds stay as they were.
-const NEWEST_PER_TICKET = `id IN (SELECT MAX(id) FROM builds GROUP BY project,
-  CASE WHEN ticket_key IS NULL OR ticket_key = '' THEN 'id:' || id ELSE ticket_key END)`;
-
-// The counts must be scoped to whatever the lists are scoped to. A strip
-// reporting 229 fleet-wide items above a table showing 9 for one project is a
-// screen contradicting itself, and the bigger number is the one people read.
-// The builds number is tickets, not rows (NEWEST_PER_TICKET).
-async function needCounts(db, project = null) {
-  const scope = project ? ' AND project = ?' : '';
-  const row = await db
-    .prepare(`SELECT
-      (SELECT COUNT(*) FROM alerts WHERE resolved = 0${scope}) AS alerts,
-      (SELECT COUNT(*) FROM commands WHERE status IN ('dead_letter','failed')${scope}) AS commands,
-      (SELECT COUNT(*) FROM builds WHERE merged = 0 AND stage IN (${NEEDS_STAGES.map(() => '?').join(',')})${scope}
-        AND ${NEWEST_PER_TICKET}) AS builds,
-      (SELECT COUNT(*) FROM proposals WHERE status = 'gate_pending'${scope}) AS proposals`)
-    .bind(...(project ? [project] : []), ...(project ? [project] : []),
-      ...NEEDS_STAGES, ...(project ? [project] : []), ...(project ? [project] : []))
-    .first();
-  const n = (v) => Number(v || 0);
-  const c = {
-    alerts: n(row && row.alerts),
-    commands: n(row && row.commands),
-    builds: n(row && row.builds),
-    proposals: n(row && row.proposals)
-  };
-  c.total = c.alerts + c.commands + c.builds + c.proposals;
-  return c;
 }
 
 // Everything on this route is something a person has to decide or unstick. It

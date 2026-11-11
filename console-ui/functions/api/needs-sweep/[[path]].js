@@ -23,10 +23,18 @@
 //        and updated_at still the value the hub read. apply:false counts the
 //        rows the same WHERE matches and writes nothing. `changed` is D1's
 //        meta.changes, never the ask.
+//   GET  /api/needs-sweep/count
+//        {ok, needs:{alerts,commands,builds,proposals,total}, generated_at}
+//        The NEEDS count Mission Control NOW shows (_lib/needs-count.js
+//        needCounts), fleet-wide, in ONE statement. The clerk staff agent's
+//        metric (bin/staff/clerk-lever.sh, BH-9420).
 //
 // Env (Pages project -> Settings): HARNESS_SECRET, CONSOLE_DB. Either missing
 // answers 503 naming it. Optional knobs: NEEDS_SWEEP_PAGE_MAX (fallback 500),
 // NEEDS_SWEEP_APPLY_MAX (fallback 100).
+
+// The same NEEDS stages and the same count the cockpit shows on NOW (BH-9420).
+import { NEEDS_STAGES, needCounts } from '../../_lib/needs-count.js';
 
 const json = (status, body) =>
   new Response(JSON.stringify(body), {
@@ -34,8 +42,6 @@ const json = (status, body) =>
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
   });
 
-// The same NEEDS stages the cockpit counts (cockpit/[[path]].js NEEDS_STAGES).
-const NEEDS_STAGES = ['plan_blocked', 'plan_deferred', 'plan_stale', 'plan_malformed', 'pr_created'];
 // The terminal stages a sweep may write. All four are already terminal on
 // every screen (cockpit TERMINAL_STAGES, lib/stages.js).
 const TARGETS = { superseded: 0, stale: 0, pr_merged: 1, pr_closed: 0 };
@@ -189,6 +195,11 @@ export async function onRequest(context) {
     if (route === 'apply') {
       if (request.method !== 'POST') return json(405, { error: `method ${request.method} not allowed on apply` });
       return await apply(env.CONSOLE_DB, request, envWhole(env, 'NEEDS_SWEEP_APPLY_MAX', APPLY_MAX_FALLBACK));
+    }
+    if (route === 'count') {
+      if (request.method !== 'GET') return json(405, { error: `method ${request.method} not allowed on count` });
+      const needs = await needCounts(env.CONSOLE_DB);
+      return json(200, { ok: true, needs, generated_at: new Date().toISOString() });
     }
     return json(404, { error: `no such route: /api/needs-sweep/${route}` });
   } catch (e) {

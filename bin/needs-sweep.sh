@@ -61,6 +61,10 @@
 # needs-sweep-apply, the run goes on, the ledger row says partial.
 #
 # Env: NS_NOW (epoch seconds) is a test seam for the clock.
+# NS_TAG (BH-9420): an optional run tag, ^[a-z0-9][a-z0-9:_.-]{0,63}$ (ns_tag_ok).
+#   A valid tag adds ` tag=<tag>` to the end of the summary (log, stdout and the
+#   ledger detail); any other value is dropped with one log line. No tag = the
+#   summary is unchanged. bin/staff/clerk-lever.sh sets clerk:<action key 12>.
 # OFF: flags/lane-off-needs-sweep (bin/harness-ctl.sh off needs-sweep).
 # Registry: catalog/lanes.d/needs-sweep.json.
 # Doc: docs/notes/2026-11-05-BH-9117-needs-sweep.md.
@@ -134,13 +138,16 @@ NS_EPOCH_JQ='def ns_epoch:
     else "" end
   else "" end;'
 
+# ns_tag_ok <tag> — rc 0 when the run tag is safe to put on a log line.
+ns_tag_ok() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9:_.-]{0,63}$ ]]; }
+
 [ "${NS_LIB_ONLY:-}" = 1 ] && return 0 2>/dev/null
 
 DRY_FLAG=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_FLAG=1; shift ;;
-    -h|--help) sed -n '2,63p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,67p' "$0"; exit 0 ;;
     *) echo "needs-sweep: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -376,6 +383,9 @@ if [ "$REFUSED" -gt 0 ]; then
   STATUS=partial
   SUMMARY="$SUMMARY refused_chunks=$REFUSED"
   alert needs-sweep-apply "[needs-sweep] $REFUSED of ${#CHUNKS[@]} apply call(s) to $BASE/apply were refused. See $LOG."
+fi
+if [ -n "${NS_TAG:-}" ]; then
+  if ns_tag_ok "$NS_TAG"; then SUMMARY="$SUMMARY tag=$NS_TAG"; else log "NS_TAG ignored (bad value)"; fi
 fi
 log "summary $SUMMARY"
 ledger "$STATUS" "$SUMMARY"
