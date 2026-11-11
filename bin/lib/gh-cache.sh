@@ -11,7 +11,11 @@
 # THE CYCLE, per eligible call (ghc_main):
 #   an entry younger than GH_CACHE_TTL_S   replayed, 0 requests (served `cache`)
 #                                          — after the wake check below
-#   an entry past the TTL                  one request with If-None-Match: a
+#   an entry past the TTL, tagged n-<N>    replayed, 0 requests (served `cache`)
+#   or s-<sha12>, at most                  when the wake sync ran and no
+#   GH_CACHE_EVENT_MAX_S old (or one       .wake-down exists; the sync drops a
+#   ghc_sweep_covers vouches for)          changed object's entry first
+#   any other entry past the TTL           one request with If-None-Match: a
 #                                          304 replays the entry and resets its
 #                                          fetch time (served `304`); a 200
 #                                          replaces it (served `200`)
@@ -49,8 +53,14 @@
 # it runs: a lane that writes and then reads never waits on the webhook.
 #
 # Knobs: GH_CACHE_TTL_S (lib.gh-ledger.gh_cache_ttl_s, 0 = off),
-# GH_CACHE_WAKE_GRACE_S (lib.gh-ledger.gh_cache_wake_grace_s); GH_CACHE_NOW is
-# the clock seam for tests.
+# GH_CACHE_WAKE_GRACE_S (lib.gh-ledger.gh_cache_wake_grace_s),
+# GH_CACHE_EVENT_MAX_S (lib.gh-ledger.gh_cache_event_max_s, 0 = off = TTL only);
+# GH_CACHE_NOW is the clock seam for tests.
+#
+# SEAMS, sourced beside this file, each with the same default defined inline
+# first so a box without the file behaves the same: gh-cache-scope.sh
+# (ghc_scope_tag, ghc_wake_drop), gh-cache-sweep.sh (ghc_sweep_covers),
+# gh-cache-eligible.sh (ghc_path_ok).
 #
 # THE SHIM PROVIDES, and this file calls back into: _ghl_run_capture
 # <trace|hdr> <out> <err> <args…> (run the real gh, stdout and the filtered
@@ -67,6 +77,33 @@ _ghc_libdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # until the next drop or 200; correctness does not depend on it.
 # shellcheck source=bin/lib/gh-rest-etag.sh
 [ -r "$_ghc_libdir/gh-rest-etag.sh" ] && . "$_ghc_libdir/gh-rest-etag.sh" 2>/dev/null
+
+# The seam defaults (the same bodies as the seam files), then the seam files.
+ghc_scope_tag() { return 0; }
+ghc_wake_drop() {
+  local dir="${1:-}" repo="${2:-}" key
+  [ -n "$dir" ] && [ -n "$repo" ] || return 0
+  ghc_drop "$dir/$repo~r~*"
+  key=$(printf '%s' "${4:-}" | tr 'A-Z' 'a-z')
+  if [[ "$key" =~ ^[0-9]{1,9}$ ]]; then ghc_drop "$dir/$repo~n-$((10#$key))~*"
+  elif [[ "$key" =~ ^[0-9a-f]{7,64}$ ]]; then ghc_drop "$dir/$repo~s-${key:0:12}~*"
+  fi
+  return 0
+}
+ghc_sweep_covers() { return 1; }
+ghc_path_ok() {
+  case "${1%%\?*}" in
+    graphql|rate_limit) return 1 ;;
+    *actions/artifacts/*/zip*|*actions/jobs/*/logs*|*installation/token*) return 1 ;;
+  esac
+  return 0
+}
+# shellcheck source=bin/lib/gh-cache-scope.sh
+[ -r "$_ghc_libdir/gh-cache-scope.sh" ] && . "$_ghc_libdir/gh-cache-scope.sh" 2>/dev/null
+# shellcheck source=bin/lib/gh-cache-sweep.sh
+[ -r "$_ghc_libdir/gh-cache-sweep.sh" ] && . "$_ghc_libdir/gh-cache-sweep.sh" 2>/dev/null
+# shellcheck source=bin/lib/gh-cache-eligible.sh
+[ -r "$_ghc_libdir/gh-cache-eligible.sh" ] && . "$_ghc_libdir/gh-cache-eligible.sh" 2>/dev/null
 
 _ghc_home() { local h="${HARNESS:-${H:-}}"; [ -n "$h" ] || return 1; printf '%s' "$h"; }
 ghc_now() { case "${GH_CACHE_NOW:-}" in ''|*[!0-9]*) date -u +%s ;; *) printf '%s' "$GH_CACHE_NOW" ;; esac; }
@@ -136,10 +173,7 @@ ghc_eligible() {
   fi
   case "$GHC_ENDPOINT" in *'{owner}'*|*'{repo}'*|*'{branch}'*) return 1 ;; esac
   bare=$(_ghc_bare "$GHC_ENDPOINT")
-  case "${bare%%\?*}" in
-    graphql|rate_limit) return 1 ;;
-    *actions/artifacts/*/zip*|*actions/jobs/*/logs*|*installation/token*) return 1 ;;
-  esac
+  ghc_path_ok "$bare" || return 1
   return 0
 }
 
@@ -149,7 +183,7 @@ ghc_eligible() {
 # writes and then reads on this box never reads its own stale entry. Every
 # other call is left alone.
 ghc_note_write() {
-  local dir="${1:-}" tag
+  local dir="${1:-}" tag key=""
   shift
   [ -d "$dir" ] || return 0
   _ghc_parse "$@" || return 0
@@ -159,8 +193,8 @@ ghc_note_write() {
   fi
   tag=$(ghc_tag "$GHC_ENDPOINT")
   case "$tag" in _~*) return 0 ;; esac
-  ghc_drop "$dir/${tag%%~*}~r~*"
-  case "$tag" in *~r) ;; *) ghc_drop "$dir/$tag~*" ;; esac
+  case "${tag#*~}" in n-*|s-*) key="${tag#*~}"; key="${key#?-}" ;; esac
+  ghc_wake_drop "$dir" "${tag%%~*}" write "$key"
   return 0
 }
 
@@ -189,7 +223,9 @@ _ghc_repo_tag() {
 
 # ghc_tag <endpoint> — `<repo>~<obj>`, the part of the name a wake drops by.
 ghc_tag() {
-  local e repo obj="r" rest seg prev="" i
+  local e repo obj="r" rest seg prev="" i st
+  st=$(ghc_scope_tag "$(_ghc_bare "${1:-}")")
+  if [ -n "$st" ]; then printf '%s' "$st"; return 0; fi
   e=$(_ghc_bare "${1:-}"); e="${e%%\?*}"
   e=$(printf '%s' "$e" | tr 'A-Z' 'a-z')
   case "$e" in repos/*/*) repo=$(_ghc_repo_tag "${e#repos/}") || repo="" ;; *) repo="" ;; esac
@@ -269,39 +305,43 @@ ghc_replay() {
   tail -n +2 "$1"
 }
 
-# ghc_knobs <cache dir> — GHC_TTL and GHC_GRACE. An env value wins; then
+# ghc_knobs <cache dir> — GHC_TTL, GHC_GRACE and GHC_EVENT_MAX. An env value wins; then
 # <dir>/.knobs while it is younger than the lane gate's settings cache window;
 # then a resolve through lib_env_apply gh-ledger in a subshell (lane-gate.sh on
 # a half-synced bin/ ends that subshell, never this process), written to .knobs.
+# The .knobs line is `ttl grace at event_max`; a 3-field line (older code) has
+# no event_max, which reads as unset.
 ghc_knobs() {
-  local dir="${1:-}" t="${GH_CACHE_TTL_S:-}" g="${GH_CACHE_WAKE_GRACE_S:-}" ft="" fg="" fa="" now win h v
-  if [ -z "$t" ] || [ -z "$g" ]; then
+  local dir="${1:-}" t="${GH_CACHE_TTL_S:-}" g="${GH_CACHE_WAKE_GRACE_S:-}" e="${GH_CACHE_EVENT_MAX_S:-}" ft="" fg="" fa="" fe="" now win h v
+  if [ -z "$t" ] || [ -z "$g" ] || [ -z "$e" ]; then
     now=$(ghc_now)
     win="${LANE_GATE_CACHE_S:-60}"   # the lane gate's own settings cache window (bin/lib/lane-gate.sh)
     case "$win" in ''|*[!0-9]*) win=60 ;; esac
-    [ -r "$dir/.knobs" ] && read -r ft fg fa _ < "$dir/.knobs" 2>/dev/null
+    [ -r "$dir/.knobs" ] && read -r ft fg fa fe _ < "$dir/.knobs" 2>/dev/null
     case "${fa:-}" in ''|*[!0-9]*) fa="" ;; esac
     if [ -z "$fa" ] || [ $((now - fa)) -ge "$win" ] || [ $((now - fa)) -lt 0 ]; then
-      ft=""; fg=""
+      ft=""; fg=""; fe=""
       h=$(_ghc_home) || h=""
       if [ -n "$h" ] && [ -r "$h/bin/lib/lane-gate.sh" ]; then
         v=$(
-          unset GH_CACHE_TTL_S GH_CACHE_WAKE_GRACE_S
+          unset GH_CACHE_TTL_S GH_CACHE_WAKE_GRACE_S GH_CACHE_EVENT_MAX_S
           # shellcheck source=bin/lib/lane-gate.sh
           { . "$h/bin/lib/lane-gate.sh" && command -v lib_env_apply && lib_env_apply gh-ledger; } >/dev/null 2>&1
-          printf '%s %s' "${GH_CACHE_TTL_S:-}" "${GH_CACHE_WAKE_GRACE_S:-}"
+          printf '%s %s %s' "${GH_CACHE_TTL_S:--}" "${GH_CACHE_WAKE_GRACE_S:--}" "${GH_CACHE_EVENT_MAX_S:--}"
         ) 2>/dev/null || v=""
-        read -r ft fg <<<"$v"
-        { printf '%s %s %s\n' "${ft:--}" "${fg:--}" "$now" > "$dir/.knobs.$$" && mv -f "$dir/.knobs.$$" "$dir/.knobs"; } 2>/dev/null
+        read -r ft fg fe <<<"$v"
+        { printf '%s %s %s %s\n' "${ft:--}" "${fg:--}" "$now" "${fe:--}" > "$dir/.knobs.$$" && mv -f "$dir/.knobs.$$" "$dir/.knobs"; } 2>/dev/null
         rm -f "$dir/.knobs.$$" 2>/dev/null
       fi
     fi
     [ -n "$t" ] || t="$ft"
     [ -n "$g" ] || g="$fg"
+    [ -n "$e" ] || e="$fe"
   fi
   case "$t" in ''|*[!0-9]*) t=60 ;; esac   # fallback for the settings row lib.gh-ledger.gh_cache_ttl_s
   case "$g" in ''|*[!0-9]*) g=5 ;; esac    # fallback for the settings row lib.gh-ledger.gh_cache_wake_grace_s
-  GHC_TTL=$((10#$t)); GHC_GRACE=$((10#$g))
+  case "$e" in ''|*[!0-9]*) e=300 ;; esac  # fallback for the settings row lib.gh-ledger.gh_cache_event_max_s
+  GHC_TTL=$((10#$t)); GHC_GRACE=$((10#$g)); GHC_EVENT_MAX=$((10#$e))
   return 0
 }
 
@@ -338,7 +378,7 @@ _ghc_wakes_fetch() {
 # ghc_wake_sync <cache dir> <now> — rc 0: serve (entries a wake named are gone);
 # rc 2: the sync lock is busy, so make the call conditional.
 ghc_wake_sync() {
-  local dir="$1" now="$2" wm="" last="" down="" lfd out head seeded=0 id repo key max
+  local dir="$1" now="$2" wm="" last="" down="" lfd out head seeded=0 id repo kind key max
   [ -r "$dir/.wakes" ] && read -r wm last _ < "$dir/.wakes" 2>/dev/null
   case "${wm:-}" in *[!0-9]*) wm="" ;; esac
   case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
@@ -358,17 +398,13 @@ ghc_wake_sync() {
       if [ -z "$wm" ]; then seeded=1; wm="${head#OK }"; fi
       [ "$seeded" = 1 ] && ghc_drop "$dir/*~*~*"
       max="$wm"
-      while IFS=$'\t' read -r id repo key; do
+      # A missing or empty kind is `-`: an empty field would collapse under the
+      # tab IFS and shift the key into kind.
+      while IFS=$'\t' read -r id repo kind key; do
         case "$id" in ''|*[!0-9]*) continue ;; esac
-        if repo=$(_ghc_repo_tag "$repo"); then
-          ghc_drop "$dir/$repo~r~*"
-          key=$(printf '%s' "$key" | tr 'A-Z' 'a-z')
-          if [[ "$key" =~ ^[0-9]{1,9}$ ]]; then ghc_drop "$dir/$repo~n-$((10#$key))~*"
-          elif [[ "$key" =~ ^[0-9a-f]{7,64}$ ]]; then ghc_drop "$dir/$repo~s-${key:0:12}~*"
-          fi
-        fi
+        if repo=$(_ghc_repo_tag "$repo"); then ghc_wake_drop "$dir" "$repo" "${kind:--}" "$key"; fi
         [ "$id" -gt "$max" ] && max=$id
-      done < <(printf '%s' "${out#*$'\n'}" | jq -r '.wakes[] | [(.id|tostring), (.repo // ""), (.key // "" | tostring)] | @tsv' 2>/dev/null)
+      done < <(printf '%s' "${out#*$'\n'}" | jq -r '.wakes[] | [(.id|tostring), (.repo // ""), ((.kind // "") | tostring | if . == "" then "-" else . end), (.key // "" | tostring)] | @tsv' 2>/dev/null)
       { printf '%s %s\n' "$max" "$now" > "$dir/.wakes.$$" && mv -f "$dir/.wakes.$$" "$dir/.wakes"; } 2>/dev/null
       rm -f "$dir/.wakes.$$" 2>/dev/null
       if [ -e "$dir/.wake-down" ]; then
@@ -431,6 +467,23 @@ ghc_main() {
         GHC_RC=$GHC_E_RC; GHC_SERVED=cache
         rm -rf "$work"
         return 0
+      fi
+    elif [ "$GHC_EVENT_MAX" -gt 0 ] && [ "$age" -gt "$GHC_TTL" ] && [[ "$tag" =~ ~(n-[0-9]+|s-[0-9a-f]+)$ ]]; then
+      # Past the TTL, scoped to one PR, issue or sha: the wake feed says when it
+      # changed. Serve it while the feed is healthy, up to GHC_EVENT_MAX old.
+      ghc_wake_sync "$dir" "$now"; ws=$?
+      if [ "$ws" = 0 ] && [ ! -e "$dir/.wake-down" ]; then
+        if cp "$f" "$work/e" 2>/dev/null && ghc_read "$work/e"; then
+          if [ $((now - GHC_E_AT)) -le "$GHC_EVENT_MAX" ] || ghc_sweep_covers "$dir" "$tag" "$GHC_E_AT"; then
+            ghc_replay "$work/e" cache "$GHC_INCLUDE"
+            GHC_RC=$GHC_E_RC; GHC_SERVED=cache
+            rm -rf "$work"
+            return 0
+          fi
+          ws=1   # too old: a conditional request
+        fi       # else a wake dropped it: an unconditional request
+      else
+        ws=1     # the feed is down or the lock is busy: the TTL rule
       fi
     fi
     # Past the TTL, or the sync lock was busy: a conditional request, against a

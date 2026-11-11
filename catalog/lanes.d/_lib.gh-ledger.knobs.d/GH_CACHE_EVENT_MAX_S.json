@@ -1,0 +1,11 @@
+{
+  "env": "GH_CACHE_EVENT_MAX_S",
+  "read_in": "bin/lib/gh-cache.sh",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9417.0. Seconds the gh PATH shim serves a PR-, issue- or sha-scoped entry (tag n-<N> or s-<sha12>) past GH_CACHE_TTL_S with no request, while the wake feed is healthy (bin/lib/gh-cache.sh ghc_main): a webhook wake drops a changed object's entry first. It bounds how long a change the worker records no wake for (a label edit by a person) can hide. 0 = off: every entry past the TTL is a conditional request, as before. Resolved like GH_CACHE_TTL_S; code fallback 300."
+}

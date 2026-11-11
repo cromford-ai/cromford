@@ -1,0 +1,3 @@
+[
+    {"path": "gh-cache", "class": "cache", "authority": "the gh shim read-through cache (BH-8066, BH-9451)", "note": "state/gh-cache/<repo>~<obj>~<sha1>: one file per cached `gh api` GET answer, plus the .knobs, .wakes (watermark), .wakes.lock and .wake-down dot files: bin/lib/gh-cache.sh. Each entry is written tmp+mv, re-fetched from GitHub when it is missing, and capped by the shared TTL + count sweep (_gh_etag_sweep). A box serves only its own entries. Losing the directory costs one request per key. Machine-local, never carried"}
+]

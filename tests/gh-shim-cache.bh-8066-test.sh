@@ -42,7 +42,7 @@ export TMPDIR="$T/tmp"
 export GH_STUB_DIR="$T"
 export HARNESS_SECRET=fixture-secret-bh8066
 unset GH_TOKEN GITHUB_TOKEN GH_DEBUG HARNESS_LANE HARNESS_LANE_PROJECT PROJECT GH_LEDGER_OFF \
-  GH_LEDGER_DEPTH GH_LEDGER_BY_CALLER GH_CACHE_TTL_S GH_CACHE_WAKE_GRACE_S GH_CACHE_NOW GH_ETAG
+  GH_LEDGER_DEPTH GH_LEDGER_BY_CALLER GH_CACHE_TTL_S GH_CACHE_WAKE_GRACE_S GH_CACHE_EVENT_MAX_S GH_CACHE_NOW GH_ETAG
 LED="$T/h/state/gh-rest-ledger"
 CACHE="$T/h/state/gh-cache"
 
@@ -149,7 +149,7 @@ reset() {
   NOWV=$T0
   # A watermark and a sync long ago: the wake check is armed but not seeded.
   mkdir -p "$CACHE"; printf '100 0\n' > "$CACHE/.wakes"
-  export GH_CACHE_TTL_S=60 GH_CACHE_WAKE_GRACE_S=5
+  export GH_CACHE_TTL_S=60 GH_CACHE_WAKE_GRACE_S=5 GH_CACHE_EVENT_MAX_S=0   # BH-9451: the knob-off path
 }
 
 [ -r "$LIB" ] && ok || bad "0: bin/lib/gh-cache.sh must exist and be in the shim's closure"

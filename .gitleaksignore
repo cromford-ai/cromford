@@ -29,8 +29,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -88,6 +88,7 @@ tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:120
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:135
 tests/gh-budget-report-served.bh-8066-test.sh:generic-api-key:102
+tests/gh-cache-event-valid.bh-9451-test.sh:generic-api-key:38
 tests/gh-default-auth-lanes-test.sh:generic-api-key:272
 tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:43
 tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:464
