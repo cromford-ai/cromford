@@ -2004,7 +2004,7 @@ pr_worker() {
   # #1045 was inside WAIT_CI's budget for ten hours after its one alert, and a
   # park the resolver owns pages never by design.
   if mc_stuck_check "$KEY" "$STATE" "$SINCE" "$HEAD" "$URL" "$WHY" "verdict=$VERDICT ci=$CIWORD mergeState=$MSTATE mode=$MODE${MC_GH_FACTS:+; github: $MC_GH_FACTS}"; then
-    stuck_rekick "$KEY" "$STATE" "$WHY" "$SLUG" "$NUM" "$URL" "$HEAD" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$CI" "$VERDICT" "$REVIEWED" "${PROVIDER:-}"
+    stuck_rekick "$KEY" "$STATE" "$WHY" "$SLUG" "$NUM" "$URL" "$HEAD" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$CI" "$VERDICT" "$REVIEWED" "${PROVIDER:-}" "$SINCE"
   fi
   # ---- the land trigger, before the state arms (BH-870) --------------------
   # This project's base moved since the last completed fan-out, so every open

@@ -115,7 +115,7 @@ _brpf_acked() {
 
 # brpf_zero_alert — see the header. rc 0 always.
 brpf_zero_alert() {
-  local on="${BRPF_ZA:-${BR_ZERO_DISPATCH_ALERT:-1}}" line xp xk xurl xtk xpk k=0 oldest="" oldat="" seen=" " id scope
+  local on="${BRPF_ZA:-${BR_ZERO_DISPATCH_ALERT:-1}}" line xp xk xurl xtk xpk k=0 d=0 oldest="" oldat="" seen=" " id scope
   [ "$on" != 0 ] || return 0
   [ "${BHW_ON:-0}" = 1 ] || return 0
   [ "${N:-0}" = 0 ] || return 0
@@ -128,7 +128,8 @@ brpf_zero_alert() {
     id=$(bhw_id "${xp:-}" "${xtk:--}" "${xurl:--}" 2>/dev/null) || id="${xp:--}/$xk"
     case "$seen" in *" $id "*) continue ;; esac
     seen="$seen$id "
-    _brpf_acked "${xp:-}" "${xtk:--}" "${xurl:--}" && continue
+    # A row acked this tick was dispatched and took no rung (rc 3): counted in d.
+    if _brpf_acked "${xp:-}" "${xtk:--}" "${xurl:--}"; then d=$((d + 1)); continue; fi
     k=$((k + 1)); [ -n "$oldest" ] || oldest="$id"
     # The oldest park by its epoch; a row with no epoch never displaces one.
     case "${xpk:-}" in
@@ -139,12 +140,12 @@ brpf_zero_alert() {
   [ "$k" -gt 0 ] || return 0
   scope="${ONLY:-fleet}"
   if [ "${OBSERVE:-0}" = 1 ]; then
-    say "ZERO_DISPATCH $scope: this tick ran 0 rungs and dispatched 0 of $k hand-off(s) (observe mode: no alert written)"
+    say "ZERO_DISPATCH $scope: this tick ran 0 rungs and $k undispatched hand-off(s) ($d dispatched with rc 3) (observe mode: no alert written)"
     return 0
   fi
-  say "ZERO_DISPATCH $scope: this tick ran 0 rungs and dispatched 0 of $k hand-off(s) (rungs=0/${EFF_PER_TICK:-0} reason=${STOPREASON:-?}); one br-zero-dispatch alert line"
+  say "ZERO_DISPATCH $scope: this tick ran 0 rungs and $k undispatched hand-off(s) ($d dispatched with rc 3) (rungs=0/${EFF_PER_TICK:-0} reason=${STOPREASON:-?}); one br-zero-dispatch alert line"
   HARNESS="$H" "$H/bin/alert-line.sh" --id "br-zero-dispatch:$scope" \
-    "[blocked-resolver] $scope: this tick ran 0 rungs and dispatched 0 of $k hand-off(s) (rungs=0/${EFF_PER_TICK:-0} reason=${STOPREASON:-?} visited=[${VISITLIST:-}]); oldest: $oldest" >/dev/null 2>&1 \
+    "[blocked-resolver] $scope: this tick ran 0 rungs and $k undispatched hand-off(s) ($d dispatched with rc 3) (rungs=0/${EFF_PER_TICK:-0} reason=${STOPREASON:-?} visited=[${VISITLIST:-}]); oldest: $oldest" >/dev/null 2>&1 \
     || say "ZERO_DISPATCH $scope: the alert line could not be written"
   return 0
 }

@@ -1,0 +1,11 @@
+{
+  "env": "BR_DISCOVERY_RECHECK_MIN",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9467-discovery-cache.sh",
+  "note": "BH-9467: how long the discovery cache keeps a rebuild record whose fresh build has no result yet. A remote result moves no local mtime, so the record is read again after this many minutes. 0 = such a record is never kept."
+}

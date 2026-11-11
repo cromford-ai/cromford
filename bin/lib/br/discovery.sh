@@ -156,6 +156,7 @@ br_from_builds() {
   else
     bglob=("$H"/builds/pool-*-*/ "$H"/builds/*-*/)
   fi
+  command -v bdc_begin >/dev/null 2>&1 && bdc_begin builds "$pl"  # BH-9467: the per-path (signature, decision) cache
   for d in "${bglob[@]}" "${bor_items[@]}"; do
     bi=""
     case "$d" in ledger:*) bi="${d#ledger:}" ;; esac
@@ -168,20 +169,21 @@ br_from_builds() {
     # `*-*` matches every pool-* dir as well: each record is visited once.
     [ -n "${bseen[$d]:-}" ] && continue
     bseen[$d]=1
-    [ -f "$d/RESULT" ] || continue
-    [ -f "$d/.blocked-resolver-abandoned" ] && continue
-    [ -f "$d/.blocked-resolver-superseded" ] && continue
+    command -v bdc_skip >/dev/null 2>&1 && bdc_skip "$d" && continue
+    [ -f "$d/RESULT" ] || { _bdcn "$d" skip; continue; }
+    [ -f "$d/.blocked-resolver-abandoned" ] && { _bdcn "$d" skip; continue; }
+    [ -f "$d/.blocked-resolver-superseded" ] && { _bdcn "$d" skip; continue; }
     # BH-9029: the pre-pass retired this build row (its dir is the only key a
     # url-less row has); counted in the prof line's retired_skipped.
-    [ -f "$d/.blocked-resolver-retired" ] && { command -v bdi_count >/dev/null 2>&1 && bdi_count; continue; }
+    [ -f "$d/.blocked-resolver-retired" ] && { command -v bdi_count >/dev/null 2>&1 && bdi_count; _bdcn "$d" retired; continue; }
     core="${bn#pool-}"; core="${core#pool-}"; project=""
     for bproj in $pl; do
       case "$core" in "$bproj"-*) project="$bproj"; break ;; esac
     done
-    [ -n "$project" ] || continue
-    [ -z "$ONLY" ] || [ "$ONLY" = "$project" ] || continue
+    [ -n "$project" ] || { _bdcn "$d" skip; continue; }
+    [ -z "$ONLY" ] || [ "$ONLY" = "$project" ] || { _bdcn "$d" skip; continue; }
     rest="${core#"$project"-}"; key="${rest%-*}"
-    [ -n "$key" ] || continue
+    [ -n "$key" ] || { _bdcn "$d" skip; continue; }
     # HELD, AND RE-READ ON EVERY TICK. The incident's own shape is a park whose
     # PR is already closed, so the conductor has no row for it and this source is
     # the only one that can re-offer it. While the ladder's state still says HELD
@@ -195,6 +197,7 @@ br_from_builds() {
     fi
     # Line 1 with a builtin, not a head fork: the same value, also for a
     # RESULT with no trailing newline.
+    command -v bdc_read >/dev/null 2>&1 && bdc_read
     first=""; { IFS= read -r first < "$d/RESULT" || [ -n "$first" ]; } 2>/dev/null
     fi
     rec_reason=""
@@ -228,6 +231,8 @@ br_from_builds() {
       # hold its claim — relaunching into that is two builds of one ticket.
       "ABANDONED_TIMEOUT"*)
         [ -f "$d/REAPED" ] && rec_reason=abandoned-timeout ;;
+      # A PLAN_BLOCKED on a board project is a stable skip: the board prefix is
+      # fleet.conf's, and a fleet.conf change discards the cache (BH-9467).
       "PLAN_BLOCKED"*)
         prefix=$("$H/bin/fleet-conf.sh" "$project" board_prefix 2>/dev/null)
         [ "$prefix" = "-" ] && rec_reason=plan-blocked ;;
@@ -236,7 +241,9 @@ br_from_builds() {
     # rebuild: the question "was removing that test legitimate" has an answer,
     # and rebuilding without answering it just produces the same block again.
     [ -s "$d/test-tamper-rescan.txt" ] && grep -q 'JUSTIFICATION: NONE' "$d/test-tamper-rescan.txt" 2>/dev/null && rec_reason=rescue-real-deletion
-    [ -n "$rec_reason" ] || continue
+    # No reason is a stable skip, unless a rescan report could change it in
+    # place (its content edit moves no mtime the cache reads).
+    if [ -z "$rec_reason" ]; then [ -e "$d/test-tamper-rescan.txt" ] || _bdcn "$d" skip; continue; fi
     # A record whose terminal was only reached MINUTES ago still belongs to the
     # lanes that own the first retry (review-rescue, the watchdog's resume pass). This
     # lane is the backstop, so it waits them out.
@@ -291,6 +298,17 @@ br_from_builds() {
     esac
     printf 'build\t%s\t%s\t%s\t-\t%s\t%s\t-\n' "$project" "$(br_rkey "$project-$key")" "$rec_reason" "$d" "$key"
   done
+  command -v bdc_end >/dev/null 2>&1 && bdc_end builds
+  return 0
+}
+
+# _bdcn <path> <decision> — the BH-9467 cache note, when the fragment is
+# loaded. A ledger item (`-`) is never noted. Every exit that does not call it
+# (a time floor, a state read, an emitted row) is read again next tick.
+_bdcn() {
+  [ "${1:--}" != - ] || return 0
+  command -v bdc_note >/dev/null 2>&1 && bdc_note "$1" "$2"
+  return 0
 }
 
 # THE REBUILD THIS LANE STARTED HAS FINISHED — the fourth source (2026-09-16).
@@ -360,8 +378,14 @@ br_from_rebuilds() {
   local f p ck key st at at_ep url seen d dn ep out res res_ep rec n=0
   local qrow qat qep wj recname now oc last prec brc bdir bupd bres
   local -A bor_rows=() bor_rc=()
+  local -a rfiles=()
+  local rcur
   now=$(date -u +%s)
-  for f in "$ST"/*/*.json; do
+  # BH-9467: a one-PR run reads only the records that name its PR (one grep);
+  # every other run globs, through the per-path cache.
+  command -v bdc_one_pr_files >/dev/null 2>&1 && bdc_one_pr_files rfiles || rfiles=("$ST"/*/*.json)
+  command -v bdc_begin >/dev/null 2>&1 && bdc_begin rebuilds
+  for f in ${rfiles[@]+"${rfiles[@]}"}; do
     [ -f "$f" ] || continue
     # THE EFFECTIVE budget, not the knob (review M12): on a tick that carried
     # unspent rungs the fleet may spend up to twice BR_PER_TICK, and a source
@@ -371,10 +395,12 @@ br_from_rebuilds() {
     # every project's state files, so a fork here is paid 13 times per file.
     p="${f%/*}"; p="${p##*/}"
     [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
+    command -v bdc_skip >/dev/null 2>&1 && bdc_skip "$f" && continue
     # BH-9029: a record whose outcome the index already holds as finished is
     # dropped before the cat and the jq forks below would drop it.
-    command -v bdi_rec_skip >/dev/null 2>&1 && bdi_rec_skip "$f" && continue
-    st=$(cat "$f" 2>/dev/null); [ -n "$st" ] || continue
+    command -v bdi_rec_skip >/dev/null 2>&1 && bdi_rec_skip "$f" && { _bdcn "$f" skip; continue; }
+    command -v bdc_read >/dev/null 2>&1 && bdc_read
+    st=$(cat "$f" 2>/dev/null); [ -n "$st" ] || { _bdcn "$f" skip; continue; }
     oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
     ck="${f##*/}"; ck="${ck%.json}"
     # THE ENQUEUE THAT DID NOT LAND (BH-488). Rung 3 closed the PR, marked the
@@ -405,12 +431,12 @@ br_from_rebuilds() {
     last=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.action // "")' 2>/dev/null)
     case "$last" in
       rebuild-fresh-failed|rebuild-fresh-board-miss)
-      case "$oc" in ''|HELD) ;; *) continue ;; esac
+      case "$oc" in ''|HELD) ;; *) _bdcn "$f" skip; continue ;; esac
       # A PR-number cap key means no key was EVER derivable (the rc-2 refusal,
       # which is counted and capped by br_rebuild_fresh). There is nothing to
       # enqueue with, so there is nothing to retry.
-      case "$ck" in "$p"-*) ;; *) continue ;; esac
-      key=$(br_key_shape "${ck#"$p"-}") || continue
+      case "$ck" in "$p"-*) ;; *) _bdcn "$f" skip; continue ;; esac
+      key=$(br_key_shape "${ck#"$p"-}") || { _bdcn "$f" skip; continue; }
       url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
       prec=$(printf '%s' "$st" | jq -r '.parked_rec // "-"' 2>/dev/null)
       printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" rebuild-enqueue-failed "${url:--}" "${prec:--}" "$key"
@@ -425,11 +451,11 @@ br_from_rebuilds() {
     # held, it costs no slot (rc 3).
     case "$oc" in
       '') ;;
-      HELD) [ -n "$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)" ] || continue ;;
+      HELD) [ -n "$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)" ] || { _bdcn "$f" skip; continue; } ;;
       # Parked on the data lane (BH-4926): offered so br_one re-reads the
       # ledger and the probe; parked, it costs no slot (rc 3).
       DATA_LANE) ;;
-      *) continue ;;
+      *) _bdcn "$f" skip; continue ;;
     esac
     # THE HOLD AND STALL ATTEMPTS ARE NOT LADDER ATTEMPTS, so they are read past.
     # `held`, `hold-unreadable` and `hold-lifted` are written by a gate that
@@ -441,17 +467,17 @@ br_from_rebuilds() {
     # by the same mistake once: a stall that displaced `rebuild-fresh-failed`
     # would make the STALLED alert's own instruction false, because clearing
     # .outcome would put back a row this source no longer recognises.
-    [ "$last" = rebuild-fresh ] || continue
+    [ "$last" = rebuild-fresh ] || { _bdcn "$f" skip; continue; }
     at=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.at // "")' 2>/dev/null)
     # AN UNREADABLE TIMESTAMP ABORTS. Everything below is "did this RESULT arrive
     # after the rebuild started", and without a start there is no such question.
-    [ -n "$at" ] || continue
-    at_ep=$(date -u -d "$at" +%s 2>/dev/null) || continue
+    [ -n "$at" ] || { _bdcn "$f" skip; continue; }
+    at_ep=$(date -u -d "$at" +%s 2>/dev/null) || { _bdcn "$f" skip; continue; }
     # The cap key is <project>-<KEY> whenever a key was derivable. When it is not
     # (a PR-number key like o-tproj-77) there is no build to poll for, and the
     # nokey cap in br_rebuild_fresh is that park's answer instead.
-    case "$ck" in "$p"-*) ;; *) continue ;; esac
-    key=$(br_key_shape "${ck#"$p"-}") || continue
+    case "$ck" in "$p"-*) ;; *) _bdcn "$f" skip; continue ;; esac
+    key=$(br_key_shape "${ck#"$p"-}") || { _bdcn "$f" skip; continue; }
     url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
     seen=$(printf '%s' "$st" | jq -r '(.rebuild_seen // []) | join(" ")' 2>/dev/null)
     # THE RECORD. Every shape the rebuild can land in: a pool build reaped onto
@@ -543,7 +569,8 @@ br_from_rebuilds() {
         fi
       fi
     fi
-    [ -n "$res" ] || continue
+    # No result yet: a wait, kept by the cache for BR_DISCOVERY_RECHECK_MIN.
+    [ -n "$res" ] || { _bdcn "$f" wait; continue; }
     out=$(br_rebuild_outcome "$res"); [ -n "$out" ] || continue
     # A REAP THAT HAS NOT LANDED IS NOT AN ENDING (BH-1770). The reaper writes
     # ABANDONED_TIMEOUT before it signals and REAPED once the lane is gone and
@@ -586,12 +613,17 @@ br_from_rebuilds() {
     fi
     # The RESULT line rides on the record: the abandon quotes it, and on the
     # ledger-row path there is no directory for it to re-read.
-    [ "$OBSERVE" = 1 ] || br_set_field "$p" "$ck" rebuild_result "$res"
+    # BH-9467: a value already on the record is not written again, so the
+    # record's age says when the ladder last did something.
+    rcur=$(printf '%s' "$st" | jq -r '[(.rebuild_result // ""), (((.wait // "") + (.wait_job // "")) | gsub("-"; ""))] | @tsv' 2>/dev/null) || rcur=""
+    [ "$OBSERVE" = 1 ] || [ "${rcur%%$'\t'*}" = "$res" ] || br_set_field "$p" "$ck" rebuild_result "$res"
     # A result has arrived for the held build; do not keep waiting.
-    [ "$OBSERVE" = 1 ] || br_set_wait "$p" "$ck" -
+    [ "$OBSERVE" = 1 ] || { [ -n "$rcur" ] && [ -z "${rcur#*$'\t'}" ]; } || br_set_wait "$p" "$ck" -
     printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" "$out" "${url:--}" "${rec:--}" "$key"
     n=$((n+1))
   done
+  command -v bdc_end >/dev/null 2>&1 && bdc_end rebuilds
+  return 0
 }
 
 br_candidates() {
@@ -602,8 +634,10 @@ br_candidates() {
   command -v bdi_src_secs >/dev/null 2>&1 && _t=bdi_src_secs
   _s0=$SECONDS; br_from_rebuilds;  $_t rebuilds "$_s0"
   _s0=$SECONDS; br_from_conductor; $_t conductor "$_s0"
-  _s0=$SECONDS; br_from_queue;     $_t queue "$_s0"
-  _s0=$SECONDS; br_from_builds;    $_t builds "$_s0"
+  # BH-9467: a one-PR run skips the two sources whose rows carry no PR url.
+  local _one=""; command -v bdc_one_pr >/dev/null 2>&1 && bdc_one_pr && _one=1
+  _s0=$SECONDS; [ -n "$_one" ] || br_from_queue;  $_t queue "$_s0"
+  _s0=$SECONDS; [ -n "$_one" ] || br_from_builds; $_t builds "$_s0"
   _s0=$SECONDS; br_from_reviews;   $_t reviews "$_s0"
   # BH-4664: an external PR source, when bin/lib/br/opt/external.sh is installed.
   _s0=$SECONDS

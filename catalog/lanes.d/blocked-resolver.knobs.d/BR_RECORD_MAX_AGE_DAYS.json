@@ -1,0 +1,11 @@
+{
+  "env": "BR_RECORD_MAX_AGE_DAYS",
+  "type": "int",
+  "default": 14,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9467-record-age-out.sh",
+  "note": "BH-9467 (#9369 fix 2): a build or rebuild row whose ticket has no open PR, and whose RESULT and record are both at least this many days old, is aged out in the pre-pass: a .blocked-resolver-retired marker (build) or an aged-out attempt (rebuild), one resolver_retired line. HELD and DATA_LANE records are never aged."
+}

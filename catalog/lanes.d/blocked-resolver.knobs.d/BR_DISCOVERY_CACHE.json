@@ -1,0 +1,10 @@
+{
+  "env": "BR_DISCOVERY_CACHE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9467-discovery-cache.sh",
+  "note": "BH-9467 (#9369 fix 3): 1 = br_from_builds and br_from_rebuilds keep a per-path (signature, decision) cache in state/blocked-resolver/.disc-cache-<source>-<scope>.tsv and skip a path that has not changed since the last tick. 0 = every path is read, no file is written. A one-PR run never uses the cache."
+}

@@ -117,13 +117,13 @@ ack() { printf '%s\n' "$3" > "$ACKS/$1.$2"; }
 clearacks() { rm -f "$ACKS"/*; }
 clearacks; za z3
 [ "$(grep -c . "$ZH/alerts")" = 1 ] && grep -q -- '--id br-zero-dispatch:fleet' "$ZH/alerts" \
-  && grep -q 'dispatched 0 of 2 hand-off(s)' "$ZH/alerts" && grep -q 'oldest: tproj-TK-2' "$ZH/alerts" && ok \
+  && grep -q '2 undispatched hand-off(s) (0 dispatched with rc 3)' "$ZH/alerts" && grep -q 'oldest: tproj-TK-2' "$ZH/alerts" && ok \
   || bad "Z3 two unacked rows (one twice): one alert, k=2, the oldest named: [$(cat "$ZH/alerts")]"
 grep -q '^ZERO_DISPATCH fleet:' "$ZH/say" && ok || bad "Z3 one ZERO_DISPATCH say line: [$(cat "$ZH/say")]"
 clearacks; ack tproj-TK-1 dispatched 1000; ack o-tproj-2 held 1001; za z4
 [ ! -s "$ZH/alerts" ] && ok || bad "Z4 every row acked (by tkey id or by url id): no alert: [$(cat "$ZH/alerts")]"
 clearacks; ack tproj-TK-1 lock-held 1000; ack tproj-TK-2 dispatched 999; za z5
-grep -q 'dispatched 0 of 1 hand-off(s)' "$ZH/alerts" && ok || bad "Z5 an ack from before this tick does not count: [$(cat "$ZH/alerts")]"
+grep -q '1 undispatched hand-off(s) (1 dispatched with rc 3)' "$ZH/alerts" && ok || bad "Z5 an ack from before this tick does not count: [$(cat "$ZH/alerts")]"
 clearacks; za z6 NN=3
 [ ! -s "$ZH/alerts" ] && ok || bad "Z6 a tick that ran rungs: no alert"
 clearacks; za z7 BR_ZERO_DISPATCH_ALERT=0
@@ -261,7 +261,7 @@ CLEAN; SEED; BRENV=(BR_REBUILDS_PER_TICK=60 BR_PER_TICK=50 BR_PER_TICK_TPROJ=0 B
 [ ! -s "$T/queue.txt" ] && ok || bad "Z1 no rung ran: $(head -3 "$T/queue.txt")"
 [ "$(grep -c 'br-zero-dispatch' "$T/alerts")" = 1 ] && ok \
   || bad "Z1 exactly one br-zero-dispatch alert line, got $(grep -c 'br-zero-dispatch' "$T/alerts"): [$(cat "$T/alerts")] tick: $(grep 'tick:' "$LOG" | tail -1)"
-grep -q -- '--id br-zero-dispatch:fleet \[blocked-resolver\] fleet: this tick ran 0 rungs and dispatched 0 of 51 hand-off(s)' "$T/alerts" && ok \
+grep -q -- '--id br-zero-dispatch:fleet \[blocked-resolver\] fleet: this tick ran 0 rungs and 51 undispatched hand-off(s) (0 dispatched with rc 3)' "$T/alerts" && ok \
   || bad "Z1 the line names the scope and the count: [$(cat "$T/alerts")]"
 grep -q '^.*ZERO_DISPATCH fleet:' "$LOG" && ok || bad "Z1 one ZERO_DISPATCH log line: $(grep ZERO "$LOG")"
 

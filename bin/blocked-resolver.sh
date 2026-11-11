@@ -2457,6 +2457,7 @@ br_prepass() {
       IFS=$'\t' read -r roc rurl rret rmech rfix rbonus rconf rage raged <<<"${_BRIDX["$key/$ck"]}"
     fi
     command -v bcr_prepass_row >/dev/null 2>&1 && bcr_prepass_row && continue  # BH-9369: a closed or merged PR's row leaves the list
+    command -v bra_prepass_row >/dev/null 2>&1 && bra_prepass_row && continue  # BH-9467: no open PR, older than BR_RECORD_MAX_AGE_DAYS
     rtext=""
     if ! br_finished "$roc" "$rurl" "${url:--}" "$reason" \
        && command -v bdi_aged_finished >/dev/null 2>&1 \
@@ -7886,8 +7887,7 @@ br_remote_open_prime
 # BR_PER_TICK while that source would otherwise still offer only BR_PER_TICK
 # candidates, and the carry would buy rungs with nothing to spend them on.
 command -v br_opt_prof_stage >/dev/null 2>&1 && br_opt_prof_stage discovery
-# BH-9029: the retired-row index the sources skip on, and two per-tick files
-# (the sources run inside $(...), so a count must travel in a file).
+# BH-9029: the retired-row index, and two per-tick files (a count from inside $(...) must travel in a file).
 BDI_SKIPS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-skips.XXXXXX" 2>/dev/null) || BDI_SKIPS=""
 BDI_SRC_SECS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-src.XXXXXX" 2>/dev/null) || BDI_SRC_SECS=""
 command -v bdi_load >/dev/null 2>&1 && bdi_load

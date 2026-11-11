@@ -3589,9 +3589,11 @@ ci_absent_escalate() {
 #   is not somebody else's decision, and says so.
 #   Optional args 13-15 (BH-4596): <verdict> <reviewed> <provider>, read only by
 #   the QUEUED arm; a caller that passes 12 gets the old answer there.
+#   Optional arg 16 (BH-9467): <since>, the park's epoch. While SATURATED, a park
+#   younger than MC_SAT_FRESH_PARK_MIN is handed off again; no since = the old answer.
 stuck_rekick() {
   local key="$1" st="$2" why="$3" slug="$4" num="$5" url="$6" head="$7" ms="$8" mg="$9"
-  local baseref="${10}" pbase="${11}" ci="${12}"
+  local baseref="${10}" pbase="${11}" ci="${12}" since="${16:-}" fmin age
   case "$st" in
     WAIT_CI)
       if [ "$ci" != none ]; then
@@ -3644,7 +3646,23 @@ stuck_rekick() {
         # action instead. No flag and no new state: delete the marker and this is
         # byte-for-byte the previous behaviour.
         if mc_resolver_saturated "$key"; then
-          mc_log "$key $(mc_state_display "$st" "$why") $why: still parked past its TTL on ${head:0:8} — bin/blocked-resolver.sh is SATURATED (see the [blocked-resolver] SATURATED line in logs/ALERTS.log); not re-handed off, its hand-off record stands: $url"
+          # A FRESH PARK IS HANDED OFF ANYWAY (BH-9467), so a new red is not
+          # muted by the old parks that fill the lane. Knob row
+          # catalog/lanes.d/merge-conductor.knobs.d/MC_SAT_FRESH_PARK_MIN.json;
+          # 1440 (24 h) is the code fallback, 0 = off.
+          fmin="${MC_SAT_FRESH_PARK_MIN:-1440}"
+          case "$fmin" in ''|*[!0-9]*)
+            [ "${_MC_SFP_BADSAID:-}" = 1 ] || { _MC_SFP_BADSAID=1; mc_log "stuck_rekick: MC_SAT_FRESH_PARK_MIN='$fmin' is not a non-negative integer — using 1440"; }
+            fmin=1440 ;;
+          esac
+          age=-1
+          case "$since" in ''|*[!0-9]*) ;; *) age=$(( $(mc_now) - 10#$since )) ;; esac
+          if [ "$((10#$fmin))" -gt 0 ] && [ "$age" -ge 0 ] && [ "$age" -lt "$((10#$fmin * 60))" ]; then
+            mc_handoff_record "$key" "$head" "$why" "$url"
+            mc_log "$key $(mc_state_display "$st" "$why") $why: still parked past its TTL on ${head:0:8} — bin/blocked-resolver.sh is SATURATED, but this park is $((age / 60))m old (< MC_SAT_FRESH_PARK_MIN=$((10#$fmin))) — handed to bin/blocked-resolver.sh again: $url"
+          else
+            mc_log "$key $(mc_state_display "$st" "$why") $why: still parked past its TTL on ${head:0:8} — bin/blocked-resolver.sh is SATURATED (see the [blocked-resolver] SATURATED line in logs/ALERTS.log); not re-handed off, its hand-off record stands: $url"
+          fi
         else
           mc_handoff_record "$key" "$head" "$why" "$url"
           mc_log "$key $(mc_state_display "$st" "$why") $why: still parked past its TTL on ${head:0:8} — handed to bin/blocked-resolver.sh again (the release marker is cleared, so the park is offered fresh): $url"

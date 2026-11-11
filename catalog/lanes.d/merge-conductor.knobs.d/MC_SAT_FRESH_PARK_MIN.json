@@ -1,0 +1,11 @@
+{
+  "env": "MC_SAT_FRESH_PARK_MIN",
+  "type": "int",
+  "default": 1440,
+  "min": 0,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": "off",
+  "read_in": "bin/lib/mc/classify.sh",
+  "note": "BH-9467: while bin/blocked-resolver.sh is SATURATED, stuck_rekick still hands off a BLOCKED_HUMAN or RED_TWICE park whose since (arg 16, from bin/merge-conductor.sh) is younger than this many minutes, so a new red is not muted by old parks. An older park, a park with no since, or a since in the future keeps the 'not re-handed off' line. 0 = off (the BH-1122 behaviour). A non-number logs one line and uses 1440."
+}
