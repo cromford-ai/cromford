@@ -118,20 +118,47 @@ def api(path, data=None):
     )
     return json.load(urllib.request.urlopen(req, timeout=30))
 
+def _chunk():
+    """Ids per resolve POST: row lane.alerts-groom.alerts_groom_resolve_chunk, fallback 100
+    (the console worker binds 100 parameters per statement)."""
+    v = os.environ.get("ALERTS_GROOM_RESOLVE_CHUNK", "100")
+    if v.isdigit() and 1 <= int(v) <= 100:
+        return int(v)
+    print(f"alerts-supersede: ALERTS_GROOM_RESOLVE_CHUNK={v} is not a whole number in 1..100 — using 100",
+          file=sys.stderr)
+    return 100
+
+def open_rows():
+    """The open set. ALERTS_OPEN_FILE (written by alerts-groom.sh, BH-9114) holds every open row
+    the groom read through D1; unset or unreadable, it is today's GET /api/alerts/open."""
+    f = os.environ.get("ALERTS_OPEN_FILE")
+    if f:
+        try:
+            with open(f) as fh:
+                return json.load(fh)
+        except Exception as e:
+            print(f"alerts-supersede: ALERTS_OPEN_FILE unreadable ({type(e).__name__}) — reading /api/alerts/open",
+                  file=sys.stderr)
+    return api("open")
+
 def age_h(ts, now):
     try:
-        return (now - datetime.fromisoformat(ts.replace("Z", "+00:00"))).total_seconds() / 3600
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        # D1 `ts` may be SQLite's naive "YYYY-MM-DD HH:MM:SS", which is UTC (BH-9114).
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return (now - t).total_seconds() / 3600
     except Exception:
         return 0.0
 
 def main():
-    d = api("open")
+    d = open_rows()
     al = d["alerts"] if isinstance(d, dict) else d
     now = datetime.now(timezone.utc)
     for a in al:
         sub = subject(a.get("line") or "")
         a["_s"] = f"{klass(a)}|{sub}" if sub else None
-    al.sort(key=lambda x: x["createdAt"])
+    al.sort(key=lambda x: x.get("createdAt") or "")
 
     INFO_CLOSED = re.compile(
         r"\bRESOLVED\b|finished rc=0|\brc=0\b.*see logs/|audit done:|LEFT IN PLACE|"
@@ -182,10 +209,15 @@ def main():
     for a in al:
         if a["_s"] and a["id"] not in legacy:
             newest[a["_s"]] = a["id"]
+    digest = set()
     for a in al:
         s = a["_s"]
         line = a.get("line") or ""
-        if INFO_CLOSED.search(line):
+        # A warn digest (bin/alert-digest.sh --warn-batch, BH-9114) is a delivery record, not an
+        # alert: its warns are rows of their own. The exact akey prefix only, never the line.
+        if (a.get("akey") or "").startswith("warnbatch:"):
+            resolve.append(a["id"]); why[a["id"]] = "warn digest (reason digest)"; digest.add(a["id"])
+        elif INFO_CLOSED.search(line):
             resolve.append(a["id"]); why[a["id"]] = "informational / already declared settled"
         elif a["id"] in legacy:
             resolve.append(a["id"]); why[a["id"]] = f"superseded by {legacy[a['id']]} (legacy auto key, BH-4053)"
@@ -201,9 +233,22 @@ def main():
         print(f"resolve {i}: {why[i]}")
     if ph_active is not None:
         print(f"ph-absent resolve={sum(1 for i in resolve if why[i].startswith('condition absent'))}")
+    print(f"digest resolve={len(digest)}")
     print(f"open={len(al)} resolve={len(resolve)} remaining={len(al)-len(resolve)}")
     if resolve and not DRY:
-        api("resolve", {"ids": [str(i) for i in resolve]})
-        print("posted")
+        n = _chunk(); sent = failed = 0
+        groups = [([i for i in resolve if i in digest], "digest"), ([i for i in resolve if i not in digest], None)]
+        for ids, reason in groups:
+            for k in range(0, len(ids), n):
+                body = {"ids": [str(i) for i in ids[k:k + n]]}
+                if reason:
+                    body["reason"] = reason
+                # One failed chunk does not stop the rest: its rows stay open for the next pass.
+                try:
+                    api("resolve", body); sent += 1
+                except Exception as e:
+                    failed += 1
+                    print(f"resolve chunk failed ({type(e).__name__}): {len(body['ids'])} id(s) stay open")
+        print("posted" if not failed else f"posted {sent} of {sent + failed} chunk(s)")
 
 main()

@@ -183,7 +183,9 @@ W_() { cat "$H/writes.log" 2>/dev/null; }
 # settings write.
 enroll_writes() { grep -v '"kind":"pr_health"' "$H/writes.log" 2>/dev/null; }
 LOG() { cat "$H/logs/pr-owner-sweep.log" 2>/dev/null; }
-tick() { jq -r '.note // empty' "$H"/state/heartbeat/pr-owner-sweep.*.json 2>/dev/null | tail -1; }
+# TEST-CHANGE (BH-9114): the sweep is a `cron` heartbeat lane now, so a completed run leaves no
+# heartbeat file to read the totals from; the same body is the run's `tick totals:` log line.
+tick() { sed -n 's/.* tick totals: //p' "$H/logs/pr-owner-sweep.log" 2>/dev/null | tail -1; }
 attempt_put() { grep -n 'JOBS PUT /api/pr-attempts' "$H/writes.log" 2>/dev/null | grep "\"number\":$1" | grep '"kind":"enrolled"' | head -1 | cut -d: -f1; }
 ledger_put()  { grep -n 'JOBS PUT /api/ledger' "$H/writes.log" 2>/dev/null | grep "#$1\"" | grep "\"status\":\"$2\"" | head -1 | cut -d: -f1; }
 
@@ -264,8 +266,9 @@ for c in repos= open= owned= external= superseded= stale_rungs=; do grep -q "$c"
 grep -q 'GH .*merge' "$H/writes.log" && bad "E1: the sweep must never merge: $(W_)" || ok
 grep -qi 'claude\|agent-call' "$H/gh-calls.log" && bad "E1: no model call" || ok
 grep -q 'owner-source=d1' "$H/logs/pr-owner-sweep.log" && ok || bad "E1: the owner source is logged: $(LOG | head -3)"
+# TEST-CHANGE (BH-9114): state/heartbeat-done/<lane> is the cron heartbeat's completion stamp, its own store.
 NEW=$(find "$H/state" "$H/flags" -newer "$T/marker2" -type f 2>/dev/null \
-      | grep -vE "/state/(pr-owners|merge-conductor|heartbeat|lane-gate|gh-etag|gh-rest-ledger|gh-budget)/|/state/pr-owner-sweep/[^/]+/(openlist|mergedlist)\.(json|meta)$")
+      | grep -vE "/state/(pr-owners|merge-conductor|heartbeat|heartbeat-done|lane-gate|gh-etag|gh-rest-ledger|gh-budget)/|/state/pr-owner-sweep/[^/]+/(openlist|mergedlist)\.(json|meta)$")
 [ -z "$NEW" ] && ok || bad "E1: no new file under state/ or flags/ outside the lanes' own stores: $NEW"
 
 # ============================================================================

@@ -68,11 +68,19 @@ if [ "${1:-}" = "--warn-batch" ]; then
   WB_BOX=$(tr -dc 'A-Za-z0-9_-' < "$HARNESS/state/box-id" 2>/dev/null)
   [ -n "$WB_BOX" ] || WB_BOX=$(hostname -s 2>/dev/null | tr -dc 'A-Za-z0-9_-')
   [ -n "$WB_BOX" ] || WB_BOX=unknown-box
-  "$BIN/beat.sh" "$(jq -nc --arg akey "warnbatch:$WB_BOX:$(date -u +%Y%m%d%H%M%S):$$" \
+  WB_AKEY="warnbatch:$WB_BOX:$(date -u +%Y%m%d%H%M%S):$$"
+  BEAT_STRICT=1 "$BIN/beat.sh" "$(jq -nc --arg akey "$WB_AKEY" \
     --arg l "Alerts (warn) on $WB_BOX, last batch: $U condition(s), $N event(s). None of these page on their own; this is the batched cadence.
 $BODY" \
     '{kind:"fleet_alert",project:"fleet",triaged:true,akey:$akey,line:$l}')" >/dev/null 2>&1
+  WB_RC=$?
   as_log "warn-batch sent: $U condition(s), $N event(s)"
+  # THE DIGEST ROW IS NOT AN ALERT (BH-9114): its warns are rows of their own. Closed with reason
+  # `digest` only after the console took the beat (rc 0), so a close never precedes the message.
+  # Row lane.alert-warn-flush.alert_digest_resolve, fallback 1; 0 leaves it to the groom backstop.
+  if [ "$WB_RC" = 0 ] && [ "${ALERT_DIGEST_RESOLVE:-1}" != 0 ] && . "$BIN/lib/console-alert-resolve.sh" 2>/dev/null; then
+    as_log "warn-batch digest row: $(console_alert_resolve_akey "$WB_AKEY" digest)"
+  fi
   rm -f "$DRAIN"
   exit 0
 fi

@@ -165,8 +165,23 @@ hold_unknown() { # hold_unknown <id> <rule> <line>
 # shrinking, which is indistinguishable from a busy week.
 "$HARNESS/bin/fleet-projects-or-alert.sh" alerts-groom >/dev/null || exit 1
 
-RESP=$(curl -s --max-time 20 -H "Authorization: Bearer $HARNESS_SECRET" "$CONSOLE_URL/api/alerts/open") || exit 0
-jq -e '.alerts' <<<"$RESP" >/dev/null 2>&1 || exit 0   # endpoint not shipped yet -> quiet
+# >>> open read (BH-9114): EVERY open row, oldest first, through D1 with an id cursor; the API's
+# newest 500 is the fallback. bin/lib/alerts-open-read.sh; the log line says which one answered.
+OPENDIR=$(mktemp -d "${TMPDIR:-/tmp}/groom.XXXXXX") || exit 0
+trap 'rm -rf "$OPENDIR"' EXIT
+OPENF="$OPENDIR/open.json"
+for _l in "$(dirname "${BASH_SOURCE[0]}")/lib/alerts-open-read.sh" "$HARNESS/bin/lib/alerts-open-read.sh"; do
+  [ -r "$_l" ] && { . "$_l"; break; }
+done
+if command -v alerts_open_read >/dev/null 2>&1; then
+  alerts_open_read "$OPENF" 2> >(while IFS= read -r _e; do echo "$(STAMP) $_e"; done >> "$LOG") || exit 0
+else
+  curl -s --max-time 20 -H "Authorization: Bearer $HARNESS_SECRET" "$CONSOLE_URL/api/alerts/open" \
+    | jq -c '{alerts: .alerts, source: "api", pages: 0, complete: false, why: "no-lib"}' > "$OPENF" 2>/dev/null || exit 0
+fi
+jq -e '.alerts | type == "array"' "$OPENF" >/dev/null 2>&1 || exit 0   # endpoint not shipped yet -> quiet
+echo "$(STAMP) $(jq -r '"open read: source=\(.source) rows=\(.alerts | length) pages=\(.pages) complete=\(if .complete then 1 else 0 end)\(if (.why // "") != "" then " why=\(.why)" else "" end)"' "$OPENF")" >> "$LOG"
+# <<< open read
 
 RESOLVE="[]"
 # The PR-open subjects rule 1 may settle (V1). Knob: env, flags/alerts.conf, or
@@ -322,12 +337,22 @@ curl -s -m 15 -H "Authorization: Bearer $TK" "$BS/api/internal/migrations/status
   fi
 # "-" for an empty akey: tab is IFS whitespace, so an empty middle field would
 # collapse and shift the line into AKEY.
-done < <(jq -r '.alerts[] | [.id, ((.akey // "") | if . == "" then "-" else . end), ((.line // "") | gsub("[\t\n\r]"; " "))] | @tsv' <<<"$RESP")
+done < <(jq -r '.alerts[] | [.id, ((.akey // "") | if . == "" then "-" else . end), ((.line // "") | gsub("[\t\n\r]"; " "))] | @tsv' "$OPENF")
 
 N=$(jq 'length' <<<"$RESOLVE")
 if [ "$N" -gt 0 ]; then
-  curl -s --max-time 20 -X POST -H "Authorization: Bearer $HARNESS_SECRET" -H 'Content-Type: application/json' \
-    -d "$(jq -nc --argjson ids "$RESOLVE" '{ids:$ids}')" "$CONSOLE_URL/api/alerts/resolve" >/dev/null
+  # CHUNKED (BH-9114): the worker binds 100 parameters per statement. Row
+  # lane.alerts-groom.alerts_groom_resolve_chunk, fallback 100. A failed chunk
+  # leaves its rows open for the next pass; the other chunks still post.
+  CH="${ALERTS_GROOM_RESOLVE_CHUNK:-100}"
+  if ! [[ "$CH" =~ ^[0-9]+$ ]] || [ "$((10#$CH))" -lt 1 ] || [ "$((10#$CH))" -gt 100 ]; then
+    echo "$(STAMP) ALERTS_GROOM_RESOLVE_CHUNK=$CH is not a whole number in 1..100 — using 100" >> "$LOG"; CH=100
+  fi
+  CH=$((10#$CH))
+  for ((K = 0; K < N; K += CH)); do
+    curl -s --max-time 20 -X POST -H "Authorization: Bearer $HARNESS_SECRET" -H 'Content-Type: application/json' \
+      -d "$(jq -nc --argjson ids "$RESOLVE" --argjson k "$K" --argjson c "$CH" '{ids:$ids[$k:$k+$c]}')" "$CONSOLE_URL/api/alerts/resolve" >/dev/null
+  done
   # One request for the whole batch, after the console's. `resolved rows=0` on a
   # failure and never the count we hoped for: this line is what an operator
   # greps to tell a closed row from a row we only meant to close.
@@ -353,7 +378,15 @@ echo "$(STAMP) pass done: resolved $N dead=$DEAD_N unknown=$UNK_N" >> "$LOG"
 # so a row this settles is never collapsed onto first.
 [ -x "$HARNESS/bin/alerts-merge-resolve.sh" ] && "$HARNESS/bin/alerts-merge-resolve.sh" >> "$LOG" 2>&1 || true
 # <<< merge alerts resolve
-python3 "$HARNESS/bin/alerts-supersede.py" >> "$LOG" 2>&1
+# Supersede judges the SAME open set (BH-9114): every row this pass read, minus the ones it just
+# resolved, so it also sees past the API's newest 500.
+jq -c --argjson r "$RESOLVE" '($r | map({(tostring): true}) | add // {}) as $m
+  | .alerts |= map(select($m[.id | tostring] | not))' "$OPENF" > "$OPENF.rest" 2>/dev/null || rm -f "$OPENF.rest"
+if [ -s "$OPENF.rest" ]; then
+  ALERTS_OPEN_FILE="$OPENF.rest" python3 "$HARNESS/bin/alerts-supersede.py" >> "$LOG" 2>&1
+else
+  python3 "$HARNESS/bin/alerts-supersede.py" >> "$LOG" 2>&1
+fi
 
 command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
 exit 0

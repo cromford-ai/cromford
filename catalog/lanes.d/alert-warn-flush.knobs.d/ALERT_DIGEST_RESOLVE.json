@@ -1,0 +1,12 @@
+{
+  "env": "ALERT_DIGEST_RESOLVE",
+  "read_in": "bin/alert-digest.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9114. 1 = bin/alert-digest.sh --warn-batch closes its own console row (akey warnbatch:<box>:<ts>:<pid>) with reason digest right after the console took the digest beat, so a digest is not counted as an open alert. 0 = the row stays open until the alerts-groom backstop (bin/alerts-supersede.py, every 2h) closes it. Read as ${ALERT_DIGEST_RESOLVE:-1}."
+}

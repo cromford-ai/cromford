@@ -102,8 +102,19 @@ as it was; a non-numeric value falls back to 120. The floor gates `silent` only,
 `<n>s` under a minute (`silent for 50s`), whole minutes from one up
 (`silent for 2m`), so `silent for 0m` can no longer be printed.
 
-Ids: `hb-<lane>-<pid>-<started_at>` per incident, `hb-<file>-unreadable` for a
-corrupt file, `hb-mass-<sha of the sorted ids>` for a collapsed wave.
+Ids: `hb-<lane>` per lane (BH-9114: two dead pids of one lane in one pass are
+one finding, and a lane dead again under a new pid while `hb-<lane>` is open is
+a suppressed repeat), `hb-<file>-unreadable` for a corrupt file,
+`hb-mass-<sha of the sorted ids>` for a collapsed wave.
+
+**A SPENT RUN IS NOT A DEAD LANE (BH-9114).** A dead, non-cron instance is
+removed with a `<lane>: pid <pid> ended; <evidence> — not a page` log line when
+a later run of the same lane (the `.lane` field, `started_at` strictly greater)
+exists, or the lane's completion stamp `state/heartbeat-done/<lane>` is newer
+than its start. After a dead page the reaper writes `<lane>.hbpaged`
+(`<epoch>\t<lane>`) beside the heartbeat files; a fresh run of the lane, or a
+completion stamp newer than the page, resolves `hb-<lane>`, and a marker older
+than `HB_STALE_GC_S` is removed with no resolve.
 `bin/lane-alert.sh --id` and `state/alerts/<id>.json` own the dedupe; this lane
 does not re-invent it.
 

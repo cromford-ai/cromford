@@ -109,7 +109,12 @@ drains only its own spool. An empty spool sends nothing. Each batch's akey is
 `warnbatch:<box>:<YYYYmmddHHMMSS>:<pid>` and its message names the box: every
 box's flush fires in the same second, so the box is what keeps two boxes'
 batches from sharing a console dedup key (the second would be swallowed
-silently), and seconds + pid keep two batches on one box apart.
+silently), and seconds + pid keep two batches on one box apart. The digest row
+is a delivery record, not an alert (BH-9114): once the console took the beat
+(`BEAT_STRICT=1` rc 0), the flush closes that row with reason `digest`
+(`bin/lib/console-alert-resolve.sh`, knob `ALERT_DIGEST_RESOLVE`, default 1),
+and the alerts-groom pass (`bin/alerts-supersede.py`) closes any `warnbatch:`
+row it missed. The single warn rows stay open.
 
 **The off-switch stops BOTH drains.** `flags/lane-off-alert-warn-flush` (or
 `flags/all-off`) gates `--warn-batch` itself, and the inline dead-man below runs

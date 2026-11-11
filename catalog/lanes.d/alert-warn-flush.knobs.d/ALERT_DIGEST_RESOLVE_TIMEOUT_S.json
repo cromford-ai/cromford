@@ -1,0 +1,12 @@
+{
+  "env": "ALERT_DIGEST_RESOLVE_TIMEOUT_S",
+  "read_in": "bin/lib/console-alert-resolve.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. curl --max-time for each of the two console calls (GET /api/alerts/open, POST /api/alerts/resolve) the warn digest makes to close its own row (bin/lib/console-alert-resolve.sh). A timeout leaves the row for the alerts-groom backstop. Read as ${ALERT_DIGEST_RESOLVE_TIMEOUT_S:-20}; a value that is not a whole number in 1..120 means 20."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "PR_OWNER_HB_INTERVAL_S",
+  "type": "int",
+  "default": 1800,
+  "min": 60,
+  "max": null,
+  "unit": "s",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. The rhythm bin/pr-owner-sweep.sh declares in its cron heartbeat (hb_start ... cron). hb_done writes it into state/heartbeat-done/pr-owner-sweep, and bin/heartbeat-reaper.sh pages when no run completed for max(this, the catalog cadence) x HB_STALE_MULT. Read as ${PR_OWNER_HB_INTERVAL_S:-1800} (the */30 cadence)."
+}

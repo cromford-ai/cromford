@@ -1,0 +1,11 @@
+{
+  "env": "PR_OWNER_HB_EXPECT_S",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": null,
+  "unit": "s",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9114. Seconds a bin/pr-owner-sweep.sh run may take before its heartbeat reads overdue (the hb_start expected-by). Read as ${PR_OWNER_HB_EXPECT_S:-3600}. 0 = off: no expected-by deadline."
+}

@@ -105,6 +105,25 @@ restart_outcome() {
 }
 
 DETAILS=(); LANES=(); IDS=(); MINSTART=0; N=0; GC_S=$(num "${HB_STALE_GC_S:-86400}" 86400)
+declare -A LANEID_SEEN=() DEADPAGED=()
+# hb_done_at <lane> — the lane's last completion epoch from hb_done's stamp, 0 when none or unreadable.
+hb_done_at() { local d e=""; d="$(hb_done_dir)"; [ -n "$d" ] || { printf 0; return 0; }
+  [ -r "$d/$(_hb_slug "$1")" ] && IFS=$'\t' read -r e _ < "$d/$(_hb_slug "$1")"; num "$e" 0; }
+# hb_spent <lane> <start> <file> — rc 0 and the evidence on stdout when this instance is spent: a
+# later run of the SAME lane (the .lane field, never a name prefix) started after it, or the lane
+# completed after it started. An equal started_at is not later.
+hb_spent() {
+  local lane="$1" start="$2" f="$3" i ia ip dn
+  for i in "$DIR/$(_hb_slug "$lane")".*.json; do
+    [ -f "$i" ] && [ "$i" != "$f" ] || continue
+    IFS=$'\037' read -r ia ip < <(jq -r --arg l "$lane" 'select(.lane == $l) | [(.started_at//0),(.pid//0)] | map(tostring) | join("\u001f")' "$i" 2>/dev/null)
+    ia=$(num "${ia:-}" 0)
+    [ "$ia" -gt "$start" ] && { printf 'later run pid %s started at %s' "$(num "${ip:-}" 0)" "$(iso "$ia")"; return 0; }
+  done
+  dn=$(hb_done_at "$lane")
+  [ "$dn" -gt "$start" ] && { printf 'completion stamp %s' "$(iso "$dn")"; return 0; }
+  return 1
+}
 # The file pass can only ever speak for THIS box, so what it has spoken for is
 # keyed (lane, box) — never the lane alone (round 1 on #1150). merge-conductor
 # runs on several boxes (hub-lease failover is exactly when it moves), and a
@@ -143,13 +162,21 @@ for F in "$DIR"/*.json; do
     SEEN_LANE["$LANE@$SELF_BOX"]=1
     continue
   fi
+  # A SPENT INSTANCE IS NOT A DEAD LANE (BH-9114). A run that exited after a later run of the same
+  # lane started, or before the lane last completed, is history: its pid is gone because it ended.
+  if [ "$ST" = dead ] && SPENT=$(hb_spent "$LANE" "$START" "$F"); then
+    rm -f "$F" "$DIR-db/$BASE" 2>/dev/null
+    log "$LANE: pid $PID ended; $SPENT — not a page"
+    SEEN_LANE["$LANE@$SELF_BOX"]=1
+    continue
+  fi
   if [ "$ST" = marked ]; then
     # ALREADY PAGED, so nothing is ever FIRED about this file again whatever the lane does (an
     # alive-overdue lane ticks for hours). RECOVERED = inside its rhythm AND ticked after the page
     # (the second half stops the tick already in the file at mark time reading as news).
     if [ "$(hb_state "$F" "$NOW" "$BOOT" nomark)" = fresh ] && [ "$LT" -gt "$SA" ]; then
       hb_mark_stale "$F" "$NOW" false || log "$LANE: could not clear the stale mark on $F"
-      resolve "hb-$LANE-$PID-$START" \
+      resolve "hb-$LANE" \
         "$LANE resumed ticking (pid $PID, it ticked $(( (LT - SA) / 60 ))m after the page)"
       log "$LANE: recovered, mark cleared, alert resolved"
     elif [ "$SA" -gt 0 ] && [ "$(( NOW - SA ))" -gt "$GC_S" ]; then
@@ -166,10 +193,36 @@ for F in "$DIR"/*.json; do
   # pages every five minutes for ever — the complaint this lane answers.
   hb_mark_stale "$F" "$NOW" || log "$LANE: could not mark $F stale — the next pass will page it again"
   OUTCOME=$(restart_outcome "$LANE" "$ST" "$RESTART" "$F")
-  DETAILS+=("$LANE $ST for $(hb_age_text "$AGE") (pid $PID $ALIVE, interval ${IV}s, expected-by $(iso "$DL"), note: ${NOTE:--}) — blocks: ${BLOCKS:-unknown} — $OUTCOME")
-  LANES+=("$LANE"); IDS+=("hb-$LANE-$PID-$START"); N=$(( N + 1 )); SEEN_LANE["$LANE@$SELF_BOX"]=1
-  { [ "$MINSTART" = 0 ] || [ "$START" -lt "$MINSTART" ]; } && [ "$START" -gt 0 ] && MINSTART=$START
+  [ "$ST" = dead ] && DEADPAGED["$LANE"]=1
   log "$LANE: $ST, age ${AGE}s, pid $PID $ALIVE, $OUTCOME"
+  # ONE FINDING PER LANE: the id is the lane, so a second instance in the same pass is the same page.
+  if [ -n "${LANEID_SEEN[$LANE]:-}" ]; then log "$LANE: pid $PID is a second instance this pass — one page per lane"; continue; fi
+  LANEID_SEEN["$LANE"]=1
+  DETAILS+=("$LANE $ST for $(hb_age_text "$AGE") (pid $PID $ALIVE, interval ${IV}s, expected-by $(iso "$DL"), note: ${NOTE:--}) — blocks: ${BLOCKS:-unknown} — $OUTCOME")
+  LANES+=("$LANE"); IDS+=("hb-$LANE"); N=$(( N + 1 )); SEEN_LANE["$LANE@$SELF_BOX"]=1
+  { [ "$MINSTART" = 0 ] || [ "$START" -lt "$MINSTART" ]; } && [ "$START" -gt 0 ] && MINSTART=$START
+done
+# >>> lane markers (BH-9114) — <slug>.hbpaged (<epoch>\t<lane>) says "this lane was paged dead".
+# A fresh run of the lane, or a completion stamp newer than the page, resolves hb-<lane>. A marker
+# older than HB_STALE_GC_S goes with no resolve. Not *.json, so the file loop above never reads it.
+for M in "$DIR"/*.hbpaged; do
+  [ -f "$M" ] || continue
+  MEP=""; MLANE=""; IFS=$'\t' read -r MEP MLANE < "$M" 2>/dev/null
+  MEP=$(num "$MEP" 0); [ -n "$MLANE" ] || MLANE=$(basename "$M" .hbpaged)
+  if [ "$(( NOW - MEP ))" -gt "$GC_S" ]; then
+    rm -f "$M" 2>/dev/null; log "gc: removed $(basename "$M") (paged $(( (NOW - MEP) / 3600 ))h ago, past HB_STALE_GC_S=${GC_S}s)"
+    continue
+  fi
+  WHY=""
+  for I in "$DIR/$(_hb_slug "$MLANE")".*.json; do
+    [ -f "$I" ] && [ "$(jq -r '.lane // ""' "$I" 2>/dev/null)" = "$MLANE" ] \
+      && [ "$(hb_state "$I" "$NOW" "$BOOT" nomark)" = fresh ] && { WHY="is running"; break; }
+  done
+  [ -z "$WHY" ] && [ "$(hb_done_at "$MLANE")" -gt "$MEP" ] && WHY="completed"
+  [ -n "$WHY" ] || continue
+  resolve "hb-$MLANE" "a later run of $MLANE $WHY"
+  rm -f "$M" 2>/dev/null
+  log "$MLANE: a later run $WHY, dead page resolved"
 done
 # >>> cron lane staleness (BH-4717) — a lane that declared `cron` is judged by the stamp hb_done
 # left in state/heartbeat-done/<lane> (<epoch>\t<interval>): older than interval x HB_STALE_MULT
@@ -291,6 +344,13 @@ while IFS=$'\t' read -r ACTION ID LANE BOX TEXT; do
 done < <(db_findings)
 
 [ "$N" -gt 0 ] || exit 0
+# mark_dead_lanes — AFTER the send: the marker is what lets a later run resolve hb-<lane>.
+mark_dead_lanes() { local l m
+  for l in "${!DEADPAGED[@]}"; do
+    m="$DIR/$(_hb_slug "$l").hbpaged"
+    { printf '%s\t%s\n' "$NOW" "$l" > "$m.tmp" && mv -f "$m.tmp" "$m"; } 2>/dev/null \
+      || { rm -f "$m.tmp" 2>/dev/null; log "$l: could not write $m — a later run will not resolve the page"; }
+  done; }
 
 MASS=$(num "${HB_MASS_STALE_N:-3}" 3)
 if [ "$N" -ge "$MASS" ]; then
@@ -313,7 +373,9 @@ if [ "$N" -ge "$MASS" ]; then
       "$(alert_state_route "${DETAILS[$i]}" '')" "[orchestrator/heartbeat-reaper] ${DETAILS[$i]}" >/dev/null 2>&1; done
   fi
   log "collapsed $N findings into one line (HB_MASS_STALE_N=$MASS)"
+  mark_dead_lanes
   exit 0
 fi
 for i in "${!IDS[@]}"; do send "${IDS[$i]}" "${DETAILS[$i]}"; done
+mark_dead_lanes
 exit 0

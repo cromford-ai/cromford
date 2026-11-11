@@ -14,6 +14,7 @@ import {
   alertRowActions, shapeAlertActions, actionOutcomeText
 } from '../lib/alertrows.js';
 import { decisionsHref } from '../lib/components.js';
+import { AlertFamilyStrip, filterByFamily, openFamilyHref } from '../lib/alert-family.js';
 
 const FILTER_KEYS = ['family', 'box', 'state', 'component'];
 const withoutFilter = (filters, drop) =>
@@ -266,6 +267,8 @@ export function AlertsScreen() {
   // A per-project alert count on the fleet screen links here with ?project=,
   // so the number you clicked and the rows you land on are the same set.
   const filterProject = useSearchParam('project');
+  // BY FAMILY pill (BH-9114): narrows OPEN ALERTS to one akey family.
+  const openFamily = useSearchParam('openfamily');
   const projects = (fleet.data && fleet.data.projects) || [];
   const all = useApi(
     async () => {
@@ -386,6 +389,7 @@ export function AlertsScreen() {
   const resolved24h = alerts.filter((a) => a.resolved && minutesSince(a.ts) <= 1440);
   const last24h = alerts.filter((a) => minutesSince(a.ts) !== null && minutesSince(a.ts) <= 1440);
 
+  const openShown = filterByFamily(open, openFamily);
   const columns = openAlertColumns(resolving, resolve);
 
   return html`
@@ -420,6 +424,7 @@ export function AlertsScreen() {
             ? agoFromMinutes(Math.max(...open.map((a) => minutesSince(a.ts) || 0)))
             : '—'} tone="sm"/>
       </div>
+      ${all.data ? html`<${AlertFamilyStrip} rows=${open} project=${filterProject} active=${openFamily}/>` : null}
 
       ${msg ? html`
         <div class=${msg.ok ? 'banner banner--warn' : 'banner'}
@@ -434,12 +439,18 @@ export function AlertsScreen() {
             the counts above exclude ${unreadable.length === 1 ? 'it' : 'them'}.</span>
         </div>` : null}
 
-      <${Section} title="OPEN ALERTS">
+      <${Section} title="OPEN ALERTS"
+        right=${openFamily ? html`
+          <span class="pill">
+            family ${openFamily} · ${openShown.length} of ${open.length}
+            <button class="btn btn--sm" style="margin-left:4px;min-height:auto;padding:1px 6px"
+              title="show every family" onClick=${() => navigate(openFamilyHref(null, filterProject))}>CLEAR</button>
+          </span>` : null}>
         ${all.loading && !all.data
           ? html`<${Skeleton} rows=${4} height=${20}/>`
           : all.error && !all.data
             ? html`<${ErrorBox} error=${all.error} onRetry=${all.reload}/>`
-            : html`<${SortableTable} columns=${columns} rows=${open}
+            : html`<${SortableTable} columns=${columns} rows=${openShown}
                 rowKey=${(r) => `${r.project}:${r.id}`}
                 rowClass=${() => 'row--warn'}
                 defaultSort="ts" defaultDir="asc"

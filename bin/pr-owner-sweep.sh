@@ -255,6 +255,11 @@ fi
 [ -r "$H/bin/lib/gh-rest.sh" ] && . "$H/bin/lib/gh-rest.sh"
 # shellcheck source=bin/lib/heartbeat.sh
 [ -r "$H/bin/lib/heartbeat.sh" ] && . "$H/bin/lib/heartbeat.sh"
+# A `cron` lane (BH-9114): each run ends, so the reaper judges the lane by the stamp hb_done leaves,
+# never by a finished pid. Rows lane.pr-owner-sweep.pr_owner_hb_interval_s / _expect_s; fallbacks
+# 1800 (the */30 cadence) and 3600.
+command -v hb_start >/dev/null 2>&1 && hb_start pr-owner-sweep "${PR_OWNER_HB_INTERVAL_S:-1800}" \
+  "${PR_OWNER_HB_EXPECT_S:-3600}" "PR owner states fleet-wide" "" cron
 # The keyed conductor run outlives this sweep, so it must not inherit fd 8 (the
 # sweep's dedupe lock): lock_spawn_unheld closes it in the child.
 # shellcheck source=bin/lib/lock-hygiene.sh
@@ -327,7 +332,7 @@ else
   done
   for SLUG in $EXTRA_REPOS; do add_pair "-" "$SLUG"; done
 fi
-[ -n "$PAIRS" ] || exit 0
+[ -n "$PAIRS" ] || { command -v hb_done >/dev/null 2>&1 && hb_done pr-owner-sweep; exit 0; }
 
 # ---- the actions ------------------------------------------------------------
 # STDIN IS CLOSED ON EVERY CHILD IN HERE, and that is not tidiness. The per-repo
@@ -1212,8 +1217,11 @@ _bin/pr-owner-sweep.sh_" \
 done <<< "$PAIRS"
 
 [ "$SWEPT" = 0 ] && say "swept no repo this run (nothing visible, or every ledger read failed)"
-command -v hb_tick >/dev/null 2>&1 && hb_tick pr-owner-sweep \
-  "repos=$T_REPOS open=$T_OPEN owned=$T_OWNED external=$T_EXT enrolled=$T_ENR ownerless=$T_OWNERLESS superseded=$T_SUP stale_rungs=$T_STALE"
+TICK_BODY="repos=$T_REPOS open=$T_OPEN owned=$T_OWNED external=$T_EXT enrolled=$T_ENR ownerless=$T_OWNERLESS superseded=$T_SUP stale_rungs=$T_STALE"
+# The totals go to the log too: hb_done below removes the heartbeat file that carried them (BH-9114).
+say "tick totals: $TICK_BODY"
+command -v hb_tick >/dev/null 2>&1 && hb_tick pr-owner-sweep "$TICK_BODY"
+command -v hb_done >/dev/null 2>&1 && hb_done pr-owner-sweep
 # ONE keyed conductor run per tick for every PR enrolled READY. It merges or not
 # on its own gates; a spawn that never ran is the backstop's (READY rows with
 # head = reviewed, every 5 minutes).

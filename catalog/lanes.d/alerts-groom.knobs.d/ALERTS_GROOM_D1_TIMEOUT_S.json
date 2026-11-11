@@ -1,0 +1,12 @@
+{
+  "env": "ALERTS_GROOM_D1_TIMEOUT_S",
+  "read_in": "bin/lib/alerts-open-read.sh",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. curl --max-time for each D1 page request of the alerts-groom open read (bin/lib/alerts-open-read.sh). A page that times out drops the D1 read and the pass uses the API fallback. Read as ${ALERTS_GROOM_D1_TIMEOUT_S:-30}; a value that is not a whole number in 1..300 means 30."
+}

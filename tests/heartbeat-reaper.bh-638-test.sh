@@ -186,8 +186,9 @@ mk l1 60 600 200 181 "$LIVE" "x"
 OUT=$(reap)
 [ "$(lines)" = 1 ] && grep -qE "\[orchestrator/heartbeat-reaper\] l1 silent for 3m .* blocks: x" "$ALERTS" && ok \
   || bad "S3 one line naming the lane, the silence and what it blocks: $OUT :: $(cat "$ALERTS")"
-grep -q "\"alertid\":\"hb-l1-$LIVE-$((NOW - 200))\"" "$T/beats.txt" && grep -q '"kind":"fleet_alert"' "$T/beats.txt" && ok \
-  || bad "S3 the line must arrive through lane-alert.sh (beat, id per incident): $(cat "$T/beats.txt")"
+# TEST-CHANGE (BH-9114): the file-pass id is per lane (hb-<lane>), no longer per pid and start.
+grep -q '"alertid":"hb-l1"' "$T/beats.txt" && grep -q '"kind":"fleet_alert"' "$T/beats.txt" && ok \
+  || bad "S3 the line must arrive through lane-alert.sh (beat, id per lane): $(cat "$T/beats.txt")"
 # the boundary is >, not >=
 reset
 mk l1 60 600 200 180 "$LIVE" "x"
@@ -269,7 +270,7 @@ reap "HB_NOW=$((NOW + 10))" >/dev/null
 # TEST-CHANGE (BH-4054): lane-alert.sh --resolve sends the orclane:<id> resolve
 # AND its console twin alert:<id>, so the recovery is two beats, one of each.
 grep -q '"alertstate":"resolve"' "$T/beats.txt" && [ "$(beats)" = "$((BEATS + 2))" ] \
-  && [ "$(grep -c '"kind":"alert","project":"fleet","akey":"alert:hb-l1-' "$T/beats.txt")" = 1 ] && ok \
+  && [ "$(grep -c '"kind":"alert","project":"fleet","akey":"alert:hb-l1"' "$T/beats.txt")" = 1 ] && ok \
   || bad "S4 the recovery must go out through lane-alert.sh --resolve: $(cat "$T/beats.txt")"
 BEFORE=$(lines); BEATS=$(beats)
 reap "HB_NOW=$((NOW + 11))" >/dev/null

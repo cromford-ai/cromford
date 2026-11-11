@@ -1,0 +1,12 @@
+{
+  "env": "ALERTS_GROOM_MAX_PAGES",
+  "read_in": "bin/lib/alerts-open-read.sh",
+  "type": "int",
+  "default": 40,
+  "min": 1,
+  "max": 1000,
+  "unit": "pages",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. Page cap for the alerts-groom open read (bin/lib/alerts-open-read.sh). At the cap the read stops, keeps what it read and logs complete=0. Read as ${ALERTS_GROOM_MAX_PAGES:-40}; a value that is not a whole number in 1..1000 means 40."
+}

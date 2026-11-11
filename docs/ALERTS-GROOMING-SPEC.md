@@ -25,7 +25,10 @@ stale alerts clear themselves; nobody hand-taps 50 Resolve buttons.
 ## Hub half (already live, for reference)
 
 `bin/alerts-groom.sh` — cron every 2h on the HUB only:
-- `GET /api/alerts/open`; for each alert, resolve it when its subject is VERIFIABLY settled:
+- reads EVERY open row, oldest first: D1 `harness-console-db` pages with an id cursor
+  (`bin/lib/alerts-open-read.sh`, BH-9114; the worker's `/api/alerts/open` caps at the newest
+  500), and `GET /api/alerts/open` is the fallback. Resolves are POSTed in chunks of at most
+  `ALERTS_GROOM_RESOLVE_CHUNK` (100) ids. For each alert, resolve it when its subject is VERIFIABLY settled:
   - the row is ABOUT A PR BEING OPEN (an `mq-*` akey, or a line matching
     `ALERTS_PR_SUBJECT_RE`: merge queue, rebase-train, blocked-resolver
     ESCALATED) and that PR is now MERGED or CLOSED. Any owner/repo casing; an

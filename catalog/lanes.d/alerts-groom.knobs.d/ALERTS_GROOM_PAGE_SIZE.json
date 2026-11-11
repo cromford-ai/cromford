@@ -1,0 +1,12 @@
+{
+  "env": "ALERTS_GROOM_PAGE_SIZE",
+  "read_in": "bin/lib/alerts-open-read.sh",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 5000,
+  "unit": "rows",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. Open console alerts rows bin/lib/alerts-open-read.sh reads per D1 page (oldest first, id cursor) for bin/alerts-groom.sh. Read as ${ALERTS_GROOM_PAGE_SIZE:-500}; a value that is not a whole number in 1..5000 means 500, with one log line."
+}

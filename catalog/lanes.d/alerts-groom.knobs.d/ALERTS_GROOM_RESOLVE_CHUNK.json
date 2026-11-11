@@ -1,0 +1,11 @@
+{
+  "env": "ALERTS_GROOM_RESOLVE_CHUNK",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "unit": "ids",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9114. Ids per POST /api/alerts/resolve from bin/alerts-groom.sh and bin/alerts-supersede.py (the console worker binds 100 parameters per statement). Read as ${ALERTS_GROOM_RESOLVE_CHUNK:-100}; a value that is not a whole number in 1..100 means 100, with one log line."
+}

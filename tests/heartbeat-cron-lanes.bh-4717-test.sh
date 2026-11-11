@@ -139,7 +139,9 @@ grep -qF "cl: cron tick pid $GONE ended without hb_done — not a page" "$RLOG" 
   || bad "C4 the log must name the dropped tick: $(cat "$RLOG")"
 
 # --- C4m: the same with no kind still pages dead -----------------------------------
-reset; stamp $((NOW - 60)) 300
+# TEST-CHANGE (BH-9114): a plain file whose lane completed AFTER it started is a spent run, not a
+# dead lane, so the stamp now predates the start (NOW-200 < NOW-100); the kind still decides.
+reset; stamp $((NOW - 200)) 300
 HB_PID="$GONE" HB_NOW=$((NOW - 100)) hb_start cl 300 1800 "x"
 reap >/dev/null
 [ "$(lines)" = 1 ] && grep -q 'cl dead for' "$ALERTS" && ok || bad "C4m a dead file with no kind must still page: $(cat "$ALERTS")"

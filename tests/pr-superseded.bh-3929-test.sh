@@ -203,8 +203,9 @@ jq -e 'select(.kind=="pr_superseded" and .key=="example-org/project-4#120" and .
 # TEST-CHANGE (BH-3933): the sweep is a hub lane now and ticks its heartbeat
 # (bin/lib/heartbeat.sh, state/heartbeat/<lane>.<pid>.json), the lane's own
 # file like every other lane's. It is not hook state.
+# TEST-CHANGE (BH-9114): state/heartbeat-done/pr-owner-sweep is the cron heartbeat's completion stamp.
 NEWF=$(find "$H/state" "$H/flags" -type f -newer "$STATE_MARK" 2>/dev/null | sed "s#^$H/##" \
-  | grep -vE '^state/pr-owners/[^/]+\.json$|^state/pr-owner-sweep/[^/]+/(openlist|mergedlist)\.(json|meta)$|^state/merge-conductor/pr-state\.tsv(\.lock)?$|^state/(gh-budget|gh-rest-ledger|gh-etag|lane-gate)/|^state/heartbeat/pr-owner-sweep\.[0-9]+\.json$' | sort)
+  | grep -vE '^state/pr-owners/[^/]+\.json$|^state/pr-owner-sweep/[^/]+/(openlist|mergedlist)\.(json|meta)$|^state/merge-conductor/pr-state\.tsv(\.lock)?$|^state/(gh-budget|gh-rest-ledger|gh-etag|lane-gate)/|^state/heartbeat/pr-owner-sweep\.[0-9]+\.json$|^state/heartbeat-done/pr-owner-sweep$' | sort)
 [ -z "$NEWF" ] && ok || bad "P1 no new state/ or flags/ file beyond the sweep's and the conductor's: $NEWF"
 
 # ---------- P8 dry run over the P1 fixture ------------------------------------
