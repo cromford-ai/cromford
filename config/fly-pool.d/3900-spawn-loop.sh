@@ -10,6 +10,16 @@ fi
 
 LAUNCHED=0
 HOT_LAUNCHED=0
+# BH-8915: the per-tick launch limit, shared by every project tick of one
+# bin/fly-pool-tick.sh run (POOL_LAUNCH_TICK_DIR). Fail open: no lib, no limit.
+# shellcheck source=bin/lib/pool-launch-limit.sh
+. "$HARNESS/bin/lib/pool-launch-limit.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-launch-limit.sh" 2>/dev/null || true
+if ! command -v pll_take >/dev/null 2>&1; then
+  pll_limit() { echo 0; }; pll_take() { return 0; }; pll_spent() { return 1; }
+  pll_used() { echo 0; }; pll_held_line() { :; }
+fi
+PLL_LIMIT=$(pll_limit); PLL_HELD=0
 # BH-8780: a tick that starts with the sync streak at its max launches one probe.
 PSS_TICK_TRIPPED=0; command -v pss_tick_gate >/dev/null 2>&1 && pss_tick_gate
 TICK_KEYS=" "
@@ -33,6 +43,9 @@ PDC_ON=0; command -v pdc_prime >/dev/null 2>&1 && { pdc_prime; PDC_ON=1; }
 # a row the decision let through: its machine, in the background.
 pool_walk_spawn() {
   local JF_HOT="$1" JF="$2" KEY="$3" TICKET="$4" ATT="$5" SDTH="$6" SSB="$7" SDEF
+  # BH-8915: a launch slot first. A row whose decision started before another
+  # project took the last slot is held here: nothing is claimed, it stays queued.
+  pll_take || { PLL_HELD=$((PLL_HELD + 1)); return 0; }
   # A release in the gate rewrote the file (BH-5967): the machine carries the
   # reset count, not the one read above.
   SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
@@ -114,6 +127,15 @@ for JF in $(hotfix_first $(ls -tr "$QDIR"/*.json 2>/dev/null)); do
   if command -v dm_job_admit >/dev/null 2>&1 && ! dm_job_admit "$JF"; then
     DM_HELD="${DM_HELD:+$DM_HELD }$KEY"; continue
   fi
+  # BH-8915: the launch limit, after the local filters and before any decision,
+  # so a row that cannot launch this tick costs no GitHub read. With verdicts
+  # out, wait for them first: a pending row may take the last slot. `continue`,
+  # not `break`, so PLL_HELD counts every eligible row the limit held.
+  if [ "$PLL_LIMIT" -gt 0 ]; then
+    while [ "$PDC_ON" = 1 ] && [ $((PDC_PEND_PLAIN + ${PDC_PEND_HOT:-0})) -gt 0 ] \
+          && [ $(( $(pll_used) + PDC_PEND_PLAIN + ${PDC_PEND_HOT:-0} )) -ge "$PLL_LIMIT" ]; do pdc_collect || break; done
+    if pll_spent; then PLL_HELD=$((PLL_HELD + 1)); continue; fi
+  fi
   # BH-7643: an RB row past pool_rb_max_per_tick stays queued for the next
   # tick. `continue`, not `break`: the ticket rows behind it still get the
   # budget. Then a closed or merged PR closes the row and takes no slot.
@@ -156,10 +178,13 @@ done
 if [ "$PDC_ON" = 1 ]; then
   pdc_drain
   PDC_LEFT=$((PDC_Q - PDC_SEEN)); [ "$PDC_LEFT" -ge 0 ] || PDC_LEFT=0
+  [ "$PLL_HELD" -gt 0 ] && [ -z "$PDC_STOP" ] && PDC_STOP=launch-limit
   [ "$PDC_LEFT" -gt 0 ] && [ -z "$PDC_STOP" ] && PDC_STOP=cap
   pdc_walk_line "$PDC_LEFT"
   pdc_cleanup
 fi
+# BH-8915: one line, only when the launch limit held a row. NOT "pool $P: ...".
+pll_held_line
 if [ -n "$_POOL_RB_WAIT" ]; then
   say "rebase rows: $(wc -w <<<"$_POOL_RB_WAIT" | tr -d ' ') past pool_rb_max_per_tick=$_POOL_RB_MAX wait for the next tick ($_POOL_RB_WAIT)"
 fi

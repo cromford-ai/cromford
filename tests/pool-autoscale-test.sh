@@ -84,7 +84,10 @@ N=$(tick)
 [ "$(line)" = "pool project-5: queued=7 running=0 spawning=7 cap=unlimited" ] \
   && ok || bad "the per-tick line must state the depth it is answering (got '$(line)')"
 queue 40
-N=$(tick)
+# BH-8915: the per-tick launch limit (default 20) is pinned by
+# tests/fly-pool-launch-per-tick.bh-8915-test.sh; 0 = no limit, so this is the
+# same 40 under the setting that keeps the uncapped walk.
+N=$(tick POOL_LAUNCH_PER_TICK=0)
 [ "$N" = 40 ] && ok || bad "40 queued builds must spawn 40 machines — no ceiling is ours to keep (got $N)"
 
 # ══ 2. AN EXPLICIT NUMBER IS STILL A HARD CEILING ═══════════════════════════

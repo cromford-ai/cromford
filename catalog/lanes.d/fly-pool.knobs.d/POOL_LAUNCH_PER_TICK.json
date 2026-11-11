@@ -1,0 +1,12 @@
+{
+  "env": "POOL_LAUNCH_PER_TICK",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 1000,
+  "unit": "launches",
+  "zero_means": "unlimited",
+  "required": false,
+  "read_in": "bin/lib/pool-launch-limit.sh",
+  "note": "BH-8915. The most Fly machines the pool SPAWN walk launches in one tick, counted across every project tick one bin/fly-pool-tick.sh run starts (state/fly-pool-launch/<stamp>.<pid>/). Rows past it stay queued for the next tick, with one `launch limit: held <n>` line per project tick. Hotfix rows walk first, so they take the slots first. It does not cap how many machines run: the pool cap does. Settings row `lane.fly-pool.pool_launch_per_tick`. 0 = no limit. A value outside 0-1000 uses 20."
+}

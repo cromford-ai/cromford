@@ -1,0 +1,3 @@
+[
+    {"path": "fly-pool-launch", "class": "box-local", "authority": "the pool per-tick launch count (BH-8915)", "note": "state/fly-pool-launch/<UTC stamp>.<pid>/<n>: one tick dir per bin/fly-pool-tick.sh run, exported as POOL_LAUNCH_TICK_DIR, and one empty dir <n> per launch slot bin/lib/pool-launch-limit.sh took (mkdir, atomic across project ticks). The wrapper deletes tick dirs older than POOL_TICK_HARD_LIMIT_S at the start of each run, so at most a few dirs of at most pool_launch_per_tick entries exist. NOT CARRIED: losing it lets one tick launch up to the limit again."}
+]

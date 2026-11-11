@@ -239,7 +239,9 @@ for n in $(seq 1 20); do
 done
 for n in $(seq 3001 3020); do q "BH-$n" "$n"; echo "$n" >> "$T/held"; done
 printf '0.5\n' > "$T/hold-s"
-run_pool POOL_TICK_BUDGET_S=30
+# BH-8915: 60 spawns is past the per-tick launch limit (default 20, pinned by
+# tests/fly-pool-launch-per-tick.bh-8915-test.sh); 0 = no limit, the walk A1 pins.
+run_pool POOL_TICK_BUDGET_S=30 POOL_LAUNCH_PER_TICK=0
 UND=""
 for n in $(seq 1001 1060); do spawned_key "BH-$n" || UND="$UND BH-$n"; done
 for n in $(seq 2001 2020); do grep -q "skipping BH-$n: waits for BH-900 (still in flight or its PR is open)" "$LOGF" || UND="$UND BH-$n"; done
@@ -358,7 +360,9 @@ done
 reset_state
 for n in $(seq 1001 1030); do q "BH-$n" "$n"; done
 printf '2\n' > "$T/hold-s"
-run_pool POOL_TICK_BUDGET_S=3
+# BH-8915: 30 rows is past the per-tick launch limit (default 20), which would
+# hold rows 21-30 before the budget is spent; 0 = no limit, the walk A7 pins.
+run_pool POOL_TICK_BUDGET_S=3 POOL_LAUNCH_PER_TICK=0
 [ "$(count 'tick budget of 3s spent' "$LOGF")" = 1 ] && ok || bad "A7: the budget line must be said once, got $(count 'tick budget of 3s spent' "$LOGF")"
 RD=$(count . "$T/thread-reads")
 [ "$RD" -lt 30 ] && [ "$RD" -ge 1 ] && ok || bad "A7: dispatch must stop at the budget, $RD of 30 rows were read"

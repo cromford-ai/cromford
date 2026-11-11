@@ -172,6 +172,40 @@ tick_noflyctl_streak() {
   return 0
 }
 
+# --- BH-8915: one launch tick dir per wrapper run ------------------------------
+# Every project tick this run starts gets POOL_LAUNCH_TICK_DIR, and
+# bin/lib/pool-launch-limit.sh counts their machine launches in it against
+# POOL_LAUNCH_PER_TICK. Old tick dirs go first: older than the hard limit of one
+# project tick (POOL_TICK_HARD_LIMIT_S; 0 = 2 x POOL_TICK_BUDGET_S, as in
+# tick_hang_check). A mkdir that fails leaves the variable unset, and then each
+# project tick counts its own launches against the limit.
+tick_launch_dir() {
+  # The mkdir names "$H/state/fly-pool-launch/<name>" in full, so
+  # tests/no-state-files.bh-4159-test.sh matches it to the box-local class in
+  # catalog/state-paths.d/8915-fly-pool-launch.json. <name> is the UTC stamp
+  # and pid of this run. The prune loops over that same literal folder, and
+  # its rm keeps the prefix guard (checks-tree R3).
+  local old name lim b now m
+  unset POOL_LAUNCH_TICK_DIR
+  lim=$(tick_knob POOL_TICK_HARD_LIMIT_S 1200)
+  if [ "$lim" = 0 ]; then b=$(tick_knob POOL_TICK_BUDGET_S 600); lim=$((b * 2)); fi
+  now=$(date +%s)
+  for old in "$H/state/fly-pool-launch"/*/; do
+    [ -d "$old" ] || continue
+    m=$(stat -c %Y "$old" 2>/dev/null | tr -dc 0-9)
+    [ -n "$m" ] && [ $((now - m)) -gt "$lim" ] || continue
+    case "$old" in "$H/state/fly-pool-launch/"?*) rm -rf -- "${old%/}" ;; esac
+  done
+  name="$(date -u +%Y%m%dT%H%M%SZ).$$"
+  if mkdir -p "$H/state/fly-pool-launch/$name" 2>/dev/null; then
+    export POOL_LAUNCH_TICK_DIR="$H/state/fly-pool-launch/$name"
+  else
+    mkdir -p "$H/logs" 2>/dev/null
+    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [pool] launch limit: no tick dir (mkdir $H/state/fly-pool-launch/$name failed) — each project tick counts alone" >> "$H/logs/fly-pool.log"
+  fi
+  return 0
+}
+
 # shellcheck source=bin/jobs-client.sh
 [ -r "$H/bin/jobs-client.sh" ] && [ -d "$H/bin/lib/jobs" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
 command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
@@ -206,6 +240,7 @@ if [ "${#TICK_PROJECTS[@]}" -gt 0 ]; then
   if [ "${#PTB_HUB[@]}" -gt 0 ]; then
     tick_noflyctl_streak
     tick_guard_once
+    tick_launch_dir
     AS=$("$H/bin/pool-cap.sh" --autoscale 2>/dev/null)
     if [ "$AS" = 0 ]; then
       for P in "${PTB_HUB[@]}"; do "$H/bin/fly-pool.sh" "$P"; done
