@@ -1,0 +1,2 @@
+bin/harness-sync.sh
+bin/lib/wrangler-run.sh

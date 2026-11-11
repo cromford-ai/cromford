@@ -29,8 +29,12 @@
 MRQA_KIND=main_red_qattr
 # A failure line: a suite that exited non-zero in the traced runner, a FAIL:
 # summary, a TAP `not ok`, a thrown Error / node ERR_ code, the gh ratchet's
-# `raw gh call`. Case-sensitive on purpose: a wider match only adds attributions.
-MRQA_FAIL_RE='(--- tests/[^ ]+ rc=[1-9]|FAIL:|not ok|Error|ERR_|raw gh call)'
+# `raw gh call`, and a `RED: <path> …` line at the start of the line content
+# (no-state-files, suite-reach-check and the tests/ convention name the file
+# that broke this way; BH-9516, the 2026-11-11 false freeze, where three
+# PR-owned `RED:` batches read as untouched). Case-sensitive on purpose: a wider
+# match only adds attributions.
+MRQA_FAIL_RE='(--- tests/[^ ]+ rc=[1-9]|FAIL:|not ok|Error|ERR_|raw gh call|^[[:space:]]*RED: )'
 
 _mrqa_log() { if declare -F log >/dev/null 2>&1; then log "$@"; fi; return 0; }
 

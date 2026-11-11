@@ -1,0 +1,11 @@
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0011110Z --- tests/no-raw-claude-test.sh rc=0 1s
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0012221Z --- tests/no-serialize-test.sh rc=0 0s
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0013332Z --- S1: the real bin/ adds no raw state/ writer (delta)
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0014443Z RED: bin/harness-sync.sh has 22 raw state/ write(s), 19 at base 89f2fc154d60 — new state must be a DB row (bin/lib/jobs/*), a settings row, or a path classed cache/box-local in a NEW fragment file catalog/state-paths.d/NNNN-<name>.json (one new file per PR, never an edit of a shared one); see docs/STATE-STORES.md
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0015554Z RED: bin/lib/wrangler-run.sh has 14 raw state/ write(s), 0 at base 89f2fc154d60 — new state must be a DB row (bin/lib/jobs/*), a settings row, or a path classed cache/box-local in a NEW fragment file catalog/state-paths.d/NNNN-<name>.json (one new file per PR, never an edit of a shared one); see docs/STATE-STORES.md
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0016665Z FAIL: S1: this diff adds a raw state/ writer in bin/, or the check could not run (see RED lines above)
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0017776Z no-state-files (delta): 0 passed, 1 failed
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0018887Z --- tests/no-state-files.bh-4159-test.sh rc=1 6s
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0019998Z --- tests/no-twin-ledgers.bh-1036-test.sh rc=0 0s
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0021109Z --- tests/nonexistent-path.bh-2210-test.sh rc=0 0s
+Tests, traced (shard 10/13)	tests/ suite, traced (shard 10 of 13)	2026-11-11T08:36:41.0022220Z ##[error]Process completed with exit code 1.
