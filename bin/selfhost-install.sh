@@ -20,14 +20,21 @@
 # unknown key, a duplicate key, or a secret-shaped key (…TOKEN, …SECRET,
 # …API_KEY, …PASSWORD, …PRIVATE_KEY) is refused. Every missing or invalid
 # setting is named in one refusal. Caps must be positive dollar amounts unless
-# SELFHOST_CAPS_OFF=1. This script does not source bin/lib/deployment.sh: its
-# defaults are another deployment's values, and a blank setting must refuse.
+# SELFHOST_CAPS_OFF=1. SELFHOST_RUNNER_LOCK is blank or `claude`. This script
+# does not source bin/lib/deployment.sh: its defaults are another deployment's
+# values, and a blank setting must refuse.
 #
 # Output, in catalog order, no timestamps:
 #   RESOURCE <provider> <kind> <name> <create|recorded|skip(<term>)> from=<setting|fixed>
 #   ENV <KEY>=<value>          each env/global.env line apply would write
 #   CAP ...                    the dollar caps it would seed, or `CAP off (...)`
-#   SECRET <NAME> needed-by=<id>[,<id>]
+#   SETTING <key>=<value>      a per-project settings row (claude_auth.<p>,
+#                              runner_lock.<p>, cost_ceiling.<p>), or
+#   SETTING <key> skip(<why>)  printed only when SELFHOST_MODEL_AUTH=api-key or
+#                              SELFHOST_RUNNER_LOCK=claude
+#   SECRET <NAME> needed-by=<id>[,<id>] [where=fly-secret]
+#                              api-key adds ANTHROPIC_API_KEY_<PROJECT> per
+#                              project, a Fly secret, never a conf value
 #   SUMMARY resources=<n> create=<n> recorded=<n> skipped=<n> live_calls=0 writes=0
 # Exit: 0 plan printed, 1 settings refused, 2 usage or --apply, 3 catalog malformed.
 set -uo pipefail
@@ -37,7 +44,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CATALOG="${SELFHOST_CATALOG:-$ROOT/catalog/selfhost/resources.tsv}"
 CONFIG=""; STATE=""
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
 die_usage() { echo "selfhost-install: $1" >&2; exit 2; }
 
 while [ $# -gt 0 ]; do
@@ -56,7 +63,7 @@ done
 KNOWN=(SELFHOST_CF_ACCOUNT_ID HARNESS_WORKERS_SUBDOMAIN CONSOLE_PAGES_PROJECT BACKUP_S3_BUCKET
   HARNESS_REPO HARNESS_GH_OWNER HARNESS_OPERATOR_LOGIN HARNESS_GIT_NAME HARNESS_GIT_EMAIL SELFHOST_GH_AUTH
   HARNESS_BOX_PREFIX HARNESS_HUB_BOX SELFHOST_HUB SELFHOST_HUB_HOST FLY_ORG SELFHOST_POOL SELFHOST_PROJECTS
-  SELFHOST_MODEL_AUTH SELFHOST_CHAT SELFHOST_CAP_USD_PER_CALL SELFHOST_CAP_USD_DAY SELFHOST_CAPS_OFF)
+  SELFHOST_MODEL_AUTH SELFHOST_RUNNER_LOCK SELFHOST_CHAT SELFHOST_CAP_USD_PER_CALL SELFHOST_CAP_USD_DAY SELFHOST_CAPS_OFF)
 is_known() { local k; for k in ${KNOWN[@]+"${KNOWN[@]}"}; do [ "$k" = "$1" ] && return 0; done; return 1; }
 WHEN_TERMS=" always hub=fly hub=vm pool=fly pool=local gh=app gh=pat model=oauth model=api-key chat=telegram chat=slack per-project "
 
@@ -148,6 +155,8 @@ enum SELFHOST_POOL fly local
 enum SELFHOST_GH_AUTH app pat
 enum SELFHOST_MODEL_AUTH oauth api-key
 enum SELFHOST_CHAT none telegram slack
+lock="$(get SELFHOST_RUNNER_LOCK)"
+case "$lock" in ''|claude) ;; *) PROBLEMS+=("SELFHOST_RUNNER_LOCK=$lock: blank or claude only") ;; esac
 [ "$(get SELFHOST_HUB)" = vm ] && [ -z "$(get SELFHOST_HUB_HOST)" ] && PROBLEMS+=("SELFHOST_HUB_HOST is blank and SELFHOST_HUB=vm needs it")
 if { [ "$(get SELFHOST_HUB)" = fly ] || [ "$(get SELFHOST_POOL)" = fly ]; } && [ -z "$(get FLY_ORG)" ]; then
   PROBLEMS+=("FLY_ORG is blank and the hub or the pool is on Fly")
@@ -261,9 +270,28 @@ else
 fi
 echo "CAP calls/tokens: no enforcing knob in this harness yet; dollars are the cap"
 
+# The per-project settings rows. With oauth and no lock nothing prints, so that
+# plan stays as it was before these rows existed.
+mode="$(get SELFHOST_MODEL_AUTH)"
+if [ "$mode" = api-key ] || [ "$lock" = claude ]; then
+  for p in ${PROJECTS[@]+"${PROJECTS[@]}"}; do
+    echo "SETTING claude_auth.$p=$mode"
+    [ "$lock" != claude ] || echo "SETTING runner_lock.$p=claude"
+    if [ "$caps_off" = 1 ]; then echo "SETTING cost_ceiling.$p skip(caps off)"
+    else echo "SETTING cost_ceiling.$p=$(get SELFHOST_CAP_USD_DAY)"; fi
+  done
+fi
+
 j=0
 while [ "$j" -lt "${#SEC_ORDER[@]}" ]; do
   echo "SECRET ${SEC_ORDER[$j]} needed-by=${SEC_IDS[$j]}"
   j=$((j+1))
 done
+# api-key: one key per project, a Fly secret on that project's app. The name
+# only; the value is never read from or written to the conf file.
+if [ "$mode" = api-key ]; then
+  for p in ${PROJECTS[@]+"${PROJECTS[@]}"}; do
+    echo "SECRET ANTHROPIC_API_KEY_$(printf '%s' "$p" | tr 'a-z-' 'A-Z_') needed-by=claude_auth.$p where=fly-secret"
+  done
+fi
 echo "SUMMARY resources=$N_RES create=$N_CREATE recorded=$N_REC skipped=$N_SKIP live_calls=0 writes=0"

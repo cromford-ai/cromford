@@ -59,7 +59,7 @@ Three are required. The rest are optional and the text says what you lose.
 
 | What | Required | Notes |
 |---|---|---|
-| **Anthropic** | yes | `claude setup-token`, run on a machine **with a browser**, prints `CLAUDE_CODE_OAUTH_TOKEN`. It is the only *model* credential you need |
+| **Anthropic** | yes | One of two paths. OAuth: `claude setup-token`, run on a machine **with a browser**, prints `CLAUDE_CODE_OAUTH_TOKEN`. API key: an `ANTHROPIC_API_KEY` from an Anthropic Console org. It is metered, so set a spend limit in the Console first |
 | **GitHub** | yes | A fine-grained PAT. Scopes below — the list is longer than you would guess |
 | **Cloudflare** | yes for Path B | Workers, D1 **and** KV, plus scheduled triggers. Free tier covers all four |
 | **Telegram** | recommended | A bot from BotFather. Without it the watchdog has nowhere to page, and you will not know the fleet died |
@@ -662,12 +662,15 @@ Two consequences worth meeting on purpose rather than at 3am:
   outright, so a restore is `--release`, restore the file, `--rearm`, per file,
   or it does not land.
 
-**`/root/harness/env/global.env`** — fleet-wide. Copy
+**`/root/harness/env/global.env`** — fleet-wide. Run
+`bin/render-env-example.sh --write`, then copy
 `env-templates/global.env.example` and fill in. The required set:
 
 ```
 HARNESS_SECRET=<the value from step 0>
+# The model credential: one of the two (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY).
 CLAUDE_CODE_OAUTH_TOKEN=<from `claude setup-token`>
+# or: ANTHROPIC_API_KEY=<a Console org key; metered, set a spend limit>
 JOBS_URL=https://<your-jobs-worker>.workers.dev
 WATCHDOG_URL=https://<your-watchdog>.workers.dev
 # CONSOLE_URL is required by bootstrap, and the console is not in this repo.
@@ -682,7 +685,7 @@ matters on a fresh box:
 | Variable | Required | Notes |
 |---|---|---|
 | `HARNESS_SECRET` | yes | The shared bearer from step 0 |
-| `CLAUDE_CODE_OAUTH_TOKEN` | yes | From `claude setup-token` |
+| `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | yes, one of the two (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) | The token from `claude setup-token`, or a metered Console API key with a spend limit |
 | `JOBS_URL` | **yes in practice** | Not in the template, and **it has a default: the upstream fleet's worker** (`bin/jobs-client.sh:19`). Unset, your boxes coordinate through someone else's database |
 | `CONSOLE_URL` | yes | Required by bootstrap. Without a console, see [What Path B is missing](#what-path-b-is-missing) |
 | `WATCHDOG_URL` | if self-hosted | Same story, different default |

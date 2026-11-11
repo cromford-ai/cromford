@@ -110,6 +110,7 @@ nothing defaults to someone else's account.
 | `SELFHOST_POOL` | `fly` for one build app per project, `local` to build on the hub | Your choice |
 | `SELFHOST_PROJECTS` | The repos to watch, space-separated `name=owner/repo`, where `name` is lowercase letters, digits and hyphens | The repos you want built |
 | `SELFHOST_MODEL_AUTH` | `oauth` for a Claude Code subscription token, `api-key` for an Anthropic API key | Your choice |
+| `SELFHOST_RUNNER_LOCK` | `claude` to keep every project on Claude, with no fallback to a non-Claude runner. Blank means no lock | Your choice. Ships blank |
 | `SELFHOST_CHAT` | `none`, `telegram` or `slack` | Your choice. Ships as `none` |
 | `SELFHOST_CAP_USD_PER_CALL` | The dollar cap on one agent call. Ships as `5` | See section 8 |
 | `SELFHOST_CAP_USD_DAY` | The dollar cap per lane per day. Ships as `20` | See section 8 |
@@ -124,6 +125,9 @@ prints the names of the ones your settings need, from this list:
 `BACKUP_S3_SECRET_ACCESS_KEY`, `FLY_API_TOKEN`, `GH_APP_ID`,
 `GH_APP_PRIVATE_KEY_FILE`, `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SLACK_BOT_TOKEN`.
+With `SELFHOST_MODEL_AUTH=api-key` the dry-run also names one
+`ANTHROPIC_API_KEY_<PROJECT>` per project (the project name in upper case, `-`
+as `_`). It is a Fly secret on that project's app. It never goes in this file.
 
 Least privilege for each credential:
 
@@ -146,6 +150,10 @@ prints, in this order:
   below), or `skip(<term>)` when a setting turns that row off.
 - `ENV <KEY>=<value>`. Each line is one the box's `env/global.env` needs.
 - `CAP ...`. The spend caps, see section 8.
+- `SETTING <key>=<value>`. The per-project settings rows `claude_auth.<project>`,
+  `runner_lock.<project>` and `cost_ceiling.<project>` (`SELFHOST_CAP_USD_DAY`,
+  or `skip(caps off)`). They print only with `SELFHOST_MODEL_AUTH=api-key` or
+  `SELFHOST_RUNNER_LOCK=claude`.
 - `SECRET <NAME> needed-by=<row ids>`. Each secret your settings need, and which rows need it.
 - `SUMMARY resources=<n> create=<n> recorded=<n> skipped=<n> live_calls=0 writes=0`.
   `live_calls=0 writes=0` is the promise that nothing was touched.

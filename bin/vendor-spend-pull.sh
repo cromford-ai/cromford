@@ -566,7 +566,9 @@ poll_fly() {
   tok=$(env_get FLY_API_TOKEN) || {
     emit_row fly "$NOW" "$NOW" "" computed no-spend-endpoint "" "" \
       "no key on this box (FLY_API_TOKEN unset in env/)"; return; }
-  org=$(env_get FLY_ORG) || org="personal"
+  org=$(env_get FLY_ORG) || {
+    emit_row fly "$NOW" "$NOW" "" computed error "" "" \
+      "FLY_ORG unset in env/: no Fly org to read (never defaults to personal)"; return; }
   ws=$(window_start_for fly)
   apps=$(mktemp); raw=$(mktemp)
   local code

@@ -58,6 +58,10 @@ SELFHOST_PROJECTS=
 # ── Models and chat ──────────────────────────────────────────────────────────
 # oauth = a Claude Code subscription token, api-key = an Anthropic API key.
 SELFHOST_MODEL_AUTH=
+# claude = no project falls back to a non-Claude runner (read by #9334).
+# Blank = no lock. With api-key, each project's key is the Fly secret
+# ANTHROPIC_API_KEY_<PROJECT> on its app, never a value in this file.
+SELFHOST_RUNNER_LOCK=
 # none, telegram or slack.
 SELFHOST_CHAT=none
 

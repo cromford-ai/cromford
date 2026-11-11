@@ -68,7 +68,7 @@ chmod +x "$T/fakebin/curl"
 # Fixtures each script needs to reach its first call.
 printf 'FLY_API_TOKEN_DEMO=tok-FIXTURE\n' > "$H/env/fly.env"
 printf '{"app":"demo-app","machine_id":"m123"}\n' > "$H/state/fly/demo.json"
-printf 'OPENROUTER_API_KEY=or-FIXTURE\nOPENAI_ADMIN_KEY=oa-FIXTURE\nFLY_API_TOKEN=fly-FIXTURE\n' > "$H/env/global.env"
+printf 'OPENROUTER_API_KEY=or-FIXTURE\nOPENAI_ADMIN_KEY=oa-FIXTURE\nFLY_API_TOKEN=fly-FIXTURE\nFLY_ORG=personal\n' > "$H/env/global.env"
 printf '{"some-model":"vendor/some-model"}\n' > "$T/ck/catalog/model-slugs.json"
 
 # run <registry> <script> [args…] — one script, a fresh URL log; the env the

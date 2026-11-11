@@ -26,9 +26,11 @@
 # read, are named as `partial: K apps not checked`, also when nothing was idle.
 # Every run writes one line to logs/fly-idle-check.log.
 #
-# FAILURE. No FLY_API_TOKEN: one log line `not configured`, rc 0, no alert. The
-# apps read failing (non-2xx, unparseable) or no fly-machines endpoint: one log
-# line and one ALERTS line naming why, rc 1, no marker — never "0 idle".
+# FAILURE. No FLY_API_TOKEN: one log line `not configured`, rc 0, no alert. A
+# token with no FLY_ORG: one log line and one ALERTS line naming FLY_ORG, rc 1,
+# no Fly call; the org never defaults to `personal`. The apps read failing
+# (non-2xx, unparseable) or no fly-machines endpoint: one log line and one
+# ALERTS line naming why, rc 1, no marker — never "0 idle".
 #
 # WHAT IT NEVER DOES. It sends GET requests only. It never stops, destroys or
 # POSTs to a machine; the alert names app/mid so a person can. The token is
@@ -41,7 +43,7 @@
 #
 # Usage: bin/fly-idle-check.sh [--help]
 set -uo pipefail
-case "${1:-}" in -h|--help) sed -n '2,43p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,44p' "$0"; exit 0 ;; esac
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 
@@ -80,7 +82,12 @@ env_get() { # env_get <VAR_NAME> -> prints the value, or nothing
   return 1
 }
 TOK=$(env_get FLY_API_TOKEN) || { say "not configured: FLY_API_TOKEN unset"; exit 0; }
-ORG=$(env_get FLY_ORG) || ORG=personal
+ORG=$(env_get FLY_ORG) || {
+  say "FLY_ORG unset in env/: no Fly org to check (never defaults to personal)"
+  alert "FLY_ORG is not set in env/; idle Fly machines not checked. Set FLY_ORG to your Fly org."
+  echo "fly-idle-check: FLY_ORG is not set" >&2
+  exit 1
+}
 
 . "${HARNESS:-/root/harness}/bin/lib/endpoints.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/endpoints.sh" 2>/dev/null
 if ! FLY_BASE=$(endpoint_url fly-machines 2>/dev/null); then

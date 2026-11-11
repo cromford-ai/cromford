@@ -1,0 +1,51 @@
+# contract-test: BH-9335 oauth/no-lock plan, captured from origin/main cd5beea9a579 bin/selfhost-install.sh before the edit
+RESOURCE cloudflare d1 harness-jobs create from=fixed
+RESOURCE cloudflare d1 harness-locks create from=fixed
+RESOURCE cloudflare worker harness-jobs create from=fixed
+RESOURCE cloudflare worker harness-locks create from=fixed
+RESOURCE cloudflare worker harness-watchdog create from=fixed
+RESOURCE cloudflare kv harness-watchdog create from=fixed
+RESOURCE cloudflare r2 acme-backup create from=BACKUP_S3_BUCKET
+RESOURCE cloudflare pages acme-console create from=CONSOLE_PAGES_PROJECT
+RESOURCE fly app acme-hub create from=HARNESS_HUB_BOX
+RESOURCE fly volume acme-hub/hub_data create from=HARNESS_HUB_BOX
+RESOURCE vm host - skip(hub=vm) from=SELFHOST_HUB_HOST
+RESOURCE fly app builder-alpha create from=SELFHOST_PROJECTS
+RESOURCE fly app builder-beta-two create from=SELFHOST_PROJECTS
+RESOURCE fly volume builder-alpha/builder_data create from=SELFHOST_PROJECTS
+RESOURCE fly volume builder-beta-two/builder_data create from=SELFHOST_PROJECTS
+RESOURCE github app-installation acme-org create from=HARNESS_GH_OWNER
+RESOURCE github pat acme-org skip(gh=pat) from=HARNESS_GH_OWNER
+RESOURCE model oauth-token claude-code create from=fixed
+RESOURCE model api-key anthropic skip(model=api-key) from=fixed
+RESOURCE chat telegram-bot telegram skip(chat=telegram) from=fixed
+RESOURCE chat slack-bot slack skip(chat=slack) from=fixed
+ENV HARNESS_REPO=acme-org/acme-harness
+ENV HARNESS_GH_OWNER=acme-org
+ENV HARNESS_OPERATOR_LOGIN=acme-op
+ENV HARNESS_GIT_NAME=acme-op
+ENV HARNESS_GIT_EMAIL=op@acme.example
+ENV HARNESS_MERGE_GIT_NAME=acme-op
+ENV HARNESS_BOT_GIT_NAME=acme-op
+ENV HARNESS_BOT_GIT_EMAIL=op@acme.example
+ENV HARNESS_WORKERS_SUBDOMAIN=acme
+ENV HARNESS_BOX_PREFIX=acme-
+ENV HARNESS_HUB_BOX=acme-hub
+ENV CONSOLE_PAGES_PROJECT=acme-console
+ENV BACKUP_S3_BUCKET=acme-backup
+CAP AGENT_CALL_BUDGET_USD=5
+CAP LLM_USD_CAP_DAY=20
+CAP calls/tokens: no enforcing knob in this harness yet; dollars are the cap
+SECRET CLOUDFLARE_API_TOKEN needed-by=cf-d1-jobs,cf-d1-locks,cf-worker-jobs,cf-worker-locks,cf-worker-watchdog,cf-kv-watchdog,cf-r2-backup,cf-pages-console
+SECRET HARNESS_SECRET needed-by=cf-worker-jobs,cf-worker-watchdog
+SECRET GITHUB_WEBHOOK_SECRET needed-by=cf-worker-jobs
+SECRET HARNESS_TOKENS needed-by=cf-worker-locks
+SECRET ADMIN_TOKEN needed-by=cf-worker-locks
+SECRET STAMP_SECRET needed-by=cf-worker-watchdog
+SECRET BACKUP_S3_ACCESS_KEY_ID needed-by=cf-r2-backup
+SECRET BACKUP_S3_SECRET_ACCESS_KEY needed-by=cf-r2-backup
+SECRET FLY_API_TOKEN needed-by=fly-hub-app,fly-hub-volume,fly-pool-app,fly-pool-volume
+SECRET GH_APP_ID needed-by=gh-app
+SECRET GH_APP_PRIVATE_KEY_FILE needed-by=gh-app
+SECRET CLAUDE_CODE_OAUTH_TOKEN needed-by=model-oauth
+SUMMARY resources=21 create=16 recorded=0 skipped=5 live_calls=0 writes=0

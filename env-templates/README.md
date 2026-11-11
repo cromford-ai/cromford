@@ -25,5 +25,9 @@ The directory is called `lanes/` because that is the one spelling
 `guardrails/rendered-file-freshness` already declared for it; the files in it
 are per TOPIC, and a topic is usually but not always one lane.
 
+The model credential blocks (OAuth token or Anthropic API key, one of the two)
+are in `lanes/030-llm-runners.env.example`. Run
+`bin/render-env-example.sh --write`, then copy `global.env.example`.
+
 The other files here are hand-maintained: `project.env.example` (per project),
 `github-app.env.example`, `alerts.conf.example` and `accounts.d/`.
