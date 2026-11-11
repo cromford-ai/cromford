@@ -33,11 +33,14 @@ WD=http://watchdog.invalid
 # The fake curl: full argv (one line per call) to $CURL_LOG; the standby list
 # is [], anything else {}; a --data-binary @- body is drained from stdin.
 mkdir -p "$T/fakebin"
+# TEST-CHANGE BH-9264: the watchdog secret moved to a curl config (watchdog_curl):
+# the fake logs it as "cfg <line>", and the standby GET URL ends the argv.
 cat > "$T/fakebin/curl" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >> "$CURL_LOG"
+[ "$1" = --config ] && sed 's/^/cfg /' "$2" >> "$CURL_LOG"
 case "$*" in *"@-"*) cat >/dev/null ;; esac
-case "$*" in */api/standby\?*) printf '[]' ;; *) printf '{}' ;; esac
+case "$*" in */api/standby\?*|*/api/standby) printf '[]' ;; *) printf '{}' ;; esac
 exit 0
 SH
 chmod +x "$T/fakebin/curl"
@@ -74,8 +77,10 @@ has "$F/curl.log" /api/standby && bad "F-unset: no standby GET without WATCHDOG_
 
 fsetup f-set "WATCHDOG_URL=$WD"
 frun
-has "$F/curl.log" "$WD/api/status?s=test-secret" && ok || bad "F-set: the status POST goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
-has "$F/curl.log" "$WD/api/standby?s=test-secret" && ok || bad "F-set: the standby GET goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
+has "$F/curl.log" "$WD/api/status " && ok || bad "F-set: the status POST goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
+grep -qE "$WD/api/standby\$" "$F/curl.log" && ok || bad "F-set: the standby GET goes to WATCHDOG_URL (got: $(cat "$F/curl.log"))"
+[ "$(grep -cxF 'cfg header = "Authorization: Bearer test-secret"' "$F/curl.log")" = 2 ] && ok || bad "F-set: both calls carry the secret in the header (got: $(cat "$F/curl.log"))"
+has "$F/curl.log" '?s=' && bad "F-set: the secret is in a URL (got: $(cat "$F/curl.log"))" || ok
 [ "$(jq -r 'has("standby_error")' "$F/BEAT.json" 2>/dev/null)" = false ] && ok || bad "F-set: a good [] list carries no standby_error"
 
 # ── C: cost-rollup ───────────────────────────────────────────────────────────
@@ -114,7 +119,9 @@ has "$C/logs/ALERTS.log" cost-snapshot && bad "C-unset: no ALERTS line when not 
 
 csetup c-set "WATCHDOG_URL=$WD"
 crun
-has "$C/curl.log" "$WD/api/cost-snapshot?s=cost-secret" && ok || bad "C-set: the snapshot goes to WATCHDOG_URL (got: $(cat "$C/curl.log"))"
+grep -qE "$WD/api/cost-snapshot\$" "$C/curl.log" && ok || bad "C-set: the snapshot goes to WATCHDOG_URL (got: $(cat "$C/curl.log"))"
+grep -qxF 'cfg header = "Authorization: Bearer cost-secret"' "$C/curl.log" && ok || bad "C-set: the secret rides the header (got: $(cat "$C/curl.log"))"
+has "$C/curl.log" '?s=' && bad "C-set: the secret is in the URL" || ok
 has "$C/logs/agent-rules.log" FAILED && bad "C-set: a 0-rc push is not FAILED" || ok
 
 # ── P: progress-push ─────────────────────────────────────────────────────────
@@ -145,7 +152,9 @@ case "$TICK" in *"post failed"*) bad "P-unset: not configured is not a failed po
 
 psetup p-set "WATCHDOG_URL=$WD"
 prun
-has "$P/curl.log" "$WD/api/progress?s=" && ok || bad "P-set: the POST goes to WATCHDOG_URL (got: $(cat "$P/curl.log"))"
+has "$P/curl.log" "$WD/api/progress " && ok || bad "P-set: the POST goes to WATCHDOG_URL (got: $(cat "$P/curl.log"))"
+grep -qxF 'cfg header = "Authorization: Bearer test-secret"' "$P/curl.log" && ok || bad "P-set: the secret rides the header (got: $(cat "$P/curl.log"))"
+grep -qE "$WD/[^ ]*\?s=" "$P/curl.log" && bad "P-set: the secret is in the watchdog URL" || ok
 
 # ── S: state-restore --standby ───────────────────────────────────────────────
 # A scratch H whose bin/ holds the real state-restore.sh and stubs for its
@@ -183,7 +192,9 @@ has "$S/curl.log" /api/standby/ && bad "S-unset: no standby report without WATCH
 
 ssetup s-set "WATCHDOG_URL=$WD"
 srun
-has "$S/curl.log" "$WD/api/standby/standby-box?s=wd-secret" && ok || bad "S-set: the report goes to WATCHDOG_URL (got: $(cat "$S/curl.log"); out: $(cat "$S/rs.out"))"
+grep -qE "$WD/api/standby/standby-box\$" "$S/curl.log" && ok || bad "S-set: the report goes to WATCHDOG_URL (got: $(cat "$S/curl.log"); out: $(cat "$S/rs.out"))"
+grep -qxF 'cfg header = "Authorization: Bearer wd-secret"' "$S/curl.log" && ok || bad "S-set: the secret rides the header (got: $(cat "$S/curl.log"))"
+has "$S/curl.log" '?s=' && bad "S-set: the secret is in the URL" || ok
 [ -e "$S/hb" ] && ok || bad "S-set: the standby heartbeat must still run"
 
 # ── H: the host is gone from the four scripts and three lane JSONs ───────────

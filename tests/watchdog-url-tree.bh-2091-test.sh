@@ -125,8 +125,11 @@ GOT=$( set -a; . "$T/hf/env/global.env"; printf '%s' "${WATCHDOG_URL:-}" )
 [ -x "$T/hf/bin/watchdog-ping.sh" ] && ok || bad "§6b-fleet harness-sync must install bin/watchdog-ping.sh"
 [ "$PRC" = 0 ] && ok || bad "§6b-fleet the ping must exit 0, got $PRC"
 NC=$(grep -c '^curl ' "$NET"); NW=$(grep -c '^wget ' "$NET")
-[ "$NC" = 1 ] && [ "$NW" = 0 ] && grep -qF "$WANT/api/ping/testbox?" "$NET" && ok \
+# TEST-CHANGE BH-9264: the ping URL has no ?s= now (the secret rides an
+# Authorization header from a curl config), so the URL must END at testbox.
+[ "$NC" = 1 ] && [ "$NW" = 0 ] && grep -qE "$WANT/api/ping/testbox( |\$)" "$NET" && ok \
   || bad "§6b-fleet want exactly 1 curl to $WANT/api/ping/testbox, saw: $(seen "$NET")"
+grep -qF '?s=' "$NET" && bad "§6b-fleet the secret is in the ping URL: $(seen "$NET")" || ok
 
 # §6b-fork
 mkbox "$T/hk"

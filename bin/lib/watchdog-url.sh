@@ -16,6 +16,15 @@
 #     appends WATCHDOG_URL=<carry> to global.env when it exists, has no non-empty
 #     WATCHDOG_URL= line and the carry applies. Called by bin/harness-sync.sh.
 #     Success: one update-runners.log line. Failed write: one ALERTS line, rc 1.
+#   watchdog_secret <env-dir>
+#     prints the watchdog credential, rc 0: the first non-empty of
+#     <env-dir>/.watchdog-secret (CR/LF stripped, read only when readable),
+#     $WATCHDOG_SECRET, $HARNESS_SECRET. None: no output, rc 1 (BH-9264).
+#   watchdog_curl <secret> <curl args...>
+#     runs curl with `Authorization: Bearer <secret>` read from a curl config on
+#     a file descriptor (process substitution), so the secret is in no argv and
+#     in no URL. No here-string: bash 3.2 writes one to $TMPDIR. Returns curl's
+#     rc. Empty secret: no curl, rc 1.
 
 watchdog_url() {
   local lane="$1" root="$2" v="${WATCHDOG_URL:-}"
@@ -82,4 +91,25 @@ watchdog_url_seed() {
     printf '%s %s (no bin/alert-line.sh to page with)\n' "$(date -u '+%F %TZ')" "$msg" >> "$root/logs/update-runners.log" 2>/dev/null
   fi
   return 1
+}
+
+watchdog_secret() {
+  local d="${1:-}" s=""
+  if [ -n "$d" ] && [ -r "$d/.watchdog-secret" ]; then
+    s=$(tr -d '\r\n' < "$d/.watchdog-secret" 2>/dev/null)
+  fi
+  [ -n "$s" ] || s="${WATCHDOG_SECRET:-}"
+  [ -n "$s" ] || s="${HARNESS_SECRET:-}"
+  [ -n "$s" ] || return 1
+  printf '%s\n' "$s"
+}
+
+watchdog_curl() {
+  local s="${1:-}"
+  [ -n "$s" ] || return 1
+  shift
+  # curl config syntax: inside "..." a backslash escapes the next character, so
+  # each \ and " in the secret gets one. printf is a builtin and sed reads the
+  # secret from a pipe: neither puts it in an argv.
+  curl --config <(printf '%s\n' "$s" | sed -e 's/[\\"]/\\&/g' -e 's/^/header = "Authorization: Bearer /' -e 's/$/"/') "$@"
 }

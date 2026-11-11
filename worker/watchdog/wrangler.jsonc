@@ -11,10 +11,19 @@
     { "binding": "KV", "id": "00000000000000000000000000000000" }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
+  // Workers Logs keep the auth log lines (src/auth.js): phase 2 of BH-9264
+  // removes ?s= only after 24 h of 0 "watchdog query-auth" lines.
+  // invocation_logs OFF: an invocation record stores the request URL, and
+  // until phase 2 every ?s= caller puts HARNESS_SECRET in that URL. Only the
+  // console.log lines (which never hold a secret) are kept.
+  // tests/watchdog-auth.bh-9264-test.sh pins both values.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   // Telegram forum topic for fleet alerts (Fleet topic in "the operator Harness").
   "vars": { "TELEGRAM_THREAD_ID": "9" }
   // secrets (set via wrangler secret put / API, never in this file):
   //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, HARNESS_SECRET, ORGO_API_KEY
+  //   WATCHDOG_SECRET — the fleet routes' own bearer (src/auth.js). Must differ
+  //     from HARNESS_SECRET: equal values answer 500 on every fleet route.
   //   STAMP_SECRET — K2: opens ONLY POST /api/stamp/<name> (docs/OUTSIDE-DEADMAN.md)
   //   JOBS_URL: harness-jobs worker base URL for hub failover (BH-401).
   //     HARNESS_SECRET doubles as its bearer. Unset = failover off.

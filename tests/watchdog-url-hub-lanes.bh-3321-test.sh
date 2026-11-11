@@ -44,6 +44,9 @@ for c in curl wget; do
   printf '#!/bin/bash\necho "%s $*" >> "${WUHL_NET:-/dev/null}"\n[ "%s" = curl ] && echo "[]"\nexit 0\n' "$c" "$c" > "$T/fakebin/$c"
   chmod +x "$T/fakebin/$c"
 done
+# TEST-CHANGE BH-9264: the secret moved to a curl config (watchdog_curl). The
+# fake curl also logs that config as "cfg <line>", so the header is pinned.
+printf '#!/bin/bash\necho "curl $*" >> "${WUHL_NET:-/dev/null}"\n[ "$1" = --config ] && sed "s/^/cfg /" "$2" >> "${WUHL_NET:-/dev/null}"\necho "[]"\nexit 0\n' > "$T/fakebin/curl"
 
 # mkh <case> <script> [nolib] -> prints the scratch harness root
 mkh() {
@@ -88,9 +91,11 @@ for pair in "ping:watchdog-ping.sh:watchdog-ping" "poll:watchdog-poll.sh:watchdo
   h=$(mkh "$tag-set" "$script"); net="$T/$tag-set/net.log"
   echo "WATCHDOG_URL=http://watchdog.invalid/" >> "$h/env/global.env"
   run "$h" "$net" "$script" "${args[@]}"
-  if [ "$tag" = ping ]; then want='http://watchdog.invalid/api/ping/box1?s=x'
-  else want='http://watchdog.invalid/api/commands?s=x'; fi
-  [ "$RC" = 0 ] && grep -qF "$want" "$net" && ok || bad "§4 $lane set: want rc 0 + a call to $want, rc=$RC saw: $(seen "$net")"
+  if [ "$tag" = ping ]; then want='http://watchdog.invalid/api/ping/box1'
+  else want='http://watchdog.invalid/api/commands'; fi
+  [ "$RC" = 0 ] && grep -qE "$want( |\$)" "$net" && ok || bad "§4 $lane set: want rc 0 + a call to $want, rc=$RC saw: $(seen "$net")"
+  grep -qxF 'cfg header = "Authorization: Bearer x"' "$net" && ok || bad "§4 $lane set: want the secret in the Authorization header, saw: $(seen "$net")"
+  grep -qF '?s=' "$net" && bad "§4 $lane set: the secret is in the URL: $(seen "$net")" || ok
   grep -qF "$FLEET_HOST" "$net" && bad "§4 $lane set: called the fleet host: $(seen "$net")" || ok
   [ "$(lines "$h" "$lane")" = 0 ] && ok || bad "§4 $lane set: must log no not-set line"
 
@@ -128,8 +133,10 @@ echo "WATCHDOG_URL=http://watchdog.invalid" >> "$h/env/global.env"
 run "$h" "$net" tickets-snapshot-push.sh
 [ "$RC" = 0 ] && ok || bad "§5b snapshot set: want rc 0, got $RC"
 grep -q 'board.invalid/api/boards' "$net" && ok || bad "§5b snapshot set: the board read should run, saw: $(seen "$net")"
-grep -F -- '-X POST' "$net" | grep -qF 'http://watchdog.invalid/api/tickets-snapshot?s=x' && ok \
-  || bad "§5b snapshot set: want a POST to http://watchdog.invalid/api/tickets-snapshot?s=x, saw: $(seen "$net")"
+grep -F -- '-X POST' "$net" | grep -qE 'http://watchdog.invalid/api/tickets-snapshot( |$)' && ok \
+  || bad "§5b snapshot set: want a POST to http://watchdog.invalid/api/tickets-snapshot, saw: $(seen "$net")"
+grep -qxF 'cfg header = "Authorization: Bearer x"' "$net" && ok || bad "§5b snapshot set: want the secret in the Authorization header, saw: $(seen "$net")"
+grep -qF '?s=' "$net" && bad "§5b snapshot set: the secret is in the URL: $(seen "$net")" || ok
 grep -qF "$FLEET_HOST" "$net" && bad "§5b snapshot set: called the fleet host" || ok
 
 h=$(mksnap snap-nolib nolib); net="$T/snap-nolib/net.log"

@@ -68,6 +68,8 @@ case "\$*" in
   */api/flags/*) printf '{"error":"not found"}\n404'; exit 0 ;;
   */api/progress*)
     printf '%s\n' "\$*" > "$T/POST.args"
+    # TEST-CHANGE BH-9264: the secret moved to a curl config (watchdog_curl); record it.
+    [ "\$1" = --config ] && cat "\$2" >> "$T/POST.args"
     cat > "$T/PUSH.json"; printf 'ok'; exit 0 ;;
 esac
 exit 7
@@ -130,11 +132,12 @@ case "$GA" in *"detectors=alert-warn-flush,ci-minutes-watch,cost-rollup,fleet-sl
 case "$GA" in *"spend_min=60"*"long_min=1440,10080"*) ok ;; *) bad "P1: the GET carries the windows (got: $GA)" ;; esac
 case "$GA" in *"Bearer test-secret"*) ok ;; *) bad "P1: the jobs GET is authed with the jobs bearer (got: $GA)" ;; esac
 PA=$(cat "$T/POST.args" 2>/dev/null)
-case "$PA" in *"https://wd-fixture.example/api/progress?s=wd-secret"*) ok ;; *) bad "P1: the POST uses env/.watchdog-secret first, like watchdog-ping.sh (got: $PA)" ;; esac
+case "$PA" in *"https://wd-fixture.example/api/progress "*'header = "Authorization: Bearer wd-secret"'*) ok ;; *) bad "P1: the POST uses env/.watchdog-secret first, like watchdog-ping.sh (got: $PA)" ;; esac
+case "$PA" in *"?s="*) bad "P1: the secret must not be in the URL (got: $PA)" ;; *) ok ;; esac
 case "$PA" in *"-m 15"*) ok ;; *) bad "P1: the POST is bounded (got: $PA)" ;; esac
 [ "$(grep -c 'progress-push' "$T/logs/progress-push.log" 2>/dev/null)" = 1 ] && ok || bad "P1: one log line per run"
 rm -f "$T/env/.watchdog-secret"; run
-case "$(cat "$T/POST.args" 2>/dev/null)" in *"/api/progress?s=test-secret"*) ok ;; *) bad "P1: without the file, HARNESS_SECRET" ;; esac
+case "$(cat "$T/POST.args" 2>/dev/null)" in *"/api/progress "*'header = "Authorization: Bearer test-secret"'*) ok ;; *) bad "P1: without the file, HARNESS_SECRET" ;; esac
 
 # ── P2: knobs ───────────────────────────────────────────────────────────────
 run PROGRESS_SILENT_MULT=4 PROGRESS_DETECTORS="pipeline-health:15,fleet-slo:ten,progress-push:10" PROGRESS_SPEND_WINDOW_MIN=30 PROGRESS_NOMERGE="2880:90"

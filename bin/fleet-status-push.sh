@@ -70,7 +70,10 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    fleet-status-p
 # included, still runs. bin/lib/watchdog-url.sh logs the skip once a day.
 . "$H/bin/lib/watchdog-url.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 WD=$(watchdog_url fleet-status-push "$H") || WD=""
-URL=""; [ -n "$WD" ] && URL="$WD/api/status?s=$HARNESS_SECRET"
+# The watchdog credential goes in a header (watchdog_curl, BH-9264), looked up
+# like bin/watchdog-ping.sh's; HARNESS_SECRET above stays the jobs bearer.
+WS=""; [ -n "$WD" ] && { WS=$(watchdog_secret "$HENV") || WD=""; }
+URL=""; [ -n "$WD" ] && URL="$WD/api/status"
 
 NOW=$(date +%s)
 # An unreadable or mid-rsync fleet.conf yields no projects. Pushing anyway would
@@ -789,7 +792,7 @@ case "${BSTALE:-}" in ''|*[!0-9]*) BSTALE="" ;; esac
 # not ask". </dev/null because a test's fake curl may read stdin, and it runs
 # BEFORE the POST so the POST is the last call either way.
 SB=null; SBERR=""
-SBRAW=""; [ -n "$WD" ] && { SBRAW=$(curl -fsS -m 5 "$WD/api/standby?s=$HARNESS_SECRET" </dev/null 2>/dev/null) || SBRAW=""; }
+SBRAW=""; [ -n "$WD" ] && { SBRAW=$(watchdog_curl "$WS" -fsS -m 5 "$WD/api/standby" </dev/null 2>/dev/null) || SBRAW=""; }
 if [ -z "$WD" ]; then
   SBERR=unconfigured
 elif [ -z "$SBRAW" ]; then
@@ -977,7 +980,7 @@ if [ "${#SNAP}" -gt "$SNAP_CAP" ]; then
     | .s + {snapshot_trimmed: "size", snapshot_shed: .shed}' 2>/dev/null)
   [ -n "$SHED" ] && SNAP="$SHED"
 fi
-[ -n "$URL" ] && { printf %s "$SNAP" | curl -fsS -m 15 -X POST "$URL" -H 'content-type: application/json' --data-binary @- >/dev/null 2>&1; }
+[ -n "$URL" ] && { printf %s "$SNAP" | watchdog_curl "$WS" -fsS -m 15 -X POST "$URL" -H 'content-type: application/json' --data-binary @- >/dev/null 2>&1; }
 
 # Same snapshot to the console as a beat, so web Mission Control reads the fleet
 # from the same push the watchdog does rather than a second, drifting source.

@@ -32,9 +32,12 @@ FLEET_HOST='harness-watchdog.'"operator"'.workers'"."'dev'
 # ── fixtures ─────────────────────────────────────────────────────────────────
 mkdir -p "$T/bin" "$T/ledger/proj"
 CALLS="$T/curl-calls.log"
+# TEST-CHANGE BH-9264: the secret moved to a curl config (--config <fd> on the
+# Mac, -K - on stdin in the workflow); the fake records it to \$CALLS.cfg.
 cat > "$T/bin/curl" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >> "$CALLS"
+case "\$1" in --config) cat "\$2" >> "$CALLS.cfg" ;; -K) [ "\$2" = - ] && cat >> "$CALLS.cfg" ;; esac
 exit 0
 EOF
 chmod +x "$T/bin/curl"
@@ -79,10 +82,12 @@ mac "$H1" "$FORK" "" >/dev/null 2>&1
 # ── M2 / M2b the fleet's own origin (https and ssh): POST to the catalog URL ──
 for pair in "M2 https://github.com/example-org/cromford.git" "M2b git@github.com:example-org/cromford.git"; do
   id=${pair%% *}; url=${pair#* }
-  CK=$(clone "ck-$id" "$url"); HM="$T/home-$id"; mkdir -p "$HM"; rm -f "$CALLS"
+  CK=$(clone "ck-$id" "$url"); HM="$T/home-$id"; mkdir -p "$HM"; rm -f "$CALLS" "$CALLS.cfg"
   mac "$HM" "$CK" ""; RC=$?
   [ "$RC" -eq 0 ] && ok || bad "$id: fleet origin must exit 0 (got $RC; log: $(cat "$HM/.mk-macburn.log" 2>/dev/null))"
-  grep -qF "https://$FLEET_HOST/api/mac-burn?s=" "$CALLS" 2>/dev/null && ok \
+  grep -qxF 'header = "Authorization: Bearer testsecret"' "$CALLS.cfg" 2>/dev/null && ok || bad "$id: the secret must ride the Authorization header"
+  grep -qF "?s=" "$CALLS" 2>/dev/null && bad "$id: the secret is in the URL" || ok
+  grep -qE "https://$FLEET_HOST/api/mac-burn( |\$)" "$CALLS" 2>/dev/null && ok \
     || bad "$id: POST did not go to the catalog URL (curl: $(cat "$CALLS" 2>/dev/null | cut -c1-200))"
   [ "$(notset_count "$HM")" = 0 ] && ok || bad "$id: resolved URL but still logged not-set"
 done
@@ -91,7 +96,7 @@ done
 CK=$(clone ck-m3 https://github.com/example-org/cromford.git); HM="$T/home-m3"; mkdir -p "$HM"; rm -f "$CALLS"
 mac "$HM" "$CK" "http://watchdog.invalid/"; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "M3: explicit URL run must exit 0 (got $RC)"
-grep -qF "http://watchdog.invalid/api/mac-burn?s=" "$CALLS" 2>/dev/null && ok \
+grep -qE "http://watchdog.invalid/api/mac-burn( |\$)" "$CALLS" 2>/dev/null && ok \
   || bad "M3: explicit WATCHDOG_URL did not win (curl: $(cut -c1-200 "$CALLS" 2>/dev/null))"
 grep -qF "$FLEET_HOST" "$CALLS" 2>/dev/null && bad "M3: catalog URL used despite explicit WATCHDOG_URL" || ok
 
@@ -133,15 +138,17 @@ printf '{"repo":"example-org/cromford","watchdog_url":"https://%s"}\n' "$FLEET_H
 # stamp <repo> <secret> — runs the body as GitHub would; stdout to $T/stamp.out
 stamp() {
   local b="${BODY//'${{ github.repository }}'/$1}"
-  rm -f "$CALLS"
+  rm -f "$CALLS" "$CALLS.cfg"
   (cd "$WD_DIR" && STAMP_SECRET="$2" PATH="$T/bin:$PATH" bash --noprofile --norc -eo pipefail -c "$b") > "$T/stamp.out" 2>&1
 }
 ncalls() { [ -f "$CALLS" ] && wc -l < "$CALLS" | tr -d ' ' || echo 0; }
 
 stamp example-org/cromford s; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "W1: stamp step rc $RC ($(cat "$T/stamp.out"))"
-[ "$(ncalls)" = 1 ] && grep -qF "https://$FLEET_HOST/api/stamp/share-mirror?s=s" "$CALLS" && ok \
+[ "$(ncalls)" = 1 ] && grep -qE "https://$FLEET_HOST/api/stamp/share-mirror( |\$)" "$CALLS" && ok \
   || bad "W1: want one POST to the catalog URL (curl: $(cat "$CALLS" 2>/dev/null))"
+grep -qxF 'header = "Authorization: Bearer s"' "$CALLS.cfg" 2>/dev/null && ok || bad "W1: the stamp secret must ride the Authorization header"
+grep -qF "?s=" "$CALLS" 2>/dev/null && bad "W1: the stamp secret is in the URL" || ok
 
 stamp someone/fork s; RC=$?
 [ "$RC" -eq 0 ] && ok || bad "W2: fork stamp rc $RC ($(cat "$T/stamp.out"))"
@@ -149,7 +156,7 @@ grep -q 'no stamp' "$T/stamp.out" && ok || bad "W2: fork must print 'no stamp' (
 [ "$(ncalls)" = 0 ] && ok || bad "W2: fork made a network call: $(cat "$CALLS")"
 
 stamp example-org/cromford s; RC=$?
-[ "$RC" -eq 0 ] && [ "$(ncalls)" = 1 ] && grep -qF "https://$FLEET_HOST/api/stamp/share-mirror?s=s" "$CALLS" && ok \
+[ "$RC" -eq 0 ] && [ "$(ncalls)" = 1 ] && grep -qE "https://$FLEET_HOST/api/stamp/share-mirror( |\$)" "$CALLS" && ok \
   || bad "W3: repo match must be case-insensitive (rc $RC, curl: $(cat "$CALLS" 2>/dev/null))"
 
 stamp example-org/cromford ""; RC=$?

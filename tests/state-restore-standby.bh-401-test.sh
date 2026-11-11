@@ -96,6 +96,8 @@ chmod +x "$T/fakebin/crontab" "$T/fakebin/git"
 cat > "$T/fakebin/curl" <<SH
 #!/bin/bash
 printf '%s\n' "\$@" >> "$T/curl.log"; echo >> "$T/curl.log"
+# TEST-CHANGE BH-9264: the secret moved to a curl config (watchdog_curl); record it.
+[ "\$1" = --config ] && cat "\$2" >> "$T/curl.cfg"
 while [ \$# -gt 0 ]; do
   case "\$1" in --data) printf '%s\n' "\${2:-}" > "$T/curl.body"; shift 2 ;; *) shift ;; esac
 done
@@ -310,8 +312,11 @@ W="$T/l1/state/standby-stream.json"
 # S12 on success
 [ "$(jq -c '[.of,.snapshot,.ok]' "$T/curl.body" 2>/dev/null)" = "[\"hub\",\"$TS1\",true]" ] \
   && ok || bad "S12: the success report body is $(cat "$T/curl.body" 2>/dev/null)"
-grep -qx "https://wd.test.invalid/api/standby/standby-box?s=$WDSECRET" "$T/curl.log" \
+grep -qx "https://wd.test.invalid/api/standby/standby-box" "$T/curl.log" \
   && ok || bad "S12: the report URL is wrong: $(grep http "$T/curl.log")"
+grep -qxF "header = \"Authorization: Bearer $WDSECRET\"" "$T/curl.cfg" 2>/dev/null \
+  && ok || bad "S12: the report must carry the secret in its Authorization header"
+grep -qF -- "$WDSECRET" "$T/curl.log" && bad "S12: the secret is in curl argv" || ok
 grep -qE "$CANARY|$WDSECRET|sak-canary" "$T/rs.out" && bad "S12: a secret reached stdout" || ok
 
 # ── S6c: up to date ─────────────────────────────────────────────────────────

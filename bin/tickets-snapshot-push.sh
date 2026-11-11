@@ -5,7 +5,8 @@
 # side (the operator, 2026-08-24 "execute this yourself", after the dash showed stale
 # statuses fleet-wide while every board read answered correctly).
 #
-# Consumer contract: GET $WATCHDOG_URL/api/tickets-snapshot?s=<secret>
+# Consumer contract: GET $WATCHDOG_URL/api/tickets-snapshot with
+# `Authorization: Bearer <secret>` (the ?s=<secret> query is phase 1 legacy, BH-9264)
 # -> {"generated_at":<epoch>,"projects":{"<proj>":
 # {"board_id":"...","tickets":[{"key","status","title","updatedAt"}]}}}.
 # The dash reads it same-origin via a console-worker pass-through (see
@@ -37,10 +38,9 @@ set -a; . "$HENV/global.env" 2>/dev/null; set +a
 # settings cache is already warm) and section 16 of tests/lanes-registry-test.sh
 # is the ordering.
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    tickets-snapshot-push
-S=""
-[ -r "$HENV/.watchdog-secret" ] && S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$S" ] || S="${HARNESS_SECRET:-}"
-[ -n "$S" ] || exit 0
+# shellcheck source=bin/lib/watchdog-url.sh
+. "${HARNESS:-/root/harness}/bin/lib/watchdog-url.sh" 2>/dev/null || { watchdog_url() { return 1; }; watchdog_secret() { return 1; }; }
+S=$(watchdog_secret "$HENV") || exit 0
 # >>> wake backstop (BH-1034/BH-1060): a wake launch just ran this lane; the next cron tick within the window stands down. Fails open.
 # shellcheck source=bin/lib/wake-lanes.sh
 [ -r "$H/bin/lib/wake-lanes.sh" ] && . "$H/bin/lib/wake-lanes.sh"
@@ -49,8 +49,6 @@ command -v wake_backstop_skip >/dev/null 2>&1 && wake_backstop_skip tickets-snap
 # WATCHDOG_URL through bin/lib/watchdog-url.sh (BH-2091), BEFORE any board or
 # GitHub read: empty means no run at all and one line a day in
 # logs/watchdog-url.log. No lib means no call, never a guessed host.
-# shellcheck source=bin/lib/watchdog-url.sh
-. "${HARNESS:-/root/harness}/bin/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 BASEURL=$(watchdog_url tickets-snapshot-push "$H") || exit 0
 # WHOSE PRs ARE OURS. The harness author SET (bin/lib/gh-pr-list.sh,
 # HARNESS_PR_AUTHORS) — since bin/gh-token.sh went live a harness PR is authored
@@ -280,8 +278,8 @@ LANES=$(jq -r '[.projects | to_entries[] | .key + ": claims=" + ([.value.tickets
       ] | join(" | ")' "$OUT" 2>/dev/null)
 [ -n "$LANES" ] && echo "$(STAMP) [tickets-snapshot] lane coverage — $LANES" >> "$H/logs/agent-rules.log"
 
-if ! curl -sf -m 30 -X POST --data-binary @"$OUT" -H "Content-Type: application/json" \
-     "$BASEURL/api/tickets-snapshot?s=$S" >/dev/null 2>&1; then
+if ! watchdog_curl "$S" -sf -m 30 -X POST --data-binary @"$OUT" -H "Content-Type: application/json" \
+     "$BASEURL/api/tickets-snapshot" >/dev/null 2>&1; then
   FLAG="$H/flags/alerted-tickets-snapshot-$(date -u +%Y%m%d)"
   [ -f "$FLAG" ] || { touch "$FLAG"; HARNESS="$H" "$H/bin/alert-line.sh" "[tickets-snapshot] push to watchdog FAILED — Mission Control kanban will go stale"; }
 fi

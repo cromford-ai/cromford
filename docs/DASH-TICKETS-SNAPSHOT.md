@@ -5,7 +5,9 @@ every 10 minutes (bin/tickets-snapshot-push.sh, hub cron). No board tokens
 leave the fleet; the CF side only ever holds the rendered snapshot.
 
 Store: watchdog KV key `tickets-snapshot`.
-  GET  https://harness-watchdog.operator.workers.dev/api/tickets-snapshot?s=<secret>
+  GET  https://harness-watchdog.operator.workers.dev/api/tickets-snapshot
+       with `Authorization: Bearer <secret>` (`?s=<secret>` is the phase 1
+       legacy transport, logged as query-auth: docs/watchdog-spec.md "Auth")
   POST same URL (hub only) replaces it.
 Shape:
   {"generated_at": <epoch-seconds>,
@@ -18,14 +20,15 @@ The SPA must read same-origin (dash cookie), so add to harness-console:
 
     app.get("/api/dash/tickets-snapshot", async (c) => {
       // reuse the dash-cookie auth your other /api/dash routes use
-      const r = await fetch(
-        `https://harness-watchdog.operator.workers.dev/api/tickets-snapshot?s=${c.env.HARNESS_SECRET}`);
+      const r = await fetch("https://harness-watchdog.operator.workers.dev/api/tickets-snapshot",
+        { headers: { Authorization: `Bearer ${c.env.WATCHDOG_SECRET}` } });
       return new Response(r.body, { headers: { "content-type": "application/json" } });
     });
 
-(HARNESS_SECRET is already a binding on harness-console. If the watchdog's
-ping secret rotates away from HARNESS_SECRET someday, mirror the new value as
-a console binding.)
+(WATCHDOG_SECRET must be a binding on harness-console with the same value as
+the watchdog's WATCHDOG_SECRET. Until the console has it, the old
+`?s=${c.env.HARNESS_SECRET}` call still works in phase 1, and each call writes
+a `watchdog query-auth` log line. BH-9264.)
 
 Kanban then renders projects[*].tickets grouped by status, with
 generated_at driving the "snapshot Xm ago" banner. First push verified live

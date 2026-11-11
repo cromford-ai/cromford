@@ -39,16 +39,12 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    watchdog-ping
 . "${HARNESS:-/root/harness}/bin/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 BASE=$(watchdog_url watchdog-ping "$HARNESS") || exit 0
 
-# The dedicated file still WINS over $HARNESS_SECRET: the whole point is to give
-# the ping its own rotatable credential.
-# Readability is tested BEFORE the redirect: `2>/dev/null` on tr does not
-# suppress the SHELL's "no such file" for a failed `<` redirection, so an
-# unprovisioned box would cron-mail this every five minutes — precisely the
-# noise this script promises never to make.
-S=""
-[ -r "$HENV/.watchdog-secret" ] && S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$S" ] || S="${HARNESS_SECRET:-}"
-[ -n "$S" ] || exit 0
+# The dedicated file still WINS over $WATCHDOG_SECRET and $HARNESS_SECRET: the
+# whole point is to give the ping its own rotatable credential. watchdog_secret
+# tests readability before the read, so an unprovisioned box makes no cron mail.
+# The secret goes in an Authorization header from a curl config on a file
+# descriptor (watchdog_curl), never in the URL or argv (BH-9264).
+S=$(watchdog_secret "$HENV") || exit 0
 
-curl -fsS -m 10 "$BASE/api/ping/$BOX?s=$S" >/dev/null 2>&1 || true
+watchdog_curl "$S" -fsS -m 10 "$BASE/api/ping/$BOX" >/dev/null 2>&1 || true
 exit 0

@@ -47,8 +47,10 @@ for a in "$@"; do
   case "$a" in http*://*) url=$a ;; esac
   prev=$a
 done
+# TEST-CHANGE BH-9264: the watchdog secret moved to a curl config (watchdog_curl); record it.
 case "$url" in
-  https://wd.test.invalid/*) printf '%s %s\n' "$url" "$body" >> "$STUB_DIR/wd.log"; exit "${WD_RC:-0}" ;;
+  https://wd.test.invalid/*) printf '%s %s\n' "$url" "$body" >> "$STUB_DIR/wd.log"
+    [ "$1" = --config ] && cat "$2" >> "$STUB_DIR/wd.cfg"; exit "${WD_RC:-0}" ;;
 esac
 printf '%s %s %s\n' "$url" "$auth" "$body" >> "$STUB_DIR/jobs.log"
 [ "${CURL_RC:-0}" = 0 ] || exit "$CURL_RC"
@@ -235,7 +237,7 @@ rs() { # the production entry point, as the standby's stream cron runs it
       bash "$DIR/bin/state-restore.sh" "$@" > "$T/rs.out" 2>&1
 }
 
-reset; rm -f "$T/wd.log"
+reset; rm -f "$T/wd.log" "$T/wd.cfg"
 mklive "$T/l1" "$T/o1"
 rs hub latest --apply --standby --identity "$T/age.key" --live "$T/l1" --orchestrator-live "$T/o1"; RC=$?
 check "S3 success rc" "$RC" 0
@@ -244,7 +246,8 @@ check "S3 success heartbeat url" "$(cut -d' ' -f1 "$T/jobs.log")" "https://jobs.
 check "S3 success heartbeat body" "$(cut -d' ' -f3- "$T/jobs.log" | jq -c '[.box,.of,.snapshot,.ok]')" "[\"standby-box\",\"hub\",\"$TS1\",true]"
 check "S3 success watchdog reports" "$(lines "$T/wd.log")" 1
 check "S3 success watchdog url+body" "$(cat "$T/wd.log")" \
-  "https://wd.test.invalid/api/standby/standby-box?s=wdsecret-2640 {\"of\":\"hub\",\"snapshot\":\"$TS1\",\"ok\":true}"
+  "https://wd.test.invalid/api/standby/standby-box {\"of\":\"hub\",\"snapshot\":\"$TS1\",\"ok\":true}"
+check "S3 success watchdog header" "$(cat "$T/wd.cfg" 2>/dev/null)" 'header = "Authorization: Bearer wdsecret-2640"'
 check "S3 recorded is the last line" "$(tail -1 "$T/rs.out")" "standby heartbeat recorded"
 grep -q "$CANARY" "$T/rs.out" && bad "S3 the jobs secret reached stdout" || ok
 

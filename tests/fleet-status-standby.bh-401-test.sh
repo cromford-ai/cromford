@@ -32,6 +32,8 @@ cat > "$T/fakebin/curl" <<SH
 case "\$*" in
   */api/standby*)
     printf '%s\n' "\$*" > "$T/GET.args"
+    # TEST-CHANGE BH-9264: the secret moved to a curl config (watchdog_curl); record it.
+    [ "\$1" = --config ] && cat "\$2" >> "$T/GET.args"
     [ "\$(cat "$T/mode")" = down ] && exit 7
     cat "$T/standby-fixture"; exit 0 ;;
 esac
@@ -63,7 +65,8 @@ jq -e . >/dev/null 2>&1 < "$T/PUSH.json" && ok || bad "F1: the push must be vali
   && ok || bad "F1: .hub keeps its nine keys (got: $(q '.hub|keys|tojson'))"
 GA=$(cat "$T/GET.args" 2>/dev/null)
 case "$GA" in *"-m 5"*) ok ;; *) bad "F1: the standby GET must be bounded by -m 5 (got: $GA)" ;; esac
-case "$GA" in *"https://wd-fixture.example/api/standby?s=test-secret"*) ok ;; *) bad "F1: the GET must go to WATCHDOG_URL with the secret (got: $GA)" ;; esac
+case "$GA" in *"https://wd-fixture.example/api/standby"*'header = "Authorization: Bearer test-secret"'*) ok ;; *) bad "F1: the GET must go to WATCHDOG_URL with the secret in the header (got: $GA)" ;; esac
+case "$GA" in *"?s="*) bad "F1: the secret must not be in the URL (got: $GA)" ;; *) ok ;; esac
 case "$GA" in *"-X POST"*) bad "F1: the standby read must be a GET (got: $GA)" ;; *) ok ;; esac
 
 # ── F2: unreachable watchdog ────────────────────────────────────────────────

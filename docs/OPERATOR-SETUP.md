@@ -332,17 +332,18 @@ cd /root/harness-checkout/worker/watchdog
 npx wrangler kv namespace create harness-watchdog-kv   # put the id in wrangler.jsonc
 printf '%s' "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN
 printf '%s' "$TELEGRAM_CHAT_ID"   | npx wrangler secret put TELEGRAM_CHAT_ID
-printf '%s' "$WATCHDOG_SECRET"    | npx wrangler secret put HARNESS_SECRET
+printf '%s' "$HARNESS_SECRET"     | npx wrangler secret put HARNESS_SECRET
+printf '%s' "$WATCHDOG_SECRET"    | npx wrangler secret put WATCHDOG_SECRET
 npx wrangler deploy
 ```
 
-**Set those three variables before you paste that block.** `wrangler secret put`
+**Set those variables (and `HARNESS_SECRET` from your env) before you paste that block.** `wrangler secret put`
 reading an unset variable stores an **empty** secret and exits 0 — the worker
 deploys green, and the alarm is dead. This is the one component whose silent
 failure you cannot detect by watching the pipeline, because the pipeline is what
 it watches.
 
-> The secret names are read from `worker/watchdog/wrangler.jsonc:16-17`; the KV
+> The secret names are read from the secrets comment in `worker/watchdog/wrangler.jsonc`; the KV
 > create line is written from Cloudflare's documentation for the same reason as
 > above. The account id, KV id and cron trigger in the committed
 > `wrangler.jsonc` are the upstream fleet's and must be replaced.
@@ -353,17 +354,20 @@ minutes; a wedged build lane; stale owed tickets; and a hub silent for 30
 minutes (`worker/watchdog/src/index.js:207-290`). Re-alerts are damped to once
 an hour, and recovery is announced.
 
-**Its auth is a query parameter, not a header** — `?s=<secret>`
-(`src/index.js:51-53`). A deliberate difference from the jobs worker, and it
-will confuse you once.
+**Its auth is a header**, `Authorization: Bearer <WATCHDOG_SECRET>`
+(`worker/watchdog/src/auth.js`; docs/watchdog-spec.md "Auth"). The old
+`?s=<secret>` query still works in phase 1 of BH-9264, and each use writes a
+`watchdog query-auth` log line. A later release removes it.
 
-**Why the watchdog gets its own secret.** Its binding is still called
-`HARNESS_SECRET` — that is the variable name in the Worker — but the *value*
-must differ from the fleet's. Each box sends the contents of
-`env/.watchdog-secret` if that file exists, falling back to the shared secret
-(`bin/watchdog-ping.sh:32-35`), so giving it a distinct value means the alarm
-survives a rotation of the main secret. That is the whole point: the alarm is
-what tells you the rotation broke something.
+**Why the watchdog gets its own secret.** `WATCHDOG_SECRET` is its own Worker
+binding, and its value must differ from `HARNESS_SECRET`: if the two are equal,
+every watchdog route answers `500`. Each box sends the contents of
+`env/.watchdog-secret` if that file exists, then `$WATCHDOG_SECRET`, then
+`$HARNESS_SECRET` (`watchdog_secret` in `bin/lib/watchdog-url.sh`). A distinct
+value means the alarm survives a rotation of the main secret. That is the whole
+point: the alarm is what tells you the rotation broke something. If an older
+setup put the watchdog value into the Worker's `HARNESS_SECRET` binding, make a
+NEW value for `WATCHDOG_SECRET`; do not copy that one.
 
 Put the same value on the box:
 
@@ -371,8 +375,9 @@ Put the same value on the box:
 printf '%s' "$WATCHDOG_SECRET" > /root/harness/env/.watchdog-secret && chmod 600 $_
 ```
 
-Four box-side scripts read that file: the ping, the ticket snapshot, the cost
-rollup and the transcript scrubber.
+The box-side watchdog callers read that file: the ping, the command poll, the
+progress push, the ticket snapshot, the cost rollup, the fleet status push, the
+standby report and the transcript scrubber.
 
 **This bot is not the console's bot.** Two different Telegram integrations share
 the word: the watchdog pages you directly and works on its own, while the
@@ -389,7 +394,7 @@ export WATCHDOG_URL='https://<the url wrangler printed>'
 Prove the Telegram path end to end before you rely on it:
 
 ```bash
-curl -X POST "$WATCHDOG_URL/api/test-alert?s=$WATCHDOG_SECRET"
+printf 'header = "Authorization: Bearer %s"\n' "$WATCHDOG_SECRET" | curl -K - -X POST "$WATCHDOG_URL/api/test-alert"
 ```
 
 **The ping is not generated — you must add it.** Every box in the upstream
@@ -691,7 +696,7 @@ matters on a fresh box:
 | `WATCHDOG_URL` | if self-hosted | Same story, different default |
 | `RUNNER_<STAGE>_FALLBACK` | no | Bootstrap appends these for 14 stages if absent |
 | `XAI_API_KEY`, `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY` | no | The fallback ladder. Absent, a Claude failure ends the attempt instead of degrading |
-| `WATCHDOG_SECRET` | if self-hosted | Not read by the harness — but the verification step below needs it, and this is the only file that survives your shell |
+| `WATCHDOG_SECRET` | if self-hosted | The watchdog callers read it after `env/.watchdog-secret` and before `HARNESS_SECRET` (`watchdog_secret`, BH-9264), and the verification step below needs it |
 | `ACCOUNT_ROUTING` | no | `1` to enable multi-account picking |
 | `CLOUDFLARE_API_TOKEN` | if this box deploys Workers | `bin/harness-sync.sh` redeploys a changed Worker only on a box that has Cloudflare credentials, and reads them from `cloudflare.env`, not this file. On the hub after BH-3905's runbook it is a Pages Read token, and deploy credentials sit only in `cloudflare-deploy.env` for a rollback (see "Which Cloudflare token lives where") |
 
@@ -1838,7 +1843,7 @@ PROJECT=myproj                                                # your column-1 na
 bin/fleet-conf.sh --projects                                  # the registry parses
 set -a; . env/global.env; set +a
 bin/jobs-client.sh lanes                                      # the worker answers
-curl -X POST "$WATCHDOG_URL/api/test-alert?s=$(cat env/.watchdog-secret)"
+. bin/lib/watchdog-url.sh && watchdog_curl "$(watchdog_secret env)" -X POST "$WATCHDOG_URL/api/test-alert"
 bin/healthcheck.sh "$PROJECT"                                 # your app is reachable
 bin/run-triage.sh "$PROJECT"                                  # one real tick
 ```

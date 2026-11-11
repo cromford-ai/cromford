@@ -20,16 +20,18 @@ set -a; . "$HENV/global.env"; set +a
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit watchdog-poll
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    watchdog-poll
-[ -n "${HARNESS_SECRET:-}" ] || exit 0
 # WATCHDOG_URL through bin/lib/watchdog-url.sh (BH-2091): empty means no poll
 # and one line a day in logs/watchdog-url.log. No lib means no call.
 # shellcheck source=bin/lib/watchdog-url.sh
 . "${HARNESS:-/root/harness}/bin/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 BASE=$(watchdog_url watchdog-poll "$H") || exit 0
+# The credential is looked up like bin/watchdog-ping.sh's and goes in a header
+# (watchdog_curl, BH-9264). No secret: no poll.
+S=$(watchdog_secret "$HENV") || exit 0
 JLOG="$H/logs/watchdog-commands.log"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
-CMDS=$(curl -fsS -m 15 "$BASE/api/commands?s=$HARNESS_SECRET" 2>/dev/null) || exit 0
+CMDS=$(watchdog_curl "$S" -fsS -m 15 "$BASE/api/commands" 2>/dev/null) || exit 0
 [ "$CMDS" = "[]" ] || [ -z "$CMDS" ] && exit 0
 
 echo "$CMDS" | jq -c '.[]' | while read -r C; do
@@ -49,5 +51,5 @@ echo "$CMDS" | jq -c '.[]' | while read -r C; do
     *)
       echo "$(STAMP) id=$ID -> UNKNOWN type '$TYPE' — journaled only, not executed" >> "$JLOG" ;;
   esac
-  curl -fsS -m 15 -X POST "$BASE/api/commands/ack/$ID?s=$HARNESS_SECRET" >/dev/null 2>&1
+  watchdog_curl "$S" -fsS -m 15 -X POST "$BASE/api/commands/ack/$ID" >/dev/null 2>&1
 done

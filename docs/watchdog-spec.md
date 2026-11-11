@@ -14,16 +14,71 @@ the fleet, already receives beats, and can reach Telegram on its own).
   path shares nothing with the thing being monitored.
 
 ## Layer 1 — liveness ping (pure cron + curl, no harness code)
-1. Worker: `GET/POST /api/ping/<box>?s=<HARNESS_SECRET>` → KV
+1. Worker: `GET/POST /api/ping/<box>` with `Authorization: Bearer <WATCHDOG_SECRET>` → KV
    `ping:<box> = now`. Boxes: box-hub (hub), box-project-2-1,
    box-project-3-2, box-project-4-1, box-project-10-1.
 2. Each box gets ONE crontab line (deliberately not a harness script — it must
    survive harness bugs/reverts):
-   `*/5 * * * * curl -fsS -m 10 "https://harness-console.operator.workers.dev/api/ping/<box>?s=..." >/dev/null 2>&1`
+   `*/5 * * * * bin/watchdog-ping.sh <box>` (the secret is in env/.watchdog-secret, not in the
+   crontab line; see "Auth" below)
 3. Worker Cron Trigger (every 5 min): any box with `now - ping > 15 min` →
    Telegram to the operator: "WATCHDOG: <box> silent for N min (last ping HH:MMZ)".
    Re-alert at most hourly per box (KV `alerted:<box>`); send an all-clear
    when the ping returns.
+
+## Auth (BH-9264, phase 1)
+`worker/watchdog/src/auth.js` holds every auth check. `src/index.js` calls
+`fleetAuth` on each fleet route and `stampAuth` on `POST /api/stamp/<name>`.
+
+- **Transport.** A caller sends `Authorization: Bearer <secret>`. The legacy
+  `?s=<secret>` query is still accepted in phase 1. A header that is present
+  decides alone: a wrong or malformed header is `403`, and the worker does not
+  try `?s=` after it.
+- **Fleet secret.** Fleet routes take `WATCHDOG_SECRET`. `HARNESS_SECRET` is the
+  phase 1 fallback, on both transports. The worker keeps `HARNESS_SECRET` set in
+  any case, because failover (`src/failover.js`) uses it as the jobs bearer.
+- **Equal secrets.** If `WATCHDOG_SECRET` equals `HARNESS_SECRET`, every fleet
+  route answers `500` with the body
+  `watchdog misconfigured: WATCHDOG_SECRET must differ from HARNESS_SECRET`, and
+  writes one `console.error` line. No secret is compared.
+- **Stamp secret.** `POST /api/stamp/<name>` takes `STAMP_SECRET` only, on the
+  same two transports. The fleet secrets do not open it, and with
+  `STAMP_SECRET` unset it is closed. The equal-secrets rule does not apply to it.
+- **Log lines.** Each request that passes on `?s=` writes ONE line
+  `watchdog query-auth route=<path> box=<name|->`. A header match on
+  `HARNESS_SECRET` while `WATCHDOG_SECRET` is set writes ONE line
+  `watchdog fallback-auth route=<path> box=<name|->`. The box name is the path
+  segment of `/api/ping/<box>` and `/api/standby/<box>`; other routes log
+  `box=-`, and the route names the caller. A line never holds a secret, a header
+  value or the query string. `wrangler.jsonc` turns on `observability`, so
+  Workers Logs keep these lines.
+- **Callers.** Every `bin/` caller gets its secret from `watchdog_secret` and
+  sends it with `watchdog_curl` (`bin/lib/watchdog-url.sh`). The lookup order is
+  `env/.watchdog-secret`, then `$WATCHDOG_SECRET`, then `$HARNESS_SECRET`. curl
+  reads the header from a config on a file descriptor, so the secret is in no
+  argv and in no URL. The Mac (`bin/mac/mac-burn-push.sh`) reads
+  `~/.orgo/.watchdog-secret`, else `~/.orgo/.harness-secret`. The stamp step of
+  `.github/workflows/publish-cromford.yml` pipes the header to `curl -K -`.
+- **Console proxy.** The harness-console watchdog pass-through
+  (`docs/DASH-TICKETS-SNAPSHOT.md`) lives in a separate repository. It must
+  send the header too. Until it does, its GETs show as `query-auth` lines for
+  `/api/tickets-snapshot`, `/api/cost-snapshot` and `/api/mac-burn`.
+
+**Phase 2** (a later PR) removes `?s=` and the `HARNESS_SECRET` fallback, and a
+refused request answers `401`. Its condition: 24 h with 0 `watchdog query-auth`
+lines and 0 `watchdog fallback-auth` lines in Workers Logs after the phase 1
+deploy.
+
+**Provisioning `WATCHDOG_SECRET`.** The order is free, because phase 1 accepts
+both secrets on both transports.
+1. Make a new value: `openssl rand -hex 32`. It must differ from the worker's
+   `HARNESS_SECRET` binding.
+2. Put it on the worker: `printf '%s' "$WATCHDOG_SECRET" | npx wrangler secret put WATCHDOG_SECRET`.
+3. Put it on every box: `env/.watchdog-secret`, mode 600.
+4. Put it on the Mac: `~/.orgo/.watchdog-secret`, mode 600.
+5. Change the console proxy to send `Authorization: Bearer <WATCHDOG_SECRET>`.
+6. After 24 h, count the `watchdog query-auth` and `watchdog fallback-auth`
+   lines in Workers Logs.
 
 ## Layer 2 — semantic staleness (the "hub is up but dead inside" case)
 Same cron trigger, over data the worker already stores:

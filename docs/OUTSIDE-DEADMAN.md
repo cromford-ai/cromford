@@ -115,8 +115,8 @@ direct stamps, pending/cooling/open keys — readable while the hub is down.
 
 | credential | opens | lives in |
 |---|---|---|
-| watchdog secret (`env/.watchdog-secret`, else `HARNESS_SECRET` — the same lookup as `bin/watchdog-ping.sh`) | `POST /api/progress`, `/api/progress/dry-run`, `GET /api/progress` (and the existing routes) | hub env; worker `HARNESS_SECRET` |
-| `STAMP_SECRET` | ONLY `POST /api/stamp/<name>`, and only for a name in the stored `cfg.detectors`. `HARNESS_SECRET` does not open it; with it unset the route is closed. | worker secret; GitHub **Environment** `watchdog-stamp` secret `WATCHDOG_STAMP_SECRET`, deployment branches restricted to `main` |
+| watchdog secret (`env/.watchdog-secret`, else `WATCHDOG_SECRET`, else `HARNESS_SECRET` — `watchdog_secret` in `bin/lib/watchdog-url.sh`), sent as `Authorization: Bearer` | `POST /api/progress`, `/api/progress/dry-run`, `GET /api/progress` (and the existing routes) | hub env; worker `WATCHDOG_SECRET` (`HARNESS_SECRET` is the phase 1 fallback, BH-9264) |
+| `STAMP_SECRET`, sent as `Authorization: Bearer` | ONLY `POST /api/stamp/<name>`, and only for a name in the stored `cfg.detectors`. `HARNESS_SECRET` and `WATCHDOG_SECRET` do not open it; with it unset the route is closed. | worker secret; GitHub **Environment** `watchdog-stamp` secret `WATCHDOG_STAMP_SECRET`, deployment branches restricted to `main` |
 
 The push is not given a separate secret: the hub already holds exactly one
 watchdog credential for its ping and status push, and a second one on the same

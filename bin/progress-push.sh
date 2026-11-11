@@ -54,13 +54,14 @@ set -a; . "$HENV/global.env" 2>/dev/null; set +a
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply progress-push
 
-# The watchdog credential, looked up exactly as bin/watchdog-ping.sh does: the
-# dedicated env/.watchdog-secret wins, HARNESS_SECRET is the fallback. The jobs
-# read below is the jobs worker's own bearer (bin/jobs-client.sh), not this.
-WD_S=""
-[ -r "$HENV/.watchdog-secret" ] && WD_S=$(tr -d '\r\n' < "$HENV/.watchdog-secret" 2>/dev/null)
-[ -n "$WD_S" ] || WD_S="${HARNESS_SECRET:-}"
-[ -n "$WD_S" ] || exit 0
+# BH-3322: no default host; post_wd skips the POST when WATCHDOG_URL is unset.
+. "$H/bin/lib/watchdog-url.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-url.sh" 2>/dev/null || { watchdog_url() { return 1; }; watchdog_secret() { return 1; }; }
+
+# The watchdog credential, looked up exactly as bin/watchdog-ping.sh does
+# (watchdog_secret: env/.watchdog-secret, then WATCHDOG_SECRET, then
+# HARNESS_SECRET). The jobs read below is the jobs worker's own bearer
+# (bin/jobs-client.sh), not this.
+WD_S=$(watchdog_secret "$HENV") || exit 0
 
 # An unreadable fleet.conf yields no projects: say nothing and let the push go
 # stale, which is what the watchdog pages on (same rule as fleet-status-push).
@@ -86,8 +87,6 @@ PROGRESS_LOOKBACK_H="${PROGRESS_LOOKBACK_H:-168}"
 PROGRESS_LANE_CADENCE="${PROGRESS_LANE_CADENCE:-build:120,merge:60}"
 PROGRESS_STAGE_LANES="${PROGRESS_STAGE_LANES:-triage:triage,plan:build,execute:build,fix:build,preplan:build,feature-map-draft:build,review:review,lead-review:any}"
 PROGRESS_DETECTORS="${PROGRESS_DETECTORS:-fleet-slo:15,pipeline-health:15,cost-rollup:60,alert-warn-flush:30,ci-minutes-watch:360,progress-push:10}"
-# BH-3322: no default host; post_wd skips the POST when WATCHDOG_URL is unset.
-. "$H/bin/lib/watchdog-url.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-url.sh" 2>/dev/null || watchdog_url() { return 1; }
 LOG="$H/logs/progress-push.log"
 mkdir -p "$H/logs" 2>/dev/null
 
@@ -166,7 +165,7 @@ CFG=$(jq -nc \
 post_wd() { # post_wd <path> <body> — prints the watchdog's answer
   local wd
   wd=$(watchdog_url progress-push "$H") || { printf 'skipped: WATCHDOG_URL not set'; return 0; }
-  printf %s "$2" | curl -sS -m 15 -X POST "$wd$1?s=$WD_S" \
+  printf %s "$2" | watchdog_curl "$WD_S" -sS -m 15 -X POST "$wd$1" \
     -H 'content-type: application/json' --data-binary @- 2>/dev/null
 }
 
