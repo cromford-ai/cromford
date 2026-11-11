@@ -1,9 +1,11 @@
 // The Pages-side queue for the console's board commands (BH-5820):
-// comment_issue, hold_ticket and unhold_ticket.
+// comment_issue, hold_ticket and unhold_ticket, and file_issue (BH-9014, the
+// MCP `file_issue` tool).
 //
-// The console worker (the harness-console repo) refuses these three with
+// The console worker (the harness-console repo) refuses these four with
 // 400 'unknown action' before it inserts anything, because its ACTION_TYPES
-// does not list them. The hub already runs all three (bin/poll-commands.sh).
+// does not list them. The hub runs all four (bin/poll-commands.sh; file_issue
+// through bin/lib/tracker/issue-file-cmd.sh).
 // So when the worker answers exactly that refusal for one of these types, the
 // Pages proxy validates the body here and inserts the command row into the
 // worker's own D1 (`CONSOLE_DB`). The hub claims every pending row whatever
@@ -20,7 +22,7 @@
 
 import { holdTarget, HOLD_REASON_MAX } from '../../src/lib/ticket-hold.js';
 
-export const BOARD_FALLBACK_TYPES = new Set(['comment_issue', 'hold_ticket', 'unhold_ticket']);
+export const BOARD_FALLBACK_TYPES = new Set(['comment_issue', 'hold_ticket', 'unhold_ticket', 'file_issue']);
 
 export const CONSOLE = 'https://harness-console.operator.workers.dev';
 export const AUTH_PROBE = '/api/dash/fleet';
@@ -45,6 +47,7 @@ export async function signedIn({ cookie = '', authorization = '' } = {}) {
 }
 
 export const COMMENT_BODY_MAX = 20000;
+export const ISSUE_TITLE_MAX = 256; // GitHub's own limit on an issue title (a vendor API limit, not a tunable)
 const PROJECT = /^[A-Za-z0-9._-]{1,100}$/;
 const posInt = (v) => Number.isSafeInteger(v) && v > 0;
 
@@ -77,6 +80,19 @@ export async function boardCommand(sent) {
       ckey: `${project}:${type}:${sent.issue}:${minute}:${hash}`,
       payload: { issue: sent.issue, body, actor }
     };
+  }
+
+  if (type === 'file_issue') {
+    const title = typeof sent.title === 'string' ? sent.title.trim() : '';
+    if (!title || title.length > ISSUE_TITLE_MAX) {
+      return { error: `title required (1-${ISSUE_TITLE_MAX} characters)` };
+    }
+    const body = sent.body ?? '';
+    if (typeof body !== 'string' || body.length > COMMENT_BODY_MAX) {
+      return { error: `body must be a string of at most ${COMMENT_BODY_MAX} characters` };
+    }
+    const hash = (await sha256Hex(title + '\n' + body)).slice(0, 16);
+    return { type, project, ckey: `${project}:${type}:${minute}:${hash}`, payload: { title, body, actor } };
   }
 
   const target = holdTarget(project, sent.ticket);

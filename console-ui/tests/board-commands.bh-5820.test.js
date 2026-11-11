@@ -88,8 +88,9 @@ async function post(env, body, { cookie = GOOD, authorization = null } = {}) {
 
 const pinClock = (t) => t.mock.timers.enable({ apis: ['Date'], now: NOW });
 
-test('the fallback set is exactly the three board types', () => {
-  assert.deepEqual([...BOARD_FALLBACK_TYPES].sort(), ['comment_issue', 'hold_ticket', 'unhold_ticket']);
+// BH-9014 added file_issue (console-ui/tests/board-commands.bh-9014.test.js).
+test('the fallback set is exactly the three board types and file_issue', () => {
+  assert.deepEqual([...BOARD_FALLBACK_TYPES].sort(), ['comment_issue', 'file_issue', 'hold_ticket', 'unhold_ticket']);
 });
 
 test('P1 comment_issue refused by the worker is queued by Pages, once', async (t) => {
@@ -172,7 +173,7 @@ test('P5 a worker that accepts the type is passed through, and Pages writes noth
 test('P6 a type outside the fallback set keeps the worker refusal', async (t) => {
   worker(t);
   const w = world();
-  const r = await post({ CONSOLE_DB: w.db }, { type: 'file_issue', project: 'cromford', title: 't' });
+  const r = await post({ CONSOLE_DB: w.db }, { type: 'run_triage', project: 'cromford' });
   assert.equal(r.status, 400);
   assert.deepEqual(r.json, { error: 'unknown action' });
   assert.equal(w.rows().length, 0);

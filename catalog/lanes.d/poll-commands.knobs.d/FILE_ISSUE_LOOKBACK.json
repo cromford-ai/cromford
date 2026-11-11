@@ -1,0 +1,11 @@
+{
+  "env": "FILE_ISSUE_LOOKBACK",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "unit": "issues",
+  "zero_means": null,
+  "read_in": "bin/lib/tracker/issue-file-cmd.sh",
+  "note": "BH-9014: newest issues (one page, per_page) bin/lib/tracker/issue-file-cmd.sh reads for its mc-command marker before the file_issue command files. Code fallback ${FILE_ISSUE_LOOKBACK:-100}; a value outside 1-100 is 100. 100 is the GitHub page maximum."
+}

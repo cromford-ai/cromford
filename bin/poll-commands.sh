@@ -92,6 +92,10 @@ else mc_pr_queued() { return 1; }; mc_queue_provider() { printf unloaded; }; fi
 # "comment not posted (lib not loaded)", OK=false.
 # shellcheck source=bin/lib/issue-comment-cmd.sh
 [ -r "$HARNESS/bin/lib/issue-comment-cmd.sh" ] && . "$HARNESS/bin/lib/issue-comment-cmd.sh"
+# The file_issue handler (BH-9014). Guarded: without it the arm answers
+# "issue not filed (lib not loaded)", OK=false.
+# shellcheck source=bin/lib/tracker/issue-file-cmd.sh
+[ -r "$HARNESS/bin/lib/tracker/issue-file-cmd.sh" ] && . "$HARNESS/bin/lib/tracker/issue-file-cmd.sh"
 # A head-moved merge_pr refusal is moved off its command key after the ack
 # (BH-4917), so the next merge_pr from any entry point is a new command.
 # Guarded: without it the key stays sticky, as before.
@@ -791,6 +795,19 @@ for CMD in "${CMDS[@]:-}"; do
         [ -n "$RESULT" ] || RESULT="comment not posted (no result, rc $ICRC)"
       else RESULT="comment not posted (lib not loaded)"; fi ;;
     # <<< comment_issue handler
+    # >>> file_issue handler (tests/issue-file-cmd.bh-9014-test.sh runs this block)
+    # Runs here on the hub, never forwarded: one App issue per command id.
+    # rc 3 is a refusal (outcome=refused); rc 1 is a retryable failure.
+    file_issue)
+      if command -v ifcmd_run >/dev/null 2>&1; then
+        RESULT=$(ifcmd_run "$PROJECT" "$PAYLOAD" "$ID"); IFRC=$?
+        case "$IFRC" in
+          0) OK=true ;;
+          3) OUTCOME=refused ;;
+        esac
+        [ -n "$RESULT" ] || RESULT="issue not filed (no result, rc $IFRC)"
+      else RESULT="issue not filed (lib not loaded)"; fi ;;
+    # <<< file_issue handler
     # >>> fleet control handler (tests/poll-commands-fleet-control.bh-6737-test.sh runs this block)
     # BH-6737. The Fly pool (fly-pool.sh, flags/fly-pool-*, state/fly/, fly.env)
     # exists only on the hub, so these run here for every project and are never

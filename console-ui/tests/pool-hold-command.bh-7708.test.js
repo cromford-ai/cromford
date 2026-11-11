@@ -160,8 +160,8 @@ test('C6 the same click in one minute is one command', async (t) => {
   assert.equal(w.rows().length, 1);
 });
 
-test('C7 the BH-5820 fallback set is unchanged; pool_hold is its own set', () => {
-  assert.deepEqual([...BOARD_FALLBACK_TYPES].sort(), ['comment_issue', 'hold_ticket', 'unhold_ticket']);
+test('C7 the BH-5820 fallback set (plus BH-9014 file_issue) holds no pool_hold; pool_hold is its own set', () => {
+  assert.deepEqual([...BOARD_FALLBACK_TYPES].sort(), ['comment_issue', 'file_issue', 'hold_ticket', 'unhold_ticket']);
   assert.deepEqual([...POOL_HOLD_TYPES], ['pool_hold']);
 });
 

@@ -12,7 +12,7 @@ const enc = encodeURIComponent;
 const PROPOSAL = new Set(['chat_proposal', 'post_proposal', 'kill_proposal', 'revise_proposal']);
 const BOARD = new Set(['pause_board', 'resume_board', 'pause_set', 'pause_end', 'run_triage', 'fetch_log',
   'fetch_artifact', 'automerge_on', 'automerge_off', 'update_company_map', 'hold_ticket', 'unhold_ticket',
-  'comment_issue']);
+  'comment_issue', 'file_issue']);
 // A fleet pause has no board; its row lives in the pause flags table on /jobs.
 const FLEET_PAUSE = new Set(['pause_set', 'pause_end']);
 

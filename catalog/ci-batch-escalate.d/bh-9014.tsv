@@ -1,0 +1,2 @@
+# BH-9014: the file_issue Pages test pins the MCP tool the console command answers.
+mcp/tools/actions.mjs	spa	console-ui/tests/board-commands.bh-9014.test.js imports the MCP action tools to check file_issue against the board command (BH-9014)
