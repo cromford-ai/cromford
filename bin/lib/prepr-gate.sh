@@ -62,6 +62,21 @@
 #   changes nothing. PREPR_SCAN_CILOCAL holds the word; `cilocal=` in
 #   prepr.txt and a separate `PREPR <label>ci-local=` log line record it.
 #
+# FRESH-MAIN GUARDS (BH-9471). Last, prepr_scan runs fmg_run
+#   (bin/lib/fresh-main-guards.sh): every guard suite main changed after this
+#   build's base, run on this branch merged with main, in the budget ci-local
+#   left. It runs on the "repo ships no pre-PR gates" path too (every product
+#   repo); there a red guard makes the scan rc 1 in place of 3. Each red guard
+#   is an in-diff finding `FRESH-MAIN-GUARD <file>: <line>` and shares the one
+#   fix turn. One still red after the turn makes PREPR_STATE red (the PR opens
+#   with the unresolved section) but never PREPR_LINT_STATE: the guard is
+#   main's code on a merge tree, and CI decides. On a repo with no gates the
+#   re-scan after the fix turn is rc 3; it counts as clean only when the
+#   guards said clean, else the fix is unverified (red). PREPR_SCAN_FMG holds the word
+#   (clean|red|could-not-run|skipped|off); `fresh-main-guards:` in
+#   prepr-scan.txt, `fmg=` in prepr.txt and a `PREPR <label>fresh-main-guards=`
+#   log line record it.
+#
 # rules_pack_block <where>
 #   Called at `# >>> rules pack block` in bin/lib/rb/execute.sh (after the push,
 #   before the reviewer) and bin/lib/rb/pr.sh (after the late pass, before PR
@@ -90,6 +105,8 @@
 _PREPR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/lib/ci-local-verify.sh
 [ -r "$_PREPR_LIB_DIR/ci-local-verify.sh" ] && . "$_PREPR_LIB_DIR/ci-local-verify.sh"
+# shellcheck source=bin/lib/fresh-main-guards.sh
+[ -r "$_PREPR_LIB_DIR/fresh-main-guards.sh" ] && . "$_PREPR_LIB_DIR/fresh-main-guards.sh"
 
 # The paths that define the CI-LOCAL findings: a fix turn must not edit them.
 _PREPR_CL_RULES='^(bin/ci-local\.sh|bin/ci-local-plan\.py|bin/lib/ci-local-verify\.sh|catalog/ci-local-skip\.d/.*|\.github/workflows/harness-ci\.yml)$'
@@ -147,17 +164,51 @@ _prepr_orphans() {
   return 0
 }
 
+# _prepr_fmg <wt> <base> <out> <spent_s> — BH-9471. fmg_run into <out>/fmg with
+# the budget ci-local left (cl_budget minus <spent_s>). Sets PREPR_SCAN_FMG,
+# writes `fresh-main-guards: <word>` (and the could-not-run reason) to
+# prepr-scan.txt, and <out>/fmg-findings.txt (empty unless red).
+_prepr_fmg() {
+  local wt="$1" base="$2" out="$3" spent="${4:-0}" cap="" why
+  : > "$out/fmg-findings.txt"
+  if ! command -v fmg_run >/dev/null 2>&1; then
+    PREPR_SCAN_FMG=off
+    echo "fresh-main-guards: off" >> "$out/prepr-scan.txt"
+    return 0
+  fi
+  command -v cl_budget >/dev/null 2>&1 && cap=$(cl_budget)
+  case "$cap" in ''|*[!0-9]*) cap="" ;; esac
+  PREPR_SCAN_FMG=$(FMG_BUDGET_S="${cap:+$((cap - spent))}" fmg_run "$wt" "$base" "$out/fmg")
+  [ -n "$PREPR_SCAN_FMG" ] || PREPR_SCAN_FMG=could-not-run
+  echo "fresh-main-guards: $PREPR_SCAN_FMG" >> "$out/prepr-scan.txt"
+  case "$PREPR_SCAN_FMG" in
+    red) grep '^FRESH-MAIN-GUARD ' "$out/fmg/findings.txt" > "$out/fmg-findings.txt" 2>/dev/null ;;
+    could-not-run)
+      why=$(grep -v '^state=' "$out/fmg/fmg.txt" 2>/dev/null | tail -1)
+      echo "fresh-main-guards: could not run: ${why:-no reason recorded}" >> "$out/prepr-scan.txt" ;;
+  esac
+  return 0
+}
+
 prepr_scan() {
-  local wt="$1" base="$2" out="$3" wta crc drc conf changed line loc path n_in=0 n_pre=0 n_gate=0 rpo prc budget
+  local wt="$1" base="$2" out="$3" wta crc drc conf changed line loc path n_in=0 n_pre=0 n_gate=0 rpo prc budget t_cl
   # Until the pack step judges, it has not: an early return 2 is could-not-run.
   PREPR_SCAN_PACK=could-not-run
   PREPR_SCAN_CILOCAL=could-not-run
+  PREPR_SCAN_FMG=could-not-run
   mkdir -p "$out" || return 2
   : > "$out/prepr-findings.txt"; : > "$out/prepr-preexisting.txt"
   if [ ! -x "$wt/bin/checks-run.sh" ] || [ ! -x "$wt/bin/test-determinism-lint.sh" ]; then
     echo "prepr: skipped (repo ships no pre-PR gates)" > "$out/prepr-scan.txt"
     PREPR_SCAN_PACK=skipped
     PREPR_SCAN_CILOCAL=skipped
+    # BH-9471: a product repo ships no gates, but main's guards still run.
+    _prepr_fmg "$wt" "$base" "$out" 0
+    if [ -s "$out/fmg-findings.txt" ]; then
+      cat "$out/fmg-findings.txt" >> "$out/prepr-findings.txt"
+      printf 'in-diff=%s preexisting=0\n' "$(grep -c . "$out/fmg-findings.txt")" >> "$out/prepr-scan.txt"
+      return 1
+    fi
     return 3
   fi
   wta=$(cd "$wt" && pwd) || return 2
@@ -208,6 +259,7 @@ prepr_scan() {
   # >>> ci-local (BH-6897)
   # CI's lint job, from the tree's own workflow. The pack already ran above.
   : > "$out/ci-local-findings.txt"
+  t_cl=$SECONDS
   if command -v cl_run >/dev/null 2>&1; then
     PREPR_SCAN_CILOCAL=$(cl_run "$wta/bin/ci-local.sh" "$wta" "$base" "$out/ci-local" --skip-rules-pack)
   else
@@ -225,6 +277,11 @@ prepr_scan() {
     done < "$out/ci-local/preexisting.txt"
   fi
   # <<< ci-local
+  # >>> fresh-main guards (BH-9471)
+  # Main's guards changed after this build's base, on the merge with main, in
+  # the budget ci-local left.
+  _prepr_fmg "$wta" "$base" "$out" "$((SECONDS - t_cl))"
+  # <<< fresh-main guards
   # CHECK-HIT <slug> <path>:<line> <reason>, and the determinism lint's FAIL
   # section only (<path>:<n>: <rule>: ...), never its warnings.
   {
@@ -233,21 +290,24 @@ prepr_scan() {
     cat "$out/orphans-findings.txt" 2>/dev/null
     [ "$PREPR_SCAN_PACK" = red ] && sed 's/^/RULES-PACK /' "$out/rules-pack-findings.txt"
     cat "$out/ci-local-findings.txt"
+    cat "$out/fmg-findings.txt" 2>/dev/null
   } > "$out/prepr-all.txt"
   while IFS= read -r line; do
     case "$line" in
       "CHECK-HIT "*) loc=$(awk '{print $3}' <<<"$line") ;;
-      "RULES-PACK "*|"CI-LOCAL "*) loc="" ;;
+      "RULES-PACK "*|"CI-LOCAL "*|"FRESH-MAIN-GUARD "*) loc="" ;;
       *) loc="$line" ;;
     esac
-    case "$line" in "RULES-PACK "*|"CI-LOCAL "*) ;; *) n_gate=$((n_gate + 1)) ;; esac
+    case "$line" in "RULES-PACK "*|"CI-LOCAL "*|"FRESH-MAIN-GUARD "*) ;; *) n_gate=$((n_gate + 1)) ;; esac
     path=$(_prepr_path "$wta" "${loc%%:*}")
     # An ORPHAN is new against the base by construction, so it is this build's
     # even when the file it names is not in the diff (a suite edit can orphan
     # an untouched script). A RULES-PACK line is too: the pack judged the diff.
     # So is a CI-LOCAL line: ci-local set aside every step red on the base.
+    # So is a FRESH-MAIN-GUARD line: CI fails this PR's merge with main on it.
     if [ "${line#ORPHAN }" != "$line" ] || [ "${line#RULES-PACK }" != "$line" ] \
-       || [ "${line#CI-LOCAL }" != "$line" ] || grep -qxF -- "$path" <<<"$changed"; then
+       || [ "${line#CI-LOCAL }" != "$line" ] || [ "${line#FRESH-MAIN-GUARD }" != "$line" ] \
+       || grep -qxF -- "$path" <<<"$changed"; then
       printf '%s\n' "$line" >> "$out/prepr-findings.txt"; n_in=$((n_in + 1))
     else
       printf '%s\n' "$line" >> "$out/prepr-preexisting.txt"; n_pre=$((n_pre + 1))
@@ -363,12 +423,13 @@ prepr_gate_late() {
 # `PREPR <label>state=`, and records the judged head in <build>/prepr-head.
 _prepr_run() {
   local wt="$1" base="$2" build="$3" out="$4" turns="$5" label="$6" spent="$7" rc pre dirty rules n n_pre tools reasons="" calls=0 ccrc
-  local pack_first_red=0 pack_rules="" pack_why="" srcs cl_first_red=0 cl_rules="" cl_why=""
+  local pack_first_red=0 pack_rules="" pack_why="" srcs cl_first_red=0 cl_rules="" cl_why="" fmg_first_red=0
   PREPR_STATE=""; PREPR_NOTE=""; PREPR_SECTION=""; PREPR_PACK_STATE=""; PREPR_PACK_OUT="$out"
   prepr_scan "$wt" "$base" "$out"; rc=$?
   cp "$out/prepr-findings.txt" "$out/prepr-findings.first.txt" 2>/dev/null
   grep -q '^RULES-PACK ' "$out/prepr-findings.txt" 2>/dev/null && pack_first_red=1
   grep -q '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null && cl_first_red=1
+  grep -q '^FRESH-MAIN-GUARD ' "$out/prepr-findings.txt" 2>/dev/null && fmg_first_red=1
   case "$rc" in
     0) PREPR_STATE=clean ;;
     2) PREPR_STATE=could-not-run ;;
@@ -397,6 +458,11 @@ _prepr_run() {
       pack_bullet="${pack_bullet}
 - A \`CI-LOCAL <job> / <step>: …\` line is a step of the CI lint job, run by \`bin/ci-local.sh --step '<step>'\` (its log is step-<n>.log under the build record's ci-local/). Fix the code it names. Never edit the workflow, \`bin/ci-local.sh\`, \`bin/ci-local-plan.py\` or \`catalog/ci-local-skip.d/\`."
     fi
+    if [ "$fmg_first_red" = 1 ]; then
+      srcs="${srcs% and *}, ${srcs##* and } and the guard suites main changed after this build's base"
+      pack_bullet="${pack_bullet}
+- A \`FRESH-MAIN-GUARD <file>: …\` line is a guard suite that came from main after this build's base, run on this branch merged with main (CI tests the same merge; its output is fmg/run.log under the build record). The guard is main's: never edit it. Fix this branch's code so the guard passes."
+    fi
     brief="The pre-PR gate found the problems below in files this build changed. They are the output of ${srcs}, the same commands cromford CI runs, and CI will fail this PR on them.
 
 Fix each one in the code on branch ${BRANCH:-the current branch}, then commit. Do not push.
@@ -418,6 +484,12 @@ $(cat "$out/prepr-findings.txt")"
 }$cl_rules"
     pack_rules=$(grep -E '^(bin/rules-pack\.sh|bin/lib/rules-pack-[a-z-]+\.sh|catalog/rules-pack\.tsv|catalog/date-bomb-lint\.conf|bin/test-date-bomb-lint\.sh|tests/alert-writers-ratchet-baseline/|tests/switch-ratchet\.d/|tests/fixtures/root-fallback-baseline/)' <<<"$rules")
     prepr_scan "$wt" "$base" "$out"; rc=$?
+    # BH-9471: a repo with no gates re-scans to rc 3 when no finding is left.
+    # Only the fresh-main guards judged that head, so it is clean only when they
+    # said clean; anything else left the fix unverified.
+    if [ "$rc" = 3 ]; then
+      if [ "${PREPR_SCAN_FMG:-}" = clean ]; then rc=0; else rc=2; fi
+    fi
     [ -n "$dirty" ] && reasons="${reasons}- The fix turn left uncommitted changes, which are not in this PR.
 "
     [ -n "$rules" ] && reasons="${reasons}- The fix turn edited the gate's own rules: $(tr '\n' ' ' <<<"$rules")
@@ -432,10 +504,11 @@ $(cat "$out/prepr-findings.txt")"
     PREPR_NOTE=" | prepr=red"
     tools=""
     grep -q '^CHECK-HIT ' "$out/prepr-findings.txt" 2>/dev/null && tools="\`bin/checks-run.sh --tree .\`"
-    grep -Ev '^(CHECK-HIT|ORPHAN|RULES-PACK|CI-LOCAL) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q . && tools="${tools:+$tools and }\`bin/test-determinism-lint.sh\`"
+    grep -Ev '^(CHECK-HIT|ORPHAN|RULES-PACK|CI-LOCAL|FRESH-MAIN-GUARD) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q . && tools="${tools:+$tools and }\`bin/test-determinism-lint.sh\`"
     grep -q '^ORPHAN ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/test-impact.sh orphans --check\`"
     grep -q '^RULES-PACK ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/rules-pack.sh\`"
     grep -q '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }\`bin/ci-local.sh\`"
+    grep -q '^FRESH-MAIN-GUARD ' "$out/prepr-findings.txt" 2>/dev/null && tools="${tools:+$tools and }the guard suites main changed after this build's base"
     PREPR_SECTION=$'\n## Pre-PR gate: unresolved\n\n'
     if [ "$n" -gt 0 ]; then
       if [ "$calls" = 1 ]; then
@@ -487,16 +560,19 @@ $(cat "$out/prepr-findings.txt")"
   # cl_why does not depend on PREPR_STATE: a ci-local that could not re-run
   # leaves prepr_scan at rc 0 (PREPR_STATE=fixed), and the head is still
   # unchecked. Same as the pack's pack_why above (lead review lr-7005).
-  if { [ "$PREPR_STATE" = red ] && grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q .; } || [ -n "$cl_why" ]; then
+  # A FRESH-MAIN-GUARD line never counts (BH-9471): the guard is main's code on
+  # a merge tree, CI runs the same merge, and the PR opens with the section.
+  if { [ "$PREPR_STATE" = red ] && grep -Ev '^(CHECK-HIT|RULES-PACK|FRESH-MAIN-GUARD) ' "$out/prepr-findings.txt" 2>/dev/null | grep -q .; } || [ -n "$cl_why" ]; then
     PREPR_LINT_STATE=red
-    grep -Ev '^(CHECK-HIT|RULES-PACK) ' "$out/prepr-findings.txt" > "$out/fast-lints-remaining.txt" 2>/dev/null
+    grep -Ev '^(CHECK-HIT|RULES-PACK|FRESH-MAIN-GUARD) ' "$out/prepr-findings.txt" > "$out/fast-lints-remaining.txt" 2>/dev/null
     [ -n "$cl_why" ] && { grep '^CI-LOCAL ' "$out/prepr-findings.first.txt"; echo "(still red: $cl_why)"; } >> "$out/fast-lints-remaining.txt"
     _prepr_log "$build" "PREPR ${label}fast lints red: $(grep -c . "$out/fast-lints-remaining.txt") determinism, orphan or ci-local finding(s) in this diff"
   fi
-  printf 'state=%s\nfindings=%s\npreexisting=%s\nturns=%s\nfix_calls=%s\npack=%s\ncilocal=%s\n' \
-    "$PREPR_STATE" "$n" "$n_pre" "$turns" "$calls" "$PREPR_PACK_STATE" "${PREPR_SCAN_CILOCAL:-could-not-run}" > "$out/prepr.txt"
+  printf 'state=%s\nfindings=%s\npreexisting=%s\nturns=%s\nfix_calls=%s\npack=%s\ncilocal=%s\nfmg=%s\n' \
+    "$PREPR_STATE" "$n" "$n_pre" "$turns" "$calls" "$PREPR_PACK_STATE" "${PREPR_SCAN_CILOCAL:-could-not-run}" "${PREPR_SCAN_FMG:-could-not-run}" > "$out/prepr.txt"
   _prepr_log "$build" "PREPR ${label}state=$PREPR_STATE findings=$n preexisting=$n_pre turns=$turns fix_calls=$calls pack=$PREPR_PACK_STATE"
   _prepr_log "$build" "PREPR ${label}ci-local=${PREPR_SCAN_CILOCAL:-could-not-run} red=$(grep -c '^CI-LOCAL ' "$out/prepr-findings.txt" 2>/dev/null)"
+  _prepr_log "$build" "PREPR ${label}fresh-main-guards=${PREPR_SCAN_FMG:-could-not-run} red=$(grep -c '^FRESH-MAIN-GUARD ' "$out/prepr-findings.txt" 2>/dev/null)"
   # A scan that could not run judged nothing, so it records no head: the late
   # pass must not read it as already covered.
   [ "$PREPR_STATE" = could-not-run ] || git -C "$wt" rev-parse HEAD > "$build/prepr-head" 2>/dev/null
