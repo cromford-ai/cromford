@@ -1,0 +1,947 @@
+{
+  "ok": true,
+  "day": "2026-11-09",
+  "project": null,
+  "generated_at": "2026-11-10T07:03:12Z",
+  "mode": {
+    "ok": true,
+    "fleet": "on",
+    "off": false,
+    "projects": {},
+    "source": "archie.manage"
+  },
+  "merges": {
+    "ok": true,
+    "total": 29,
+    "by_project": [
+      {
+        "project": "cromford",
+        "n": 19,
+        "prs": [
+          {
+            "repo": "example-org/cromford",
+            "pr": 9300,
+            "url": "https://github.com/example-org/cromford/pull/9300",
+            "merged_at": "2026-11-09T00:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9301,
+            "url": "https://github.com/example-org/cromford/pull/9301",
+            "merged_at": "2026-11-09T01:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9302,
+            "url": "https://github.com/example-org/cromford/pull/9302",
+            "merged_at": "2026-11-09T02:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9303,
+            "url": "https://github.com/example-org/cromford/pull/9303",
+            "merged_at": "2026-11-09T03:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9304,
+            "url": "https://github.com/example-org/cromford/pull/9304",
+            "merged_at": "2026-11-09T04:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9305,
+            "url": "https://github.com/example-org/cromford/pull/9305",
+            "merged_at": "2026-11-09T05:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9306,
+            "url": "https://github.com/example-org/cromford/pull/9306",
+            "merged_at": "2026-11-09T06:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9307,
+            "url": "https://github.com/example-org/cromford/pull/9307",
+            "merged_at": "2026-11-09T07:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9308,
+            "url": "https://github.com/example-org/cromford/pull/9308",
+            "merged_at": "2026-11-09T08:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9309,
+            "url": "https://github.com/example-org/cromford/pull/9309",
+            "merged_at": "2026-11-09T09:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9310,
+            "url": "https://github.com/example-org/cromford/pull/9310",
+            "merged_at": "2026-11-09T10:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9311,
+            "url": "https://github.com/example-org/cromford/pull/9311",
+            "merged_at": "2026-11-09T11:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9312,
+            "url": "https://github.com/example-org/cromford/pull/9312",
+            "merged_at": "2026-11-09T12:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9313,
+            "url": "https://github.com/example-org/cromford/pull/9313",
+            "merged_at": "2026-11-09T13:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9314,
+            "url": "https://github.com/example-org/cromford/pull/9314",
+            "merged_at": "2026-11-09T14:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9315,
+            "url": "https://github.com/example-org/cromford/pull/9315",
+            "merged_at": "2026-11-09T15:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9316,
+            "url": "https://github.com/example-org/cromford/pull/9316",
+            "merged_at": "2026-11-09T16:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9317,
+            "url": "https://github.com/example-org/cromford/pull/9317",
+            "merged_at": "2026-11-09T17:10:00Z"
+          },
+          {
+            "repo": "example-org/cromford",
+            "pr": 9318,
+            "url": "https://github.com/example-org/cromford/pull/9318",
+            "merged_at": "2026-11-09T18:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-4",
+        "n": 4,
+        "prs": [
+          {
+            "repo": "example-org/project-4",
+            "pr": 9319,
+            "url": "https://github.com/example-org/project-4/pull/9319",
+            "merged_at": "2026-11-09T00:10:00Z"
+          },
+          {
+            "repo": "example-org/project-4",
+            "pr": 9320,
+            "url": "https://github.com/example-org/project-4/pull/9320",
+            "merged_at": "2026-11-09T01:10:00Z"
+          },
+          {
+            "repo": "example-org/project-4",
+            "pr": 9321,
+            "url": "https://github.com/example-org/project-4/pull/9321",
+            "merged_at": "2026-11-09T02:10:00Z"
+          },
+          {
+            "repo": "example-org/project-4",
+            "pr": 9322,
+            "url": "https://github.com/example-org/project-4/pull/9322",
+            "merged_at": "2026-11-09T03:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-3",
+        "n": 2,
+        "prs": [
+          {
+            "repo": "example-org/project-3",
+            "pr": 9323,
+            "url": "https://github.com/example-org/project-3/pull/9323",
+            "merged_at": "2026-11-09T00:10:00Z"
+          },
+          {
+            "repo": "example-org/project-3",
+            "pr": 9324,
+            "url": "https://github.com/example-org/project-3/pull/9324",
+            "merged_at": "2026-11-09T01:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-2",
+        "n": 1,
+        "prs": [
+          {
+            "repo": "example-org/project-2",
+            "pr": 9325,
+            "url": "https://github.com/example-org/project-2/pull/9325",
+            "merged_at": "2026-11-09T00:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-1",
+        "n": 1,
+        "prs": [
+          {
+            "repo": "example-org/project-1",
+            "pr": 9326,
+            "url": "https://github.com/example-org/project-1/pull/9326",
+            "merged_at": "2026-11-09T00:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-5",
+        "n": 1,
+        "prs": [
+          {
+            "repo": "example-org/project-5",
+            "pr": 9327,
+            "url": "https://github.com/example-org/project-5/pull/9327",
+            "merged_at": "2026-11-09T00:10:00Z"
+          }
+        ]
+      },
+      {
+        "project": "project-4-site",
+        "n": 1,
+        "prs": [
+          {
+            "repo": "example-org/project-4-site",
+            "pr": 9328,
+            "url": "https://github.com/example-org/project-4-site/pull/9328",
+            "merged_at": "2026-11-09T00:10:00Z"
+          }
+        ]
+      }
+    ]
+  },
+  "queue": {
+    "ok": true,
+    "actions": {
+      "total": 0,
+      "by_action": {},
+      "by_outcome": {}
+    },
+    "batches": {
+      "total": 12,
+      "by_outcome": {
+        "merged": 12
+      }
+    }
+  },
+  "stuck": {
+    "ok": true,
+    "total": 4,
+    "cleared": 4,
+    "open": 0,
+    "failed": 0,
+    "would": 0,
+    "skipped": 0,
+    "items": [
+      {
+        "id": 1,
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9300,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "created_at": "2026-11-09T00:00:00Z",
+        "url": "https://github.com/example-org/cromford/pull/9300",
+        "alert_id": null,
+        "kind": "repair"
+      },
+      {
+        "id": 2,
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9301,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "created_at": "2026-11-09T01:00:00Z",
+        "url": "https://github.com/example-org/cromford/pull/9301",
+        "alert_id": null,
+        "kind": "repair"
+      },
+      {
+        "id": 3,
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9302,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "created_at": "2026-11-09T02:00:00Z",
+        "url": "https://github.com/example-org/cromford/pull/9302",
+        "alert_id": null,
+        "kind": "repair"
+      },
+      {
+        "id": 4,
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9303,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "created_at": "2026-11-09T03:00:00Z",
+        "url": "https://github.com/example-org/cromford/pull/9303",
+        "alert_id": null,
+        "kind": "repair"
+      }
+    ],
+    "truncated": false
+  },
+  "tickets": {
+    "ok": true,
+    "filed": 0,
+    "commented": 0,
+    "shipped": 0,
+    "verified": 0,
+    "reopened": 0,
+    "would": 0,
+    "items": [],
+    "empty_reason": "Archie filed, commented on and shipped no ticket on 2026-11-09"
+  },
+  "spend": {
+    "ok": true,
+    "by_project": [
+      {
+        "project": "cromford",
+        "usd": 290.5,
+        "calls": 300,
+        "unpriced_calls": 1,
+        "cap_usd": 11323.76,
+        "over": false
+      },
+      {
+        "project": "project-4",
+        "usd": 45.1,
+        "calls": 6,
+        "unpriced_calls": 1,
+        "cap_usd": 4970.21,
+        "over": false
+      },
+      {
+        "project": "unknown",
+        "usd": 16.24,
+        "calls": 41,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9200.b7a156ae7d6c",
+        "usd": 12.34,
+        "calls": 40,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "project-3",
+        "usd": 12.0,
+        "calls": 3,
+        "unpriced_calls": 0,
+        "cap_usd": 2000.0,
+        "over": false
+      },
+      {
+        "project": "cromford.9201.6b399f88bd14",
+        "usd": 7.02,
+        "calls": 40,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "project-2",
+        "usd": 6.5,
+        "calls": 2,
+        "unpriced_calls": 0,
+        "cap_usd": 1000.0,
+        "over": false
+      },
+      {
+        "project": "project-1",
+        "usd": 4.99,
+        "calls": 2,
+        "unpriced_calls": 0,
+        "cap_usd": 1000.0,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-p",
+        "usd": 3.75,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-o",
+        "usd": 3.5,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-n",
+        "usd": 3.25,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-m",
+        "usd": 3.0,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "project-5",
+        "usd": 3.0,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 5.0,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-l",
+        "usd": 2.75,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-k",
+        "usd": 2.5,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-j",
+        "usd": 2.25,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-i",
+        "usd": 2.0,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-h",
+        "usd": 1.75,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-g",
+        "usd": 1.5,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-f",
+        "usd": 1.25,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-e",
+        "usd": 1.0,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-d",
+        "usd": 0.75,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-c",
+        "usd": 0.5,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-b",
+        "usd": 0.25,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9203.88be3d5fef58",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9206.f713f5796ebf",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9209.f71f1e5cfc12",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9212.b9ee2a9eff0a",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9215.a431dac878b6",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9218.1aa165881ef5",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9221.529605dbda67",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9224.6ce9464c7ac3",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9227.379079229e9b",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9230.775dfede4483",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9233.4d0ce300b3f8",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9236.1810f0f112f4",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9239.fdab66d7684e",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9242.6950395b4e2e",
+        "usd": 0.01,
+        "calls": 6,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9202.0120d1029617",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9204.952dd3f49401",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9205.5eef9052d22b",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9207.524b450751f9",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9208.f9851f8fdd39",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9210.7d6280747103",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9211.8ff1aae6da55",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9213.4c01aed49fbd",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9214.6d4b84e4782c",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9216.4a480666dff4",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9217.36263e618227",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9219.f85d86541fc6",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9220.c3f7b542d2a4",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9222.ccfe4b48f9e4",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9223.099a25bc0a98",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9225.9cec795201cc",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9226.b8a3a82605fa",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9228.97fe5d95ab5a",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9229.54fd77c4b775",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9231.90861d829e08",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9232.470f442002a6",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9234.86a38e3b1518",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9235.9bdad2056415",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9237.56891472a34c",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9238.731591c9c839",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9240.029ebb87c144",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "cromford.9241.16be61d1ff6d",
+        "usd": 0.0,
+        "calls": 7,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "fixture-proj-a",
+        "usd": 0.0,
+        "calls": 1,
+        "unpriced_calls": 0,
+        "cap_usd": 7068.03,
+        "over": false
+      },
+      {
+        "project": "project-4-site",
+        "usd": null,
+        "calls": 1,
+        "unpriced_calls": 1,
+        "cap_usd": 500.0,
+        "over": false
+      }
+    ]
+  },
+  "totals": {
+    "ok": true,
+    "total": 4,
+    "by_outcome": {
+      "done": 4
+    }
+  },
+  "actions": {
+    "ok": true,
+    "limit": 300,
+    "truncated": false,
+    "rows": [
+      {
+        "id": 1,
+        "created_at": "2026-11-09T00:00:00Z",
+        "updated_at": "2026-11-09T00:00:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9300,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "evidence": {}
+      },
+      {
+        "id": 2,
+        "created_at": "2026-11-09T01:00:00Z",
+        "updated_at": "2026-11-09T01:00:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9301,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "evidence": {}
+      },
+      {
+        "id": 3,
+        "created_at": "2026-11-09T02:00:00Z",
+        "updated_at": "2026-11-09T02:00:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9302,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "evidence": {}
+      },
+      {
+        "id": 4,
+        "created_at": "2026-11-09T03:00:00Z",
+        "updated_at": "2026-11-09T03:00:00Z",
+        "project": "cromford",
+        "repo": "example-org/cromford",
+        "pr": 9303,
+        "playbook": "rebase-repair",
+        "mode": "on",
+        "action": "repair",
+        "outcome": "done",
+        "why": "merged main and pushed with lease",
+        "evidence": {}
+      }
+    ]
+  },
+  "one_thing": {
+    "kind": "none",
+    "text": "Nothing needs you from 2026-11-09."
+  }
+}

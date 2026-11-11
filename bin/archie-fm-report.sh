@@ -3,8 +3,10 @@
 # and the stop-the-line beat. A hub lane, every 15 minutes.
 #
 #   archie-fm-report.sh [tick]        the cron line
-#   archie-fm-report.sh render <day>  prints the report text for <day>
-#                                     (YYYY-MM-DD); sends nothing, no lock
+#   archie-fm-report.sh render <day> [--telegram]
+#                                     prints the full report text for <day>
+#                                     (YYYY-MM-DD); with --telegram, the short
+#                                     text the tick sends. Sends nothing, no lock
 #   archie-fm-report.sh stl --dry-list
 #                                     one TSV line per open stop-the-line
 #                                     incident that is due (first_seen epoch,
@@ -25,11 +27,15 @@
 #      archie.stl.beats_per_tick a tick; the rest wait. Not held for quiet
 #      hours. Mode off or unreadable: no beat.
 #   4. THE REPORT, from the first tick at or after archie.report.send_hour_utc:
-#      yesterday (UTC) from GET /api/archie/factory-report, rendered by
-#      afr_render (bin/lib/archie-fm-report/render.sh), sent ONCE through
-#      archie-tg-send.sh "fm-report:<day>". Mode off still sends it, and its
-#      first line says Archie is off. A failed read sends nothing; the next
-#      tick retries.
+#      yesterday (UTC) from GET /api/archie/factory-report, rendered SHORT by
+#      afr_render_short (bin/lib/archie-fm-report/render.sh), sent ONCE through
+#      archie-tg-send.sh "fm-report:<day>". The spend filter is the settings
+#      rows report.spend_min_usd, report.spend_cap_pct and
+#      report.spend_unknown_min_usd (a bad or unreadable row: its code fallback
+#      and one warn line). The short text links the full report on Mission
+#      Control (console_pages_url, /factory?day=<day>); `render <day>` prints
+#      the full text. Mode off still sends it, and its mode line says Archie
+#      took no action. A failed read sends nothing; the next tick retries.
 #   One line in logs/archie-fm-report.log per thing done or failed.
 #
 # The ONLY side effect is a Telegram send through archie-tg-send.sh, whose
@@ -44,16 +50,18 @@
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 SELF="$(cd "$(dirname "$0")" && pwd)"
-CMD=tick; R_DAY=""
+CMD=tick; R_DAY=""; R_TG=0
 case "${1:-}" in
   ''|tick) ;;
   render)
     CMD=render; R_DAY="${2:-}"
-    [[ $R_DAY =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "usage: archie-fm-report.sh render <YYYY-MM-DD>" >&2; exit 2; } ;;
+    case "${3:-}" in ''|--telegram) [ "${3:-}" = --telegram ] && R_TG=1 ;; *) R_DAY="" ;; esac
+    [[ $R_DAY =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ -z "${4:-}" ] \
+      || { echo "usage: archie-fm-report.sh render <YYYY-MM-DD> [--telegram]" >&2; exit 2; } ;;
   stl)
     [ "${2:-}" = --dry-list ] || { echo "usage: archie-fm-report.sh stl --dry-list" >&2; exit 2; }
     CMD=stl-dry ;;
-  *) echo "usage: archie-fm-report.sh [tick] | render <YYYY-MM-DD> | stl --dry-list" >&2; exit 2 ;;
+  *) echo "usage: archie-fm-report.sh [tick] | render <YYYY-MM-DD> [--telegram] | stl --dry-list" >&2; exit 2 ;;
 esac
 . "$H/bin/lib/env-path.sh" 2>/dev/null || . "$SELF/lib/env-path.sh" 2>/dev/null \
   || harness_env_dir() { printf '%s\n' "${1:-$H}/env"; }
@@ -80,13 +88,14 @@ fi
   . "$SELF/lib/archie-fm.sh" 2>/dev/null || true
   . "$SELF/lib/archie-fm-report/render.sh" 2>/dev/null || true
   . "$SELF/lib/archie-fm-report/stl.sh" 2>/dev/null || true
+  . "$SELF/lib/console-pages.sh" 2>/dev/null || true
 }
 # The suite's seam. Sandbox only, and settable:false in the registry.
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -n "${ARCHIE_FMR_FIXTURE:-}" ]; then
   # shellcheck disable=SC1090
   . "$ARCHIE_FMR_FIXTURE"
 fi
-for f in afm_mode afm_log _afm_req _jobs_req setting_get alerts_list job_ledger_get afr_render afr_stl_scan afr_stl_tick; do
+for f in afm_mode afm_log _afm_req _jobs_req setting_get alerts_list job_ledger_get afr_render afr_render_short afr_stl_scan afr_stl_tick console_pages_url; do
   command -v "$f" >/dev/null 2>&1 || { echo "archie-fm-report: $f is not defined (a lib is missing)" >&2; exit 1; }
 done
 command -v jq >/dev/null 2>&1 || { echo "archie-fm-report: jq missing" >&2; exit 1; }
@@ -115,11 +124,41 @@ afr_fetch() {
   fi
 }
 
+# afr_knob <settings-key> <fallback> -> the row's value when it is a plain
+#   non-negative number, else the fallback. No row: the fallback, silently. An
+#   unreadable row or a bad value: the fallback and one warn line. Never stops
+#   the report.
+afr_knob() {
+  local key="$1" fb="$2" v rc
+  v=$(setting_get "$key"); rc=$?
+  case "$rc" in
+    0) v=$(printf '%s' "$v" | tr -d '[:space:]')
+       if [[ $v =~ ^[0-9]+(\.[0-9]+)?$ ]]; then printf '%s' "$v"; return 0; fi
+       afm_log "warn: $key='${v:0:40}' is not a number; using the fallback $fb" ;;
+    2) ;;
+    *) afm_log "warn: $key could not be read (rc=$rc); using the fallback $fb" ;;
+  esac
+  printf '%s' "$fb"
+}
+
+# afr_short <report-file> <mode> <day> -> the short Telegram text (afr_render_short).
+afr_short() {
+  local min pct unk
+  min=$(afr_knob report.spend_min_usd 5.00)        # fallback of the settings row report.spend_min_usd
+  pct=$(afr_knob report.spend_cap_pct 50)          # fallback of the settings row report.spend_cap_pct
+  unk=$(afr_knob report.spend_unknown_min_usd 1.00) # fallback of the settings row report.spend_unknown_min_usd
+  afr_render_short "$1" "$2" "$AFR_STL_DUE" "$min" "$pct" "$unk" "$(console_pages_url)/factory?day=$3"
+}
+
 if [ "$CMD" = render ]; then
   AFM_LOG=""
   afr_fetch "$R_DAY" "$WORK/report.json" || { echo "archie-fm-report: the report for $R_DAY could not be read" >&2; exit 1; }
   afr_stl_scan >/dev/null 2>&1 || : > "$AFR_STL_DUE"
-  afr_render "$WORK/report.json" "$(afr_mode)" "$AFR_STL_DUE"
+  if [ "$R_TG" = 1 ]; then
+    afr_short "$WORK/report.json" "$(afr_mode)" "$R_DAY"
+  else
+    afr_render "$WORK/report.json" "$(afr_mode)" "$AFR_STL_DUE"
+  fi
   exit $?
 fi
 if [ "$CMD" = stl-dry ]; then
@@ -170,7 +209,7 @@ esac
 afr_fetch "$DAY" "$WORK/report.json" || exit 0
 [ "$MODE" = off ] || afr_stl_scan >/dev/null 2>&1 || : > "$AFR_STL_DUE"
 [ "$MODE" = off ] && : > "$AFR_STL_DUE"
-if ! TEXT=$(afr_render "$WORK/report.json" "$MODE" "$AFR_STL_DUE") || [ -z "${TEXT//[[:space:]]/}" ]; then
+if ! TEXT=$(afr_short "$WORK/report.json" "$MODE" "$DAY") || [ -z "${TEXT//[[:space:]]/}" ]; then
   afm_log "report $DAY: the answer could not be rendered; nothing sent"; exit 0
 fi
 rc=0; "$AFR_TG_SEND" "$AKEY" "$TEXT" >/dev/null 2>&1 || rc=$?

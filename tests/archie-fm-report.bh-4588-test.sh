@@ -136,6 +136,10 @@ n()     { local c; c=$(wc -l 2>/dev/null < "$1"); printf '%s' "${c:-0}" | tr -d 
 sends() { n "$T/tg.jsonl"; }
 akeys() { jq -r .akey "$T/tg.jsonl" 2>/dev/null | tr '\n' ' '; }
 report_text() { jq -r 'select(.akey | startswith("fm-report:")) | .text' "$T/tg.jsonl" 2>/dev/null; }
+# full_text: the full report for $DAY through the shipped `render <day>` verb.
+# Since BH-9449 the tick sends the short text (tests/archie-fm-report-short.bh-9449-test.sh);
+# the full text, every section, is what `render <day>` prints.
+full_text() { env HARNESS_TEST_SANDBOX=1 ARCHIE_FMR_NOW="$T0" ARCHIE_FMR_FIXTURE="$T/fx.sh" bash "$H/bin/archie-fm-report.sh" render "$DAY"; }
 logl()  { cat "$H/logs/archie-fm-report.log" 2>/dev/null; }
 
 # ═════ R: the daily report ═══════════════════════════════════════════════════
@@ -145,7 +149,9 @@ tick
 eq "R1 rc 0" "$(cat "$T/rc")" 0
 eq "R1 exactly one send" "$(sends)" 1
 eq "R1 the akey is fm-report:<yesterday>" "$(akeys)" "fm-report:$DAY "
-R=$(report_text)
+eq "R1 the Telegram text: line 1 is the failed action with its link" "$(report_text | sed -n 1p)" \
+  "Failed: queue-culprit on example-org/cromford#102: solo run could not start. https://github.com/example-org/cromford/pull/102"
+R=$(full_text)
 for h in 'Merges:' 'Queue:' 'Stuck items:' 'Tickets:' 'Spend vs caps:' 'Archie actions:' 'Mode:'; do
   check "R1 the section [$h] is there" 'grep -q "^$h" <<<"$R"'
 done
@@ -158,7 +164,8 @@ eq "R1 stuck items listed: one line per fixture item" "$(sed -n '/^Stuck items:/
   "$(jq '.stuck.items | length' "$FIX/report.json")"
 eq "R1 tickets 1 filed, 1 shipped" "$(grep '^Tickets:' <<<"$R")" "Tickets: 1 filed, 1 commented, 1 shipped, 0 verified."
 check "R1 the filed ticket links its issue" 'grep -qxe "- filed: .*https://github.com/example-org/cromford/issues/9001" <<<"$R"'
-eq "R1 spend cromford" "$(grep '^- cromford: \$' <<<"$R")" "- cromford: \$3.75 of a \$11323.76 day cap (partial: 1 of 3 calls unpriced)."
+eq "R1 spend cromford" "$(grep '^- cromford: \$' <<<"$R")" "- cromford: \$3.75 of a \$11323.76 day cap."
+eq "R1 spend partial: one total line" "$(grep partial <<<"$R")" "Spend partial: 2 of 4 calls unpriced."
 eq "R1 spend project-4 unknown, never \$0" "$(grep '^- project-4: unknown' <<<"$R")" "- project-4: unknown of a \$4970.21 day cap (1 call, none priced)."
 eq "R1 queue health" "$(grep '^Queue:' <<<"$R")" "Queue: 3 batches finished (failed 1, merged 2). Queue actions: 2 (failed 1, done 1)."
 eq "R1 action totals" "$(grep '^Archie actions:' <<<"$R")" "Archie actions: 8 (done 6, failed 1, requested 1)."
@@ -168,7 +175,7 @@ check "R1 the log says sent" 'logl | grep -q "sent fm-report:$DAY (mode on)"'
 reset on
 rm -f "$T/report.$DAY.json"; jq --arg d "$DAY" '.day = $d' "$FIX/empty.json" > "$T/report.$DAY.json"
 tick
-R=$(report_text)
+R=$(full_text)
 for h in 'Merges' 'Queue' 'Stuck items' 'Tickets' 'Spend vs caps' 'Archie actions'; do
   check "R2 [$h] says none: <reason>" 'grep -qE "^$h: none: .+\." <<<"$R"'
 done
@@ -194,18 +201,20 @@ eq "R3 the hour is the settings row (9): 0 sends at 07:05" "$(sends)" 0
 reset off
 alert main-red-cromford "$(( T0 - 7200 ))"
 tick
-R=$(report_text)
 eq "R4 one send (the report still goes out)" "$(sends)" 1
-eq "R4 the first line says Archie is off" "$(sed -n 1p <<<"$R")" "Archie is off (archie.manage=off) and took no action."
+check "R4 the Telegram text says Archie took no action" 'grep -qx "Mode: off (Archie took no action)." <<<"$(report_text)"'
 check "R4 no POST at all (no archie_actions write)" '! grep -q "^POST" "$T/reqlog"'
 eq "R4 no stl: beat for a 2 h main-red" "$(jq -r 'select(.akey | startswith("stl:")) | .akey' "$T/tg.jsonl" | wc -l | tr -d ' ')" 0
 check "R4 no alert read when off" '! grep -q "/api/alerts" "$T/reqlog"'
+R=$(full_text)
+eq "R4 the first line says Archie is off" "$(sed -n 1p <<<"$R")" "Archie is off (archie.manage=off) and took no action."
 
 # R5: voice: no em or en dash, the one thing first, a PR link on each PR line.
 reset on
 jq '.stuck.items[0].why = "kicked the lane — twice – today"' "$FIX/report.json" > "$T/report.$DAY.json"
 tick
-R=$(report_text)
+check "R5 no em dash or en dash in the Telegram text" '! grep -q "[—–]" <<<"$(report_text)"'
+R=$(full_text)
 check "R5 no em dash or en dash" '! grep -q "[—–]" <<<"$R"'
 eq "R5 the first line is the one thing" "$(sed -n 1p <<<"$R")" "$(jq -r .one_thing.text "$FIX/report.json")"
 while IFS= read -r l; do
@@ -237,7 +246,7 @@ check "R7 no sent line" '! logl | grep -q "^.* sent fm-report"'
 reset on
 jq '.spend = {ok: false, error: "D1_ERROR: fixture cost read down"}' "$FIX/report.json" > "$T/report.$DAY.json"
 tick
-R=$(report_text)
+R=$(full_text)
 eq "R8 not measured" "$(grep '^Spend vs caps:' <<<"$R")" "Spend vs caps: not measured: D1_ERROR: fixture cost read down."
 check "R8 never claims over cap" '! grep -qi "over" <<<"$(grep -iE "cap" <<<"$R")"'
 check "R8 the other sections still print" 'grep -q "^Merges: 3 merges" <<<"$R"'
@@ -383,7 +392,7 @@ sed -i '/Archie is off (archie.manage=off) and took no action./d' "$H/bin/lib/ar
 check "X1 the mutant differs" '! cmp -s "$H/bin/lib/archie-fm-report/render.sh" "$DIR/bin/lib/archie-fm-report/render.sh"'
 reset off
 tick
-check "X1 without the off line R4 is red" '[ "$(report_text | sed -n 1p)" != "Archie is off (archie.manage=off) and took no action." ]'
+check "X1 without the off line R4 is red" '[ "$(full_text 2>/dev/null | sed -n 1p)" != "Archie is off (archie.manage=off) and took no action." ]'
 scratch_rm "$H/bin/lib/archie-fm-report/render.sh" || exit 1
 scratch_install_closure bin/archie-fm-report.sh "$H" >/dev/null || exit 1
 check "X1 the closure is restored" 'cmp -s "$H/bin/lib/archie-fm-report/render.sh" "$DIR/bin/lib/archie-fm-report/render.sh"'
