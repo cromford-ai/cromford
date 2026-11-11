@@ -184,7 +184,7 @@ RB_TOKEN_REDACT() {
 # reason this script stops.
 HARNESS_SUITE_RUN() {
   local outfile="$1" phase="$2" script mode rc t0 stage reason prelude pgrc disk
-  local pgon serial=0 rc0 n0 prc why rerun=()
+  local pgon serial=0 rc0 n0 prc why rerun=() guards
   local pgenv=() cerc=0
   local sel="$BUILD/test-select-$phase.txt" err="$BUILD/test-select-$phase.err"
   local FILES=()
@@ -227,9 +227,30 @@ HARNESS_SUITE_RUN() {
   else
     mode="full (TEST_SELECT=0)"
   fi
+  # THE GUARDS (BH-9414). A selected run also runs the project's always-run
+  # guard suites (bin/lib/verify-guards.sh: tests/static-guards.txt,
+  # scripts/ci/lane-rules.json alwaysSuites, tests/static-guards/). A full run
+  # already runs them, so it only records the count. A guard list that cannot be
+  # read makes a selected run full: it never narrows a run. No lib: as before.
+  guards=""
+  if { command -v vg_suite_guards >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/verify-guards.sh" ] && . "$HARNESS/bin/lib/verify-guards.sh"; }; }; then
+    if vg_suite_guards . HEAD; then
+      if [ "${#FILES[@]}" -gt 0 ]; then
+        mapfile -t FILES < <(printf '%s\n' "${FILES[@]}" ${VG_GUARDS[@]+"${VG_GUARDS[@]}"} | LC_ALL=C sort -u)
+        mode="selected ${#FILES[@]} of the suite"
+        guards="${#VG_GUARDS[@]} guard suite(s) in the run"
+      else
+        guards="${#VG_GUARDS[@]} guard suite(s), in the full run"
+      fi
+    else
+      [ "${#FILES[@]}" -gt 0 ] && { FILES=(); mode="full ($VG_WHY)"; }
+      guards="none listed ($VG_WHY)"
+    fi
+  fi
   # The file header and the log line come from the SAME variable, so the record
   # in the build dir and the record in pipeline.log can never disagree.
   echo "HARNESS_SUITE: $mode — npm run $script" > "$BUILD/$outfile"
+  [ -n "$guards" ] && echo "HARNESS_GUARDS: $guards" >> "$BUILD/$outfile"
   echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase (npm run $script) $mode" >> "$BUILD/pipeline.log"
   # command -v, because a block test may source this block without the timing
   # one. A stage that cannot be timed is a missing log line, never a stopped run.

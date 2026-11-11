@@ -1,0 +1,32 @@
+{
+  "libs": [
+    {
+      "id": "verify-guards",
+      "file": "bin/lib/verify-guards.sh",
+      "note": "BH-9414 slice C0: the always-run guard suites of a project. HARNESS_SUITE_RUN (bin/lib/rb/gates.sh) adds them to a selected pre-push suite run, and a guard list it cannot read makes the run full. tests/verify-guards.bh-9414-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "VERIFY_GUARD_SOURCES",
+          "type": "string",
+          "default": "tests/static-guards.txt,scripts/ci/lane-rules.json#alwaysSuites",
+          "zero_means": null,
+          "required": false,
+          "note": "Comma list of guard sources, read at the head commit. `<file>` is a text file with one path or glob per line; `<file>#<key>` is a JSON file whose <key> is an array of path strings (project-6: scripts/ci/lane-rules.json alwaysSuites, TK-3641). Every file under tests/static-guards/ is always added. Read by bin/lib/verify-guards.sh (vg_list).",
+          "settable": true
+        },
+        {
+          "env": "VERIFY_GUARD_MAX",
+          "type": "int",
+          "default": 200,
+          "min": 0,
+          "max": 5000,
+          "unit": "paths",
+          "zero_means": "any guard path makes the run full",
+          "required": false,
+          "note": "The most guard paths a selected run takes. A list over it is a misread source, so the run goes full (the safe side). Read by bin/lib/verify-guards.sh (vg_list).",
+          "settable": true
+        }
+      ]
+    }
+  ]
+}

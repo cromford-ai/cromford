@@ -26,6 +26,7 @@ import worker from "../src/index.js";
 import { prLedgerJob } from "../src/routes/verdict.js";
 import { withD1Retry, D1_RETRY_ATTEMPTS } from "../src/lib/d1-retry.js";
 import { recordGiveUp, resetGiveUpStreaks, GIVEUP_UPSERT_SQL } from "../src/lib/d1-giveup.js";
+import { _resetStmtStats } from "../src/lib/stmt-stats.js";
 import { openDb, d1 } from "./lib/d1-sqlite.bh-1030.js";
 import { openVolumeDb, plan } from "./lib/d1-volume.bh-6727.js";
 
@@ -47,6 +48,9 @@ async function overloadable() {
            VALUES ('build-7541','cromford','BH-7541','build','box-1','done','done','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z')`);
   db.exec(`INSERT INTO job_artifacts (job_id, artifact_kind, artifact_ref, created_at, updated_at)
            VALUES ('build-7541','pr_url','${PR}','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z')`);
+  // BH-9430: stmt-stats sampling off, so a sampled request cannot write d1_stmt_stats.
+  db.exec("UPDATE settings SET value = '0' WHERE key = 'd1.stmt_stats_sample_pct'");
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'd1.stmt_stats_sample_pct'").get()?.value, "0");
   const inner = d1(db);
   const ov = { on: true, db, tag: ++cases, next() { ov.tag = ++cases; } };
   const overload = () => new Error(`${OVERLOAD} [case ${ov.tag}]`);
@@ -121,6 +125,7 @@ const rowsOf = (ov) => ov.db.prepare("SELECT COUNT(*) AS n FROM d1_overload_stre
 
 async function fresh(t) {
   resetGiveUpStreaks();
+  _resetStmtStats(); // BH-9430: re-read the stmt-stats knobs from this case's pinned DB
   return spies(t);
 }
 
