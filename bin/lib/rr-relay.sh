@@ -20,8 +20,13 @@
 #   bin/builds-retention.sh    rrr_open: a pool dir whose sent json is owed is kept
 #   bin/fleet-slo.sh           rrr_list: remote lanes the hub holds no copy of
 #
-# THE FILE IS STILL WRITTEN AND STILL THE INPUT (#4141, the last-good cache).
-# The writer PUTs the row BEFORE it writes or sends the file. A box that
+# THE FILES ARE KEPT FOR GOOD (BH-9408). The relay file is the transport: it is
+# the input that staging reads (bin/lib/rt/staging.sh), and the last-good cache
+# (#4141). The rr-relay row cuts .result to 1000 chars when the detail is over
+# 3500, so the row cannot replace the file. "Retire the relay file writers"
+# (#7860, #8364, #9324, #9408) closed as won't-do; a retire needs a staging that
+# reads a lossless row first (tests/rr-file-writers-kept.bh-9408-test.sh pins
+# this). The writer PUTs the row BEFORE it writes or sends the file. A box that
 # consumes the file before the parked PUT lands can leave the row at `parked`;
 # its rr-consumed row still says consumed, so a reader asks rr-consumed
 # (rrr_consumed), not rr-relay.

@@ -17,12 +17,22 @@
 #   rr-relay     key <p>/<KEY>@<build-id>    status set to the outcome here; the
 #                                            writer parks it (bin/lib/rr-relay.sh)
 #
-# THE FILE IS READ FIRST AND STILL WRITTEN (#4141: "DB-first with a last-good
-# cache for outages"). A reader answers from the file when it is there, so a box
-# that has its files makes no extra read. Only a missing file asks the row, and
-# a row that answers heals the file. A writer does the file op first (its rc is
-# the function's rc), then the PUT. A failed PUT is one $LOG line and nothing
-# else: it is not a staging failure and never freezes the watermark.
+# THE FILES ARE KEPT FOR GOOD (BH-9408). The file is read first and written
+# first (#4141: "DB-first with a last-good cache for outages"). A reader answers
+# from the file when it is there, so a box that has its files makes no extra
+# read. Only a missing file asks the row, and a row that answers heals the file.
+# A writer does the file op first (its rc is the function's rc), then the PUT. A
+# failed PUT is one $LOG line and nothing else: it is not a staging failure and
+# never freezes the watermark. The rows are the copy a rebuilt box heals from.
+# They do not replace the files:
+#   - The rr-consumed detail is cut to 3500 bytes, so the moved
+#     .handled/<KEY>.json is the only full copy of a long result.
+#   - With no .job marker, a ledger outage reads "not handled" and staging
+#     stages the result again: a second close-out comment on a client ticket.
+# "Retire the file writers" (#7860 item 4, #8364, #9324, #9408) closed as
+# won't-do for these reasons. A future retire needs a lossless row store and a
+# fail-closed staging first, and it must change
+# tests/rr-file-writers-kept.bh-9408-test.sh.
 #
 # "Not configured" (no job_ledger_row / job_ledger_put in scope) is the
 # file-only behaviour exactly. An unreadable row with no file reads "not
