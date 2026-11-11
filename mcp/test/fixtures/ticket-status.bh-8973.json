@@ -1,0 +1,51 @@
+{
+  "format": "ticket-status v1",
+  "project": "s3",
+  "repo": "example-org/s3-fixture",
+  "fresh_at": "2026-11-02T12:00:00Z",
+  "tickets": [
+    {
+      "key": "BH-8973",
+      "issue": 8973,
+      "state": "running",
+      "stage": "execute",
+      "rung": null,
+      "machine": "m-fixture-1",
+      "spawned_at": "2026-11-02T11:31:00Z",
+      "claimed_at": "2026-11-02T11:30:00Z",
+      "branch": "ticket/bh-8973",
+      "pr": null,
+      "last_checkpoint_at": "2026-11-02T11:58:00Z",
+      "last_activity_at": "2026-11-02T11:58:00Z",
+      "attempts": [
+        {
+          "job_id": "build-s3-BH-8973-1",
+          "kind": "build",
+          "started_at": "2026-11-02T11:32:00Z",
+          "ended_at": null,
+          "status": "running",
+          "stage": "execute",
+          "machine": "m-fixture-1",
+          "outcome": null
+        }
+      ],
+      "events": [
+        {
+          "from": null,
+          "to": "building",
+          "actor": "pool",
+          "reason": "r",
+          "pr": null,
+          "at": "2026-11-02T11:32:00Z"
+        }
+      ],
+      "waits_on": [],
+      "hold": null,
+      "truncated": {
+        "attempts": false,
+        "events": false
+      }
+    }
+  ],
+  "unknown": []
+}

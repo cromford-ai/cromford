@@ -1,0 +1,5 @@
+# BH-8973 (C0): the live status of named tickets, and the open queue rows with
+# no activity past ticket_status.stuck_min. Read-only, bearer-gated. The MCP
+# tools ticket_status and stuck_tickets read these through /api/coord.
+GET /api/ticket-status
+GET /api/ticket-status/stuck

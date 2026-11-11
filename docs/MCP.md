@@ -30,6 +30,7 @@ The server reads these from its environment at startup.
 | `HARNESS_MCP_BATCH_LOG_CAP` | no | Failed job logs `batch_failure` reads per call (default 10). A check past the cap is `not_read_cap` and leaves every PR `culprit: null`. |
 | `HARNESS_MCP_BATCH_LINE_CAP` | no | Failure lines `batch_failure` returns per failed check (default 40). |
 | `HARNESS_MCP_BATCH_LINE_LEN` | no | Characters kept per failure line (default 500). |
+| `HARNESS_MCP_TICKET_STATUS_COMMIT_READS` | no | Branch commit reads one `ticket_status` or `stuck_tickets` call makes through `HARNESS_MCP_GITHUB_TOKEN` (default 20). A ticket past the cap is `commit_source: skipped_cap`. |
 | `HARNESS_MCP_GH_TIMEOUT_MS` | no | Milliseconds one `gh api` call from `post_block` / `clear_block` may run (default 60000). |
 | `HARNESS_MCP_LV_TIMEOUT_MS` | no | Milliseconds one `bin/lead-verdict.sh` run from `post_block` / `clear_block` may run (default 90000). |
 | `HARNESS_MCP_TEXT_CAP` | no | Characters of `gh` or `bin/lead-verdict.sh` output kept in a `post_block` / `clear_block` part (default 300). |
@@ -155,6 +156,8 @@ parameters only when given.
 | `pr_stage` | read | `GET /api/coord/merge-queue/live`, then `GET /api/coord/pr-state-events?repo=&number=&limit=50` and `GET /api/coord/risk-tiers?repo=&pr=&limit=1` |
 | `backlog` | read | `GET /api/coord/merge-queue/live?project=` and `GET /api/coord/jobs?project=&kind=build&status=running&limit=200` |
 | `batch_failure` | read | GitHub REST, GET only, through `mcp/lib/github.mjs`: the batch draft PR, its check runs and failed job logs, and each member and ahead PR with its files, head checks and verdict check. Needs `HARNESS_MCP_GITHUB_TOKEN`. A culprit is a likely culprit: a log line that names a file the PR changed. A match is not proof, and `requeue_candidates` is advice only. A `pending` or `passed` batch has no candidates. |
+| `ticket_status` | read | `GET /api/coord/ticket-status?project=\|repo=&key=...&issue=...` (worker `routes/ticket-status.js`, format `ticket-status v1`): the live state of each named ticket from the hub's D1 rows, never the pipeline snapshot. Then one GitHub `GET /repos/<repo>/commits?sha=<branch>&per_page=1` per ticket branch, for `last_commit_at` and `commit_source`. Exactly one of `repo` / `project` (`project_or_repo_required`); 1 to 50 `tickets`, each `{key}` or `{issue}`. More than the settings row `ticket_status.batch_max` is `http_400: too_many`. |
+| `stuck_tickets` | read | `GET /api/coord/ticket-status/stuck?project=\|repo=`: the queued or claimed tickets with no activity past the settings row `ticket_status.stuck_min` (default 90 minutes), oldest first, with the same fields and commit reads as `ticket_status`. |
 | `file_issue` | write | `POST /api/dash/action` `{type:"file_issue", ...args}` |
 | `comment_issue` | write | `POST /api/dash/action` `{type:"comment_issue", ...args}`. The hub posts one comment on the issue as the GitHub App, once per command id (`bin/lib/issue-comment-cmd.sh`). |
 | `hold_issue` | write | `POST /api/dash/action` `{type:"hold_ticket", project, issue, reason}`. The hub adds the `hold` label (`bin/lib/ticket-hold-cmd.sh`). |

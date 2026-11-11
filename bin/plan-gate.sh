@@ -71,14 +71,17 @@
 #         <path>" / "SHARED_NOREASON: <path>" line per offender and
 #         PLAN_SHARED: ok | unlisted | unread, with PLAN_GATE_TICKET: one
 #         "UNTRACED: spec trace — <section>: <why>" line per gap and
-#         PLAN_SPEC_TRACE: ok | missing | n/a | unread, PLAN_OUTCOME_REPLAY:
+#         PLAN_SPEC_TRACE: ok | missing | n/a | unread, with PLAN_GATE_TICKET:
+#         one "UNTRACED: coverage — <rows vs items>" line when short and
+#         PLAN_COVERAGE: ok (...) | short | unread (no line when the ticket
+#         body has no Scope list), PLAN_OUTCOME_REPLAY:
 #         ok | missing | n/a with one "UNTRACED: outcome replay — <gap>"
 #         line per gap, and last
 #         PLAN_TRACE: ok | untraced | unavailable
 #
 # exit 0  every task block carries both lines
 # exit 2  the plan is missing one of the lines entirely, or a task block is
-#         missing one of them  (the refusal case)
+#         missing one of them, or a ticket-aware check refused  (the refusal case)
 # exit 3  no plan file, or a traced plan whose tasks this parser cannot see
 set -uo pipefail
 PLAN="${1:-}"
@@ -231,6 +234,17 @@ fi
 ST_LIB="$(cd "$(dirname "$0")" && pwd)/lib/spec-trace.sh"
 if [ -n "${PLAN_GATE_TICKET:-}" ] && [ -r "$ST_LIB" ] && . "$ST_LIB"; then
   st_plan_check "$PLAN" "$PLAN_GATE_TICKET"
+  [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
+fi
+
+# ---- the coverage rows (BH-9441, prompts/plan-contract.md §4) -----------------
+# PLAN_GATE_TICKET set and a ticket body with a `## Scope` list: the plan's
+# `## Requirements coverage` table needs at least one row per Scope item. A
+# short table refuses the plan (rc 2, the same repair pass). No Scope section,
+# unset, or no lib on this box: no refusal, and the trace decides.
+CR_LIB="$(cd "$(dirname "$0")" && pwd)/lib/coverage-rows.sh"
+if [ -n "${PLAN_GATE_TICKET:-}" ] && [ -r "$CR_LIB" ] && . "$CR_LIB"; then
+  cr_plan_check "$PLAN" "$PLAN_GATE_TICKET"
   [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
 fi
 

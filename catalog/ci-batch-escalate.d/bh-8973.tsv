@@ -1,0 +1,2 @@
+# The MCP ticket_status fixture the worker test re-checks (BH-8973).
+mcp/test/fixtures/ticket-status.bh-8973.json	worker	worker/jobs/test/ticket-status.bh-8973.test.js reads the MCP fixture and checks it against the worker answer (BH-8973)

@@ -1,0 +1,4 @@
+{
+  "title": "fixture: four scope items",
+  "body": "## Problem\n\nA fixture ticket with four scope items.\n\n## Scope\n\n1. first item\n2. second item\n3. third item\n4. fourth item\n\n## Acceptance tests\n\n- a\n- b\n- c\n- d\n- e\n\n## Out of scope\n\n- f\n- g\n"
+}

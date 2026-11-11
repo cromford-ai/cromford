@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "coverage-rows",
+      "file": "bin/lib/coverage-rows.sh",
+      "note": "BH-9441. The plan gate counts the rows of the plan's `## Requirements coverage` table against the top-level items of the ticket body's `## Scope` list (body only, never comments). Resolved by cr_conf through lib_env_apply in a subshell, then the env, then CR_DEFAULT_ENFORCE in bin/lib/coverage-rows.sh, which equals the default here (tests/coverage-rows.bh-9441-test.sh K1).",
+      "knobs": [
+        {
+          "env": "COVERAGE_ROWS_ENFORCE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "log only",
+          "required": true,
+          "note": "1: a plan whose `## Requirements coverage` table has fewer rows than the ticket body's `## Scope` has items is refused (rc 2, the plan gate's repair pass, then PLAN_MALFORMED). 0: the gate writes a NOTE line and `PLAN_COVERAGE: short (not enforced, ...)` only. Applies only to tickets whose body carries a Scope list."
+        }
+      ]
+    }
+  ]
+}

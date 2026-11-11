@@ -828,6 +828,15 @@ fi
 STN_NOTE=""; command -v st_plan_note >/dev/null 2>&1 && STN_NOTE=$(st_plan_note "$BUILD/ticket-meta.json")
 [ -n "$STN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$STN_NOTE"
 # <<< spec trace note (BH-6485)
+# >>> coverage rows note (BH-9441)
+# A ticket body with a `## Scope` list tells the planner how many rows
+# `## Requirements coverage` needs (prompts/plan-contract.md §4) through
+# UI_PLAN_NOTE. No Scope list, or no lib: nothing is added.
+# shellcheck source=bin/lib/coverage-rows.sh
+[ -r "$HARNESS/bin/lib/coverage-rows.sh" ] && . "$HARNESS/bin/lib/coverage-rows.sh" 2>/dev/null
+CRN_NOTE=""; command -v cr_plan_note >/dev/null 2>&1 && CRN_NOTE=$(cr_plan_note "$BUILD/ticket-meta.json")
+[ -n "$CRN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$CRN_NOTE"
+# <<< coverage rows note (BH-9441)
 # >>> replan check (BH-3955)
 # A SPLIT CHILD WHOSE BLOCKERS HAVE MERGED GETS ONE CHEAP LOOK BEFORE ITS PLAN.
 # bin/replan-check.sh decides eligibility itself (a `<KEY>.<n>` child, n >= 1,
@@ -1482,7 +1491,7 @@ if [ "$PG_RC" = 2 ]; then
   case "${PLAN_GATE_MAX_LIST:-}" in ''|*[!0-9]*) PG_MAX=8 ;; *) PG_MAX=$PLAN_GATE_MAX_LIST ;; esac
   PG_LIST=$(sed -n 's/^  UNTRACED: //p' "$BUILD/plan-gate.txt" | head -n "$PG_MAX" | tr '\n' ';' | sed 's/;$//')
   echo "$(STAMP) [$PROJECT/$KEY] plan gate: untraced tasks — one repair pass ($PG_LIST)" >> "$BUILD/pipeline.log"
-  CC plan "$PLAN_MODEL" 600 "$BUILD/plan-repair-run.txt" "Repair the plan at $BUILD/plan.md IN PLACE (rewrite the file; change nothing about its scope, approach or size line). EVERY task must carry BOTH lines, each on its own line: 'VALIDATE: <the exact command or observable check that proves this task is done>' and 'SATISFIES: <the ticket acceptance criterion it delivers>'. These task blocks are missing one of them right now: $PG_LIST. If a task satisfies nothing the ticket asked for, delete it. Keep the '## Acceptance tests' and '## QA screens' sections, the final SIZE line and any 'SLICE:' line exactly as they are.$(command -v pfm_repair_note >/dev/null 2>&1 && pfm_repair_note "$BUILD/plan-gate.txt")$(command -v pt_repair_note >/dev/null 2>&1 && pt_repair_note "$BUILD/plan-gate.txt")$(command -v st_repair_note >/dev/null 2>&1 && st_repair_note "$BUILD/plan-gate.txt")"
+  CC plan "$PLAN_MODEL" 600 "$BUILD/plan-repair-run.txt" "Repair the plan at $BUILD/plan.md IN PLACE (rewrite the file; change nothing about its scope, approach or size line). EVERY task must carry BOTH lines, each on its own line: 'VALIDATE: <the exact command or observable check that proves this task is done>' and 'SATISFIES: <the ticket acceptance criterion it delivers>'. These task blocks are missing one of them right now: $PG_LIST. If a task satisfies nothing the ticket asked for, delete it. Keep the '## Acceptance tests' and '## QA screens' sections, the final SIZE line and any 'SLICE:' line exactly as they are.$(command -v pfm_repair_note >/dev/null 2>&1 && pfm_repair_note "$BUILD/plan-gate.txt")$(command -v pt_repair_note >/dev/null 2>&1 && pt_repair_note "$BUILD/plan-gate.txt")$(command -v st_repair_note >/dev/null 2>&1 && st_repair_note "$BUILD/plan-gate.txt")$(command -v cr_repair_note >/dev/null 2>&1 && cr_repair_note "$BUILD/plan-gate.txt")"
   PG_RUN; PG_RC=$?
   [ "$PG_RC" = 2 ] || echo "$(STAMP) [$PROJECT/$KEY] plan gate: repaired, every task now carries both lines" >> "$BUILD/pipeline.log"
 fi
@@ -1560,6 +1569,8 @@ if [ "$PG_RC" = 2 ] && [ "$PG_ENFORCE" = 1 ]; then
   [ "$PG_TASKS" = 0 ] && PG_WHY="the plan carries no VALIDATE/SATISFIES lines at all, after one repair pass"
   grep -q '^PLAN_SPEC_TRACE: missing$' "$BUILD/plan-gate.txt" 2>/dev/null \
     && PG_WHY="${PG_WHY}; the spec trace is still missing ($(grep -c '^  UNTRACED: spec trace' "$BUILD/plan-gate.txt") gap(s))"
+  CR_WHY=""; command -v cr_why_note >/dev/null 2>&1 && CR_WHY=$(cr_why_note "$BUILD/plan-gate.txt")
+  [ -n "$CR_WHY" ] && PG_WHY="${PG_WHY}; $CR_WHY"
   PM_TERMINAL "$PG_WHY" "$BUILD/plan-gate.txt" "produce a traced plan"
 fi
 [ "$PG_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] plan gate: $PG_UNTRACED untraced task(s) — PLAN_GATE_ENFORCE=0, executor gets an untraced plan" >> "$BUILD/pipeline.log"

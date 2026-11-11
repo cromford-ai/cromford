@@ -1,0 +1,15 @@
+{
+ "ticket": "BH-8973",
+ "note": "GET /api/ticket-status and /api/ticket-status/stuck read the last stage event of each ticket's NEWEST job (by job id, idx_events_job) for its last checkpoint. A job whose events are archived reads no row, and the checkpoint falls back to the job's updated_at and heartbeat. Read by test/archive-readers.bh-6779.test.js R1.",
+ "readers": [
+  {
+   "file": "src/routes/ticket-status.js",
+   "line_hint": 121,
+   "match": "FROM stage_events WHERE job_id IN (SELECT value FROM json_each(?1)) GROUP BY job_id",
+   "table": "stage_events",
+   "window": "the newest job of each named ticket, by job id",
+   "class": "poll",
+   "status": "hot-only"
+  }
+ ]
+}
