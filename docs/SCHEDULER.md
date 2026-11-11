@@ -284,7 +284,7 @@ non-number for `sched_num`, anything but a decimal ≤ 1 for `sched_frac`) falls
 | key | default | meaning |
 | --- | --- | --- |
 | `OVERLAP_THRESHOLD` | `0` | Jaccard at or above which a pair defers. `0` = **any shared file defers**, which is `bin/conflict-check.sh`'s rule and what this fleet has always done. Raise it (e.g. `0.25`) on a repo where builds legitimately share a directory. |
-| `OVERLAP_IGNORE` | `package.json package-lock.json *.md` | space-separated globs never counted as a collision, because the conductor union-resolves them |
+| `OVERLAP_IGNORE` | `package.json package-lock.json *.md` | space-separated globs never counted as a collision, because the conductor union-resolves them. Its `*.md` token also governs `bin/plan-overlap.sh`, `bin/plan-sibling.sh` and `bin/conflict-check.sh` (BH-9096, `bin/lib/docs-overlap.sh`): an override without `*.md` makes a shared `.md` path defer in all six paths |
 | `OVERLAP_PR_LIMIT` | `30` | open PRs read per author |
 | `OVERLAP_PR_CACHE_SECS` | `120` | how long `state/overlap-guard/<project>-prs.json` is reused. The guard runs once per candidate ticket and the dispatcher ticks every two minutes; uncached this would be several `gh pr list` calls a minute for an answer that only changes on a merge. `0` disables the cache. |
 | `OVERLAP_LEDGER_LIMIT` | `50` | running rows read from `/api/jobs` |

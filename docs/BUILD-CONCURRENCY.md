@@ -1374,8 +1374,34 @@ Shared with `bin/overlap-guard.sh` through `bin/lib/scheduler-conf.sh`
 
 | knob | default | what it does |
 |---|---|---|
-| `OVERLAP_IGNORE` | `package.json package-lock.json *.md` | paths that are never a scheduling collision (the conductor union-resolves them). Still reported in `HOT-FILES`. |
+| `OVERLAP_IGNORE` | `package.json package-lock.json *.md` | paths that are never a scheduling collision (the conductor union-resolves them). Still reported in `HOT-FILES`. Its `*.md` token also governs `bin/plan-overlap.sh`, `bin/plan-sibling.sh` and `bin/conflict-check.sh` (BH-9096). |
 | `OVERLAP_THRESHOLD` | `0` | Jaccard below which a hit is not a collision. `0` means any shared path collides. |
+
+**Docs never defer (BH-9096).** A path that ends in `.md` (lowercase, at any
+depth) is not an overlap in `bin/plan-overlap.sh`, `bin/plan-sibling.sh`
+(`check` and `inflight`) and `bin/conflict-check.sh`, the three paths that did
+not read `OVERLAP_IGNORE`. The rule is `bin/lib/docs-overlap.sh`. It is on when
+the resolved `OVERLAP_IGNORE` list holds the bare `*.md` token, so one knob
+controls all six overlap paths: an override without `*.md` (env, settings row
+`conf.scheduler.overlap_ignore`, or `flags/scheduler.conf`) puts the docs
+collision back everywhere. A pair is docs-safe when either side is a `.md`
+path, so a bare `docs` claim against `docs/UI.md` builds and against
+`docs/nav.ts` still defers. A docs-only result logs
+`PLAN_HOTSPOT <K> choice=build vs <K2> docs-only files=[..]` (or the
+`PLAN_SIBLING` form) and prints no `OVERLAP_DEFER`.
+
+**Changelog fragments (BH-9096).** A build does not edit `docs/RECENT-CHANGES.md`
+in its PR. After the last execute-stage commit, the `# >>> changelog fragment`
+block of `bin/lib/rb/execute.sh` (`bin/lib/changelog-fragment.sh:clf_strip`)
+moves the lines the build ADDED to `docs/recent-changes.d/<key>.md` and resets
+the changelog to the merge-base, in one commit, before the gates and the review.
+Two builds then never edit one hunk. A diff that edits or deletes an older line,
+a changelog the build created, or a diff that is only the changelog is left as
+it is. `pipeline.log` gets one `changelog fragment: <what happened>` line. The
+path list is the settings row `conf.changelog-fragment.paths` (fallback
+`docs/RECENT-CHANGES.md`); the switch is `switch.changelog-fragment-off`. There
+is no fold step: the fragments stay as files, and `docs/RECENT-CHANGES.md` keeps
+its history.
 
 **`PREPLAN_AHEAD=0` is still the ready-class kill switch.** The raise the graph
 needs has its own knob, `PREPLAN_AHEAD_READY` (default `10`), and it applies

@@ -1,0 +1,11 @@
+{
+  "env": "BR_STALE_OVERDUE_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-7555-overdue-first.sh",
+  "note": "BH-9369 fix 5: an overdue row parked this many days ago is stale; when one exists, fresh live parks (BR_FRESH_PARK_MIN) go first. With none, the BH-7555 oldest-first order stands."
+}

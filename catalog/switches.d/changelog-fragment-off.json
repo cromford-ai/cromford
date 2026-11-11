@@ -1,0 +1,1 @@
+{"name":"changelog-fragment-off","readers":["bin/lib/changelog-fragment.sh"],"box_scoped":true,"what":"turns off the changelog move (BH-9096), so a build's docs/RECENT-CHANGES.md entry stays in its PR instead of moving to docs/recent-changes.d/<key>.md"}

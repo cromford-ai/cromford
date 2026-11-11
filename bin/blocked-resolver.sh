@@ -886,8 +886,9 @@ if [ -n "$ONLY" ]; then
   esac
 fi
 BR_SCAN_LOCK=blocked-resolver-cron.lock
-[ -z "$ONLY" ] || BR_SCAN_LOCK="blocked-resolver-$ONLY.lock"
-if [ -n "$ONLY" ] && [ "${PL_LANE:-}" = blocked-resolver ] && [ "${PL_PROJECT:-}" = "$ONLY" ] \
+[ -z "${BR_ONLY_PR:-}" ] || { [ -n "$ONLY" ] && [[ "$BR_ONLY_PR" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[0-9]+$ ]]; } || { echo "$(STAMP) blocked-resolver: BR_ONLY_PR='$BR_ONLY_PR' needs <owner>/<repo>#<n> and a project argument — exiting without a scan" >&2; exit 2; }
+[ -z "$ONLY" ] || BR_SCAN_LOCK="blocked-resolver-$ONLY${BR_ONLY_PR:+-pr-${BR_ONLY_PR##*#}}.lock"  # BH-9369 fix 6: a one-PR run's own lock (bh-9369-one-pr-lock.sh)
+if [ -n "$ONLY" ] && [ -z "${BR_ONLY_PR:-}" ] && [ "${PL_LANE:-}" = blocked-resolver ] && [ "${PL_PROJECT:-}" = "$ONLY" ] \
    && command -v pl_unlock >/dev/null 2>&1 && [ -n "${PL_LOCK_FD:-}" ] \
    && { : >&"$PL_LOCK_FD"; } 2>/dev/null; then
   br_cron_unlock() { pl_unlock; }
@@ -2455,6 +2456,7 @@ br_prepass() {
     if [ -n "${_BRIDX["$key/$ck"]:-}" ]; then
       IFS=$'\t' read -r roc rurl rret rmech rfix rbonus rconf rage raged <<<"${_BRIDX["$key/$ck"]}"
     fi
+    command -v bcr_prepass_row >/dev/null 2>&1 && bcr_prepass_row && continue  # BH-9369: a closed or merged PR's row leaves the list
     rtext=""
     if ! br_finished "$roc" "$rurl" "${url:--}" "$reason" \
        && command -v bdi_aged_finished >/dev/null 2>&1 \
@@ -7829,7 +7831,7 @@ TICK_COUNTS=$(mktemp "${TMPDIR:-/tmp}/br-tick-counts.XXXXXX" 2>/dev/null) \
 BR_ROW_MISS="${TMPDIR:-/tmp}/br-row-miss.$$"
 # The parent wait pass's tick file (BH-5741), made in the ordering block below.
 BR_PARENT_TICK=""
-trap 'rm -rf "${TMPDIR:-/tmp}/br-open-prs.$$" "${TMPDIR:-/tmp}/br-read-memo.$$" "$BR_ROW_MISS"; [ -n "${BR_PARENT_TICK:-}" ] && rm -f "$BR_PARENT_TICK"; [ -n "${TICK_DONE:-}" ] && rm -f "$TICK_DONE"; [ -n "${TICK_REBUILDS:-}" ] && rm -f "$TICK_REBUILDS"; [ -n "${TICK_CAPSAID:-}" ] && rm -f "$TICK_CAPSAID"; [ -n "${TICK_COUNTS:-}" ] && rm -f "$TICK_COUNTS"' EXIT
+BCR_RETIRED_OUT=""; trap 'rm -rf "${TMPDIR:-/tmp}/br-open-prs.$$" "${TMPDIR:-/tmp}/br-read-memo.$$" "$BR_ROW_MISS"; [ -n "${BR_PARENT_TICK:-}" ] && rm -f "$BR_PARENT_TICK"; [ -n "${TICK_DONE:-}" ] && rm -f "$TICK_DONE"; [ -n "${TICK_REBUILDS:-}" ] && rm -f "$TICK_REBUILDS"; [ -n "${TICK_CAPSAID:-}" ] && rm -f "$TICK_CAPSAID"; [ -n "${TICK_COUNTS:-}" ] && rm -f "$TICK_COUNTS"; [ -n "${BCR_RETIRED_OUT:-}" ] && rm -f "$BCR_RETIRED_OUT"' EXIT
 N=0
 # How many rows this loop DISPATCHED, rc whatever — the wall bound's counter.
 LOOKED=0
@@ -7869,9 +7871,9 @@ CAPSAID=" "
 # both a windowed on-disk ledger under flock is a real change with its own
 # failure modes and belongs to whoever builds the concurrent-rung lane.
 # A project run carries its own budget (BH-5913): runs of different projects
-# overlap, and one shared file would hand one project's carry to another.
+# overlap, and one shared file would hand one project's carry to another. A one-PR run (BH-9369) neither spends nor writes it.
 BUDGET_FILE="$ST/.tick-budget${ONLY:+-$ONLY}"
-CARRY_IN=$(head -1 "$BUDGET_FILE" 2>/dev/null)
+CARRY_IN=$([ -n "${BR_ONLY_PR:-}" ] || head -1 "$BUDGET_FILE" 2>/dev/null)
 case "$CARRY_IN" in ''|*[!0-9]*) CARRY_IN=0 ;; esac
 [ "$CARRY_IN" -le "$PER_TICK" ] || CARRY_IN="$PER_TICK"
 EFF_PER_TICK=$(( PER_TICK + CARRY_IN ))
@@ -7889,6 +7891,7 @@ command -v br_opt_prof_stage >/dev/null 2>&1 && br_opt_prof_stage discovery
 BDI_SKIPS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-skips.XXXXXX" 2>/dev/null) || BDI_SKIPS=""
 BDI_SRC_SECS=$(mktemp "${TMPDIR:-/tmp}/br-bdi-src.XXXXXX" 2>/dev/null) || BDI_SRC_SECS=""
 command -v bdi_load >/dev/null 2>&1 && bdi_load
+command -v bcr_load >/dev/null 2>&1 && bcr_load  # BH-9369: the closed-PR set, one batched read per project
 RAW=$(br_candidates)
 BDI_SKIPPED=0
 if [ -n "$BDI_SKIPS" ]; then BDI_SKIPPED=$(grep -c . "$BDI_SKIPS" 2>/dev/null); rm -f "$BDI_SKIPS"
@@ -7898,9 +7901,9 @@ BDI_SRC=""
 if [ -n "$BDI_SRC_SECS" ]; then BDI_SRC=$(paste -sd, "$BDI_SRC_SECS" 2>/dev/null); rm -f "$BDI_SRC_SECS"; fi
 # A PROJECT RUN SEES ONLY ITS PROJECT (BH-5913). Each source filters on ONLY,
 # and this line holds it for any source that does not: runs of other projects
-# are live at the same time, and a row of theirs is theirs to move.
+# are live at the same time, and a row of theirs is theirs to move. A one-PR run (BH-9369) keeps only its PR's rows (u), so its pre-pass writes no record of a row the sweep owns; the one-PR filter below stays as the backstop.
 if [ -n "$ONLY" ] && [ -n "$RAW" ]; then
-  RAW=$(printf '%s\n' "$RAW" | awk -F'\t' -v p="$ONLY" '$2 == p')
+  RAW=$(printf '%s\n' "$RAW" | awk -F'\t' -v p="$ONLY" -v u="${BR_ONLY_PR:+https://github.com/${BR_ONLY_PR%#*}/pull/${BR_ONLY_PR##*#}}" '$2 == p && (u == "" || $5 == u)')
 fi
 ORDERED=""; ORDER_RC=0
 # HOW MANY THE SOURCES FOUND, and how many the pre-pass dropped. `candidates`
@@ -7951,6 +7954,7 @@ if [ -n "$RAW" ]; then
   case "$RETIRED" in ''|*[!0-9]*) RETIRED=0 ;; esac
   case "$IDX_BAD" in ''|*[!0-9]*) IDX_BAD=0 ;; esac
   [ "$PREF" = /dev/null ] || rm -f "$PREF"
+  command -v bcr_commit >/dev/null 2>&1 && bcr_commit
   # THE CHEAPEST RUNG FIRST, WITHIN EACH PROJECT (BH-1457, review finding 2).
   # The first cut sorted by cost GLOBALLY, after br_round_robin — which undoes
   # BH-980 outright: a project whose parks are all rebuilds sits behind every
@@ -8028,10 +8032,8 @@ CANDS=()
 # HANDOFF-WAIT line saying why not, or one page once it has sat silent for
 # BR_HANDOFF_SILENT_PAGE_S.
 BHW_ON=0
-# >>> one-PR run (BH-6000)
-# BR_ONLY_PR=<owner/repo>#<n>: the merge conductor started this run for ONE
-# park (a queue-ejected-twice PR whose fix round must start now,
-# mc_eject_fix_now). Every other candidate is left to the normal ticks; this
+# >>> one-PR run (BH-6000). BR_ONLY_PR=<owner/repo>#<n>: the merge conductor started this run for ONE
+# park (a queue-ejected-twice PR whose fix round must start now, mc_eject_fix_now). Every other candidate is left to the normal ticks; this
 # run works only the rows whose URL is that PR. Unset: every candidate, as before.
 if [ -n "${BR_ONLY_PR-}" ]; then
   _bro_url="https://github.com/${BR_ONLY_PR%#*}/pull/${BR_ONLY_PR##*#}"
@@ -8166,6 +8168,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   # conductor row and a build record for the same ticket is the normal case).
   case "$DONE_KEYS" in *" $P/$RKEY "*) continue ;; esac
   DONE_KEYS="$DONE_KEYS$P/$RKEY "
+  [ -z "${br_only_pr_run:-}" ] && command -v bop_sweep_skip >/dev/null 2>&1 && bop_sweep_skip && continue  # BH-9369 fix 6: a one-PR run holds this PR
   # Bash refuses an EMPTY associative subscript ("bad array subscript"), and
   # br_round_robin deliberately keeps a candidate whose project field is empty
   # rather than dropping it, so that line gets the "-" bucket here.
@@ -8281,8 +8284,8 @@ fi
 BUDGET_TMP="$BUDGET_FILE.tmp.$$"
 # A WRITE THAT FAILED SAYS SO (review M3). Without the line, an unwritable $ST
 # leaves the PREVIOUS carry on disk and the next tick re-spends it, for ever, on
-# a lane whose tick lines all look correct.
-if printf '%s\n' "$BUDGET_CARRY" > "$BUDGET_TMP" 2>/dev/null && mv -f "$BUDGET_TMP" "$BUDGET_FILE" 2>/dev/null; then :
+# a lane whose tick lines all look correct. A one-PR run (BH-9369) writes no carry.
+if [ -n "${br_only_pr_run:-}" ] || { printf '%s\n' "$BUDGET_CARRY" > "$BUDGET_TMP" 2>/dev/null && mv -f "$BUDGET_TMP" "$BUDGET_FILE" 2>/dev/null; }; then :
 else say "the carried rung budget could not be written to $BUDGET_FILE — the next tick will re-read the previous value"; fi
 rm -f "$BUDGET_TMP" 2>/dev/null
 REBUILDS_BOUGHT=0
@@ -8510,7 +8513,7 @@ SAT_TMP="$SAT_FILE.tmp.$$"
 # back of its own list — so letting the new ending reset the streak would
 # silence the SATURATED alert on exactly the fleet that needs it.
 case "$STOPREASON" in budget|tick-budget) SAT_ENDED=1 ;; *) SAT_ENDED=0 ;; esac
-if [ "$SAT_ENDED" = 1 ]; then
+if [ "$SAT_ENDED" = 1 ] && [ -z "${br_only_pr_run:-}" ]; then  # BH-9369: a one-PR run leaves the streak, marker and alert to the sweep
   SAT_STREAK=$((SAT_STREAK + 1))
   if [ "${#NP[@]}" -gt 0 ]; then
     for PJ in "${!NP[@]}"; do
@@ -8532,7 +8535,7 @@ if [ "$SAT_ENDED" = 1 ]; then
     fi
   } > "$SAT_TMP" 2>/dev/null && mv -f "$SAT_TMP" "$SAT_FILE"
   rm -f "$SAT_TMP" 2>/dev/null
-else
+elif [ -z "${br_only_pr_run:-}" ]; then
   # Drained, or an idle tick with no candidates at all. Either way this lane is
   # keeping up with its list and the episode is over.
   printf 'streak\t0\talerted\t0\n' > "$SAT_TMP" 2>/dev/null && mv -f "$SAT_TMP" "$SAT_FILE"

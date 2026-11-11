@@ -75,6 +75,11 @@ esac
 # shellcheck source=lib/lane-switch.sh
 . "$(dirname "$0")/lib/lane-switch.sh" || exit 1
 lane_switch plan-overlap-off && exit 0
+# A docs path (*.md at any depth) never defers (BH-9096). A box without the lib
+# judges every pair as before.
+# shellcheck source=lib/docs-overlap.sh
+. "$(dirname "$0")/lib/docs-overlap.sh" 2>/dev/null || true
+command -v docs_overlap_pair >/dev/null 2>&1 || docs_overlap_pair() { return 1; }
 
 # <plan.md> is the documented argument; a build dir is accepted because that is
 # what every other gate in this pipeline is handed and a caller should not have
@@ -306,14 +311,19 @@ hotspot_log() { # hotspot_log <line> — stderr (the build's pipeline.log) and l
   mkdir -p "$HARNESS/logs" 2>/dev/null && printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$HARNESS/logs/plan-hotspot.log" 2>/dev/null
   return 0
 }
-judge() { # judge <other-key> <pairs> — report the non-fragment pairs (max 3); all safe -> log and go on
-  local pr real=""
+judge() { # judge <other-key> <pairs> — report the code, non-fragment pairs (max 3); all safe -> log and go on
+  local pr real="" docs=""
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
+    docs_overlap_pair "$pr" && { docs="$docs$pr"$'\n'; continue; }
     fragment_safe "$pr" || real="$real$pr"$'\n'
   done <<< "$2"
   [ -n "$real" ] && report "$1" "$(head -3 <<<"$real")"
-  hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 fragment-only files=[$(pairs_csv "$(head -3 <<<"$2")")]"
+  if [ -n "$docs" ] && [ "$docs" = "$2"$'\n' ]; then
+    hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 docs-only files=[$(pairs_csv "$(head -3 <<<"$docs")")]"
+  else
+    hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 fragment-only files=[$(pairs_csv "$(head -3 <<<"$2")")]"
+  fi
 }
 
 SEEN=$(mktemp); FCD=$(mktemp -d); trap 'rm -f "$CLAIMED" "$UNJUDGED" "$SEEN"; rm -rf "$FCD" "$PHD"' EXIT

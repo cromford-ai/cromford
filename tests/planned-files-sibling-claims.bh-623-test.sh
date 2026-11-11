@@ -85,15 +85,17 @@ cat > "$C4/plan.md" <<EOF
 $SIB_NOTE
 
 ## Tasks
-Overlap is unavoidable: edit \`docs/sib-only.md\`.
+Overlap is unavoidable: edit \`lib/sib-only.sh\`.
 EOF
 "$PF" "$C4"
 : > "$C1/RESULT"; : > "$C3/RESULT"   # finished: only the sibling S is running now
-has "$C4" docs/sib-only.md && ok || bad "A4: a path the tasks name must stay listed: $(cat "$C4/planned-files.txt")"
-has "$C4" lib/sib-only.sh && bad "A4: lib/sib-only.sh is still only in the section: $(cat "$C4/planned-files.txt")" || ok
+# TEST-CHANGE (BH-9096): a shared *.md path never defers now, so the genuine
+# overlap is pinned on a code path; docs/sib-only.md is the section-only path.
+has "$C4" lib/sib-only.sh && ok || bad "A4: a path the tasks name must stay listed: $(cat "$C4/planned-files.txt")"
+has "$C4" docs/sib-only.md && bad "A4: docs/sib-only.md is still only in the section: $(cat "$C4/planned-files.txt")" || ok
 OUT=$(HARNESS="$T/h" "$CC" proj "$C4" 2>&1); crc=$?
 [ "$crc" = 1 ] && ok || bad "A4: a genuine overlap must still defer (rc=$crc: $OUT)"
-[ "$OUT" = "CONFLICT with proj-BH-455-s: docs/sib-only.md ~ docs/sib-only.md" ] \
+[ "$OUT" = "CONFLICT with proj-BH-455-s: lib/sib-only.sh ~ lib/sib-only.sh" ] \
   && ok || bad "A4: conflict reason: $OUT"
 scratch_rm "$C4"   # keep it from colliding with the fixtures below
 

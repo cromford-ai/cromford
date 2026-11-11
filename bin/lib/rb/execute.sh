@@ -282,6 +282,26 @@ else
 fi
 # <<< generated no-commit
 
+# >>> changelog fragment
+# --- A BUILD DOES NOT EDIT THE SHARED CHANGELOG (BH-9096) ----------------------
+# An entry the build ADDED to docs/RECENT-CHANGES.md (the path list is the row
+# conf.changelog-fragment.paths) moves to its own docs/recent-changes.d/<key>.md
+# in one commit, so two builds never edit one hunk and the second merge cannot
+# conflict. HERE, before the gates, the review and the first push, for the same
+# reason as the generated no-commit block above. A rewrite of older lines, a
+# new changelog, or a diff that is only the changelog is left as it is. Never
+# fatal. bin/lib/changelog-fragment.sh; switch changelog-fragment-off.
+# shellcheck disable=SC1091
+if [ -n "${HARNESS:-${H:-}}" ] \
+   && . "${HARNESS:-${H:-}}/bin/lib/changelog-fragment.sh" 2>/dev/null \
+   && type clf_strip >/dev/null 2>&1; then
+  CLF_MSG=$(clf_strip "$BASE" "$KEY" "$BUILD" | paste -sd ';' -)
+  echo "$(STAMP) [$PROJECT/$KEY] changelog fragment: ${CLF_MSG:-no changelog entry in this diff}" >> "$BUILD/pipeline.log"
+else
+  echo "$(STAMP) [$PROJECT/$KEY] changelog fragment: bin/lib/changelog-fragment.sh not on this box — skipped" >> "$BUILD/pipeline.log"
+fi
+# <<< changelog fragment
+
 # >>> prepr gate
 # --- PRE-PR GATE (BH-1706) -----------------------------------------------------
 # CI runs `bin/checks-run.sh --tree .` and `bin/test-determinism-lint.sh` on

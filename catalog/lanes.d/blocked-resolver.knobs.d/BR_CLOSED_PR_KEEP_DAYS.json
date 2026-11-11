@@ -1,0 +1,11 @@
+{
+  "env": "BR_CLOSED_PR_KEEP_DAYS",
+  "type": "int",
+  "default": 90,
+  "min": 0,
+  "max": 3650,
+  "unit": "days",
+  "zero_means": "unlimited",
+  "read_in": "bin/blocked-resolver.d/bh-9369-closed-pr-retire.sh",
+  "note": "BH-9369 fix 1: a row of state/blocked-resolver/.closed-prs-<project>.tsv whose closed_at is older than this is pruned on the next rewrite. Its retire is already marked by then."
+}

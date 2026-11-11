@@ -14,6 +14,17 @@
 # bin/lib/br/opt/untouched.sh reads it. BR_OPT_OFF=bh-7555-overdue-first does
 # not source this file, and the driver's call site then falls back to `cat`.
 
+# br_fresh_park <row> <now> <min> — rc 0 when the row's url is a PR url and it
+#   was parked (an epoch, not in the future) less than <min> minutes ago
+#   (BH-9369 fix 5). Pure.
+br_fresh_park() {
+  local src p rkey reason url rec tkey parked
+  IFS=$'\t' read -r src p rkey reason url rec tkey parked <<<"$1"
+  [[ "${url:-}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$ ]] || return 1
+  case "${parked:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$parked" -le "$2" ] && [ $(( $2 - parked )) -lt $(( $3 * 60 )) ]
+}
+
 # br_overdue_first <now-epoch> — stdin: the run's 8-column candidate rows
 # (src p rkey reason url rec tkey parked), already in cost, round-robin and
 # rank order. stdout: the same rows, reordered:
@@ -22,6 +33,10 @@
 #   2. overdue rows (parked is an epoch and now - parked >= the bar), oldest
 #      first, stable on a tie;
 #   3. every other row, in input order.
+# BH-9369 fix 5: when one overdue row is BR_STALE_OVERDUE_DAYS old (default 7,
+# 0 = off), the live PR rows parked less than BR_FRESH_PARK_MIN ago (default
+# 1440, 0 = off) are lifted out of 2 and 3 and go between 1 and 2, in their
+# order there. With no stale row the order above stands, byte for byte.
 # A parked of `-`, empty, non-numeric or in the future is never overdue:
 # unknown is not oldest (D11). Every input row is printed exactly once. On any
 # failure the input is printed unchanged (fail-open): the driver reads this
@@ -66,6 +81,37 @@ br_overdue_first() {
   if [ "${#over[@]}" -eq 0 ]; then printf '%s\n' "$buf"; return 0; fi
   sorted=$(printf '%s\n' "${over[@]}" | sort -s -t$'\t' -k1,1n | cut -f2-) \
     || { say "overdue-first: the age sort failed — every candidate keeps its order this tick"; printf '%s\n' "$buf"; return 0; }
+  # BH-9369 fix 5: A FRESH LIVE PARK GOES BEFORE A STALE OVERDUE ROW. When one
+  # overdue row is BR_STALE_OVERDUE_DAYS old, the oldest-first order put 200
+  # week-old rows ahead of a PR parked 30 min ago, and the fresh park waited
+  # hours. Only when such a stale row exists: with none, the order above stands.
+  local fdays fmin fresh=() keep=() frow fstale=0 fover=0
+  fdays="${BR_STALE_OVERDUE_DAYS:-7}"   # knob: catalog/lanes.d/blocked-resolver.knobs.d/BR_STALE_OVERDUE_DAYS.json
+  fmin="${BR_FRESH_PARK_MIN:-1440}"     # knob: catalog/lanes.d/blocked-resolver.knobs.d/BR_FRESH_PARK_MIN.json
+  case "$fdays" in ''|*[!0-9]*) say "BR_STALE_OVERDUE_DAYS is '$fdays', not a number — the fallback 7 is used"; fdays=7 ;; esac
+  case "$fmin" in ''|*[!0-9]*) say "BR_FRESH_PARK_MIN is '$fmin', not a number — the fallback 1440 is used"; fmin=1440 ;; esac
+  if [ "$fdays" -gt 0 ] && [ "$fmin" -gt 0 ]; then
+    for frow in "${over[@]}"; do
+      [ $((now - ${frow%%$'\t'*})) -ge $((fdays * 86400)) ] && { fstale=1; break; }
+    done
+  fi
+  if [ "$fstale" = 1 ]; then
+    # fresh = live PR rows parked < BR_FRESH_PARK_MIN ago, from the over rows
+    # (oldest first) and then the rest (input order); hot rows are never moved.
+    local frest=()
+    while IFS= read -r frow; do
+      [ -n "$frow" ] || continue
+      if br_fresh_park "$frow" "$now" "$fmin"; then fresh+=("$frow"); fover=$((fover+1)); else keep+=("$frow"); fi
+    done <<<"$sorted"
+    for frow in ${rest[@]+"${rest[@]}"}; do
+      if br_fresh_park "$frow" "$now" "$fmin"; then fresh+=("$frow"); else frest+=("$frow"); fi
+    done
+    if [ "${#fresh[@]}" -gt 0 ]; then
+      sorted=$( { printf '%s\n' "${fresh[@]}"; [ "${#keep[@]}" -eq 0 ] || printf '%s\n' "${keep[@]}"; } )
+      rest=(${frest[@]+"${frest[@]}"})
+      said+=("fresh-first: ${#fresh[@]} live park(s) parked < $fmin min offered before $(( ${#over[@]} - fover )) overdue row(s) older than $fdays days")
+    fi
+  fi
   out=$( { [ "${#hot[@]}" -eq 0 ] || printf '%s\n' "${hot[@]}"
            printf '%s\n' "$sorted"
            [ "${#rest[@]}" -eq 0 ] || printf '%s\n' "${rest[@]}"; } )

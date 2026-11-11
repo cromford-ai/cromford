@@ -1,0 +1,10 @@
+{
+  "env": "BR_CLOSED_PR_OVERLAP_SECS",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "read_in": "bin/blocked-resolver.d/bh-9369-closed-pr-retire.sh",
+  "note": "BH-9369 fix 1 (lead review lr-9381): the overlap of a closed-PR read with the last complete read. The read stops at that read's newest updated_at minus this many seconds, so a PR closed while the last read was running is still seen. 0 = no overlap."
+}

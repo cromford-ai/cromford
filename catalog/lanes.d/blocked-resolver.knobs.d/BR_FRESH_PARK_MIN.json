@@ -1,0 +1,11 @@
+{
+  "env": "BR_FRESH_PARK_MIN",
+  "type": "int",
+  "default": 1440,
+  "min": 0,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-7555-overdue-first.sh",
+  "note": "BH-9369 fix 5: a live PR park parked less than this many minutes ago is offered before the overdue rows when one of them is BR_STALE_OVERDUE_DAYS old."
+}

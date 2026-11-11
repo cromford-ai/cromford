@@ -117,6 +117,12 @@ off "$(genv OVERLAP_SCHED)" && exit 0
 . "$HERE/lib/lane-switch.sh" 2>/dev/null || true
 command -v lane_switch >/dev/null 2>&1 || lane_switch() { [ -f "$HARNESS/flags/$1" ]; }
 lane_switch plan-overlap-off && exit 0
+# A docs path (*.md at any depth) never defers (BH-9096). A box without the lib
+# judges every path as before.
+# shellcheck source=bin/lib/docs-overlap.sh
+. "$HERE/lib/docs-overlap.sh" 2>/dev/null || true
+command -v docs_overlap_pair >/dev/null 2>&1 || docs_overlap_pair() { return 1; }
+command -v docs_overlap_drop >/dev/null 2>&1 || docs_overlap_drop() { cat; }
 command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply plan-sibling "$PROJECT" >/dev/null 2>&1
 
 valid_key() { [[ "${1:-}" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$1" != . ] && [ "$1" != .. ]; }
@@ -239,7 +245,7 @@ if [ "$MODE" = inflight ]; then
   trap 'rm -rf "$TMPD"' EXIT
   head -n "$TOP" "$BUILD/.hotspots.txt" | awk 'NF' > "$TMPD/hot"
   { cat "$(psib_cfiles)" 2>/dev/null; psib_shared_files "$BUILD/plan.md"; } | awk 'NF && !s[$0]++' > "$TMPD/cand"
-  grep -Fxf "$TMPD/hot" "$TMPD/cand" > "$TMPD/hotset" 2>/dev/null
+  grep -Fxf "$TMPD/hot" "$TMPD/cand" 2>/dev/null | docs_overlap_drop > "$TMPD/hotset"
   if [ ! -s "$TMPD/hotset" ]; then psib_log "PLAN_INFLIGHT $KEY choice=build hot=0"; exit 0; fi
   NH=$(wc -l < "$TMPD/hotset" | tr -d ' ')
   SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
@@ -428,12 +434,17 @@ while IFS=$'\t' read -r SN PRN; do
   jq -r '.[].filename // empty' "$TMPD/f.json" > "$TMPD/theirs" 2>/dev/null
   HITS=$(overlap "$CFILES" "$TMPD/theirs")
   [ -n "$HITS" ] || continue
-  REAL=""
+  REAL=""; DOCS=""
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
+    docs_overlap_pair "$pr" && { DOCS="$DOCS$pr"$'\n'; continue; }
     fragment_safe "$pr" || REAL="$REAL$pr"$'\n'
   done <<< "$HITS"
   SIBKEY="$PU-$SN"
+  if [ -z "$REAL" ] && [ "$DOCS" = "$HITS"$'\n' ]; then
+    psib_log "PLAN_SIBLING $KEY choice=build vs $SIBKEY pr=#$PRN docs-only files=[$(pairs_csv "$(head -3 <<<"$HITS")")]"
+    continue
+  fi
   if [ -z "$REAL" ]; then
     psib_log "PLAN_SIBLING $KEY choice=build vs $SIBKEY pr=#$PRN fragment-only files=[$(pairs_csv "$(head -3 <<<"$HITS")")]"
     continue

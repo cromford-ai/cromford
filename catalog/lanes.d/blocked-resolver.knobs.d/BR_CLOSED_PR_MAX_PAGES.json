@@ -1,0 +1,11 @@
+{
+  "env": "BR_CLOSED_PR_MAX_PAGES",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 200,
+  "unit": "pages",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9369-closed-pr-retire.sh",
+  "note": "BH-9369 fix 1: the most pages (100 PRs each) of the repo's closed pull list one tick reads, newest update first. A read stops earlier at the last complete read's newest updated_at minus 600 s, so the steady state is one page. 0 = no read: no park is retired by PR state."
+}

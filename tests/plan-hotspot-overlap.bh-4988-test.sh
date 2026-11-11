@@ -132,7 +132,7 @@ po BH-B
 [ "$RC" = 0 ] && ok || bad "case 2b: bare fragment dir + glob-declared render must not defer, rc=$RC out=$OUT"
 # 2c. the knob widens the set; a trailing slash is stripped
 reset
-claimf BH-A docs/frag; mkbuild BH-B docs/frag/b.md
+claimf BH-A docs/frag; mkbuild BH-B docs/frag/b.json  # TEST-CHANGE (BH-9096): a .md path never defers now, so the knob is tested on a code file
 OUT=$(HARNESS="$H" PLAN_OVERLAP_REPO="$R" PLAN_OVERLAP_FRAGMENT_DIRS="docs/frag/" \
       bash "$H/bin/plan-overlap.sh" proj "$(bdir BH-B)" 2>/dev/null); RC=$?
 [ "$RC" = 0 ] && ok || bad "case 2c: PLAN_OVERLAP_FRAGMENT_DIRS must be read, rc=$RC out=$OUT"
