@@ -253,12 +253,56 @@ T_REBASE=$(STAGE_START)
 # FETCH_HEAD and leaves refs/remotes/origin/<parent> stale, which would rebase
 # onto the parent as it looked when this build started rather than as it is.
 REBASE_NOTE=""
-# >>> rebase verify
-if [ -n "$STACK_ON" ]; then
-  git fetch origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" --quiet 2>/dev/null || true
-else
-  git fetch origin "$BASE" --quiet 2>/dev/null || true
+# >>> rebase fetch (BH-9406)
+# THE FETCH FAILS CLOSED (BH-9406, TK-3738). It was `|| true`: a fetch that
+# failed left origin/$BASE stale, the verify below read that as "main did not
+# move", and the PR opened on outdated code. Now it is retried, and a fetch that
+# never lands ends the build BUILD_DEFERRED with no PR (the branch is already on
+# origin from PUSH_BRANCH; the pool reap requeues the deferral).
+# THE KNOBS ARE SETTINGS ROWS (worker/jobs/schema.d/202611110257-bh-9406-rebase-verify-knobs.sql):
+#   rebase_verify.mode.<project>, then rebase_verify.mode = block (default) |
+#     note (the old fail-open fetch and the old notes). Unreadable or any other
+#     value is block.
+#   rebase_verify.fetch_attempts = 1..10, code fallback 3.
+#   rebase_verify.fetch_sleep_s  = 0..120, code fallback 10.
+# A value that is not a number in range is the fallback.
+rv_knob() { # rv_knob <key> <min> <max> <fallback>  -> prints the integer
+  local v=""
+  command -v setting_get >/dev/null 2>&1 && v=$(setting_get "$1" 2>/dev/null) || v=""
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$v" in ''|*[!0-9]*) echo "$4"; return 0 ;; esac
+  v=$((10#$v))
+  if [ "$v" -lt "$2" ] || [ "$v" -gt "$3" ]; then echo "$4"; else echo "$v"; fi
+}
+RV_MODE=block
+if command -v setting_get >/dev/null 2>&1; then
+  _RV_V=$(setting_get "rebase_verify.mode.$PROJECT" 2>/dev/null) || _RV_V=$(setting_get rebase_verify.mode 2>/dev/null) || _RV_V=block
+  case "$(printf '%s' "$_RV_V" | tr 'A-Z' 'a-z' | tr -d '[:space:]')" in note) RV_MODE=note ;; esac
 fi
+RV_FETCH_N=$(rv_knob rebase_verify.fetch_attempts 1 10 3)
+RV_FETCH_SLEEP=$(rv_knob rebase_verify.fetch_sleep_s 0 120 10)
+RV_FETCH_OK=0; _rv_i=0
+while [ "$_rv_i" -lt "$RV_FETCH_N" ]; do
+  _rv_i=$((_rv_i+1))
+  if [ -n "$STACK_ON" ]; then
+    git fetch origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" --quiet 2>>"$BUILD/pipeline.log" && { RV_FETCH_OK=1; break; }
+  else
+    git fetch origin "$BASE" --quiet 2>>"$BUILD/pipeline.log" && { RV_FETCH_OK=1; break; }
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] rebase fetch attempt $_rv_i/$RV_FETCH_N of origin/$BASE failed (BH-9406)" >> "$BUILD/pipeline.log"
+  [ "$_rv_i" -lt "$RV_FETCH_N" ] && sleep "$RV_FETCH_SLEEP"
+done
+if [ "$RV_FETCH_OK" = 0 ]; then
+  if [ "$RV_MODE" = block ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] rebase fetch of origin/$BASE failed $RV_FETCH_N time(s) — BUILD_DEFERRED, no PR opened on an unverified base (BH-9406)" >> "$BUILD/pipeline.log"
+    declare -F PUSH_BRANCH >/dev/null && PUSH_BRANCH rebase-fetch
+    RESULT "BUILD_DEFERRED rebase-fetch: git fetch of origin/$BASE failed $RV_FETCH_N time(s) — the branch is pushed, no PR opened"
+    exit 3
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] rebase fetch of origin/$BASE failed $RV_FETCH_N time(s) — rebase_verify.mode note, going on with the local origin/$BASE (BH-9406)" >> "$BUILD/pipeline.log"
+fi
+# <<< rebase fetch (BH-9406)
+# >>> rebase verify
 # BH-575: the heap this verify typecheck runs at. A project whose tsc needs more
 # than Node's default (project-5: 6144, its own CI sets it) aborted here at 134
 # before printing a single diagnostic, and the step called that "red". Order:
@@ -278,6 +322,57 @@ rebase_tsc_heap() {
     h=$(( mem * 7 / 10 )); [ "$h" -gt 12288 ] && h=12288; src=ram
   fi
   echo "$h $src"
+}
+# rebase_typecheck — the typecheck of the updated HEAD (BH-575 classification).
+# Sets TC_OK (1 green or no TS repo, 0 not), TC_INCONCLUSIVE (why it did not
+# finish, empty for a real answer), RB_HEAP, RB_HEAP_SRC, RB_RC, TSC_FLAGS and
+# writes $BUILD/rebase-tsc.txt. The gate below (BH-9406) re-runs it after a fix
+# round, so there is one classification, not two copies of it.
+rebase_typecheck() {
+  TC_OK=1
+  TC_INCONCLUSIVE=""
+  TSC_FLAGS=""; [ -f tsconfig.build.json ] && TSC_FLAGS="-p tsconfig.build.json"
+  if [ -f tsconfig.build.json ] || [ -f tsconfig.json ]; then
+    read -r RB_HEAP RB_HEAP_SRC <<<"$(rebase_tsc_heap)"
+    echo "$(STAMP) [$PROJECT/$KEY] rebase typecheck at heap ${RB_HEAP}MB (source: $RB_HEAP_SRC)" >> "$BUILD/pipeline.log"
+    # BH-575: append, never clobber — a later --max-old-space-size wins in V8,
+    # so whatever the build environment already asked for survives.
+    NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$RB_HEAP" \
+      timeout 900 npx tsc $TSC_FLAGS --noEmit > "$BUILD/rebase-tsc.txt" 2>&1
+    RB_RC=$?
+    cat "$BUILD/rebase-tsc.txt" >> "$BUILD/pipeline.log"
+    # BH-575: a tsc that CRASHED did not say no. `|| TC_OK=0` collapsed a V8
+    # abort (>=128), a SIGKILL, a `timeout` (124) and an npx that could not
+    # find tsc into "typechecks red", and the PR was parked on a sentence
+    # nobody could check. Red is an exit with `error TS` diagnostics in it;
+    # everything else is INCONCLUSIVE — neither green nor red, and said so.
+    if [ "$RB_RC" != 0 ]; then
+      TC_OK=0
+      if [ "$RB_RC" = 124 ]; then
+        TC_INCONCLUSIVE="tsc exit 124 (timeout 900s)"
+      elif [ "$RB_RC" -ge 128 ] || ! grep -qE 'error TS[0-9]+' "$BUILD/rebase-tsc.txt"; then
+        TC_INCONCLUSIVE="tsc exit $RB_RC with no diagnostics at heap ${RB_HEAP}MB"
+      fi
+    fi
+    # Baseline-aware (2026-08-20, the #578/#579 park class): a red typecheck
+    # whose every error line ALREADY exists on origin/$BASE is main's own
+    # baseline, not this rebase's damage — the train learned this first;
+    # its 4h-cached baseline file is reused here. No baseline cached = the
+    # old strict behavior stands (fail closed).
+    # An inconclusive run has no error lines to diff, so the baseline branch
+    # is skipped for it (BH-575) — accepting a crash as "zero new errors"
+    # would be the same false green from the other side.
+    if [ "$TC_OK" = 0 ] && [ -z "$TC_INCONCLUSIVE" ]; then
+      BASEF="$HARNESS/state/tsc-baseline-$PROJECT.txt"
+      if [ -s "$BASEF" ] && [ "$(find "$BASEF" -mmin -240 2>/dev/null | wc -l)" -gt 0 ]; then
+        NEWERR=$(grep "error TS" "$BUILD/rebase-tsc.txt" | sort -u | comm -13 "$BASEF" - | wc -l)
+        if [ "$NEWERR" -eq 0 ]; then
+          TC_OK=1
+          echo "$(STAMP) [$PROJECT/$KEY] rebase typecheck red but zero NEW errors vs origin/$BASE baseline — accepting" >> "$BUILD/pipeline.log"
+        fi
+      fi
+    fi
+  fi
 }
 # BH-575: "main moved" is a claim about two shas, so read them once and print
 # them in every note. An EMPTY merge-base (a shallow pool clone, unrelated
@@ -339,50 +434,7 @@ if [ -n "$RB_MAIN" ] && [ -n "$RB_MB" ] && [ "$RB_MAIN" != "$RB_MB" ]; then
     RB_ABORT=(rebase --abort); RB_DID="rebased onto origin/$BASE"
   fi
   if { if [ "$RB_UPDATE" = merge ]; then git merge --no-edit "origin/$BASE"; else git rebase "origin/$BASE"; fi; } >> "$BUILD/pipeline.log" 2>&1; then
-    TC_OK=1
-    TC_INCONCLUSIVE=""
-    TSC_FLAGS=""; [ -f tsconfig.build.json ] && TSC_FLAGS="-p tsconfig.build.json"
-    if [ -f tsconfig.build.json ] || [ -f tsconfig.json ]; then
-      read -r RB_HEAP RB_HEAP_SRC <<<"$(rebase_tsc_heap)"
-      echo "$(STAMP) [$PROJECT/$KEY] rebase typecheck at heap ${RB_HEAP}MB (source: $RB_HEAP_SRC)" >> "$BUILD/pipeline.log"
-      # BH-575: append, never clobber — a later --max-old-space-size wins in V8,
-      # so whatever the build environment already asked for survives.
-      NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$RB_HEAP" \
-        timeout 900 npx tsc $TSC_FLAGS --noEmit > "$BUILD/rebase-tsc.txt" 2>&1
-      RB_RC=$?
-      cat "$BUILD/rebase-tsc.txt" >> "$BUILD/pipeline.log"
-      # BH-575: a tsc that CRASHED did not say no. `|| TC_OK=0` collapsed a V8
-      # abort (>=128), a SIGKILL, a `timeout` (124) and an npx that could not
-      # find tsc into "typechecks red", and the PR was parked on a sentence
-      # nobody could check. Red is an exit with `error TS` diagnostics in it;
-      # everything else is INCONCLUSIVE — neither green nor red, and said so.
-      if [ "$RB_RC" != 0 ]; then
-        TC_OK=0
-        if [ "$RB_RC" = 124 ]; then
-          TC_INCONCLUSIVE="tsc exit 124 (timeout 900s)"
-        elif [ "$RB_RC" -ge 128 ] || ! grep -qE 'error TS[0-9]+' "$BUILD/rebase-tsc.txt"; then
-          TC_INCONCLUSIVE="tsc exit $RB_RC with no diagnostics at heap ${RB_HEAP}MB"
-        fi
-      fi
-      # Baseline-aware (2026-08-20, the #578/#579 park class): a red typecheck
-      # whose every error line ALREADY exists on origin/$BASE is main's own
-      # baseline, not this rebase's damage — the train learned this first;
-      # its 4h-cached baseline file is reused here. No baseline cached = the
-      # old strict behavior stands (fail closed).
-      # An inconclusive run has no error lines to diff, so the baseline branch
-      # is skipped for it (BH-575) — accepting a crash as "zero new errors"
-      # would be the same false green from the other side.
-      if [ "$TC_OK" = 0 ] && [ -z "$TC_INCONCLUSIVE" ]; then
-        BASEF="$HARNESS/state/tsc-baseline-$PROJECT.txt"
-        if [ -s "$BASEF" ] && [ "$(find "$BASEF" -mmin -240 2>/dev/null | wc -l)" -gt 0 ]; then
-          NEWERR=$(grep "error TS" "$BUILD/rebase-tsc.txt" | sort -u | comm -13 "$BASEF" - | wc -l)
-          if [ "$NEWERR" -eq 0 ]; then
-            TC_OK=1
-            echo "$(STAMP) [$PROJECT/$KEY] rebase typecheck red but zero NEW errors vs origin/$BASE baseline — accepting" >> "$BUILD/pipeline.log"
-          fi
-        fi
-      fi
-    fi
+    rebase_typecheck
     if [ "$TC_OK" = 1 ]; then
       # Head-bound approval (SDLC item 1): a CLEAN rebase this pipeline performed
       # itself, typechecked green, carries the reviewed tree onto a newer base —
@@ -416,6 +468,7 @@ if [ -n "$RB_MAIN" ] && [ -n "$RB_MB" ] && [ "$RB_MAIN" != "$RB_MB" ]; then
       fi
     fi
   else
+    RB_CONFLICT_PATHS=$(git diff --name-only --diff-filter=U 2>/dev/null | awk 'NR <= 20 { printf "%s ", $0 }')
     git "${RB_ABORT[@]}" >> "$BUILD/pipeline.log" 2>&1 || true
     git reset --hard "$PREBASE" >> "$BUILD/pipeline.log" 2>&1 || true
     REBASE_NOTE=" | REBASE_CONFLICT vs origin/$BASE @$(git rev-parse --short "origin/$BASE") (base=$RB_MB_S main=$RB_MAIN_S) — PR will be DIRTY, needs a rebase/fix pass"
@@ -431,6 +484,84 @@ elif [ -n "$RB_MAIN" ] && [ -z "$RB_MB" ]; then
   echo "$(STAMP) [$PROJECT/$KEY] merge-base of origin/$BASE and HEAD is unresolvable (main=$RB_MAIN_S) — rebase skipped, not claiming main moved" >> "$BUILD/pipeline.log"
 fi
 # <<< rebase verify
+# >>> rebase verify gate (BH-9406)
+# A CONFLICT or a RED typecheck no longer opens the PR with only a note
+# (TK-3738: a DIRTY PR on outdated code). It gets fix rounds on the box: the fix
+# model updates the branch onto origin/$BASE itself, resolves, typechecks and
+# commits. A round passes only when rebase_recheck reads a clean, complete
+# update that typechecks green. No round passes: the worktree goes back to
+# PREBASE, nothing is pushed, and the build ends REVIEW_BLOCKED (exit 6) — the
+# prepush gate's terminal. An INCONCLUSIVE tsc, an unresolvable merge-base and
+# a red the baseline accepts are not gated (BH-575 decided those).
+# KNOBS (settings rows, worker/jobs/schema.d/202611110257-bh-9406-rebase-verify-knobs.sql):
+#   rebase_verify.mode[.<project>] (read in `# >>> rebase fetch`): note = the old note, no gate.
+#   rebase_verify.fix_rounds    = 0..3, code fallback 1.
+#   rebase_verify.fix_timeout_s = 60..7200, code fallback 1800.
+RV_KIND=""
+case "$REBASE_NOTE" in
+  *REBASE_CONFLICT*)      RV_KIND=conflict ;;
+  *REBASE_VERIFY_FAILED*) RV_KIND=typecheck-red ;;
+esac
+if [ -n "$RV_KIND" ] && [ "${RV_MODE:-block}" = block ]; then
+  RV_ROUNDS=$(rv_knob rebase_verify.fix_rounds 0 3 1)
+  RV_TMO=$(rv_knob rebase_verify.fix_timeout_s 60 7200 1800)
+  RV_GITDIR=$(git rev-parse --absolute-git-dir 2>/dev/null)
+  # rebase_recheck — rc 0 only for a clean, complete update that typechecks
+  # green (or INCONCLUSIVE, which keeps its note). Sets RV_WHY on a fail.
+  rebase_recheck() {
+    RV_WHY=""
+    if [ -n "$RV_GITDIR" ] && { [ -e "$RV_GITDIR/MERGE_HEAD" ] || [ -d "$RV_GITDIR/rebase-merge" ] || [ -d "$RV_GITDIR/rebase-apply" ]; }; then RV_WHY="a merge or rebase is still in progress"; return 1; fi
+    [ -z "$(git ls-files -u 2>/dev/null)" ] || { RV_WHY="unmerged paths remain"; return 1; }
+    git diff --quiet HEAD 2>/dev/null || { RV_WHY="uncommitted changes remain"; return 1; }
+    [ "$(git rev-parse HEAD 2>/dev/null)" != "$PREBASE" ] || { RV_WHY="HEAD did not move"; return 1; }
+    git merge-base --is-ancestor "$RB_MAIN" HEAD 2>/dev/null || { RV_WHY="origin/$BASE ($RB_MAIN_S) is not in HEAD"; return 1; }
+    if [ "$RB_UPDATE" = merge ] && ! git merge-base --is-ancestor "$PREBASE" HEAD 2>/dev/null; then
+      RV_WHY="the branch must take origin/$BASE by merge, and the pre-update head is no longer in HEAD"; return 1
+    fi
+    rebase_typecheck
+    [ "$TC_OK" = 1 ] || [ -n "$TC_INCONCLUSIVE" ] || { RV_WHY="the typecheck is red"; return 1; }
+    return 0
+  }
+  if [ "$RB_UPDATE" = merge ]; then RV_CMD="git merge --no-edit origin/$BASE"; else RV_CMD="git rebase origin/$BASE"; fi
+  if [ "$RV_KIND" = conflict ]; then RV_WHAT="conflicts in: ${RB_CONFLICT_PATHS:-unknown paths}"; else RV_WHAT="typechecks red; the tsc output is in $BUILD/rebase-tsc.txt"; fi
+  RV_DONE=0; RV_PASS=0
+  while [ "$RV_DONE" -lt "$RV_ROUNDS" ] && command -v CC >/dev/null 2>&1; do
+    RV_DONE=$((RV_DONE+1))
+    echo "$(STAMP) [$PROJECT/$KEY] rebase verify gate: $RV_KIND vs origin/$BASE -> fix round $RV_DONE/$RV_ROUNDS (BH-9406)" >> "$BUILD/pipeline.log"
+    CC fix "${FIX_MODEL:-}" "$RV_TMO" "$BUILD/rebase-fix-run-$RV_DONE.txt" "Branch ${BRANCH:-HEAD} is at $PREBASE. origin/$BASE moved to $RB_MAIN_S, and updating the branch onto it $RV_WHAT. Update the branch with exactly this command: '$RV_CMD'. Resolve every conflict and keep the intent of both sides. Run the typecheck ('npx tsc ${TSC_FLAGS:-} --noEmit' where the repo has a tsconfig) and fix what is red. Commit your work so that no merge or rebase is in progress and the tree is clean. Do NOT push. Never weaken, skip or delete a test to get green." || true
+    if rebase_recheck; then
+      RV_PASS=1
+      if [ -n "${TC_INCONCLUSIVE:-}" ]; then
+        REBASE_NOTE=" | REBASE_VERIFY_INCONCLUSIVE: main moved (base=$RB_MB_S main=$RB_MAIN_S) and fix round $RV_DONE updated the branch, but its typecheck did not finish — $TC_INCONCLUSIVE — rebase unverified"
+      else
+        REBASE_NOTE=""
+      fi
+      echo "$(STAMP) [$PROJECT/$KEY] rebase fix round $RV_DONE landed: $RV_KIND resolved, HEAD $(git rev-parse --short=12 HEAD) contains origin/$BASE $RB_MAIN_S${TC_INCONCLUSIVE:+ (typecheck INCONCLUSIVE: $TC_INCONCLUSIVE)} (BH-9406)" >> "$BUILD/pipeline.log"
+      PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-PR rebase fix round\n\n'"Updating this branch onto \`origin/$BASE\` ($RB_MAIN_S) gave a $RV_KIND. Fix round $RV_DONE on the build box resolved it with \`$RV_CMD\`. The fix commits sit above the reviewed head, so the head-bound gate re-reviews them."$'\n'
+      break
+    fi
+    echo "$(STAMP) [$PROJECT/$KEY] rebase fix round $RV_DONE did not land: $RV_WHY — reset to $(git rev-parse --short=12 "$PREBASE") (BH-9406)" >> "$BUILD/pipeline.log"
+    git merge --abort >> "$BUILD/pipeline.log" 2>&1 || true
+    git rebase --abort >> "$BUILD/pipeline.log" 2>&1 || true
+    git reset --hard "$PREBASE" >> "$BUILD/pipeline.log" 2>&1 || true
+  done
+  if [ "$RV_PASS" = 0 ]; then
+    { echo "kind: $RV_KIND"
+      echo "base: origin/$BASE merge-base=$RB_MB_S main=$RB_MAIN_S head=$PREBASE"
+      echo "update: $RV_CMD"
+      echo "conflict paths: ${RB_CONFLICT_PATHS:-none}"
+      echo "fix rounds: $RV_DONE of $RV_ROUNDS${RV_WHY:+ (last: $RV_WHY)}"
+      if [ -s "$BUILD/rebase-tsc.txt" ]; then echo "--- rebase-tsc.txt (first 40 lines)"; sed -n '1,40p' "$BUILD/rebase-tsc.txt"; fi
+    } > "$BUILD/rebase-verify-block.txt"
+    echo "$(STAMP) [$PROJECT/$KEY] rebase verify gate: $RV_KIND vs origin/$BASE not fixed after $RV_DONE fix round(s) — REVIEW_BLOCKED, no PR (BH-9406)" >> "$BUILD/pipeline.log"
+    [ -x "$HARNESS/bin/alert-line.sh" ] && "$HARNESS/bin/alert-line.sh" --project "$PROJECT" \
+      "[$PROJECT/$KEY] BLOCKED: the pre-PR update onto origin/$BASE gave a $RV_KIND that $RV_DONE fix round(s) did not fix (rebase-verify) (pr)"
+    escalate_block "rebase-verify" "Updating the branch onto origin/$BASE ($RB_MAIN_S) gave a $RV_KIND, and $RV_DONE fix round(s) did not fix it. Details: rebase-verify-block.txt."
+    RESULT "REVIEW_BLOCKED rebase-verify: $RV_KIND vs origin/$BASE (base=$RB_MB_S main=$RB_MAIN_S) after $RV_DONE fix round(s); see $BUILD/rebase-verify-block.txt"
+    exit 6
+  fi
+fi
+# <<< rebase verify gate (BH-9406)
 # >>> migration renumber (BH-7365)
 # A repo that numbers migrations by hand (migration_renumber.dir.<project>)
 # gets a branch-added migration whose number main already took moved above
