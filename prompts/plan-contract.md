@@ -33,6 +33,7 @@ Pilot 1313: the invariants section eliminated the invariant-class defects (zero 
 - Negative/policy requirements ("no X going forward", "never Y") get the same treatment — a row naming the unit that REMOVES or refuses the behavior and the test that pins its absence.
 - The whole-PR review checks the matrix against the ticket before checking the code.
 - The matrix lives under `## Requirements coverage`. One row per ticket noun, field and number, each quoting the ticket's words and naming the file and the test that deliver it. When the ticket BODY has a `## Scope` list, the plan gate counts (BH-9441, `bin/lib/coverage-rows.sh`): fewer table or list rows than top-level Scope items is `PLAN_COVERAGE: short`, rc 2, one repair pass, then PLAN_MALFORMED. Scope items in comments are not counted. A Scope item this slice does not deliver still gets a row that names the child slice that owns it. Knob `COVERAGE_ROWS_ENFORCE` (1 = refuse, 0 = log only; `catalog/lanes.d/_lib.coverage-rows.json`).
+- The in-build general review reads the same rows as R1..Rn (BH-9499, `bin/lib/coverage-review.sh`) and writes one `COVERAGE-ROW:` line per row. So a row holds ONE requirement: a row that bundles two is judged as one, and a part-delivered row is `missing`. A row with no line, a `missing` or `contradicts` row, or a `delivered` row with no file:line turns the review's APPROVE into `[BLOCK wrong-data]`.
 
 ## 5. KIND: which workflow this ticket gets (SDLC item 7, 2026-09-06)
 

@@ -26,6 +26,7 @@
 # THE FUNCTIONS
 #   cr_scope_count <ticket>          the item count; rc 1 and no output: no Scope
 #   cr_plan_rows <plan>              the row count; `0` and rc 1: no section
+#   cr_plan_row_list <plan>          the rows, one a line; rc 1: no section
 #   cr_conf [project]                sets CR_ENFORCE (0|1) and CR_CONF_WARN
 #   cr_plan_check <plan> <ticket>    the plan gate (rc 2 = refuse); no Scope: silent
 #   cr_plan_note <ticket>            the planner's sentence, or nothing
@@ -50,12 +51,17 @@ _cr_body() {
 # whose lowercased text matches the regex, and counts its items up to the next
 # heading at the same or a higher level. mode scope: list items only. mode
 # rows: table rows (no separator, no header) and list items. Prints the count,
-# or nothing when no heading matched.
+# or nothing when no heading matched. mode list: the rows of mode rows, one per
+# line, in order: a table row's text with its outer pipes and spaces trimmed (an
+# inner `|` stays), a list item's text without its marker. No count.
 _cr_count() {
   tr -d '\r' | awk -v re="$1" -v mode="$2" '
+    function cell(s) { sub(/^[ \t]*\|?[ \t]*/, "", s); sub(/[ \t]*\|?[ \t]*$/, "", s); return s }
     function flush(   i) {
       # A table row is a header when the line after it is a separator.
-      for (i = 1; i <= nt; i++) if (!(tsep[i]) && !(i < nt && tsep[i + 1])) n++
+      for (i = 1; i <= nt; i++) if (!(tsep[i]) && !(i < nt && tsep[i + 1])) {
+        n++; if (mode == "list") print cell(tl[i])
+      }
       nt = 0
     }
     {
@@ -78,14 +84,17 @@ _cr_count() {
         next
       }
       if (!open) next
-      if (mode == "rows" && line ~ /^[ \t]*\|/) {
-        tsep[++nt] = (line ~ /^[ \t]*\|[ \t:|-]+$/)
+      if (mode != "scope" && line ~ /^[ \t]*\|/) {
+        tsep[++nt] = (line ~ /^[ \t]*\|[ \t:|-]+$/); tl[nt] = line
         next
       }
       if (nt) flush()
-      if (line ~ /^[ ]?([0-9]+[.)]|[-*+])[ \t]+/) n++
+      if (line ~ /^[ ]?([0-9]+[.)]|[-*+])[ \t]+/) {
+        n++
+        if (mode == "list") { it = line; sub(/^[ ]?([0-9]+[.)]|[-*+])[ \t]+/, "", it); sub(/[ \t]+$/, "", it); print it }
+      }
     }
-    END { if (open) flush(); if (found) print n + 0 }'
+    END { if (open) flush(); if (found && mode != "list") print n + 0; if (mode == "list" && !found) exit 1 }'
 }
 
 cr_scope_count() {
@@ -102,6 +111,13 @@ cr_plan_rows() {
   c=$(_cr_count '^requirements coverage' rows < "$1")
   [ -n "$c" ] || { echo 0; return 1; }
   echo "$c"
+}
+
+# cr_plan_row_list <plan> — the rows cr_plan_rows counts, one per line (the
+# same walk, mode list). rc 1 and no output: no plan or no section.
+cr_plan_row_list() {
+  [ -r "${1:-}" ] && [ -f "$1" ] || return 1
+  _cr_count '^requirements coverage' list < "$1"
 }
 
 # cr_conf [project] — CR_ENFORCE from COVERAGE_ROWS_ENFORCE: lib_env_apply in a

@@ -1,0 +1,40 @@
+{
+  "libs": [
+    {
+      "id": "coverage-review",
+      "file": "bin/lib/coverage-review.sh",
+      "note": "BH-9499. The in-build general review gets the lead-review checklist and the plan's `## Requirements coverage` rows as R1..Rn, and writes one COVERAGE-ROW line per row; cv_enforce (inside LENS_APPROVED) turns an APPROVE into a BLOCK on a missing, contradicting or untraced row. Resolved by cv_conf through lib_env_apply in a subshell, then the env, then the CV_DEFAULT_* values in bin/lib/coverage-review.sh, which equal the defaults here (tests/coverage-review.bh-9499-test.sh K1).",
+      "knobs": [
+        {
+          "env": "COVERAGE_REVIEW_ENFORCE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "log only",
+          "required": true,
+          "note": "1: an APPROVE in review.md with a coverage row that is missing, contradicts, has no COVERAGE-ROW line, or has no evidence gets `[BLOCK wrong-data]` (or core-flow-broken) COVERAGE-GATE lines and VERDICT: BLOCK, so the build's fix round runs. 0: one `COVERAGE-GATE: would BLOCK` pipeline.log line, the verdict stands. Applies only to plans with coverage rows."
+        },
+        {
+          "env": "COVERAGE_REVIEW_ROWS_MAX",
+          "type": "int",
+          "default": 40,
+          "min": 1,
+          "max": 200,
+          "required": true,
+          "note": "The most coverage rows the review note lists and the gate judges. Rows past it are named NOT JUDGED in the note and are not enforced. Bounds the prompt."
+        },
+        {
+          "env": "COVERAGE_REVIEW_CHECKLIST_MAX_BYTES",
+          "type": "int",
+          "default": 16000,
+          "min": 0,
+          "max": 65536,
+          "zero_means": "never inline the checklist",
+          "required": true,
+          "note": "The largest checklist text (prompts/lead-review-checklist.md items 1..n, up to `## Changes`) the review note inlines. Over it, or 0, the note names the file for the reviewer to read instead."
+        }
+      ]
+    }
+  ]
+}

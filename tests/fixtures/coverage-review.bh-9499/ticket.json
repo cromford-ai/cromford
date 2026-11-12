@@ -1,0 +1,5 @@
+{
+  "key": "FX-9499",
+  "title": "fixture: rows screen",
+  "body": "Fixture ticket (BH-9499 test, not a real client).\n\n## Scope\n\n1. The rows screen lists the fixture rows.\n2. Each row has the `name` field.\n3. The empty state says \"no fixture rows\".\n"
+}
