@@ -90,9 +90,9 @@
     {
       "env": "EXTRA_USAGE_STALE_HOURS",
       "type": "int",
-      "default": 6,
+      "default": 2,
       "zero_means": null,
-      "note": "Read by bin/extra-usage-track.sh as ${EXTRA_USAGE_STALE_HOURS:-6}. Registered by BH-1165 so it is visible and settable; no reviewed min/max yet, so nothing is clamped."
+      "note": "Read by bin/extra-usage-track.sh (stale_alert) as ${EXTRA_USAGE_STALE_HOURS:-}, default 2: a login with no meter reading for this many hours raises extra-usage-meter-<label> once per outage; the first ok poll re-arms it. 0 or a non-integer falls back to 2. BH-9068 (was 6, once per UTC day)."
     },
     {
       "env": "EXTRA_USAGE_TRACK",

@@ -277,7 +277,7 @@ for p in 'pattern: suite-timings-*' 'bin/ci-durations.sh merge' 'name: ci-durati
   has "$S" 'continue-on-error: true' "decisions '$p' cannot turn the check red"
   has "$S" 'if: always()' "decisions '$p' runs always"
 done
-has "$(step_of "$DEC" 'name: ci-durations-next')" 'retention-days: 30' "ci-durations-next keeps 30 days"
+has "$(step_of "$DEC" 'name: ci-durations-next')" 'retention-days: 7' "ci-durations-next keeps 7 days (BH-9068)"
 has "$(step_of "$DEC" 'bin/ci-durations.sh merge')" '--run ${{ github.run_id }}' "merge names this run"
 has "$(step_of "$LINT" 'bin/ci-durations.sh fetch')" "if: github.event_name == 'pull_request'" "lint fetches on a PR"
 has "$(step_of "$LINT" 'name: fast always-lints (BH-3860)')" 'FAST_LINTS_DURATIONS: ${{ runner.temp }}/ci-durations.tsv' "fast-lints reads the fetched file"

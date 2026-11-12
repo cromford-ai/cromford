@@ -23,7 +23,7 @@ Every PR that added an always-run suite had to add a row. Two such PRs added row
 |---|---|---|
 | `plan` job | `bin/ci-durations.sh fetch` | `ci-durations` (3 days) |
 | `tests-shard` jobs | read `ci-durations` as `SUITE_DURATIONS_FILE`; `bin/test-trace-safety.sh --gate --timings` | `suite-timings-<n>` (3 days) |
-| `decisions` job | `bin/ci-durations.sh merge` over `ci-durations` and every `suite-timings-*` | `ci-durations-next` (30 days) |
+| `decisions` job | `bin/ci-durations.sh merge` over `ci-durations` and every `suite-timings-*` | `ci-durations-next` (7 days, BH-9068) |
 | `lint` job (PRs) | `bin/ci-durations.sh fetch`, then `FAST_LINTS_DURATIONS` on the fast-lints step | none |
 | `ci-timings` job (green Mergify batch) | `bin/ci-durations.sh post` over every `suite-timings-*` | the jobs worker's `ci_suite_durations` (BH-5653) |
 | `harness-nightly.yml` plan + shards | `bin/ci-durations.sh fetch` (`CI_WORKFLOW=Harness CI`); the shard re-plan reads it as `CI_PLAN_DURATIONS_FILE`, the traced scan as `SUITE_DURATIONS_FILE` (BH-9384) | `nightly-durations` (3 days) |

@@ -1,0 +1,8 @@
+{
+  "env": "EXTRA_USAGE_NOW_EPOCH",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "note": "BH-9068 test seam: the clock, an epoch. Read by bin/extra-usage-track.sh (stale_alert) as ${EXTRA_USAGE_NOW_EPOCH:-$(date -u +%s)} for the reading age only. NOT settable from the control plane.",
+  "settable": false
+}

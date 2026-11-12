@@ -20,9 +20,10 @@
 #             key_env names the env var with the API key.
 #   per account:
 #     no key      "not configured": one log line, no Orgo call, no PUT, no ALERT.
-#     GET /computers through orgo() (bin/lib/restore-drill-orgo.sh), curl -m
-#                 ORGO_STATE_CALL_TIMEOUT_S. The list is an array or
-#                 {computers:[…]} (the shape bin/box-launch.sh reads).
+#     GET /workspaces through orgo() (bin/lib/restore-drill-orgo.sh), curl -m
+#                 ORGO_STATE_CALL_TIMEOUT_S. The list is workspaces[].desktops[]
+#                 flattened (BH-9068: GET /computers answers 405), or an array
+#                 or {computers:[…]} (the shape bin/box-launch.sh reads).
 #     failed read a non-2xx or an unreadable body: PUT {ok:false,
 #                 complete:false, computers:[]}. The worker changes no computer
 #                 row for it and records the failed read; no ALERT (the console
@@ -115,13 +116,20 @@ while IFS= read -r A; do
   if [ -z "$KEY" ]; then
     NNC=$((NNC+1)); log "account $A: not configured ($KEYENV is unset); nothing read or sent"; continue
   fi
-  ORGO_API_KEY="$KEY" RESTORE_DRILL_CALL_TIMEOUT_S="$TO" orgo GET /computers
+  # GET /computers answers 405 since 2026-11-04; the desktops now live under
+  # GET /workspaces as workspaces[].desktops[] (BH-9068). A workspace with no
+  # desktops key adds none. The old shapes (a bare array, {computers:[...]}) are
+  # still read, so a fixture of either shape works.
+  ORGO_API_KEY="$KEY" RESTORE_DRILL_CALL_TIMEOUT_S="$TO" orgo GET /workspaces
   RRC=$?
-  if [ "$RRC" != 0 ]; then failed "$A" "GET /computers HTTP $ORGO_HTTP"; continue; fi
+  if [ "$RRC" != 0 ]; then failed "$A" "GET /workspaces HTTP $ORGO_HTTP"; continue; fi
   if ! LIST=$(printf '%s' "$ORGO_BODY" | jq -ce '
-      (if type == "array" then . elif (.computers | type) == "array" then .computers else error("shape") end)
+      (if type == "array" then .
+       elif type == "object" and (.workspaces | type) == "array" then [.workspaces[] | (.desktops // []) | if type == "array" then .[] else error("shape") end]
+       elif type == "object" and (.computers | type) == "array" then .computers
+       else error("shape") end)
       | map(if type == "object" then with_entries(select(.key | test("pass|token|secret|key|auth|cred"; "i") | not)) else . end)' 2>/dev/null); then
-    failed "$A" "unreadable computer list from GET /computers"; continue
+    failed "$A" "unreadable desktop list from GET /workspaces"; continue
   fi
   COUNT=$(jq length <<<"$LIST")
   if [ "$COUNT" -gt "$MAX" ]; then

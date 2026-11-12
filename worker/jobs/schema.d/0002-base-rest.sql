@@ -2007,9 +2007,7 @@ INSERT OR IGNORE INTO model_routes (scope, project, role, position, model, runne
   FROM (VALUES
     ('stage.triage', 0, 'claude-fable-5-1', 'claude'),
     ('stage.triage', 1, 'gpt-6-astra', 'codex'),
-    ('stage.plan', 0, 'claude-fable-5-1', 'claude'),
     ('stage.plan', 1, 'gpt-6-astra', 'codex'),
-    ('stage.preplan', 0, 'claude-fable-5-1', 'claude'),
     ('stage.preplan', 1, 'gpt-6-astra', 'codex'),
     ('stage.execute', 0, 'claude-opus-5-5', 'claude'),
     ('stage.execute', 1, 'gpt-6-astra', 'codex'),

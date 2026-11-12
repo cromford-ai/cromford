@@ -786,7 +786,7 @@ and at one sample an hour every hourly window has exactly one.
 | `EXTRA_USAGE_CAP_ALERT_PCT` | 98 | alert at this % of the extra-usage cap |
 | `EXTRA_USAGE_CAP_ALERT_DEDUPE_S` | 21600 (6h) | cap-alert dedupe, per label |
 | `EXTRA_USAGE_DAY_ALERT` | 1300 | same-day cash-delta alert, per label |
-| `EXTRA_USAGE_STALE_HOURS` | 6 | how stale a meter must be before the daily METER DOWN line |
+| `EXTRA_USAGE_STALE_HOURS` | 2 | how stale a meter must be before the METER DOWN line (once per outage, BH-9068) |
 | `RECONCILE=0` / `flags/cost-reconcile-off` | on | **kill the reconciliation** |
 | `RECONCILE_GAP_PCT` | 10 | the gap that alerts |
 | `RECONCILE_MIN_METER_USD` | 1 | money floor — a % of $0.40 is noise |

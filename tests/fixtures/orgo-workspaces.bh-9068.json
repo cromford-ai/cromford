@@ -1,0 +1,29 @@
+{
+  "workspaces": [
+    {
+      "id": "ws-fixture-1",
+      "name": "fixture-workspace-one",
+      "desktops": [
+        {"id": "dk-1", "name": "fixture-desk-1", "status": "running", "cpu": 4, "ram": 16, "disk": 100, "vnc_password": "pw-fixture"},
+        {"id": "dk-2", "name": "fixture-desk-2", "status": "running", "cpu": 4, "ram": 16, "disk": 100},
+        {"id": "dk-3", "name": "fixture-desk-3", "status": "stopped", "cpu": 2, "ram": 8, "disk": 50},
+        {"id": "dk-4", "name": "fixture-desk-4", "status": "running", "cpu": 8, "ram": 32, "disk": 200, "api_token": "tok-fixture-9"},
+        {"id": "dk-5", "name": "fixture-desk-5", "status": "running", "cpu": 4, "ram": 16, "disk": 100}
+      ]
+    },
+    {
+      "id": "ws-fixture-2",
+      "name": "fixture-workspace-two",
+      "desktops": [
+        {"id": "dk-6", "name": "fixture-desk-6", "status": "running", "cpu": 4, "ram": 16, "disk": 100},
+        {"id": "dk-7", "name": "fixture-desk-7", "status": "stopped", "cpu": 4, "ram": 16, "disk": 100},
+        {"id": "dk-8", "name": "fixture-desk-8", "status": "running", "cpu": 8, "ram": 16, "disk": 100},
+        {"id": "dk-9", "name": "fixture-desk-9", "status": "running", "cpu": 2, "ram": 8, "disk": 50}
+      ]
+    },
+    {
+      "id": "ws-fixture-3",
+      "name": "fixture-workspace-empty"
+    }
+  ]
+}

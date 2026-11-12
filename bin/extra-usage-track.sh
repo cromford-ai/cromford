@@ -44,7 +44,8 @@
 #   - once per day when same-day cash delta exceeds $EXTRA_USAGE_DAY_ALERT (default 1300)
 #   - every 6h while the account is at >=98% of its extra-usage cap, or has hit
 #     its spend limit (folded in from the project-6 stopgap, 2026-09-14)
-#   - once per day when the meter itself has stopped
+#   - once per outage when the meter itself has stopped (no reading for
+#     EXTRA_USAGE_STALE_HOURS, default 2; BH-9068)
 #   - once per day when EXTRA_USAGE_ERROR_STREAK (default 3) polls in a row
 #     came back status=error (BH-3985)
 #   - once per day when the meter has not moved for 12h while the account was
@@ -368,10 +369,9 @@ PYEOF
   fi
 
   rm -f "$UNAVAIL" 2>/dev/null
-  # The day's stale flag goes with it: a meter that recovered at noon must be able
-  # to alert again if it dies at six, rather than spending the rest of the day
-  # holding a flag that says "already told you".
-  rm -f "$H/flags/alerted-extra-usage-stale$SUF-$(date -u +%Y%m%d)" 2>/dev/null
+  # The incident's stale flag goes with it: a meter that recovered at noon must
+  # be able to alert again if it dies at six (BH-9068).
+  rm -f "$H/flags/alerted-extra-usage-stale$SUF" 2>/dev/null
   # ...and so does the alert itself: a meter that is reading again is a
   # condition that ENDED, and saying so once is the other half of saying it
   # broke. Silent when it was never down.
@@ -477,12 +477,17 @@ push_row() { # push_row <label> <ts> <sess> <wk> <resets> <enabled> <usd> <slr> 
 #
 # NOT one alert per failed poll — that is the noise that gets an alert channel
 # ignored, and a single blip is genuinely not news. The alarm is on the thing
-# that matters: the METER HAS STOPPED. One ALERTS line per day per label, once
-# the last SUCCESSFUL row is older than EXTRA_USAGE_STALE_HOURS (default 6).
+# that matters: the METER HAS STOPPED. One ALERTS line per outage per label,
+# once the last SUCCESSFUL row is older than EXTRA_USAGE_STALE_HOURS (BH-9068).
+# The flag has no date in its name: an outage that runs past 00:00Z is still one
+# incident. The first ok poll removes it, so the next outage alerts again.
 stale_alert() { # stale_alert <label> <csv> <unavail-file> <suffix>
   local LABEL="$1" CSV="$2" UNAVAIL="$3" SUF="$4" STALE_H SFLAG LASTTS LASTEPOCH NOWEPOCH AGE_H=99999
-  STALE_H="${EXTRA_USAGE_STALE_HOURS:-6}"
-  SFLAG="$H/flags/alerted-extra-usage-stale$SUF-$(date -u +%Y%m%d)"
+  # Knob row: EXTRA_USAGE_STALE_HOURS in catalog/lanes.d/extra-usage-track.json.
+  # 2 is its documented fallback; 0 or junk falls back to it.
+  IFS=$'\t' read -r STALE_H _ <<< "$(xc_knob "${EXTRA_USAGE_STALE_HOURS:-}" 2)"
+  [ "$STALE_H" -ge 1 ] 2>/dev/null || STALE_H=2
+  SFLAG="$H/flags/alerted-extra-usage-stale$SUF"
   [ -f "$SFLAG" ] && return 0
   # The last row with a METER READING on it, not the last row: since 2026-09-14
   # a failed poll writes a row too, and measuring staleness from those would
@@ -494,13 +499,17 @@ stale_alert() { # stale_alert <label> <csv> <unavail-file> <suffix>
     # used could not run — measuring "how long has this been broken" with the
     # broken thing gives 99999 hours and a daily alert on a meter that is fine.
     LASTEPOCH=$(date -u -d "$LASTTS" +%s 2>/dev/null || echo "")
-    NOWEPOCH=$(date -u +%s)
+    # EXTRA_USAGE_NOW_EPOCH is a test seam: it pins the clock for the age only.
+    NOWEPOCH="${EXTRA_USAGE_NOW_EPOCH:-$(date -u +%s)}"
     [ -n "$LASTEPOCH" ] && AGE_H=$(( (NOWEPOCH - LASTEPOCH) / 3600 ))
   fi
   case "$AGE_H" in ''|*[!0-9]*) AGE_H=99999 ;; esac
   [ "$AGE_H" -ge "$STALE_H" ] || return 0
-  touch "$SFLAG" 2>/dev/null
-  alert "extra-usage-meter-$LABEL" critical "EXTRA-USAGE METER DOWN [$LABEL]: no successful poll for ${AGE_H}h (reason: $(tr -d '\n' < "$UNAVAIL" 2>/dev/null)). The credits-vs-cash overage number is going stale — nothing is watching the bill on this account. Fix: bin/extra-usage-track.sh $BOX by hand and read $(basename "$UNAVAIL" | sed 's/unavailable/lasterr/')."
+  # The flag is written only after the alert went out: a failed alert call leaves
+  # no flag, so the next poll tries again.
+  alert "extra-usage-meter-$LABEL" critical "EXTRA-USAGE METER DOWN [$LABEL]: no successful poll for ${AGE_H}h (reason: $(tr -d '\n' < "$UNAVAIL" 2>/dev/null)). The credits-vs-cash overage number is going stale — nothing is watching the bill on this account. Fix: bin/extra-usage-track.sh $BOX by hand and read $(basename "$UNAVAIL" | sed 's/unavailable/lasterr/')." \
+    && touch "$SFLAG" 2>/dev/null
+  return 0
 }
 
 # ── METER vs COST ROWS (BH-1915, BH-167.2) ─────────────────────────────────
@@ -525,10 +534,10 @@ IFS=$'\t' read -r XC_GAP XC_GAP_SRC <<< "$(xc_knob "${EXTRA_USAGE_XCHECK_GAP_PCT
 IFS=$'\t' read -r XC_MIN XC_MIN_SRC <<< "$(xc_knob "${EXTRA_USAGE_XCHECK_MIN_USD:-}" 1)"
 
 # ── A METER THAT FAILS OR FREEZES IS NEWS (BH-3985) ─────────────────────────
-# stale_alert only fires 6h after the last READING, so a meter that answered
+# stale_alert only fires hours after the last READING, so a meter that answered
 # `error` all afternoon and a meter stuck on one value while the account kept
 # spending both stayed quiet. Each of these says so once per day per label
-# (a per-day flag, the stale_alert pattern, touched only when the alert went
+# (a per-day flag, touched only when the alert went
 # out), and resolves once when the meter reads again / moves again.
 IFS=$'\t' read -r EU_STREAK EU_STREAK_SRC <<< "$(xc_knob "${EXTRA_USAGE_ERROR_STREAK:-}" 3)"
 if [ "$EU_STREAK" -lt 1 ]; then EU_STREAK=3; EU_STREAK_SRC="code default (rejected '${EXTRA_USAGE_ERROR_STREAK:-}' from env/settings)"; fi

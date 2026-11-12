@@ -13,6 +13,7 @@
 import { json, overloadGuardedRoute } from "../lib/http.js";
 import { str, ensureColumns } from "../lib/core.js";
 import { readHistory, mergeRows, mergeAggregate, mergeGroups } from "../lib/archive-read.js";
+import { settingsRows } from "../lib/settings-cache.js";
 
 // dimension -> max filter length. Lengths match the POST's str() caps.
 const DIMS = { project: 128, stage: 64, runner: 64, model: 256, billing_mode: 32, ticket: 128 };
@@ -91,6 +92,144 @@ function statements(q, since, until, group, limit) {
   };
 }
 
+// ── The day's CASH line (BH-9068) ─────────────────────────────────────────
+// cash = subscriptions + overage + metered, for the UTC day of `until`:
+//   subscriptions  each account's usd_per_month / the days in that month. The
+//                  account list is the D1 fleet registry (registry_box_accounts,
+//                  the source catalog/cost-accounts.json is exported from since
+//                  BH-5651). The price is the settings row
+//                  cost.usd_per_month.<account>, read through the same settings
+//                  snapshot GET /api/settings serves. bin/cost-prices-push.sh
+//                  writes those rows from catalog/cost-accounts.json
+//                  usd_per_month ("null" for a null). A row that is absent or
+//                  is not a number >= 0 is unknown.
+//   overage        the rise of each account's extra-usage meter over the day's
+//                  ok readings (extra_usage_snapshots.box is the account label).
+//                  A drop is a monthly reset and is not counted down. It covers
+//                  the first to the last reading of the day.
+//   metered        the day's vendor_spend usd.
+// ABSENT IS NOT ZERO. A part with any missing input is null, cash_usd is null,
+// and `unknown` names each missing input: subscription:<account> (no price),
+// subscription:no-registry-account, overage:<account> (under two readings
+// today), overage:no-readable-account, metered:<vendor> (a row with no usd),
+// metered:no-vendor-spend-row.
+// TWO INPUTS ARE NOT MISSING, THEY ARE OUT OF SCOPE, and each is named in
+// `excluded` ({part, name, why}) and left out of the sum. Neither makes
+// cash_usd null:
+//   why=no-login            an account with no usd reading today whose polls
+//                           were recorded status=no-login (a setup-token cannot
+//                           read the usage endpoint, bin/extra-usage-track.sh).
+//                           Its overage is not in the line, and the line says so.
+//   why=subscription-billed a vendor whose polls today were all recorded
+//                           status=no-spend-endpoint (bin/vendor-spend-pull.sh
+//                           writes that for a vendor that bills a subscription,
+//                           with no usd, every hour). It is not metered cash.
+//                           Its subscription is a row under subscriptions, priced
+//                           by the settings row cost.usd_per_month.<vendor>; with
+//                           no price row it is unknown as subscription:<vendor>.
+// A no-spend-endpoint poll of a vendor that also has ok polls today is not
+// counted as unmeasured. An auth-failed or error poll with no usd still is.
+// The two money reads are single aggregates on the ts indexes (EXPLAIN in
+// test/cost-cash.bh-9068.test.js); the account read is the registry PK.
+export const CASH_OVERAGE_SQL = "SELECT box, SUM(has_usd) AS readings, SUM(CASE WHEN d > 0 THEN d ELSE 0 END) AS usd, SUM(no_login) AS no_login FROM (SELECT box, extra_used_usd IS NOT NULL AS has_usd, COALESCE(status,'') = 'no-login' AS no_login, extra_used_usd - LAG(extra_used_usd) OVER (PARTITION BY box, extra_used_usd IS NOT NULL ORDER BY ts) AS d FROM extra_usage_snapshots WHERE ts >= ?1 AND ts <= ?2) GROUP BY box";
+export const CASH_METERED_SQL = "SELECT vendor, COUNT(*) AS polls, SUM(usd) AS usd, SUM(usd IS NULL AND COALESCE(status,'') <> 'no-spend-endpoint') AS unmeasured, SUM(usd IS NULL AND COALESCE(status,'') = 'no-spend-endpoint') AS no_endpoint, SUM(usd IS NOT NULL) AS measured FROM vendor_spend WHERE ts >= ?1 AND ts <= ?2 GROUP BY vendor";
+export const CASH_ACCOUNTS_SQL = "SELECT DISTINCT account FROM registry_box_accounts ORDER BY account";
+export const PRICE_KEY_PREFIX = "cost.usd_per_month.";
+const PRICE_RE = /^\d+(\.\d+)?$/;
+const r6 = (n) => Math.round(n * 1e6) / 1e6;
+
+// cashSummary — the pure half. `accounts` is the list of account labels,
+// `prices` maps account -> its settings value (a string, as D1 stores it).
+export function cashSummary({ day, accounts, prices, overageRows, vendorRows }) {
+  const [y, m] = day.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const meters = new Map((overageRows || []).map((r) => [String(r.box), r]));
+  const unknown = [];
+  const excluded = [];
+  const price = (name) => {
+    const raw = prices.get(name);
+    return typeof raw === "string" && PRICE_RE.test(raw.trim()) ? Number(raw.trim()) : null;
+  };
+  const rows = [...new Set(accounts || [])].sort().map((account) => {
+    const usdPerMonth = price(account);
+    const meter = meters.get(account);
+    const readings = meter ? Number(meter.readings) || 0 : 0;
+    // No usd reading at all today and at least one no-login poll: the account
+    // is known to have no readable meter. One reading is still a gap.
+    const noLogin = readings === 0 && !!meter && Number(meter.no_login) > 0;
+    if (usdPerMonth === null) unknown.push(`subscription:${account}`);
+    if (noLogin) excluded.push({ part: "overage", name: account, why: "no-login" });
+    else if (readings < 2) unknown.push(`overage:${account}`);
+    return {
+      account, kind: "account", usd_per_month: usdPerMonth,
+      day_usd: usdPerMonth === null ? null : r6(usdPerMonth / daysInMonth),
+      overage_usd: readings < 2 ? null : r6(Number(meter.usd)),
+      readings, overage_excluded: noLogin ? "no-login" : null,
+    };
+  });
+  if (!rows.length) unknown.push("subscription:no-registry-account");
+  const vendors = (vendorRows || []).map((v) => {
+    const unmeasured = Number(v.unmeasured) || 0;
+    // Every poll today said no-spend-endpoint: a subscription, not metered cash.
+    const notCash = unmeasured === 0 && Number(v.no_endpoint) > 0 && !(Number(v.measured) > 0);
+    return {
+      vendor: v.vendor, polls: Number(v.polls), unmeasured,
+      usd: unmeasured > 0 || notCash ? null : r6(Number(v.usd)),
+      excluded: notCash ? "subscription-billed" : null,
+    };
+  }).sort((a, b) => (a.vendor < b.vendor ? -1 : a.vendor > b.vendor ? 1 : 0));
+  const taken = new Set(rows.map((r) => r.account));
+  for (const v of vendors) {
+    if (!v.excluded) { if (v.usd === null) unknown.push(`metered:${v.vendor}`); continue; }
+    excluded.push({ part: "metered", name: v.vendor, why: v.excluded });
+    // Its subscription moves under subscriptions. An account of the same name
+    // already carries that price row, so it is not counted twice.
+    if (taken.has(v.vendor)) continue;
+    const usdPerMonth = price(v.vendor);
+    if (usdPerMonth === null) unknown.push(`subscription:${v.vendor}`);
+    rows.push({
+      account: v.vendor, kind: "vendor", usd_per_month: usdPerMonth,
+      day_usd: usdPerMonth === null ? null : r6(usdPerMonth / daysInMonth),
+      overage_usd: null, readings: 0, overage_excluded: "subscription-billed",
+    });
+  }
+  const meteredIn = vendors.filter((v) => !v.excluded);
+  if (!meteredIn.length) unknown.push("metered:no-vendor-spend-row");
+  const overageIn = rows.filter((r) => !r.overage_excluded);
+  if (rows.length && !overageIn.length) unknown.push("overage:no-readable-account");
+  const sum = (list, k) => (list.length && list.every((x) => x[k] !== null)
+    ? r6(list.reduce((s, x) => s + x[k], 0)) : null);
+  const subscriptions = sum(rows, "day_usd");
+  const overage = sum(overageIn, "overage_usd");
+  const metered = sum(meteredIn, "usd");
+  const parts = [subscriptions, overage, metered];
+  return {
+    day, subscriptions_usd: subscriptions, overage_usd: overage, metered_usd: metered,
+    cash_usd: parts.every((x) => x !== null) ? r6(parts[0] + parts[1] + parts[2]) : null,
+    unknown, excluded, accounts: rows, vendors,
+  };
+}
+
+// readCash — the three reads and the settings snapshot, run in parallel.
+async function readCash(env, until) {
+  const day = until.slice(0, 10);
+  const since = `${day}T00:00:00Z`;
+  const [ov, ve, ac, st] = await Promise.all([
+    env.DB.prepare(CASH_OVERAGE_SQL).bind(since, until).all(),
+    env.DB.prepare(CASH_METERED_SQL).bind(since, until).all(),
+    env.DB.prepare(CASH_ACCOUNTS_SQL).all(),
+    settingsRows(env),
+  ]);
+  const prices = new Map();
+  for (const r of st.rows) {
+    if (typeof r.key === "string" && r.key.startsWith(PRICE_KEY_PREFIX)) prices.set(r.key.slice(PRICE_KEY_PREFIX.length), String(r.value));
+  }
+  return { since, until, ...cashSummary({
+    day, accounts: (ac.results || []).map((r) => r.account), prices,
+    overageRows: ov.results || [], vendorRows: ve.results || [],
+  }) };
+}
+
 export const routes = [
   [
     "GET", "/api/metrics/cost-breakdown",
@@ -137,9 +276,13 @@ export const routes = [
         return json(200, { since, until, filters, rows, truncated: rows.length === limit, archive: h.state, as_of: t });
       }
 
-      const [g, tot] = await Promise.all([
+      // The CASH line is fleet-wide: only the unfiltered read carries it, so a
+      // drill-down costs no extra statement (BH-9068).
+      const withCash = Object.keys(filters).length === 0;
+      const [g, tot, cash] = await Promise.all([
         readHistory(env, { table: "cost_rows", since, now: t, hot: st.groups }),
         readHistory(env, { table: "cost_rows", since, now: t, hot: st.total, method: "first" }),
+        withCash ? readCash(env, until) : null,
       ]);
       // Each store groups and sums its own rows; the two answers merge here.
       // A row in both stores counts twice in a sum: an aggregate cannot dedupe.
@@ -163,6 +306,7 @@ export const routes = [
           calls: total.calls ?? 0, unpriced_calls: total.unpriced_calls ?? 0,
         },
         groups, truncated: merged.truncated, archive, as_of: t,
+        ...(cash ? { cash } : {}),
       });
     }),
   ],

@@ -236,13 +236,17 @@ test('4: the stage.* seed is untouched (claude then codex, as BH-1766 seeded it)
   const db = openDb();
   const want = {
     'stage.triage': ['0:claude-fable-5-1:claude', '1:gpt-6-astra:codex'],
-    'stage.plan': ['0:claude-fable-5-1:claude', '1:gpt-6-astra:codex'],
-    'stage.preplan': ['0:claude-fable-5-1:claude', '1:gpt-6-astra:codex'],
     'stage.execute': ['0:claude-opus-5-5:claude', '1:gpt-6-astra:codex'],
     'stage.review': ['0:claude-opus-5-5:claude', '1:gpt-6-astra:codex'],
     'stage.fix': ['0:claude-opus-5-5:claude', '1:gpt-6-astra:codex'],
   };
   for (const [role, rungs] of Object.entries(want)) assert.deepEqual(ladder(db, role), rungs, role);
+  // TEST-CHANGE BH-9068: stage.plan and stage.preplan rung 0 now copy the plan
+  // and triage.light rung 0 (schema.d/202611111514-bh-9068-plan-routes.sql);
+  // rung 1 stays the same rung every stage role has.
+  const rung1 = ladder(db, 'stage.execute')[1];
+  assert.deepEqual(ladder(db, 'stage.plan'), [ladder(db, 'plan')[0], rung1], 'stage.plan');
+  assert.deepEqual(ladder(db, 'stage.preplan'), [ladder(db, 'triage.light')[0], rung1], 'stage.preplan');
   db.close();
 });
 

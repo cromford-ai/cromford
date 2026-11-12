@@ -79,3 +79,45 @@ export function leafRows(data) {
     ...r, key: `${r.box || ''}|${r.ts || ''}|${i}`, href: rowHref(r), usdText: fmtUsd(r.cost_usd)
   }));
 }
+
+// BH-9068: the day's CASH line, from the `cash` object the unfiltered
+// breakdown read carries (worker cashSummary). A null part is never printed as
+// $0.00: the line says unknown and names what is missing. An input the worker
+// left out on purpose (`excluded`: a no-login account's overage, a
+// subscription-billed vendor) is named after the number, so the reader knows
+// what the dollar figure does not cover.
+const UNKNOWN_KIND = { subscription: 'price', overage: 'reading', metered: 'reading' };
+const EXCLUDED_WHY = { 'no-login': 'no login', 'subscription-billed': 'subscription-billed' };
+export function cashExcluded(cash) {
+  const by = new Map();
+  for (const e of (cash && cash.excluded) || []) {
+    if (!e || !e.part || !e.name) continue;
+    const k = `${e.part}|${e.why || ''}`;
+    if (!by.has(k)) by.set(k, { part: e.part, why: EXCLUDED_WHY[e.why] || String(e.why || 'excluded'), names: [] });
+    by.get(k).names.push(e.name);
+  }
+  return [...by.values()].map((g) => `${g.part} ${g.names.join(', ')} (${g.why})`).join('; ');
+}
+export function cashLine(cash) {
+  if (!cash) return null;
+  const ex = cashExcluded(cash);
+  if (cash.cash_usd !== null && cash.cash_usd !== undefined) {
+    return `cash ${fmtUsd(cash.cash_usd)} = subscriptions ${fmtUsd(cash.subscriptions_usd)}`
+      + ` + overage ${fmtUsd(cash.overage_usd)} + metered ${fmtUsd(cash.metered_usd)}`
+      + (ex ? ` · not counted: ${ex}` : '');
+  }
+  const noPrice = [];
+  const noReading = [];
+  for (const u of cash.unknown || []) {
+    const [kind, ...rest] = String(u).split(':');
+    const name = rest.join(':');
+    if (UNKNOWN_KIND[kind] === 'price') noPrice.push(name);
+    else noReading.push(`${kind} ${name}`);
+  }
+  const why = [
+    noPrice.length ? `no price: ${noPrice.join(', ')}` : null,
+    noReading.length ? `no reading: ${noReading.join(', ')}` : null,
+    ex ? `not counted: ${ex}` : null
+  ].filter(Boolean).join('; ');
+  return `cash unknown${why ? ` (${why})` : ''}`;
+}

@@ -7,7 +7,7 @@ import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { fmtUsd } from '../lib/format.js';
 import {
   BREAKDOWN_WINDOWS, BREAKDOWN_VIEWS, viewOf, windowParams, billingLabel, breakdownRows,
-  childRequest, ticketHref, leafRows
+  childRequest, ticketHref, leafRows, cashLine
 } from '../lib/cost-breakdown.js';
 
 // BH-3557: where the fleet's spend is, by project → stage, runner · model,
@@ -141,6 +141,30 @@ function Level({ viewKey, depth, data, filters, open, onOpen, kids, onRetryChild
       </div>` : null}`;
 }
 
+// BH-9068: one line, the day's cash and its three parts. It wraps on a narrow
+// screen. The per-account and per-vendor parts open below it.
+function CashLine({ cash }) {
+  const line = cashLine(cash);
+  if (!line) return null;
+  const part = (usd) => (usd === null || usd === undefined ? 'unknown' : fmtUsd(usd));
+  return html`<div data-cash-line style="display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;margin-bottom:10px;overflow-wrap:anywhere">
+    <b>CASH · ${cash.day} UTC</b>
+    <span class="num" style="min-width:0">${line}</span>
+    <details style="flex-basis:100%;min-width:0">
+      <summary class="section__note">parts</summary>
+      <ul style="margin:4px 0;padding-left:18px">
+        ${(cash.accounts || []).map((a) => html`<li key=${'a' + a.account}>${a.account}: subscription ${part(a.day_usd)}${
+          a.usd_per_month === null ? ' (no price)' : ` (${fmtUsd(a.usd_per_month)}/month)`}${
+          a.kind === 'vendor' ? ' · vendor subscription, no overage meter'
+            : a.overage_excluded ? ` · overage not counted (${a.overage_excluded === 'no-login' ? 'no login' : a.overage_excluded})`
+              : ` · overage ${part(a.overage_usd)}`}</li>`)}
+        ${(cash.vendors || []).map((v) => html`<li key=${'v' + v.vendor}>${v.vendor}: ${
+          v.excluded ? `not metered cash (${v.excluded})` : `metered ${part(v.usd)}`} (${v.polls} polls)</li>`)}
+      </ul>
+    </details>
+  </div>`;
+}
+
 export function CostBreakdownView({ data, error, loading, reload, win, onWin, view, onView, open = [], onOpen, kids = {}, onRetryChild }) {
   const buttons = (list, cur, on) => html`<span style="display:inline-flex;gap:6px;flex-wrap:wrap">
     ${list.map((x) => html`
@@ -164,5 +188,5 @@ export function CostBreakdownView({ data, error, loading, reload, win, onWin, vi
   const note = data && tot
     ? `cost_rows · ${span(data.since)} → ${span(data.until)} · total ${fmtUsd(tot.usd)} (cash ${fmtUsd(tot.cash_usd)}, API-equivalent, not cash ${fmtUsd(tot.equiv_usd)})`
     : null;
-  return html`<${Section} title="SPEND BREAKDOWN" note=${note} right=${right}>${body()}<//>`;
+  return html`<${Section} title="SPEND BREAKDOWN" note=${note} right=${right}><${CashLine} cash=${data && data.cash}/>${body()}<//>`;
 }
