@@ -142,7 +142,7 @@ _pb_answers_since() {
 #   pb_excerpt as before.
 #   Log lines go to stdout; the caller sends them to pipeline.log.
 pb_notice() {
-  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf last ans why now cqrc=3 qs=""
+  local h="${1:-}" p="${2:-}" t="${3:-}" key="${4:-}" b="${5:-}" line bp repo num ex tok mkey mfile bf last ans why now cqrc=3 qs="" hgq=""
   local _PB_WHO="$p/$key"
   [ -n "$h" ] && [ -n "$p" ] && [ -n "$key" ] && [ -n "$b" ] && [ -s "$b/RESULT" ] || return 4
   line=$(head -1 "$b/RESULT" 2>/dev/null)
@@ -171,6 +171,11 @@ pb_notice() {
        || ! qs=$(HARNESS="$h" cq_render "$b/plan.md" 2>/dev/null) || [ -z "$qs" ]; then
       _pb_say "plan-blocked notice refused on $repo#$num: ${why%%$'\n'*} (no comment posted; the questions need a recommended answer, reasons and a default)"
       return 5
+    fi
+    # HUMAN GATES (BH-9559): the 5-field blocks hg_plan_blocked wrote, each
+    # backed by a human_gates row, replace the plain text when they scrub clean.
+    if [ -s "$b/human-gates.md" ] && [ -x "$h/bin/transcript-scrub.sh" ]; then
+      hgq=$("$h/bin/transcript-scrub.sh" < "$b/human-gates.md" 2>/dev/null) && [ -n "$hgq" ] && qs="$hgq"
     fi
     ex="$qs"
   else

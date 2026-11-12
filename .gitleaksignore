@@ -100,6 +100,9 @@ tests/hub-probe-tracker-envelope.bh-7968-test.sh:generic-api-key:85
 tests/hub-probe-tracker-envelope.bh-7968-test.sh:generic-api-key:203
 tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:51
 tests/hub-probe-tracker-test.bh-7936-test.sh:generic-api-key:214
+tests/human-gate-format.bh-9559-test.sh:generic-api-key:87
+tests/human-gate-format.bh-9559-test.sh:generic-api-key:131
+tests/human-gate-format.bh-9559-test.sh:generic-api-key:136
 tests/jobs-client-secret-sources.bh-7188-test.sh:generic-api-key:12
 tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:38
 tests/lane-ports-linear.bh-8451-test.sh:generic-api-key:173

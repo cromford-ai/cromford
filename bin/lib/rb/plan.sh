@@ -1397,8 +1397,15 @@ if [ ! -s "$BUILD/plan.md" ]; then
   RESULT "BUILD_DEFERRED $WHY_RESULT"; exit 3
 fi
 # <<< plan empty-output verdict
+# >>> human gate lib (BH-9559)
+# shellcheck source=bin/lib/human-gate.sh
+[ -r "${HARNESS:-}/bin/lib/human-gate.sh" ] && . "${HARNESS:-}/bin/lib/human-gate.sh"
+# <<< human gate lib (BH-9559)
 # >>> plan blocked gate
 if PLAN_IS_BLOCKED "$BUILD/plan.md"; then
+  # One human gate per client question (lane plan, reason plan_blocked), into
+  # $BUILD/human-gates.md for pb_notice. It never changes the RESULT below.
+  command -v hg_plan_blocked >/dev/null 2>&1 && hg_plan_blocked "${PROJECT:-}" "${KEY:-}" "$BUILD" >> "$BUILD/pipeline.log" 2>&1
   BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
   RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4
 fi

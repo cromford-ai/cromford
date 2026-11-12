@@ -1,0 +1,3 @@
+# HUMAN GATES (BH-9559): one row per question the harness asks a person, with
+# a recommended answer, reasons, a default and a deadline. A re-ask upserts.
+POST /api/human-gates

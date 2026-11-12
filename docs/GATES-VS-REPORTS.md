@@ -36,3 +36,12 @@ note, never a red (`tests/rules-pack-budget.bh-4220-test.sh`).
 - A red suite and a red rules-pack row.
 
 Source-file line limits are #5273.
+
+## Human gates
+
+A question to a person is a human gate (`docs/CUSTODY.md`). A gate is
+`defaultable` or `irreversible`, from the settings row
+`human_gate.class.<reason>`; an unknown reason is irreversible. An
+irreversible gate never auto-applies its default. Two gates are not human
+questions and stay hard: [pre-queue fresh main](gates/prequeue-fresh-main.md)
+and [builder to-red](gates/builder-topred.md).
