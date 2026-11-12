@@ -1,0 +1,33 @@
+{
+  "libs": [
+    {
+      "id": "web-session",
+      "file": "bin/lib/web-session.sh",
+      "note": "BH-7597 (slice C0): the client half of the saved browser session of a web-task run (worker/jobs/src/routes/web-session.js). wsess_save and wsess_load POST to the worker; these two are the box-side HTTP timeouts of those calls. Applied by the lib through lib_env_apply web-session when the caller has loaded bin/lib/lane-gate.sh. Doc: docs/notes/2026-11-01-BH-7597-web-session.md.",
+      "knobs": [
+        {
+          "env": "WEB_SESSION_TIMEOUT_S",
+          "type": "int",
+          "default": 15,
+          "min": 1,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The whole-request timeout of each worker call of wsess_save and wsess_load (curl -m). Read as ${WEB_SESSION_TIMEOUT_S:-15}."
+        },
+        {
+          "env": "WEB_SESSION_CONNECT_TIMEOUT_S",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The connect timeout of the same calls (curl --connect-timeout). Read as ${WEB_SESSION_CONNECT_TIMEOUT_S:-5}."
+        }
+      ]
+    }
+  ]
+}

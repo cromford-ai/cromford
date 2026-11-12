@@ -21,7 +21,8 @@
 //   settings, the vault row on uq_web_vault_entry), then the first failing
 //   check wins: no_run, wrong_lane, not_claimed, not_claimer, bad_token,
 //   lease_expired, wrong_project, site_not_allowed, no_entry, key_missing,
-//   decrypt_failed. Every outcome
+//   decrypt_failed. Field session_state is refused use_session_load after
+//   the run checks pass (POST /api/web-session/load serves it). Every outcome
 //   writes ONE audit row. An ok read writes the audit row and last_used_at in
 //   ONE batch and only then answers {value}; a failed batch is a 503 with no value.
 // GET /api/web-vault/entries?project=&site=&stale=1&limit=   operator, metadata only
@@ -227,6 +228,10 @@ export const routes = [
       ]);
       const tokenOk = !!(presented && tok && tok.machine === machine && sameText(hash, String(tok.token_hash)));
       let why = readRefusal(run, { project: e.project, site: e.site, machine, t, allowed: allowedSites(byKey, e.project), tokenOk });
+      // A saved browser session is read through POST /api/web-session/load
+      // only, where its age limit is checked (routes/web-session.js). The run
+      // checks come first, so an unverified caller gets its own refusal.
+      if (!why && e.field === "session_state") why = "use_session_load";
       let value = null;
       if (!why && !row) why = "no_entry";
       if (!why) {

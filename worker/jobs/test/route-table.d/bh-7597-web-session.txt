@@ -1,0 +1,6 @@
+# WEB SESSION (BH-7597, slice C0): the saved browser session (Playwright
+# storageState) of a web-task run, stored as web_vault field session_state.
+# Both routes are bound to the caller's claimed lane run and its run token.
+# Bearer-gated.
+POST /api/web-session/save
+POST /api/web-session/load
