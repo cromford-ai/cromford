@@ -30,7 +30,9 @@ export const LIFECYCLE_TRANSITIONS = {
   // the rebuild can reach plan_blocked or pr_open again. Owner: pool.
   pr_open:      ["building", "in_queue", "merged", "abandoned", "closed"],
   in_queue:     ["merged", "ejected", "closed"],
-  ejected:      ["in_queue", "pr_open", "abandoned", "closed"],
+  ejected:      ["in_queue", "pr_open", "merged", "abandoned", "closed"],
+  // merged: the PR landed while the ticket sat ejected (BH-9586, U14-MERGED).
+  // Owner: lifecycle, through the re-entry rule below.
   abandoned:    ["triaged", "planned", "closed"],
   merged:       [],
   closed:       [],

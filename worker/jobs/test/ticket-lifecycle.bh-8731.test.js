@@ -81,7 +81,7 @@ const TABLE = {
   building: 'pr_open plan_blocked abandoned closed',
   pr_open: 'building in_queue merged abandoned closed',
   in_queue: 'merged ejected closed',
-  ejected: 'in_queue pr_open abandoned closed',
+  ejected: 'in_queue pr_open merged abandoned closed',
   abandoned: 'triaged planned closed',
   merged: '',
   closed: '',
@@ -215,8 +215,8 @@ test('L4 a rejected move answers 409/400/404 and writes nothing', { skip: SKIP }
   seedRow(db, P, 'L4-own', 'ejected', at0);
   const own = await move(DB, { project: P, ticket_key: 'L4-own', to_phase: 'in_queue', actor: 'conductor', reason: 'r' });
   assert.deepEqual(own.body.owners, ['lifecycle']);
-  const ill = await move(DB, { project: P, ticket_key: 'L4-own', to_phase: 'merged', actor: 'conductor', reason: 'r' });
-  assert.deepEqual(ill.body.allowed, ['in_queue', 'pr_open', 'abandoned', 'closed']);
+  const ill = await move(DB, { project: P, ticket_key: 'L4-own', to_phase: 'building', actor: 'conductor', reason: 'r' });
+  assert.deepEqual(ill.body.allowed, ['in_queue', 'pr_open', 'merged', 'abandoned', 'closed']);
   // bad fields: 400 naming the field, nothing written
   seedRow(db, P, 'L4-bad', 'building', at0);
   const ok = { project: P, ticket_key: 'L4-bad', to_phase: 'pr_open', actor: 'pool', reason: 'r' };

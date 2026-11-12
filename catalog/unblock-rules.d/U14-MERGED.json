@@ -1,0 +1,24 @@
+{
+  "id": "U14-MERGED",
+  "priority": 139,
+  "family": "lifecycle",
+  "class": "lifecycle-settle",
+  "cites": ["G4", "G12"],
+  "note": "BH-9586. A ticket sat in phase ejected past its limit, but its PR is closed and merged: the work landed, so a rebuild or a requeue would act on merged work. settle_merged re-reads the PR, checks with GitHub's compare that the merge sha is on the PR's base branch, moves the ticket to merged (actor lifecycle), then removes a leftover MC_MERGIFY_LABEL (default merge-queue) label. A null field (an unread pull, no merge sha, no base ref) never matches and falls to the U12 card. Disjoint from U14-REQUEUE, which takes an open, unmerged PR. One decision per stuck episode.",
+  "match": {
+    "kind": "ticket-ejected",
+    "all": [
+      ".pr_state == \"closed\"",
+      ".merged == true",
+      "(.head | type) == \"string\"",
+      "(.merge_sha | type) == \"string\"",
+      "(.base_ref | type) == \"string\""
+    ]
+  },
+  "judge": null,
+  "action": {
+    "name": "settle_merged",
+    "args": {"ticket_key": ".ticket_key", "merge_sha": ".merge_sha", "base_ref": ".base_ref"}
+  },
+  "key": ["project", "ticket_key", "episode", "id"]
+}

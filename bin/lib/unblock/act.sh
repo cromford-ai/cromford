@@ -14,8 +14,8 @@
 #    class, cites, action: {name, args}}
 #   decision_key [A-Za-z0-9._:-]{1,128}; project [a-z0-9._-]+. A PR action
 #   (post_block post_findings requeue queue_approve dismiss_review fix_round
-#   lead_rerequest update_branch) also needs repo <owner>/<name>, pr > 0, head
-#   (40 hex). ticket_comment and file_ticket need repo <owner>/<name>.
+#   lead_rerequest update_branch settle_merged) also needs repo <owner>/<name>,
+#   pr > 0, head (40 hex). ticket_comment and file_ticket need repo <owner>/<name>.
 #   action.args, per action:
 #     post_block, post_findings  {lines: [non-empty strings]}
 #     requeue                    {ticket_key?} (BH-8736: with ticket_key, a
@@ -47,6 +47,13 @@
 #                                one comment on issue <issue> of repo)
 #     file_ticket                {title, lines: [non-empty strings]} (BH-8817:
 #                                one open `ai-build` issue on repo)
+#     settle_merged              {ticket_key, merge_sha (40 hex), base_ref}
+#                                (BH-9586, U14-MERGED): re-read the PR (merged,
+#                                same merge sha, same base), GitHub compare
+#                                <merge_sha>...<base_ref> is identical or ahead,
+#                                then lifecycle_transition <p> <key> merged
+#                                lifecycle, then remove the MC_MERGIFY_LABEL
+#                                (default merge-queue) label if the PR has it
 #   A ticket key is [A-Z][A-Z0-9]*-<n>[.<n>]; a question is 1 to
 #   UNBLOCK_ASK_QUESTION_MAX chars.
 #
@@ -91,8 +98,10 @@
 #                         / mc_dequeue_label (bin/lib/mc/*)
 #   queue_approve         mc_enqueue_mergify
 #   fix_round             fix_round_enqueue (bin/lib/fix-round-queue.sh)
-#   rebuild, ask          lifecycle_transition (bin/lib/jobs/lifecycle.sh,
-#                         #8731), else failed lifecycle-libs-not-loaded; ask
+#   rebuild, ask,         lifecycle_transition (bin/lib/jobs/lifecycle.sh,
+#   settle_merged         #8731), else failed lifecycle-libs-not-loaded;
+#                         settle_merged also prr_write (pr-record-write.sh),
+#                         else failed pr-record-libs-not-loaded; ask
 #                         also unblock_card_id / unblock_card_scrub (card.sh),
 #                         else failed card-libs-not-loaded
 #   setting_set           _jobs_req (bin/lib/jobs/req.sh), for the row's actor
@@ -124,8 +133,8 @@
 
 UB_NEVER_CLASSES="spend production live-probe client-board merge deploy governance"
 UB_NEVER_ACTIONS="merge force_push deploy pause_project"
-UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath rebuild ask update_branch ticket_comment file_ticket"
-UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest update_branch"
+UB_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest box_restart setting_set send_card launch_fastpath rebuild ask update_branch ticket_comment file_ticket settle_merged"
+UB_PR_ACTIONS="post_block post_findings requeue queue_approve dismiss_review fix_round lead_rerequest update_branch settle_merged"
 # The actions that write to GitHub without a PR head (BH-8817): the App token
 # is armed for them too, and the marker gate is their own.
 UB_ISSUE_ACTIONS="ticket_comment file_ticket"
@@ -213,6 +222,11 @@ _ub_valid() {
     send_card) [[ "$(_ub_arg card_id)" =~ ^[A-Za-z0-9._-]+$ ]] || return 1 ;;
     requeue) f=$(_ub_arg ticket_key); [ -z "$f" ] || [[ "$f" =~ $UB_TICKET_RE ]] || return 1 ;;
     rebuild) [[ "$(_ub_arg key)" =~ $UB_TICKET_RE ]] || return 1 ;;
+    settle_merged)
+      [[ "$(_ub_arg ticket_key)" =~ $UB_TICKET_RE ]] || return 1
+      [[ "$(_ub_arg merge_sha)" =~ ^[0-9a-f]{40}$ ]] || return 1
+      f=$(_ub_arg base_ref)
+      [[ "$f" =~ ^[A-Za-z0-9._/-]{1,255}$ ]] && [[ "$f" != *..* ]] || return 1 ;;
     ask)
       [[ "$(_ub_arg key)" =~ $UB_TICKET_RE ]] || return 1
       f=$(_ub_arg question)
@@ -602,6 +616,60 @@ _ub_rebuild() {
   esac
 }
 
+# settle_merged (BH-9586, U14-MERGED): the ticket is ejected, its PR merged.
+# Order: verify (the PR re-read, then the compare) -> the phase -> the label.
+# Each step stops on failure; nothing after it runs. done only after the phase
+# answered (200, or a 409 whose current is merged) and the label step answered
+# (DELETE rc 0, or the label was not on the fresh read).
+_ub_settle_merged() {
+  local tk sha base pull cmp st out rc cur err label
+  tk=$(_ub_arg ticket_key); sha=$(_ub_arg merge_sha); base=$(_ub_arg base_ref)
+  # 1. the PR now: still merged, the same merge sha, the same base
+  pull=$(gh api "repos/$_UB_SLUG/pulls/$_UB_PR" 2>/dev/null) || pull=""
+  jq -e 'type == "object" and (.head.sha | type) == "string"' >/dev/null 2>&1 <<<"$pull" \
+    || { _ub_out failed pull-unreadable; return 0; }
+  [ "$(jq -r '.merged' <<<"$pull")" = true ] || { _ub_out refused not-merged; return 0; }
+  [ "$(jq -r '.merge_commit_sha // ""' <<<"$pull")" = "$sha" ] || { _ub_out refused merge-sha-moved; return 0; }
+  [ "$(jq -r '.base.ref // ""' <<<"$pull")" = "$base" ] || { _ub_out refused base-moved; return 0; }
+  # 2. the merge sha is on the base: compare <merge_sha>...<base> is identical
+  # (the base tip is the merge) or ahead (the base has moved on from it)
+  cmp=$(gh api "repos/$_UB_SLUG/compare/$sha...$(jq -rn --arg v "$base" '$v | @uri')" 2>/dev/null) || cmp=""
+  st=$(jq -r 'if type == "object" and (.status | type) == "string" then .status else "" end' <<<"$cmp" 2>/dev/null)
+  case "$st" in
+    identical|ahead) ;;
+    behind|diverged) _ub_out refused "merge-sha-not-on-base:$st"; return 0 ;;
+    *) _ub_out failed compare-unreadable; return 0 ;;
+  esac
+  # 3. the phase. A 409 whose current is merged = another writer was first.
+  out=$(lifecycle_transition "$_UB_P" "$tk" merged lifecycle \
+    "$_UB_RULE settle, merge ${sha:0:12} on $base, decision $_UB_K12" "$_UB_PR" 2>/dev/null); rc=$?
+  case "$rc" in
+    0) ;;
+    9) cur=$(jq -r 'if (.current | type) == "string" then .current else "" end' <<<"$out" 2>/dev/null)
+       err=$(jq -r '.error // ""' <<<"$out" 2>/dev/null)
+       if [ "$cur" = merged ]; then :
+       elif [ -z "$cur" ]; then _ub_out failed phase-unreadable; return 0
+       elif [ "$cur" = ejected ] && [ "$err" = illegal_transition ]; then
+         # the worker does not allow ejected -> merged yet (not deployed)
+         _ub_out refused phase-illegal; return 0
+       else _ub_out refused "phase-moved:$(printf '%s' "$cur" | tr -c 'A-Za-z0-9_-' '_')"; return 0
+       fi ;;
+    2) _ub_out refused no-row; return 0 ;;
+    *) _ub_out failed "transition rc $rc"; return 0 ;;
+  esac
+  # 4. the leftover queue label, from the fresh read in step 1
+  label="${MC_MERGIFY_LABEL:-merge-queue}"
+  if ! jq -e --arg l "$label" 'any((.labels // [])[]; (.name? // .) == $l)' >/dev/null 2>&1 <<<"$pull"; then
+    _ub_out done "phase merged; no label"; return 0
+  fi
+  if prr_write "$_UB_SLUG" "$_UB_PR" labels - \
+       gh api -X DELETE "repos/$_UB_SLUG/issues/$_UB_PR/labels/$(jq -rn --arg v "$label" '$v | @uri')" >/dev/null 2>&1; then
+    _ub_out done "phase merged; label removed"
+  else
+    _ub_out failed "label-remove-failed after phase merged"
+  fi
+}
+
 # _ub_ask_text <card id> <ticket key> <age_min> <question> — the card text.
 _ub_ask_text() {
   printf 'Tackler %s: %s %s has been plan_blocked for %s min. The plan asked: %s. Answer on the issue thread, then reply `Tackler %s 1` to plan it again, or `Tackler %s hold` to keep it parked.' \
@@ -678,6 +746,9 @@ ub_act() {
     post_block) declare -F mc_dequeue_label >/dev/null || { _ub_out failed conductor-libs-not-loaded; return 0; } ;;
     queue_approve) declare -F mc_enqueue_mergify >/dev/null || { _ub_out failed conductor-libs-not-loaded; return 0; } ;;
     fix_round) declare -F fix_round_enqueue >/dev/null || { _ub_out failed fix-round-libs-not-loaded; return 0; } ;;
+    settle_merged)
+      declare -F lifecycle_transition >/dev/null || { _ub_out failed lifecycle-libs-not-loaded; return 0; }
+      declare -F prr_write >/dev/null || { _ub_out failed pr-record-libs-not-loaded; return 0; } ;;
     rebuild|ask)
       declare -F lifecycle_transition >/dev/null || { _ub_out failed lifecycle-libs-not-loaded; return 0; }
       if [ "$_UB_ACTION" = ask ]; then
@@ -715,6 +786,7 @@ ub_act() {
     update_branch)  _ub_update_branch ;;
     ticket_comment) _ub_ticket_comment ;;
     file_ticket)    _ub_file_ticket ;;
+    settle_merged)  _ub_settle_merged ;;
   esac
   _ub_in "$_UB_ACTION" "$UB_PR_ACTIONS $UB_ISSUE_ACTIONS" && _ub_gh_reset
   return 0

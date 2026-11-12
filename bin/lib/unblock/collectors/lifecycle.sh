@@ -21,7 +21,8 @@
 #      abandons = the events with to_phase abandoned; pr = the row's pr, else
 #      the newest event's non-null pr (events in id order, else route order).
 #   3. ejected with a pr: one gh_rest GET repos/<repo>/pulls/<pr> -> head,
-#      pr_state, merged, labels.
+#      pr_state, merged, labels, merge_sha (.merge_commit_sha, 40 hex, else
+#      null) and base_ref (.base.ref, else null). U14-MERGED reads the last two.
 # UNKNOWN IS NOT FALSE: a failed read 2 or 3 sets its fields to null and names
 # it in `unknown` (history, pull). A null never matches a U14 predicate.
 #
@@ -30,7 +31,8 @@
 #    family: "lifecycle", project, repo, subject_kind: "build",
 #    subject: "<project>:<KEY>", ticket_key, phase, episode (= phase_at),
 #    age_min, threshold_min, phase_actor, question, pr, head, pr_state,
-#    merged, labels, abandons, rebuild_max, stall_at (= phase_at), unknown}
+#    merged, merge_sha, base_ref, labels, abandons, rebuild_max,
+#    stall_at (= phase_at), unknown}
 # The rules (catalog/unblock-rules.d/U14-*.json) key on project, ticket_key,
 # episode and the rule id: one decision per stuck episode.
 # unblock_collect_lifecycle prints one meta line last:
@@ -141,6 +143,8 @@ unblock_collect_lifecycle() {
          head: (if $pull == null or ($pull.head.sha | test("^[0-9a-f]{40}$") | not) then null else $pull.head.sha end),
          pr_state: (if $pull == null then null else ($pull.state // null) end),
          merged: (if $pull == null or ($pull.merged | type) != "boolean" then null else $pull.merged end),
+         merge_sha: (if $pull == null or (($pull.merge_commit_sha // "") | tostring | test("^[0-9a-f]{40}$") | not) then null else $pull.merge_commit_sha end),
+         base_ref: (if $pull == null or ($pull.base.ref? | type) != "string" then null else $pull.base.ref end),
          labels: (if $pull == null then [] else [($pull.labels // [])[] | (.name? // .) | select(type == "string")] end),
          abandons: (if $ev == null then null else [$ev[] | select(type == "object" and .to_phase == "abandoned")] | length end),
          rebuild_max: $rb, stall_at: $r.phase_at, unknown: $unk}')$'\n'
