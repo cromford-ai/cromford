@@ -17,5 +17,5 @@
   },
   "action": {"verb": "card", "args": {"subject": ".subject"}},
   "key": ["subject", "head", "id"],
-  "note": "BH-7725 (UNB-3). The fallback: every stall no other rule takes becomes one escalation card (bin/lib/unblock/card.sh) to the operator through the critical alert DM. never_auto maps a proposal key glob (case-insensitive) to the class the card carries; a spend key is never acted on. One card per subject and head. Nothing runs on silence: an unanswered card expires."
+  "note": "BH-7725 (UNB-3). The fallback: every stall no other rule takes becomes one escalation card (bin/lib/unblock/card.sh) to the operator through the critical alert DM. never_auto maps a proposal key glob (case-insensitive) to the class the card carries; a spend key is never acted on. One card per subject and head. By default nothing runs on silence: an unanswered card expires. BH-9447: when the project row unblock.silence_auto.<p> is on and the recommended option carries a lever in unblock.silence_safe_levers, the card says when that option runs, and bin/lib/unblock/silence.sh runs it through act.sh after unblock.silence_auto_after_min minutes with no answer."
 }

@@ -1,0 +1,6 @@
+# UNBLOCK SILENCE (BH-9447): a safe recommended lever runs when nobody answers
+# a Tackler card. The sweep claims the card (one attempt per card, a day cap
+# per project), runs the lever through act.sh, then records the result; done
+# answers the row as silence-default.
+POST re:/^\/api\/unblock\/silence\/(\d{1,15})\/claim$/
+POST re:/^\/api\/unblock\/silence\/(\d{1,15})\/result$/

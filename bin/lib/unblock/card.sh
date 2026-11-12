@@ -4,9 +4,12 @@
 #
 # A stall that no rule in catalog/unblock-rules.d takes becomes ONE card for
 # the operator: what is stuck, the evidence, 2-4 numbered options, a recommendation, the
-# default (nothing runs on silence), a deadline and the answer line. The model
-# only fills the what, options, recommendation and reason fields; the layout,
-# the scrub and the cap are code.
+# default, a deadline and the answer line. The model only fills the what,
+# options, levers, recommendation and reason fields; the layout, the scrub, the
+# lever check, the default and the cap are code. The default is "nothing runs
+# on silence", except a safe recommended lever on a project whose row
+# unblock.silence_auto.<p> is `on` (BH-9447, bin/lib/unblock/silence.sh): that
+# card says when its option runs, and unblock_card_sweep runs it then.
 #
 #   unblock_card_id <decision_key>      u- + the first 6 hex of the key (a key
 #                                       that is not hex is hashed first)
@@ -23,15 +26,34 @@
 #                                       answer, and a decide outside 2-4
 #                                       options: option 1 hold, option 2 the
 #                                       proposed action in words.
-#   unblock_card_compose <stall.json> <decide.json> <decision_key> <now_epoch>
+#   unblock_card_compose <stall.json> <decide.json> <decision_key> <now_epoch> [ctx-json]
 #                                       the card JSON on stdout: id, key,
 #                                       subject, what, evidence, options,
-#                                       recommendation, reason, default,
+#                                       levers, recommendation, reason, default,
 #                                       deadline_at (now + UNBLOCK_CARD_TTL_H,
 #                                       default 72 h) and text. Every text field
 #                                       is scrubbed. Text over 900 chars: the
 #                                       evidence is trimmed first, then WHAT,
 #                                       each with an ellipsis; still over = rc 1.
+#                                       levers: _unblock_card_levers (BH-9447).
+#                                       With a ctx {project, subject_kind,
+#                                       subject, repo, head, class} and
+#                                       unblock_silence_promise rc 0 for the
+#                                       recommended option's lever: default =
+#                                       `option <n> runs at <YYYY-MM-DDTHH:MMZ>
+#                                       if you do not answer. Reply "Tackler
+#                                       <id> hold" to stop it`, and the card
+#                                       gains silence_at (ISO) and
+#                                       silence_option (n). Else (no ctx, lever
+#                                       none, the project off ...) the default
+#                                       is UNBLOCK_CARD_DEFAULT.
+#   _unblock_card_levers <decide-json>  the levers array (BH-9447): the
+#                                       decide's `levers` when it is an array of
+#                                       the options' length, else all `none`;
+#                                       a name that is not a word in act.sh's
+#                                       UB_ACTIONS becomes `none`, index 0
+#                                       (hold) is always `none`. act.sh's list
+#                                       unreadable = all `none` (fail closed).
 #   unblock_card_decide <stall.json> <claim.json> <outfile> [model]
 #                                       the bounded stage.unblock model call.
 #                                       A given model is used as is (the tick
@@ -128,7 +150,12 @@
 #                                       card.route (sent
 #                                       before BH-8817) is skipped. Prints the
 #                                       count paged; a failed list read is one
-#                                       log line, 0 pages, rc 1.
+#                                       log line, 0 pages, rc 1. After the
+#                                       loop, on the same rows:
+#                                       unblock_silence_sweep (silence.sh,
+#                                       BH-9447), and `sweep <p>:
+#                                       silence_ran=<n>` in the log when n > 0.
+#                                       The printed count stays the pages.
 #   _unblock_card_severity <card-or-row.json>
 #                                       warn when the recommended option
 #                                       (.options[.recommendation - 1] when
@@ -146,8 +173,11 @@
 #                                       The stall is the decision's evidence +
 #                                       decision_key, project, subject and
 #                                       near_miss [{rule, predicate, read}].
-#                                       Then decide (with <model>), compose and
-#                                       send (mode, default shadow). The card
+#                                       Then decide (with <model>), compose
+#                                       (ctx: the decision's project,
+#                                       subject_kind, subject, repo, head and
+#                                       class) and send (mode, default
+#                                       shadow). The card
 #                                       carries route (unblock_card_route) and
 #                                       class (the decision's .class or null).
 #                                       Prints {outcome, detail, model_calls,
@@ -176,6 +206,27 @@
 # to ubt_log when the caller defines it, else to stderr.
 
 _unblock_card_root() { printf '%s' "${HARNESS:-${H:-}}"; }
+
+# _unblock_card_actvar <NAME> — an act.sh list (UB_ACTIONS, UB_NEVER_CLASSES,
+# UB_NEVER_ACTIONS, UB_TICKET_RE): the loaded variable, else its line in act.sh
+# beside this file (read, never sourced, so a caller's ub_act stays its own).
+# Empty = unknown, and every reader fails closed on it.
+_unblock_card_actvar() {
+  local n="${1:-}" v=""
+  [[ $n =~ ^UB_[A-Z_]+$ ]] || return 0
+  v="${!n:-}"
+  [ -n "$v" ] || v=$(sed -n -E "s/^$n=[\"']([^\"']*)[\"'][[:space:]]*$/\1/p" "$(dirname "${BASH_SOURCE[0]}")/act.sh" 2>/dev/null | head -n 1)
+  printf '%s' "$v"
+}
+
+# _unblock_card_silence_lib — rc 0 when silence.sh (BH-9447) is loaded, loading it
+# from beside this file when it is not. Missing = no promise and no silence run.
+_unblock_card_silence_lib() {
+  declare -F unblock_silence_sweep >/dev/null && return 0
+  # shellcheck source=bin/lib/unblock/silence.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/silence.sh" 2>/dev/null && declare -F unblock_silence_sweep >/dev/null
+}
+
 UNBLOCK_CARD_DEFAULT="it stays as it is now; nothing runs on silence"
 UNBLOCK_CARD_MAX=900
 
@@ -235,8 +286,19 @@ _unblock_card_valid() {
     and .recommendation >= 1 and .recommendation <= (.options | length)' >/dev/null 2>&1
 }
 
+_unblock_card_levers() {
+  local acts
+  acts=$(_unblock_card_actvar UB_ACTIONS)
+  jq -c --arg a " $acts " '(.options | length) as $n
+    | if (.levers | type) == "array" and (.levers | length) == $n then
+        [range(0; $n) as $i | .levers[$i] as $l
+         | if $i > 0 and ($l | type) == "string" and ($l | test("^[a-z_]{1,40}$")) and ($a | contains(" " + $l + " ")) then $l else "none" end]
+      else [range(0; $n) | "none"] end' <<<"${1:-}" 2>/dev/null
+}
+
 unblock_card_compose() {
-  local stall="${1:-}" decf="${2:-}" key="${3:-}" now="${4:-}" dec ttl id subject what reason evidence opts
+  local stall="${1:-}" decf="${2:-}" key="${3:-}" now="${4:-}" ctx="${5:-}" dec ttl id subject what reason evidence opts
+  local levers rec lever sat="" sopt=null sat_iso="" def="$UNBLOCK_CARD_DEFAULT"
   [ -r "$stall" ] && jq -e 'type == "object"' "$stall" >/dev/null 2>&1 || return 1
   [ -n "$key" ] && [[ $now =~ ^[0-9]+$ ]] || return 1
   dec=$(jq -c . "$decf" 2>/dev/null)
@@ -254,9 +316,21 @@ unblock_card_compose() {
     | gsub("[\\r\\n\\t]+"; " ")' "$stall" | unblock_card_scrub) || return 1
   opts=$(jq -r '.options[] | gsub("[\\r\\n\\t]+"; " ")' <<<"$dec" | unblock_card_scrub) || return 1
   opts=$(jq -R . <<<"$opts" | jq -sc .)
+  levers=$(_unblock_card_levers "$dec"); [ -n "$levers" ] || levers=$(jq -c '[.[] | "none"]' <<<"$opts")
+  rec=$(jq '.recommendation' <<<"$dec")
+  # BH-9447: the promise, only when silence.sh says the lever will run.
+  if [ -n "$ctx" ] && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$ctx"; then
+    lever=$(jq -r --argjson r "$rec" '.[$r - 1] // "none"' <<<"$levers")
+    if [ "$lever" != none ] && _unblock_card_silence_lib \
+       && sat=$(unblock_silence_promise "$ctx" "$lever" "$now" "$id" "$(jq -r --argjson r "$rec" '.[$r - 1]' <<<"$opts")") \
+       && [[ $sat =~ ^[0-9]+$ ]]; then
+      sopt=$rec; sat_iso=$(date -u -d "@$sat" +%Y-%m-%dT%H:%M:%SZ)
+      def="option $rec runs at $(date -u -d "@$sat" +%Y-%m-%dT%H:%MZ) if you do not answer. Reply \"Tackler $id hold\" to stop it"
+    fi
+  fi
   jq -nc --arg id "$id" --arg key "$key" --arg subject "$subject" --arg what "$what" --arg ev "$evidence" \
-    --argjson opts "$opts" --argjson rec "$(jq '.recommendation' <<<"$dec")" --arg reason "$reason" \
-    --arg def "$UNBLOCK_CARD_DEFAULT" --arg deadline "$(jq -nr --argjson t "$((now + ttl * 3600))" '$t | todate')" \
+    --argjson opts "$opts" --argjson rec "$rec" --arg reason "$reason" --argjson levers "$levers" \
+    --arg sat "$sat_iso" --argjson sopt "$sopt" --arg def "$def" --arg deadline "$(jq -nr --argjson t "$((now + ttl * 3600))" '$t | todate')" \
     --argjson max "$UNBLOCK_CARD_MAX" '
     def body($w; $e):
       "TACKLER CARD \($id) \($subject)\n"
@@ -278,8 +352,9 @@ unblock_card_compose() {
            end
        end)
     | if . == null then empty else
-        {id: $id, key: $key, subject: $subject, what: .w, evidence: .e, options: $opts, recommendation: $rec,
-         reason: $reason, default: $def, deadline_at: $deadline, text: .t}
+        {id: $id, key: $key, subject: $subject, what: .w, evidence: .e, options: $opts, levers: $levers,
+         recommendation: $rec, reason: $reason, default: $def, deadline_at: $deadline, text: .t}
+        + (if $sat == "" then {} else {silence_at: $sat, silence_option: $sopt} end)
       end' | grep . || return 1
 }
 
@@ -430,7 +505,8 @@ _ubt_stage_card_run() {
     && { _ubt_card_out refused "decide refused" 0; return 0; }
   jq -c '.decide' "$tmp/out.json" > "$tmp/decide.json" 2>/dev/null
   now=${UB_NOW:-}; [[ $now =~ ^[0-9]+$ ]] || now=$(date -u +%s)
-  card=$(unblock_card_compose "$tmp/stall.json" "$tmp/decide.json" "$key" "$now") && [ -n "$card" ] \
+  card=$(unblock_card_compose "$tmp/stall.json" "$tmp/decide.json" "$key" "$now" \
+      "$(jq -c '{project, subject_kind, subject, repo, head, class: (.class // null)}' <<<"$d" 2>/dev/null)") && [ -n "$card" ] \
     || { _ubt_card_out failed card-compose-failed "$calls"; return 0; }
   card=$(jq -c --arg r "$(unblock_card_route)" --argjson c "$(jq -c '.class // null' <<<"$d" 2>/dev/null || echo null)" \
     '. + {route: $r, class: $c}' <<<"$card") || { _ubt_card_out failed card-route-failed "$calls"; return 0; }
@@ -550,7 +626,7 @@ unblock_card_page_direct() {
 }
 
 unblock_card_sweep() {
-  local p="${1:-}" now="${2:-}" rows maxmin lease row rid routed paged route claimed created age cl paged_n=0 reason body rc
+  local p="${1:-}" now="${2:-}" rows maxmin lease row rid routed paged route claimed created age cl paged_n=0 reason body rc sil
   [[ $now =~ ^[0-9]+$ ]] || now=$(date -u +%s)
   if ! rows=$(unblock_card_open_rows "$p" "$now"); then
     _unblock_card_log "sweep $p: open rows unreadable; 0 pages"; echo 0; return 1
@@ -588,5 +664,10 @@ unblock_card_sweep() {
       *) _unblock_card_log "sweep $p: row $rid route failed (http ${JOBS_HTTP:-none}); the next sweep tries again" ;;
     esac
   done <<<"$rows"
+  # BH-9447: the silence default, on the rows read above (no second list read).
+  if _unblock_card_silence_lib; then
+    sil=$(unblock_silence_sweep "$p" "$now" "$rows"); [[ $sil =~ ^[0-9]+$ ]] || sil=0
+    [ "$sil" -gt 0 ] && _unblock_card_log "sweep $p: silence_ran=$sil"
+  fi
   echo "$paged_n"
 }
