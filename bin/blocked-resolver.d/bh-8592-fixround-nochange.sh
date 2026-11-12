@@ -287,16 +287,41 @@ brnc_settle_pending() {
   return 0
 }
 
+# brnc_waiting_only <pr-url> <sha> — rc 0 when every Mergify check on <sha>
+#   says "Waiting for queue conditions to match" (at least one line). rc 1 for
+#   anything else: another title, no check, or a read that failed.
+brnc_waiting_only() {
+  local url="$1" sha="${2:-}" slug out
+  command -v mc_mergify_check >/dev/null 2>&1 || return 1
+  [ -n "$sha" ] || return 1
+  slug=$(mc_slug_of_url "$url" 2>/dev/null) || return 1
+  [ -n "$slug" ] || return 1
+  out=$(mc_mergify_check "$slug" "$url" "$sha" 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  ! grep -qvE '^[^|]*\|[^|]*\|Waiting for queue conditions to match[[:space:]]*$' <<<"$out"
+}
+
 # brnc_queued_guard <p> <ck> <rkey> <reason> <url> <lease> <head> — rc 0 push.
 #   rc 1 NOT pushed: Mergify holds the PR (queued/checking). A push would
 #   dequeue it and kill its batch. The round is recorded (it was spent), the
 #   worktree is dropped and brfix/<ck> is KEPT, so a round after an ejection
 #   starts from it. merged, ejected and unknown push as before; unknown says so.
+#
+#   BH-9612: "queued" from mc_queue_state is any non-empty Mergify check, and a
+#   PR a lead or a person blocked always carries one that only says "Waiting for
+#   queue conditions to match" (#changes-requested-reviews-by=0 fails). That PR
+#   is in no queue and no batch, so the guard dropped every fix round a lead
+#   BLOCK bought (#9522, row 1927, 2026-11-12). brnc_waiting_only reads the
+#   checks once more; waiting-only pushes, anything else keeps the answer.
 brnc_queued_guard() {
   local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" lease="$6" h="${7:-}" qs
   command -v mc_queue_state >/dev/null 2>&1 || return 0
   [ -n "$url" ] && [ "$url" != - ] || return 0
   qs=$(mc_queue_state "$url" "$lease" 2>/dev/null)
+  if [ "$qs" = queued ] && brnc_waiting_only "$url" "$lease"; then
+    say "$p/$rkey [$reason]: Mergify only waits for queue conditions on ${lease:0:8} (the PR is in no queue) — pushing the fix round"
+    return 0
+  fi
   case "$qs" in
     queued)
       say "$p/$rkey [$reason]: fix round NOT pushed — Mergify holds the PR (queued/checking) on ${lease:0:8}; a push would dequeue it. brfix/$ck is kept"
