@@ -16,7 +16,7 @@
 #   LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_PIDS LENS_SHA LENS_T0 LENS_TAGS LENS_TIER LENS_V
 #   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
 #   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT SLC_CLASSES SLC_LIB SLC_OUT SLC_RC SP_FIX_ROUND T_E2E T_LENSES
-#   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE
+#   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE EI_PR_VERDICT EI_STATUS
 # shellcheck shell=bash
 
 rb_review() {
@@ -1207,6 +1207,24 @@ $(cat "$BUILD/fix-delta.diff")
   git rev-parse HEAD > "$BUILD/review-head"
 fi
 fi  # end REVIEW checkpoint
+# >>> evidence inbuild cap (BH-9500)
+# A review that approves a build whose acceptance claims are ALL inconclusive
+# does not report APPROVE: bin/lib/evidence-inbuild.sh appends one
+# `[NOTE] not verified here` line per claim and `TIER: 2` to review.md, and sets
+# EI_PR_VERDICT for the PR body (bin/lib/rb/pr.sh). The verdict word stays
+# APPROVE, so no fix round runs on a check this box cannot run. After the
+# checkpoint `fi`, so a resumed build gets the same answer (the lib is idempotent).
+unset EI_PR_VERDICT
+# shellcheck source=bin/lib/evidence-inbuild.sh
+if [ -r "$HARNESS/bin/lib/evidence-inbuild.sh" ] && . "$HARNESS/bin/lib/evidence-inbuild.sh" 2>/dev/null && command -v ei_cap >/dev/null 2>&1; then
+  ei_conf "$PROJECT"
+  [ -z "${EI_CONF_WARN:-}" ] || echo "$(STAMP) [$PROJECT/$KEY] EVIDENCE INBUILD CAP: $EI_CONF_WARN" >> "$ALERTS"
+  ei_cap "$BUILD" "$BUILD/review.md" >/dev/null
+  echo "$(STAMP) [$PROJECT/$KEY] ${EI_STATUS:-EVIDENCE INBUILD CAP: could not run (no status)}" >> "$BUILD/pipeline.log"
+else
+  echo "$(STAMP) [$PROJECT/$KEY] EVIDENCE INBUILD CAP: could not run (lib absent)" >> "$BUILD/pipeline.log"
+fi
+# <<< evidence inbuild cap (BH-9500)
 # >>> go-live hold (BH-7123 wave B)
 # An APPROVED general lens may still name a go-live step: rl_cap --golive note
 # (LENS_APPROVED) rewrote it to `HUMAN_GOLIVE: <step>` and the verdict did not

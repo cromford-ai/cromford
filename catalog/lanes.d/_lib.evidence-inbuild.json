@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "evidence-inbuild",
+      "file": "bin/lib/evidence-inbuild.sh",
+      "note": "BH-9500 (BH-9441 scope item 4). After the review lenses, a build whose acceptance claims are ALL inconclusive (evidence.json total >= 1, inconclusive == total) and whose review.md ends VERDICT: APPROVE gets one `[NOTE] not verified here` line per claim and `TIER: 2` appended to review.md, and the PR body says `(VERDICT: MERGE-WITH-NOTES, 0 of N acceptance claims proven)`. The verdict word stays APPROVE. Resolved by ei_conf through lib_env_apply in a subshell, then the env, then EI_DEFAULT_ENFORCE in bin/lib/evidence-inbuild.sh, which equals the default here (tests/evidence-inbuild.bh-9500-test.sh K1).",
+      "knobs": [
+        {
+          "env": "EVIDENCE_INBUILD_CAP",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "log only",
+          "required": true,
+          "note": "1: an all-inconclusive evidence block caps the in-build review: NOTE lines and TIER: 2 in review.md, MERGE-WITH-NOTES in the PR body, so the build never self-merges at tier 1 on zero proven claims. 0: review.md and the PR body do not change; pipeline.log gets `EVIDENCE INBUILD CAP: not enforced (...)` only."
+        }
+      ]
+    }
+  ]
+}
