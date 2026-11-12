@@ -1,0 +1,11 @@
+{
+  "env": "MC_TTL_WAIT_MIGRATION",
+  "read_in": "bin/lib/mc/classify.sh",
+  "type": "int",
+  "default": 86400,
+  "min": -1,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9368: the stuck TTL of a WAIT_MIGRATION row (an approved PR whose only red required checks are the mc.migration_gate_checks.<project> gates). A day, because a person or the apply workflow moves it and its alert already went out once per head. -1 turns the stuck page off for this state. mc_ttl reads it as MC_TTL_<STATE>."
+}

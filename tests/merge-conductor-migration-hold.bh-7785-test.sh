@@ -10,7 +10,8 @@
 #   D1-D6  the decision tables (path, glob, name, probe answer, settings, cache)
 #   R1     the cache writer/reader round trip
 #   X1-X3  the exit paths of mc_mig_hold and their side-effect counts
-#   L1     an apply lane: held for it, no probe, no comment, no alert
+#   L1     an apply lane: held for it, no comment, no alert; since BH-9368 the
+#          ledger is asked once (tests/merge-conductor-migration-hold.bh-9368-test.sh)
 #   A1/A2  one alert per (PR, head); observe mode alerts nothing
 # Part B (whole tick) drives the WHOLE bin/merge-conductor.sh in a scratch tree
 # (the fixture of tests/conductor-hold-comment-sites.bh-3456-test.sh part 2).
@@ -257,8 +258,9 @@ and a newline"
   # ---- L1 apply lane ----
   reset; echo 'prisma/migrations/*/migration.sql' > "$FXD/set/mc_migration_hold.globs.mgfy"; echo project-6-d7-drain > "$FXD/set/mc_migration_hold.apply_lane.mgfy"
   files prisma/migrations/0423_x/migration.sql:added; run
-  [ "$STATE" = WAIT_CI ] && [[ $WHY == "HELD_MIGRATION 0423_x: left to the project-6-d7-drain lane"* ]] && [ "$(n "$FXD/status.log")" = 0 ] \
-    && [ "$(n "$FXD/trace")" = 0 ] && [ "$(n "$FXD/alerts")" = 0 ] || no "L1 apply lane: held for the lane, no probe/comment/alert ($WHY)"
+  # BH-9368: the lane-set project asks the ledger once (here: not applied).
+  [ "$STATE" = WAIT_CI ] && [[ $WHY == "HELD_MIGRATION 0423_x: left to the project-6-d7-drain lane"* ]] && [ "$(n "$FXD/status.log")" = 1 ] \
+    && [ "$(n "$FXD/trace")" = 0 ] && [ "$(n "$FXD/alerts")" = 0 ] || no "L1 apply lane: held for the lane, 1 probe, no comment/alert ($WHY)"
   # L1b an apply lane and no migration file: READY
   reset; echo 'prisma/migrations/*/migration.sql' > "$FXD/set/mc_migration_hold.globs.mgfy"; echo project-6-d7-drain > "$FXD/set/mc_migration_hold.apply_lane.mgfy"
   files src/a.ts:added; run
@@ -335,6 +337,7 @@ case "\$*" in
   *"api -i -X GET repos/$SLUG/issues/31/comments"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/"*"/issues/"*) restpr --raw 200 '{"state":"open"}' ;;
   *"api -i -X GET repos/$SLUG/pulls/31"*"v3.diff"*) restpr --diff ;;
+  *"api -i -X GET repos/$SLUG/contents/"*) restpr --raw 200 "\$(jq -nc --arg c "\$(base64 < "$FX/content" | tr -d '\n')" '{encoding:"base64",content:\$c}')" ;;
   *"api -i -X GET repos/$SLUG/pulls/31/files"*) printf '%s\n' "\$*" >> "$FX/files-reads.txt"; restpr --raw 200 "\$(cat "$FX/files.json" 2>/dev/null || echo '[]')" ;;
   *"api -i -X GET repos/"*"/pulls/"*"/files"*) restpr --raw 200 '[]' ;;
   *"api -i -X GET repos/$SLUG/pulls/31"*) restpr OPEN "\$HD" ticket/mg-31 main "" MERGEABLE CLEAN operator "" "" ;;
@@ -391,7 +394,10 @@ grep -q "#31 HELD_MIGRATION 0423_x on ${H1:0:8}" "$CH/logs/merge-conductor.log" 
 NF_HELD=$(awk -F'\t' '{print NF}' <<<"$ROW")
 
 # M2 — applied: enqueued as today (one @mergifyio queue POST), the applied log line.
-fresh; globs; mig_files; echo '{"applied":[{"filename":"0423_x","checksum":"x"}]}' > "$FX/st-body"; tick
+# BH-9368: a ledger checksum must be the sha256 of the head file, so the
+# fixture serves the file and the row carries its real sum (it was "x").
+fresh; globs; mig_files; printf 'CREATE TABLE x (id int);\n' > "$FX/content"
+jq -nc --arg c "$(sha256sum < "$FX/content" | cut -c1-64)" '{applied:[{filename:"0423_x",checksum:$c}]}' > "$FX/st-body"; tick
 [ "$(n "$FX/queue-posts.txt")" = 1 ] && ok || bad "M2 an applied migration is enqueued (queue $(n "$FX/queue-posts.txt"); log: $(clog))"
 grep -q "migration hold: 0423_x applied in production on ${H1:0:8} (probed)" "$CH/logs/merge-conductor.log" && ok || bad "M2 the applied log line (log: $(clog))"
 [ "$(alerts)" = 0 ] && [ "$(grep -c "	migration	" "$TR")" = 0 ] && ok || bad "M2 applied: no alert, no comment"
@@ -449,9 +455,10 @@ fresh; globs; mig_files; tick
 echo "$H2" > "$FX/head"; echo "$H2" > "$REC/reviewed-sha"; tick
 [ "$(alerts)" = 2 ] && ok || bad "A2 whole tick: a new head sends one more alert ($(alerts); log: $(clog))"
 
-# L1 — apply lane: held for the lane, no probe, no comment, no alert, no enqueue.
+# L1 — apply lane: held for the lane, no comment, no alert, no enqueue. Since
+# BH-9368 the ledger is asked once (it answers not applied here).
 fresh; globs; mig_files; echo project-6-d7-drain > "$FX/set/mc_migration_hold.apply_lane.mgfy"; tick
-[ "$(n "$FX/status.log")" = 0 ] && [ "$(grep -c "	migration	" "$TR")" = 0 ] && [ "$(alerts)" = 0 ] && [ "$(n "$FX/queue-posts.txt")" = 0 ] \
+[ "$(n "$FX/status.log")" = 1 ] && [ "$(grep -c "	migration	" "$TR")" = 0 ] && [ "$(alerts)" = 0 ] && [ "$(n "$FX/queue-posts.txt")" = 0 ] \
   && grep -q 'HELD_MIGRATION 0423_x: left to the project-6-d7-drain lane' <<<"$(crow)" && ok \
   || bad "L1 apply lane (probes $(n "$FX/status.log"), alerts $(alerts), queue $(n "$FX/queue-posts.txt"), row $(crow))"
 

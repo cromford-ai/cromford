@@ -1,0 +1,11 @@
+{
+  "env": "MC_CI_REPORT_ONLY_SUFFIX",
+  "read_in": "bin/lib/mc-ci-advisory.sh",
+  "type": "string",
+  "default": " (report only)",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9368: the job-name suffix of a report-only check. With no readable required set (.mergify.yml unread or no check-success name), a failed run whose every failed job name ends in this suffix (exact, leading space included) is advisory, not red. Empty = off: every failed run is red, as before."
+}

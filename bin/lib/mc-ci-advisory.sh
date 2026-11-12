@@ -19,8 +19,19 @@
 # unread run is never advisory. Each advisory head writes one ledger line and
 # one `advisory-red: <workflow>` log line per advisory workflow, once.
 #
+# NO READABLE REQUIRED SET (BH-9368). When .mergify.yml cannot be read
+# (required-unread) or names no check-success (required-none), a failed run is
+# advisory only when its jobs were read in full and EVERY job that did not end
+# success, skipped or neutral has a name that ends in MC_CI_REPORT_ONLY_SUFFIX
+# (` (report only)`). One other failed job, or a jobs read that fails or is
+# cut, keeps the run red. MC_CI_REQ_APPLIED stays 0: no required set was read.
+# A `continue-on-error: true` job is not visible in the jobs API; it does not
+# fail its workflow run, so mc_ci_state already reads that run as green.
+#
 # Knobs (one file each in catalog/lanes.d/merge-conductor.knobs.d/):
 #   MC_CI_ADVISORY_RED     1 = the rule is on; 0 = every failed run is red.
+#   MC_CI_REPORT_ONLY_SUFFIX  the job-name suffix of a report-only check; default
+#                          ` (report only)`, empty = off (BH-9368).
 #   MC_CI_JOBS_PAGES_MAX   jobs pages (100 each) read per failed run; default 3.
 #   MC_CI_ADVISORY_KEEP_D  days a ledger line is kept; default 7.
 #
@@ -68,6 +79,43 @@ _mca_jobs() {
   return 1
 }
 
+# _mca_report_only <slug> <lines> — BH-9368, mca_split's rule when no required
+#   set can be read. Sets MCA_KEEP, MC_CI_ADVISORY and MC_CI_RED_RUN_IDS in the
+#   caller's shell. Knob: MC_CI_REPORT_ONLY_SUFFIX (fallback ` (report only)`,
+#   catalog/lanes.d/merge-conductor.knobs.d/MC_CI_REPORT_ONLY_SUFFIX.json).
+_mca_report_only() {
+  local slug="$1" lines="$2" suf line s c id name jl jc jn red keep="" n
+  suf="${MC_CI_REPORT_ONLY_SUFFIX- (report only)}"
+  [ -n "$suf" ] || return 0
+  MC_CI_RED_RUN_IDS=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS='|' read -r s c id name <<<"$line"
+    red=""; n=0
+    if ! _mca_jobs "$slug" "$id" jl; then
+      red=unread
+    else
+      while IFS=$'\t' read -r jc jn; do
+        [ -n "$jn" ] || continue
+        case "$jc" in success|skipped|neutral) continue ;; esac
+        n=$((n + 1))
+        # An exact suffix: ` (report only)` at the end, with its leading space.
+        case "$jn" in *"$suf") [ "${#jn}" -gt "${#suf}" ] && continue ;; esac
+        red=1
+      done <<<"$jl"
+      [ "$n" -gt 0 ] || red=1
+    fi
+    if [ -n "$red" ]; then
+      keep="${keep:+$keep$'\n'}$line"
+      MC_CI_RED_RUN_IDS="${MC_CI_RED_RUN_IDS:+$MC_CI_RED_RUN_IDS }$id"
+    else
+      MC_CI_ADVISORY="${MC_CI_ADVISORY:+$MC_CI_ADVISORY,}$name"
+    fi
+  done <<<"$lines"
+  MCA_KEEP="$keep"
+  return 0
+}
+
 # mca_split <slug> <sha> <failed-lines> — plain command, never in $( ).
 #   Input: one `completed|failure|<run-id>|<workflow name>` line per latest
 #   failed run (mc_ci_state's reduction shape). Sets, in the caller's shell:
@@ -89,12 +137,23 @@ mca_split() {
     && command -v gh_rest >/dev/null 2>&1 && command -v mc_rest_var >/dev/null 2>&1 || { MCA_WHY=no-reader; return 0; }
   prov=$(mc_queue_provider "$slug" 2>/dev/null)
   [ "$prov" = mergify ] || { MCA_WHY="provider ${prov:-none}"; return 0; }
-  req=$(mc_mergify_required_checks "$slug" 2>/dev/null) || { MCA_WHY=required-unread; return 0; }
-  req=$(grep -v '^[[:space:]]*$' <<<"$req")
-  [ -n "$req" ] || { MCA_WHY=required-none; return 0; }
+  req=$(mc_mergify_required_checks "$slug" 2>/dev/null) || MCA_WHY=required-unread
+  if [ -z "$MCA_WHY" ]; then
+    req=$(grep -v '^[[:space:]]*$' <<<"$req")
+    [ -n "$req" ] || MCA_WHY=required-none
+  fi
   GH_REST_TIMEOUT_S=30
   command -v mc_ci_read_timeout_s >/dev/null 2>&1 && GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s)
   [ "${GH_REST_TIMEOUT_S:-0}" -gt 0 ] 2>/dev/null || GH_REST_TIMEOUT_S=
+  if [ -n "$MCA_WHY" ]; then
+    # BH-9368: no readable required set. Only a report-only failure is advisory.
+    _mca_report_only "$slug" "$lines"
+    if [ -n "$MC_CI_ADVISORY" ]; then
+      MCA_WHY="$MCA_WHY; report-only advisory $MC_CI_ADVISORY"
+      mca_note "$slug" "$sha" "$MC_CI_ADVISORY" "no readable required set; every failed job is a report-only check"
+    fi
+    return 0
+  fi
   MC_CI_REQ_APPLIED=1; MC_CI_RED_RUN_IDS=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue

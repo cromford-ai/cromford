@@ -1,0 +1,11 @@
+{
+  "env": "MC_BUDGET_WAIT_MIGRATION",
+  "read_in": "bin/lib/mc/locks.sh",
+  "type": "int",
+  "default": 86400,
+  "min": -1,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9368: the age budget of a WAIT_MIGRATION row before mc_budget_check pages once. A day: the WAIT_MIGRATION alert is sent once per (PR, head) on entry, so this is the one reminder for an apply nobody ran. -1 turns the age page off."
+}

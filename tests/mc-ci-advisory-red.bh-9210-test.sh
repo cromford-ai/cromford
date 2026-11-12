@@ -25,7 +25,7 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: mc-ci-advisory-red: $1"; }
 command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
-unset GH_TOKEN GITHUB_TOKEN MC_CI_ADVISORY_RED MC_CI_JOBS_PAGES_MAX MC_CI_ADVISORY_KEEP_D MC_CI_REQUIRED_ONLY
+unset GH_TOKEN GITHUB_TOKEN MC_CI_ADVISORY_RED MC_CI_JOBS_PAGES_MAX MC_CI_ADVISORY_KEEP_D MC_CI_REQUIRED_ONLY MC_CI_REPORT_ONLY_SUFFIX
 ADV="$DIR/bin/lib/mc-ci-advisory.sh"
 
 H1=$(printf 'a%.0s' $(seq 40))
@@ -134,8 +134,15 @@ want "A2 ci failure + unit-clock failure" red
 # A3 — no queue rules (.mergify.yml unread): the old rule, red.
 reset; runs "$CI_OK" "$UC_RED" > "$FX/runs.json"; uc_jobs; : > "$FX/req-fail"
 want "A3 .mergify.yml unread" red
+# BH-9368: with no readable required set the report-only rule reads the jobs of
+# the failed run (unit-clock's failed job `report` is not report-only: red).
+[ "${MC_CI_REQ_APPLIED:-}" = 0 ] && [ "$(advn)" = 0 ] && ok \
+  || bad "A3 the required-set rule did not run: no advisory line (applied=${MC_CI_REQ_APPLIED:-})"
+# A3b — the report-only knob off: the old rule exactly, no jobs read at all.
+reset; runs "$CI_OK" "$UC_RED" > "$FX/runs.json"; uc_jobs; : > "$FX/req-fail"
+MC_CI_REPORT_ONLY_SUFFIX='' want "A3b .mergify.yml unread, report-only knob off" red
 [ "${MC_CI_REQ_APPLIED:-}" = 0 ] && ! grep -q '/jobs' "$FX/rest.log" && [ "$(advn)" = 0 ] && ok \
-  || bad "A3 the rule did not run: no jobs read, no advisory line (applied=${MC_CI_REQ_APPLIED:-})"
+  || bad "A3b the rule did not run: no jobs read, no advisory line (applied=${MC_CI_REQ_APPLIED:-})"
 
 # A4 — unit-shuffle the same way.
 reset; runs "$CI_OK" '103|unit-shuffle|completed|failure|2026-11-07T15:02:00Z' > "$FX/runs.json"

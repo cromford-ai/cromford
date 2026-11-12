@@ -1385,6 +1385,7 @@ mc_ttl() {
     BLOCKED_HUMAN) d=7200 ;;   # 2h: the resolver's ladder runs every 10 min, so two hours is many rungs
     NEEDS_HUMAN_VERDICT) d=3600 ;;  # an hour: only a person moves it, so the page is the hand-off (BH-3777)
     WAIT_LEAD)     d=21600 ;;  # 6h: a lead review is a queued model run on a box (BH-8890); knob MC_TTL_WAIT_LEAD
+    WAIT_MIGRATION) d=86400 ;; # a day: a person or the apply workflow moves it, and its alert went out per head (BH-9368); knob MC_TTL_WAIT_MIGRATION
     RED_TWICE)     d=7200 ;;
     *)             d=-1 ;;     # MERGED, CLOSED, ABANDONED and anything unknown
   esac
@@ -1564,6 +1565,7 @@ mc_stuck_waiting_on() {
     STACKED_WAIT)  printf 'the parent PR to merge and this one to be retargeted' ;;
     NEEDS_HUMAN_VERDICT) printf 'a human lead verdict on this head (%s)' "${2:-no reason recorded}" ;;
     WAIT_LEAD)     printf 'a lead or human MERGE verdict on this head (%s)' "${2:-no reason recorded}" ;;
+    WAIT_MIGRATION) printf 'the SQL of the PR applied to production and the gate re-run (%s)' "${2:-no reason recorded}" ;;
     BLOCKED_HUMAN|RED_TWICE) printf 'bin/blocked-resolver.sh to drain the park (%s)' "${2:-no reason recorded}"
                              act=$(mc_park_human_action "${2:-}"); [ -n "$act" ] && printf ' — %s' "$act" ;;
     *)             printf 'nothing this lane knows how to name (%s)' "${2:-no reason recorded}" ;;
@@ -2392,6 +2394,12 @@ mc_classify() {
     # longer on the branch. The strike ledger is still written by the caller.
     # It no longer decides anything: only this head's own ladder parks it.
     red)
+      # A MIGRATION-GATE RED WAITS ON THE APPLY (BH-9368): every failing
+      # required check is in mc.migration_gate_checks.<project>, so pr_worker
+      # set MC_CI_MIGRATION_GATE (bin/merge-conductor.d/bh-9368-migration-gate.sh)
+      # and skipped the red ladder. Not RED_TWICE: no branch change turns it green.
+      if [ -n "${MC_CI_MIGRATION_GATE:-}" ]; then
+        printf 'WAIT_MIGRATION\tmigration-gate: %s red; PR adds %s' "${MC_CI_MIGRATION_GATE//,/, }" "${MC_CI_MIGRATION_SQL:--}"; return; fi
       # RED ON TWO CONSECUTIVE SETTLED HEADS (BH-7241): pr_worker sets
       # MC_RED_CONSEC ("<prev8> <head8>|<names>") and skips the rerun rung.
       # BH-9210: the reason names the failing REQUIRED checks when this head's
@@ -3674,6 +3682,8 @@ stuck_rekick() {
       mc_log "$key stuck in NEEDS_HUMAN_VERDICT past its TTL — only a human verdict moves it: $why" ;;
     WAIT_LEAD)
       mc_log "$key stuck in WAIT_LEAD past its TTL — only a lead or human verdict on this head moves it: $why" ;;
+    WAIT_MIGRATION)
+      mc_log "$key stuck in WAIT_MIGRATION past its TTL — only the SQL applied to production (then the gate re-run) moves it: $why" ;;
     QUEUED)
       mc_vs_ttl_republish "$key" "$st" "$slug" "$num" "$url" "$head" "${13:-}" "${14:-}" "${15:-}" ;;
     READY)

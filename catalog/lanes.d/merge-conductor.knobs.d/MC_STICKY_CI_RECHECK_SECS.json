@@ -1,0 +1,11 @@
+{
+  "env": "MC_STICKY_CI_RECHECK_SECS",
+  "read_in": "bin/merge-conductor.d/bh-9368-park-ci-recheck.sh",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-9368: 0 = off, a red-twice or WAIT_MIGRATION park is never re-read fresh. at most one fresh CI read per (PR, head) per this many seconds for a RED_TWICE, WAIT_MIGRATION or BLOCKED_HUMAN red-twice row on its parked head. Green (or green under mcr_ci_override) releases the park in that tick. Not a whole number: 600."
+}

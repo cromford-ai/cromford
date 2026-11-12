@@ -12,8 +12,9 @@
 # `HELD_MIGRATION <names>: <detail>`, one hold comment goes to the PR (kind
 # migration) and one alert per (PR, head). The row is re-derived every tick, so
 # the tick after the apply takes the ordinary READY path. A project whose
-# mc_migration_hold.apply_lane.<project> row names a lane: the row is held for
-# that lane, with no probe, no comment and no alert. No lib: no-op.
+# mc_migration_hold.apply_lane.<project> row names a lane: the ledger is still
+# asked (BH-9368); every file at the head checksum is READY, anything else is
+# held for that lane, with no comment and no alert. No lib: no-op.
 # shellcheck source=bin/lib/migration-hold.sh
 [ -r "$H/bin/lib/migration-hold.sh" ] && . "$H/bin/lib/migration-hold.sh"
 

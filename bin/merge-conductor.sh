@@ -671,6 +671,9 @@ pr_worker() {
   # nothing to ask, and a release is honoured ONCE per (PR, head) — a label that
   # stays on the PR (observe mode never removes it, and a removal can fail) must
   # not release every re-park on that head and recreate the oscillation.
+  # BH-9368: a red-twice / WAIT_MIGRATION park whose CI is green on a fresh
+  # read is released first (fragment bh-9368-park-ci-recheck).
+  command -v mc_park_ci_recheck >/dev/null 2>&1 && mc_park_ci_recheck
   mc_step handoff-sticky
   if mc_handoff_sticky "$KEY" "$HEAD"; then
     # A PARK ON OUR OWN RE-REVIEW BLOCK IS RE-CHECKED FOR A NEWER HUMAN MERGE
@@ -853,6 +856,9 @@ pr_worker() {
   # A non-required check does not hold a PR (BH-8012): pending/red becomes
   # green when every required check is green (fragment bh-8012-required-ci).
   MC_CI_REQUIRED_GREEN=0; command -v mc_cireq_apply >/dev/null 2>&1 && mc_cireq_apply
+  # BH-9368: a red whose failing required checks are all migration gates is
+  # WAIT_MIGRATION, with no rerun and no strike (fragment bh-9368-migration-gate).
+  MC_CI_MIGRATION_GATE=""; MC_CI_MIGRATION_SQL=""; command -v mc_miggate_apply >/dev/null 2>&1 && mc_miggate_apply
   # BH-8417: the head commit time for the STUCK clock (kept across memo hits)
   # and the hung-CI arm (fragment bh-8417-head-clock).
   MC_CI_HUNG=""; command -v mc_ci_hung_check >/dev/null 2>&1 && { mc_headclock_note "$KEY" "$HEAD"; mc_ci_hung_check; }
@@ -881,7 +887,7 @@ pr_worker() {
   # logic is bin/lib/mc-stuck-timers.sh's; without it the variable stays empty.
   MC_RED_CONSEC=""
   case "$CI" in green|red) command -v mst_cihead_put >/dev/null 2>&1 && mst_cihead_put "$KEY" "$HEAD" "$CI" ;; esac
-  if [ "$CI" = red ]; then
+  if [ "$CI" = red ] && [ -z "${MC_CI_MIGRATION_GATE:-}" ]; then
     MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
     [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && command -v mst_red_known >/dev/null 2>&1 && MC_RED_CONSEC=$(mst_red_known "$KEY" "$HEAD")
     if [ -z "$MC_RED_CONSEC" ] && [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && mc_flake_rerun "$SLUG" "$KEY" "$HEAD"; then
@@ -2024,6 +2030,11 @@ pr_worker() {
       # the line shape br_handoff_lines reads, once per park.
       [ "$PREV" = RED_TWICE ] && return 0
       mc_log "$KEY RED_TWICE red-twice: CI is still red on ${HEAD:0:8} after its failed jobs were re-run once — handed to bin/blocked-resolver.sh (fix round on the branch, or a fresh rebuild against current main): $URL"
+      return 0 ;;
+    WAIT_MIGRATION)
+      # BH-9368: the alert, the apply dispatch and the gate re-run (fragment
+      # bh-9368-migration-gate). Not a resolver park.
+      command -v mc_miggate_arm >/dev/null 2>&1 && mc_miggate_arm
       return 0 ;;
     NEEDS_REBASE)
       [ "$ACTIONS" = 1 ] || return 0

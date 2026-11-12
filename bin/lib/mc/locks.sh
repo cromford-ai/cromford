@@ -546,6 +546,10 @@ mc_budget() {
     # WAIT_LEAD (BH-8890) waits on a lead review the conductor asked for once
     # per head; an hour on, one page. Knob MC_BUDGET_WAIT_LEAD.
     WAIT_LEAD) echo "${MC_BUDGET_WAIT_LEAD:-3600}" ;;
+    # WAIT_MIGRATION (BH-9368) waits on a production apply; its alert goes out
+    # once per (PR, head) on entry, and a day on, one page. Every live state
+    # ages (tests/mc/classify-test.sh). Knob MC_BUDGET_WAIT_MIGRATION.
+    WAIT_MIGRATION) echo "${MC_BUDGET_WAIT_MIGRATION:-86400}" ;;
     # STACKED_WAIT is a child PR based on its parent's branch (2026-09-14,
     # stacked child builds). It is SUPPOSED to sit there: it waits for the
     # parent to merge, which is one chain level — 60-75 min on project-5 — plus
