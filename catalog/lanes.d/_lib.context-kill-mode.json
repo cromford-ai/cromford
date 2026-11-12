@@ -1,0 +1,47 @@
+{
+  "libs": [
+    {
+      "id": "context-kill-mode",
+      "file": "bin/agent-call.sh",
+      "note": "BH-9536 context kill is alert only (the operator, 2026-11-11): context_meter in bin/agent-call.sh writes one alert line and one CONTEXT_OVER job_event when a session passes its bound (cumulative, cliff or declared), and does not signal the session. kill restores the BH-653 stop. Applied by agent-call.sh right after lib_env_apply context-kill-declared. Note: docs/notes/2026-11-11-BH-9536-context-kill-alert-only.md. Each knob is a settings row lib.context-kill-mode.<env lowercased>; the code default is the documented fallback.",
+      "knobs": [
+        {
+          "env": "CONTEXT_KILL_MODE",
+          "type": "string",
+          "default": "alert",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9536. What context_meter (bin/agent-call.sh) does when a session passes its bound: alert = one alert line (bin/alert-line.sh, which writes logs/ALERTS.log) and one CONTEXT_OVER job_event, no TERM, the session runs to its own end or to the stage time cap; kill = the BH-653 stop (TERM, $OUT.ctxkill, budget_stop class). Any other value is alert (fail toward no kill). Read as ${CONTEXT_KILL_MODE:-alert}. Settings row: lib.context-kill-mode.context_kill_mode."
+        },
+        {
+          "env": "CONTEXT_KILL_MODE_KILL_STAGES",
+          "type": "string",
+          "default": "",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9536. The per-stage control: a space/comma list of stages that use kill mode whatever CONTEXT_KILL_MODE says, or `all`. Default empty: no stage kills. Read as ${CONTEXT_KILL_MODE_KILL_STAGES:-}. Settings row: lib.context-kill-mode.context_kill_mode_kill_stages."
+        },
+        {
+          "env": "CONTEXT_KILL_ALERT_X",
+          "type": "int",
+          "default": 2,
+          "min": 2,
+          "max": 100,
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9536. The multiple of the bound at which alert mode writes its second line (the first is at 1x). A value that is not a whole number from 2 to 100 is 2. Read as ${CONTEXT_KILL_ALERT_X:-2}. Settings row: lib.context-kill-mode.context_kill_alert_x."
+        },
+        {
+          "env": "CONTEXT_KILL_ALERT_MAX",
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 10,
+          "zero_means": null,
+          "required": false,
+          "note": "BH-9536. The cap on alert lines per session (one meter process) in alert mode, over every bound together. A value that is not a whole number from 1 to 10 is 2. Read as ${CONTEXT_KILL_ALERT_MAX:-2}. Settings row: lib.context-kill-mode.context_kill_alert_max."
+        }
+      ]
+    }
+  ]
+}

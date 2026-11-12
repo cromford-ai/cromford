@@ -188,6 +188,25 @@ bound the harness enforces itself:
 - **The unit is the SESSION, not the attempt.** A `--resume`d attempt inherits the whole
   prior session's reads, so its kill total can exceed what that attempt bought on its
   own. That is correct: one session is one context.
+- **The default is ALERT ONLY since BH-9536 (the operator, 2026-11-11).** The kill lost
+  work: in the 7 days to 2026-11-11, 8 plan sessions ended
+  `RUNNER_ERROR class=real-failure(budget_stop)` (for example BH-9454: killed at
+  725 s with 7,616,046 cache-read tokens against a 7,500,000 bound, no plan kept).
+  The standing rule of 2026-10-14 applies: a tripwire alerts and never stops a build.
+  Now a session over its bound (cumulative, cliff-lowered or declared) gets one
+  `CONTEXT OVER BOUND (alert only):` line (through `bin/alert-line.sh`) and
+  one `CONTEXT_OVER` job event at 1x the bound, and one more at
+  `CONTEXT_KILL_ALERT_X` (default 2) times the bound. A session gets at most
+  `CONTEXT_KILL_ALERT_MAX` (default 2) lines. The meter writes no `$OUT.ctxkill`
+  and sends no TERM, so nothing above (truncation marker, forced rc, policy stop,
+  `budget_stop` class) happens. The session runs to its own end or to the stage
+  time cap. The kill described above is `kill` mode: settings row
+  `lib.context-kill-mode.context_kill_mode` (env `CONTEXT_KILL_MODE`, default
+  `alert`; any value but `kill` is alert) for every stage, or
+  `lib.context-kill-mode.context_kill_mode_kill_stages` (a stage list or `all`)
+  per stage. Knobs: `catalog/lanes.d/_lib.context-kill-mode.json`. The kill switch
+  (`flags/context-kill-off`, `CONTEXT_KILL=0`) still turns the meter off in both
+  modes. Note: `docs/notes/2026-11-11-BH-9536-context-kill-alert-only.md`.
 
 ## Rule 7 — Placement is a composition decision
 

@@ -30,6 +30,8 @@
 # Run from anywhere: tests/responder-cliff.bh-1384-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }

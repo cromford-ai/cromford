@@ -27,6 +27,8 @@
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/context-kill-declared.bh-9124-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 SRC="${CTX_DECLARED_SRC:-$DIR/bin/agent-call.sh}"
 PASS=0; FAIL=0

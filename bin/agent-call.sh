@@ -87,6 +87,16 @@
 # in catalog/model-prices.json, and labels the stop CLIFF-AVOIDED: instead
 # (BH-1384). A model with no cliff — every claude model in today's table — is
 # the path above, unchanged.
+# ALERT ONLY BY DEFAULT (2026-11-11, BH-9536): everything above about a kill is
+# `kill` mode. The default mode is `alert`: a session over its bound (cumulative,
+# cliff-lowered or declared) gets one alert line (`CONTEXT OVER BOUND (alert
+# only):`, through alert-line.sh) and one CONTEXT_OVER job_event at 1x the
+# bound, one more at CONTEXT_KILL_ALERT_X (default 2) times it, and at most
+# CONTEXT_KILL_ALERT_MAX (default 2) lines per session. No TERM, no $OUT.ctxkill,
+# no budget_stop class: the session runs to its own end or to the stage time cap.
+# Rows: lib.context-kill-mode.context_kill_mode (alert|kill),
+# .context_kill_mode_kill_stages (stages that kill, or all), .context_kill_alert_x,
+# .context_kill_alert_max (catalog/lanes.d/_lib.context-kill-mode.json).
 # Optional env AGENT_SYSTEM_APPEND: extra system prompt (claude --append-system-prompt;
 # prepended to the prompt text for codex/gemini, which have no equivalent flag).
 # A stage listed on a prompts/iron-laws.d/*.md `stages:` line gets that file's
@@ -490,6 +500,9 @@ command -v cost_live_boundary_push >/dev/null 2>&1 || cost_live_boundary_push() 
 # THE DECLARED KILL'S KNOBS (BH-9124): lib.context-kill-declared.* rows become
 # CONTEXT_KILL_DECLARED / _UNIT / _LANES, which _ctx_declared_row and context_meter read.
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply context-kill-declared; } || true
+# ALERT OR KILL (BH-9536): lib.context-kill-mode.* rows become CONTEXT_KILL_MODE,
+# _MODE_KILL_STAGES, _ALERT_X and _ALERT_MAX, which context_meter reads.
+[ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply context-kill-mode; } || true
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply runner-fastfail; } || true
 # OWN-ACCOUNT PINS (BH-1657): which Claude account a project is pinned to, by
 # label, from the settings row account.<project> (env ACCOUNT_OWN_PROJECTS only
@@ -1308,6 +1321,10 @@ cliff_refuse_costlier() { # cliff_refuse_costlier <projected-context> <model-bel
 # session's cumulative `input_tokens + cache_read` crosses the lane's ceiling
 # the child is terminated, $OUT gets a truncation marker as its last line, and
 # one lane alert names the lane, the ceiling and the API call count.
+# That is `kill` mode. The DEFAULT since BH-9536 (the operator, 2026-11-11) is `alert`:
+# the same crossing writes ctx_over_alert lines (1x, then CONTEXT_KILL_ALERT_X
+# times the bound, at most CONTEXT_KILL_ALERT_MAX a session) and never signals
+# the child. CONTEXT_KILL_MODE / CONTEXT_KILL_MODE_KILL_STAGES pick the mode.
 #
 # UNIT: cumulative over the SESSION, not per request — the same unit the
 # manifest's `measured` blocks are stated in. On a --resume the whole session
@@ -1470,10 +1487,25 @@ _ctx_declared_row() { # _ctx_declared_row <stage> [project] [runner] — rc 0 + 
 # ceiling_tokens; cumulative compares the session total instead. A peak that
 # cannot be read never kills (fail-open, as above). On execute and fix in a
 # build dir, the C1 checkpoint brief (ecb_write) is written BEFORE the TERM.
-context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-start-fp np-start-epoch np-min np-pct]
+context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-start-fp np-start-epoch np-min np-pct] [model]
   local pid="$1" sid="$2" cap="$3" cwd="$4" line in cr msgs tot said=""
   local nps="${5:-}" npt="${6:-}" npmin="${7:-0}" nppct="${8:-0}" npnow npchg npv
   local errf="$OUT.ctxmeter.err" pk dmode=off dunit=peak dcl="" dval dsaid="" ecb build
+  # ALERT ONLY BY DEFAULT (BH-9536). kmode=alert: a crossing writes one line
+  # (ctx_over_alert) and never signals the session. kmode=kill: the BH-653 stop.
+  local cm="${9:-?}" kmode=alert ax amax asent=0 afired=" " arule alv
+  # Fallback alert: settings row lib.context-kill-mode.context_kill_mode; any value but kill is alert.
+  case "${CONTEXT_KILL_MODE:-alert}" in kill|KILL) kmode=kill ;; esac
+  # Fallback empty: settings row lib.context-kill-mode.context_kill_mode_kill_stages (a stage list or all).
+  case " $(printf '%s' "${CONTEXT_KILL_MODE_KILL_STAGES:-}" | tr ',\t' '  ') " in
+    *" all "*|*" $STAGE "*) kmode=kill ;;
+  esac
+  # Fallback 2: settings row lib.context-kill-mode.context_kill_alert_x (2..100).
+  ax="${CONTEXT_KILL_ALERT_X:-2}"
+  case "$ax" in ''|*[!0-9]*) ax=2 ;; *) { [ "$ax" -ge 2 ] && [ "$ax" -le 100 ]; } || ax=2 ;; esac
+  # Fallback 2: settings row lib.context-kill-mode.context_kill_alert_max (1..10).
+  amax="${CONTEXT_KILL_ALERT_MAX:-2}"
+  case "$amax" in ''|*[!0-9]*) amax=2 ;; *) { [ "$amax" -ge 1 ] && [ "$amax" -le 10 ]; } || amax=2 ;; esac
   case "${CONTEXT_KILL_DECLARED:-1}" in
     1|on|yes|true|ON|YES|TRUE) dmode=on ;;
     0|off|no|false|OFF|NO|FALSE) dmode=off ;;
@@ -1497,15 +1529,33 @@ context_meter() { # context_meter <child-pid> <session-id> <ceiling> <cwd> [np-s
       case "$pk" in ''|*[!0-9]*) pk="" ;; esac
     fi
     if [ -n "$tot" ] && [ -n "$cap" ] && [ "$tot" -gt "$cap" ]; then
-      printf 'ceiling=%s total=%s calls=%s session=%s\n' "$cap" "$tot" "${msgs:-0}" "$sid" > "$OUT.ctxkill"
-      kill -TERM "$pid" 2>/dev/null
-      break
+      if [ "$kmode" = kill ]; then
+        printf 'ceiling=%s total=%s calls=%s session=%s\n' "$cap" "$tot" "${msgs:-0}" "$sid" > "$OUT.ctxkill"
+        kill -TERM "$pid" 2>/dev/null
+        break
+      fi
+      # Alert mode: once at 1x and once at ax times the bound, at most amax lines a session.
+      arule=cumulative; [ -f "$OUT.cliffcap" ] && arule=cliff
+      for alv in 1 "$ax"; do
+        [ "$tot" -gt $(( cap * alv )) ] && [ "$asent" -lt "$amax" ] || continue
+        case "$afired" in *" $arule/$alv "*) continue ;; esac
+        afired="$afired$arule/$alv "; asent=$(( asent + 1 ))
+        ctx_over_alert "$cm" "$arule" "$cap" "$tot" "${msgs:-0}" "$sid" "$alv"
+      done
     fi
     dval="$pk"; [ "$dunit" = cumulative ] && dval="$tot"
     if [ -n "$dcl" ] && [ -n "$dval" ] && [ "$dval" -gt "$dcl" ]; then
       if [ "$dmode" = observe ]; then
         [ -n "$dsaid" ] || { dsaid=1
           echo "$(STAMP) [$PROJECT] $STAGE: CONTEXT KILL DECLARED (observe): session $sid $dunit=$dval is over the declared ceiling $dcl — no kill, CONTEXT_KILL_DECLARED=1 kills it" >> "$HARNESS/logs/claude-cost.log"; }
+      elif [ "$kmode" != kill ]; then
+        # Alert mode (BH-9536): no marker, no checkpoint brief, no TERM.
+        for alv in 1 "$ax"; do
+          [ "$dval" -gt $(( dcl * alv )) ] && [ "$asent" -lt "$amax" ] || continue
+          case "$afired" in *" declared/$alv "*) continue ;; esac
+          afired="${afired}declared/$alv "; asent=$(( asent + 1 ))
+          ctx_over_alert "$cm" declared "$dcl" "$dval" "${msgs:-0}" "$sid" "$alv"
+        done
       else
         # Marker first, then the brief, then the TERM: a killed session can
         # never look finished, and the relaunch (bin/lib/rb/execute.sh) reads the brief.
@@ -1584,6 +1634,26 @@ ctx_kill_alert() { # ctx_kill_alert <model> <[rule=declared] ceiling=.. total=..
     return 0
   fi
   echo "$(STAMP) [agent-call] $line" >> "$ALERTS"
+}
+
+# ALERT ONLY (BH-9536). One line per bound and level, keyed on the session, so
+# a --resume of the same session never says the same level twice. The prefix is
+# not CONTEXT KILL / CLIFF-AVOIDED: the readers that match those strings
+# (watchdog-responder, review-autopilot, ctx_kill_repeats) mean a stopped
+# session, and this one keeps running. Always returns 0: the meter never stops
+# on an alert failure.
+ctx_over_alert() { # ctx_over_alert <model> <rule> <bound> <total> <calls> <session> <level>
+  local cm="${1:-?}" rule="$2" b="$3" t="$4" c="$5" sid="$6" lv="$7" al line tk
+  tk="${CK_TK:-${AGENT_CALL_TICKET:-${COST_KEY:--}}}"
+  line="CONTEXT OVER BOUND (alert only): $STAGE/$PROJECT ticket=$tk model=$cm session=$sid rule=$rule bound=$b total=$t calls=$c level=${lv}x — the session continues; no kill (lib.context-kill-mode.context_kill_mode=alert)"
+  # The sanctioned writer, kind:alert (alert-writers ratchet, BH-2314): no new
+  # lane-alert call in this file and never a raw append.
+  al="$(dirname "$0")/alert-line.sh"; [ -x "$al" ] || al="$HARNESS/bin/alert-line.sh"
+  HARNESS="$HARNESS" "$al" --severity warn --id "context-over:$STAGE/$PROJECT/$sid/$rule/$lv" \
+    --project "$PROJECT" "[agent-call] $line" >/dev/null 2>&1 || true
+  { command -v job_event >/dev/null 2>&1 && [ -n "${JOB_ID:-}" ] \
+      && job_event "$JOB_ID" "$STAGE" CONTEXT_OVER "rule=$rule bound=$b total=$t calls=$c session=$sid level=${lv}x" >/dev/null 2>&1; } || true
+  return 0
 }
 
 # THE REPEAT KILL GOES TO A PERSON (BH-2538). A kill is a runaway backstop, so
@@ -3048,7 +3118,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           printf '%s' "$PROMPT" | ( eval "$ACCT_EXPORTS"; exec timeout --kill-after=120 "$TO" ${EG_WRAP[@]+"${EG_WRAP[@]}"} env -u AGENT_CALL_RUNNERS -u AGENT_CALL_ROLE -u CONTEXT_KILL_TOKENS -u CONTEXT_KILL_CLIFF -u CONTEXT_KILL_CLIFF_MARGIN IS_SANDBOX=1 ${SP_ENV[@]+"${SP_ENV[@]}"} claude "${ARGS[@]}" ) > "$OUT.json" 2> "$OUT.err" &
           _CPID=$!
           if [ -n "$_CAP" ] || [ -n "$_DCL" ]; then
-            context_meter "$_CPID" "$SESSION_ID" "$_CAP" "$PWD" "$_NPS" "$_NPT" "${_NP_MIN:-0}" "${_NP_PCT:-0}" &
+            context_meter "$_CPID" "$SESSION_ID" "$_CAP" "$PWD" "$_NPS" "$_NPT" "${_NP_MIN:-0}" "${_NP_PCT:-0}" "$cm" &
             _MPID=$!
           fi
           # The live meter needs a session to read, like the context meter.

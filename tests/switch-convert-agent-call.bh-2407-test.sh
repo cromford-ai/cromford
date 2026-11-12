@@ -23,6 +23,8 @@
 # Run from anywhere: tests/switch-convert-agent-call.bh-2407-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$DIR/tests/lib/model-route-stub.sh" || exit 1
 . "$(dirname "$0")/lib/verdict-fixture.sh" || exit 1

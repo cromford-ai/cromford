@@ -22,6 +22,8 @@
 # Run from anywhere: tests/context-kill-row-source.bh-3990-test.sh (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+# TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$T/logs" "$T/locks" "$T/flags" "$T/state" "$T/bin/lib/jobs" "$T/fakebin" "$T/noenv" "$T/.claude/projects/-work"
 PASS=0; FAIL=0
