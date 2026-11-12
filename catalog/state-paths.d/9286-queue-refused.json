@@ -1,0 +1,3 @@
+[
+    {"path": "queue-refused", "class": "box-local", "authority": "the triage queue repeat-refusal counters (BH-9286)", "note": "state/queue-refused/<p>/<KEY>.n, one line `<count> <sha256 of the shard's queue text>`: bin/lib/queue-closed.sh qc_refusal_note, called by bin/triage-shard.sh after the call-guard answers. It counts `call-guard repeat` refusals IN A ROW for one key and only gates a drop of the READY-QUEUE line (the queue file and the D1 ready rows stay the record). Deleted on any other outcome and at the drop; files older than QUEUE_REFUSED_KEEP_S are pruned on every call. Losing it costs at most N more refusals at $0. Machine-local, never carried"}
+]

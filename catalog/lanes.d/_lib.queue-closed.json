@@ -1,0 +1,42 @@
+{
+  "libs": [
+    {
+      "id": "queue-closed",
+      "file": "bin/lib/queue-closed.sh",
+      "note": "BH-9286: stop the triage queue re-offering lines that can never become work. qc_drop_closed (bin/lib/rt/shards.sh, block `closed-issue queue drop`, GitHub-issue boards only): one issue-state read per distinct READY-QUEUE key per tick; a closed issue's line and ready row are dropped through bin/queue-line-drop.sh before a shard is offered, an unknown state keeps the line. qc_refusal_note (bin/triage-shard.sh, after the BH-3949 park): N `call-guard repeat` refusals in a row on unchanged queue text (TSH_QUEUE) drop the line and write one warn lane-alert (id queue-refused-<p>-<KEY>); counters in state/queue-refused/<p>/<KEY>.n. Applied by the lib itself through lib_env_apply queue-closed <project>. Doc: docs/CALL-GUARD.md.",
+      "knobs": [
+        {
+          "env": "QUEUE_CLOSED_DROP",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = read each READY-QUEUE key's GitHub issue state once per tick and drop the line of a closed issue before a shard is offered. 0 = no read, every line kept. Code default 1, read as ${QUEUE_CLOSED_DROP:-1}; any value but 0 or 1 falls back to 1."
+        },
+        {
+          "env": "QUEUE_REFUSED_DROP_AFTER",
+          "type": "int",
+          "default": 3,
+          "min": 0,
+          "max": 50,
+          "zero_means": "off",
+          "required": false,
+          "note": "Consecutive `call-guard repeat` refusals of one key on unchanged queue text before its READY-QUEUE line is dropped and one warn alert is written. Any other shard outcome resets the count. 0 = never drop, nothing counted. Code default 3, read as ${QUEUE_REFUSED_DROP_AFTER:-3}; a non-integer falls back to 3."
+        },
+        {
+          "env": "QUEUE_REFUSED_KEEP_S",
+          "type": "int",
+          "default": 604800,
+          "min": 3600,
+          "max": 2592000,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Retention of the repeat-refusal counters (state/queue-refused/<p>/<KEY>.n): a counter not touched for this long is deleted on the next call. Code default 604800 (7 days, the triage-park recheck window), read as ${QUEUE_REFUSED_KEEP_S:-604800}; a non-integer falls back to 604800."
+        }
+      ]
+    }
+  ]
+}

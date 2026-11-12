@@ -149,6 +149,20 @@ What a refusal means to each:
   (agent-call's once-a-day warn covers it). A `repeat` refusal KEEPS the stamp
   (this world was bought today; clearing it would re-offer the ticket every
   tick for 24h). A `counter-unreadable` refusal clears it with the re-arm.
+  BH-9286: a READY-QUEUE line that only ever earns `repeat` refusals is
+  dropped. The dispatcher hands each shard its queue lines in `TSH_QUEUE`, and
+  `qc_refusal_note` (`bin/lib/queue-closed.sh`) counts `repeat` refusals in a
+  row per key on unchanged queue text in `state/queue-refused/<p>/<KEY>.n`.
+  At `QUEUE_REFUSED_DROP_AFTER` (default 3, 0 = off) it drops the line through
+  `bin/queue-line-drop.sh`, writes one warn lane-alert
+  (`--id queue-refused-<p>-<KEY>`, "drop failed" when the drop did not
+  succeed) and deletes the counter. Any other outcome resets the count;
+  counters older than `QUEUE_REFUSED_KEEP_S` (7 days) are pruned. Before any
+  shard is offered, on a GitHub-issue board, `qc_drop_closed` reads each queue
+  key's issue state once per tick and drops the line of a closed issue
+  (`QUEUE_CLOSED_DROP`, default 1); an unknown state keeps the line. The
+  call-guard limits do not change. Knobs: `catalog/lanes.d/_lib.queue-closed.json`.
+  Verified by `tests/triage-queue-closed.bh-9286-test.sh`.
 - `bin/run-build.sh` execute (`bin/lib/rb/execute.sh`): a refused execute call
   is `BUILD_DEFERRED execute refused by the call-guard: <marker>`, never
   `EXECUTE_EMPTY` (nothing ran, so "no changes produced" would be false).

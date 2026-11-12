@@ -71,6 +71,9 @@ command -v run_beat >/dev/null 2>&1 || run_beat() { "$HARNESS/bin/beat.sh" "$1" 
 # BH-3949: park a ticket the call-guard keeps refusing (bin/lib/triage-park.sh).
 # shellcheck source=bin/lib/triage-park.sh
 . "$HARNESS/bin/lib/triage-park.sh" 2>/dev/null || :
+# BH-9286: drop a queue line the call-guard keeps refusing (bin/lib/queue-closed.sh).
+# shellcheck source=bin/lib/queue-closed.sh
+. "$HARNESS/bin/lib/queue-closed.sh" 2>/dev/null || :
 TSH_GH="${TSH_GH:-0}"
 
 # ── WHICH RUNNER, AND SAYING SO (2026-09-14, the shard storm) ─────────────────
@@ -345,6 +348,11 @@ fi
 # BH-3949: after the stamp above, so the park is the last write to the row.
 [ -n "${CG_PARK:-}" ] && command -v triage_park_on_refusal >/dev/null 2>&1 \
   && triage_park_on_refusal "$HARNESS" "$PROJECT" "$KEY" "$CG_FP" "$CG_MARK"
+# BH-9286: N `call-guard repeat` refusals IN A ROW on unchanged queue text
+# (TSH_QUEUE, this shard's queue lines from the dispatcher) drop the line and
+# write one alert; any other outcome resets the count. No TSH_QUEUE = no-op.
+command -v qc_refusal_note >/dev/null 2>&1 \
+  && qc_refusal_note "$HARNESS" "$PROJECT" "$KEY" "$([ -n "${CG_PARK:-}" ] && echo repeat || echo other)" "${TSH_QUEUE:-}"
 
 # A FAILED SHARD PUTS ITS TICKET BACK. The dispatcher consumed the board
 # fingerprint when it handed this key out, which is only honest while somebody is

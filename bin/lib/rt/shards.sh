@@ -115,6 +115,21 @@ if [ "$SHARD_ON" = 1 ]; then
   [ -s "$SHARD_UNITS" ] || SHARD_ON=0
 fi
 [ "$SHARD_ON" = 1 ] || { [ -n "$SHARD_UNITS" ] && rm -f "$SHARD_UNITS"; }
+# >>> closed-issue queue drop (BH-9286)
+# A READY-QUEUE line for a CLOSED issue is never work, and before this it was
+# re-offered every fingerprint TTL and refused by the call-guard forever. On a
+# GitHub-issue board, one issue-state read per distinct queue key per tick; a
+# closed key's line and ready row go (bin/queue-line-drop.sh) and its queue
+# rows leave the units, before any guard or slot below. Unknown state keeps
+# the line. An emptied units file dispatches 0 shards at $0 (never the single
+# session). bin/lib/queue-closed.sh qc_drop_closed.
+SHARD_CLOSED=""
+if [ "$SHARD_ON" = 1 ] && [ "${SHARD_GH:-0}" = 1 ] && [ -r "$HARNESS/bin/lib/queue-closed.sh" ] \
+   && . "$HARNESS/bin/lib/queue-closed.sh" 2>/dev/null && command -v qc_drop_closed >/dev/null 2>&1; then
+  SHARD_CLOSED=$(qc_drop_closed "$HARNESS" "$PROJECT" \
+    "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)" "$SHARD_UNITS" "${QLINES:-}")
+fi
+# <<< closed-issue queue drop
 if [ "$SHARD_ON" = 1 ]; then
   # CLIENT-COURT GUARD (BH-411): before launching any shard, drop keys whose
   # tickets are waiting on the client, not ready, or whose newest comment is
@@ -386,6 +401,7 @@ $SHARD_SOP"
     ( HARNESS="$HARNESS" TSH_MODEL="$TRIAGE_MODEL" TSH_RUNNER="$SHARD_RUNNER" \
       TSH_EFFORT="$EFFECTIVE_GROK_EFFORT" TSH_GATE="$GATE_REASON" \
       TSH_SCOPE="$SCOPE_N" TSH_GH="$SHARD_GH" \
+      TSH_QUEUE="$SHARD_QUEUE" \
       TSH_TS_HASH="$(command -v ts_shard_hash >/dev/null 2>&1 && ts_shard_hash "$K")" \
       lock_spawn_unheld setsid "$HARNESS/bin/triage-shard.sh" "$PROJECT" "$K" "$SHARD_PF" \
         </dev/null >/dev/null 2>&1 )
@@ -450,7 +466,7 @@ $SHARD_SOP"
     elif [ "$SHARD_MAX" -gt 0 ]; then SHARD_LEFT_TXT=" — left in scope (cap $SHARD_MAX):$SHARD_LEFT"
     else SHARD_LEFT_TXT=" — left in scope:$SHARD_LEFT"; fi
   fi
-  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_BUILD:+ — building:$SHARD_BUILD}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
+  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_BUILD:+ — building:$SHARD_BUILD}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}${SHARD_CLOSED:+ — closed:$SHARD_CLOSED}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
   # ONE ALERT PER PROJECT PER CLOCK HOUR, and it is an ALERT rather than a log
   # line on purpose (the 08-13 lesson: "stopping is an alert, not a whisper").
   # A lane that has stopped triaging its board because it hit a money ceiling is
