@@ -35,11 +35,11 @@
     {
       "env": "MODEL_WATCH_PROBE_USD_CAP",
       "type": "number",
-      "default": 0.25,
+      "default": 1,
       "min": 0,
       "max": 1,
       "zero_means": "off",
-      "note": "BH-3422: USD cap on the one liveness probe per new anthropic model, read where it is spent: bin/lib/model-watch-suggest.sh mw_probe_run, ${MODEL_WATCH_PROBE_USD_CAP:-0.25}. 0 = `probe disabled`, nothing spent. A run spends at most MODEL_WATCH_MAX_NEW x this.",
+      "note": "BH-3422: USD cap on the one liveness probe per new anthropic model, read where it is spent: bin/lib/model-watch-suggest.sh mw_probe_run, ${MODEL_WATCH_PROBE_USD_CAP:-1}. 0 = `probe disabled`, nothing spent. A run spends at most MODEL_WATCH_MAX_NEW x this.",
       "settable": true,
       "read_in": "bin/lib/model-watch-suggest.sh"
     },

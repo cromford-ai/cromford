@@ -39,9 +39,9 @@ Optional vars in `env/global.env` (code fallbacks = the previous hardcoded model
 | Var | Default | Note |
 |---|---|---|
 | `TRIAGE_MODEL` | claude-opus-4-8 | fleet runs Opus (2026-07-24 decision): the gate killed the volume and per-box accounts made Opus triage allowance-cheap, so triage judgment stays strong. Drop to `claude-sonnet-5` only if a box hits its cap. |
-| `PLAN_MODEL` | claude-fable-5-1 | also used by preplan |
+| `PLAN_MODEL` | claude-fable-5-2 | also used by preplan |
 | `EXECUTE_MODEL` | claude-opus-4-8 | |
-| `REVIEW_MODEL` | claude-fable-5-1 | keep strong — this is the merge gate |
+| `REVIEW_MODEL` | claude-fable-5-2 | keep strong — this is the merge gate |
 | `FIX_MODEL` | = EXECUTE_MODEL | |
 
 ## Lever 3 — multi-vendor runners (Codex / Gemini seam)

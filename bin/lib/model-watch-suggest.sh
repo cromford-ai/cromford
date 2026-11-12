@@ -41,7 +41,7 @@
 #   The one `Probe: ...` line for a verdict.
 # mw_probe_run <vendor> <id> <outdir>
 #   anthropic only (else a not-run JSON, rc 0). MODEL_WATCH_PROBE_USD_CAP
-#   (default 0.25; 0 = `probe disabled`, rc 0; not a number = rc 1, no call).
+#   (default 1; 0 = `probe disabled`, rc 0; not a number = rc 1, no call).
 #   No executable $root/bin/agent-call.sh: not-run, rc 1. DEDUP BEFORE SPEND:
 #   the model_watch row is read (mw_get) first; an unreadable list, or no row
 #   for (vendor, id), is rc 1 with no PUT and no call. A row that already has
@@ -237,7 +237,7 @@ mw_probe_run() {
   if [ "$vendor" != anthropic ]; then
     jq -nc --arg v "$vendor" '{verdict:"not-run", reason:("no probe runner for " + $v)}'; return 0
   fi
-  cap=${MODEL_WATCH_PROBE_USD_CAP:-0.25}
+  cap=${MODEL_WATCH_PROBE_USD_CAP:-1}
   if ! [[ $cap =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     echo "model-watch-suggest: MODEL_WATCH_PROBE_USD_CAP=$cap is not a number; no probe" >&2; return 1
   fi

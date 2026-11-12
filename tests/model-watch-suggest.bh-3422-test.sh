@@ -215,7 +215,7 @@ a7() { : > "$LOG"; A7LOG="$LOG" HARNESS="$H" PATH="$PB:$PATH" mws mw_probe_run "
 
 got=$(SHIM_FIXTURE="$FX/envelope-live.json" a7 anthropic claude-sonnet-5-5 "$T/out"); rc=$?
 [ "$rc" = 0 ] && jq -e '.verdict=="live" and .cli=="2.1.284"' <<<"$got" >/dev/null 2>&1 && ok || bad "A7 live verdict rc=$rc [$got]"
-grep -qx 'ENV AGENT_CALL_BUDGET_USD_PROBE=0.25' "$LOG" && ok || bad "A7 cap env: $(cat "$LOG")"
+grep -qx 'ENV AGENT_CALL_BUDGET_USD_PROBE=1' "$LOG" && ok || bad "A7 cap env: $(cat "$LOG")"
 grep -qx 'ENV AGENT_CALL_RUNNERS=claude' "$LOG" && ok || bad "A7 runners env"
 grep -qx 'ENV RUNNER_PROBE=claude' "$LOG" && ok || bad "A7 RUNNER_PROBE env"
 grep -qx 'ENV AGENT_CALL_LEDGER=0' "$LOG" && ok || bad "A7 ledger off"
