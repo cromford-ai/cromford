@@ -7,7 +7,7 @@ import { useFleet } from '../app.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Modal, useConfirm } from '../ui/Modal.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, ProjectLink, Legend } from '../ui/primitives.js';
-import { minutesSince, clockTime, agoFromMinutes, whenLabel } from '../lib/format.js';
+import { minutesSince, clockTime, agoFromMinutes, whenLabel, fmtNum } from '../lib/format.js';
 import {
   shapeAlertRows, alertSortValue, filterHref, familyHref, boxHref, stateHref,
   FLEET_ROWS_LIMIT, FLEET_ROWS_DEFAULT_STATE,
@@ -117,7 +117,7 @@ function AlertHistory({ id, history, onClose, nowMs }) {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
         <span class="section__title">HISTORY · ${id}</span>
         ${shaped && shaped.truncated
-          ? html`<span style="font-size:var(--fs-sm);color:var(--faint)">showing ${shaped.rows.length} of more</span>`
+          ? html`<span style="font-size:var(--fs-sm);color:var(--faint)">showing ${fmtNum(shaped.rows.length)} of more</span>`
           : null}
         <button type="button" class="btn btn--sm" style="margin-left:auto" onClick=${onClose}>CLOSE</button>
       </div>
@@ -182,8 +182,8 @@ export function FleetRowsSection({ loading, error, onRetry, shaped, filters, act
   const rows = shaped ? shaped.rows : [];
   const note = shaped
     ? (shaped.truncated
-      ? `showing ${rows.length} of more`
-      : `${rows.length} row${rows.length === 1 ? '' : 's'}`)
+      ? `showing ${fmtNum(rows.length)} of more`
+      : `${fmtNum(rows.length)} row${rows.length === 1 ? '' : 's'}`)
     : null;
 
   return html`
@@ -395,8 +395,8 @@ export function AlertsScreen() {
   return html`
     <div class="page">
       <${PageHeadline} chip=${filterProject ? `Alerts · ${filterProject}` : 'Alerts'}
-        line1=${all.data ? `${open.length} open ${open.length === 1 ? 'alert' : 'alerts'}.` : all.error ? 'The alerts read failed.' : 'Reading the alerts.'}
-        line2=${all.data ? `${resolved24h.length} resolved in the last 24 hours.${unreadable.length ? ` ${unreadable.length} projects not read.` : ''}` : ''}/>
+        line1=${all.data ? `${fmtNum(open.length)} open ${open.length === 1 ? 'alert' : 'alerts'}.` : all.error ? 'The alerts read failed.' : 'Reading the alerts.'}
+        line2=${all.data ? `${fmtNum(resolved24h.length)} resolved in the last 24 hours.${unreadable.length ? ` ${fmtNum(unreadable.length)} projects not read.` : ''}` : ''}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/" class="crumb">← FLEET<//>
         <${Link} to="/components" class="crumb">COMPONENTS →<//>
@@ -409,7 +409,7 @@ export function AlertsScreen() {
         <span style="font-size:var(--fs-sm);color:var(--faint)">
           ${filterProject
             ? `filtered to ${filterProject} · counts below are for this project only`
-            : `assembled per project · ${projects.length} project${projects.length === 1 ? '' : 's'} polled`}
+            : `assembled per project · ${fmtNum(projects.length)} project${projects.length === 1 ? '' : 's'} polled`}
         </span>
       </div>
 
@@ -442,7 +442,7 @@ export function AlertsScreen() {
       <${Section} title="OPEN ALERTS"
         right=${openFamily ? html`
           <span class="pill">
-            family ${openFamily} · ${openShown.length} of ${open.length}
+            family ${openFamily} · ${fmtNum(openShown.length)} of ${fmtNum(open.length)}
             <button class="btn btn--sm" style="margin-left:4px;min-height:auto;padding:1px 6px"
               title="show every family" onClick=${() => navigate(openFamilyHref(null, filterProject))}>CLEAR</button>
           </span>` : null}>
@@ -476,7 +476,7 @@ export function AlertsScreen() {
           onCancel=${() => setNoteFor(null)}/>` : null}
 
       ${resolved24h.length ? html`
-        <${Section} title="RESOLVED · 24H" note=${`${resolved24h.length} closed`}>
+        <${Section} title="RESOLVED · 24H" note=${`${fmtNum(resolved24h.length)} closed`}>
           <${SortableTable} columns=${resolvedColumns(nowMs)}
             rows=${resolved24h}
             rowKey=${(a) => `${a.project}:${a.id}`}

@@ -4,7 +4,7 @@ import { PageHeadline } from '../ui/line.js';
 import { fleetHeadline } from '../lib/line-screens.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
-import { agoFromMinutes, healthFromAge, minutesFromPingText, minutesSince, snapshotLabel } from '../lib/format.js';
+import { agoFromMinutes, healthFromAge, minutesFromPingText, minutesSince, snapshotLabel, fmtNum } from '../lib/format.js';
 import { Section, Skeleton, Empty, ErrorBox, healthColor, Legend } from '../ui/primitives.js';
 import { flyMachines, flyOrphans, flyProjectProps, flyUnreadableReason } from '../lib/fly.js';
 import { SortableTable } from '../ui/SortableTable.js';
@@ -109,7 +109,7 @@ export function MachinesScreen({ quotePoll } = {}) {
         ${flyErrors.length ? html`
           <${Section} title="FLY NOT ENUMERATED">
             <div class="empty">
-              <span class="empty__title">${flyErrors.length} project${flyErrors.length > 1 ? 's' : ''} without live Fly data</span>
+              <span class="empty__title">${fmtNum(flyErrors.length)} project${flyErrors.length > 1 ? 's' : ''} without live Fly data</span>
               ${flyErrors.map((e) => html`
                 <span key=${e.project} class="empty__note">
                   <${Link} to=${`/p/${encodeURIComponent(e.project)}`}>${e.project}<//> — ${e.error}
@@ -332,7 +332,7 @@ export function BoxCommandsSection({ state, box }) {
             note=${box ? `Nobody has asked ${box} to run anything yet.` : 'Nobody has asked a box to run anything yet.'} />`} />
         ${data.truncated ? html`
           <div class="banner banner--warn">
-            <span>showing the newest ${data.rows.length}; older commands are not listed</span>
+            <span>showing the newest ${fmtNum(data.rows.length)}; older commands are not listed</span>
           </div>` : null}` : null}
     <//>`;
 }
@@ -402,7 +402,7 @@ export function FlyProject({ project, fly, flyErrors, onAction, ver = null }) {
             note="The Fly API returned nothing for this project's builder and pool apps right now." />`}
       ${orphans.length ? html`
         <div class="banner banner--warn">
-          <span><b>${orphans.length} orphan job${orphans.length > 1 ? 's' : ''}</b> — the beat saw
+          <span><b>${fmtNum(orphans.length)} orphan job${orphans.length > 1 ? 's' : ''}</b> — the beat saw
             ${orphans.map((o) => o.key || o.ticket_id).join(', ')} building, but Fly no longer returns that machine.
             It was destroyed between the beat and now; without this line the build would vanish silently mid-flight.</span>
         </div>` : null}

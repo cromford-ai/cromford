@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { minutesSince } from '../lib/format.js';
+import { minutesSince, fmtNum } from '../lib/format.js';
 import { PRODUCT_COCKPIT_URL } from '../lib/deployment.js';
 import {
   statusLabel, statusTone, statusRank, awaitingDecision,
@@ -64,7 +64,7 @@ export function MockupCell({ row }) {
       ${shots ? html`
         <${Link} to=${mockupAnchor(row)} class="tag tag--green"
           title="the mockup as the drafting stage shot it, served from the console's own asset store">
-          ${shots} SHOT${shots === 1 ? '' : 'S'}<//>` : null}
+          ${fmtNum(shots)} SHOT${shots === 1 ? '' : 'S'}<//>` : null}
     </span>`;
 }
 
@@ -190,7 +190,7 @@ export function IdeasScreen() {
   return html`
     <div class="page">
       <${PageHeadline} chip="Ideas"
-        line1=${ideas.data ? `${s.total} ${s.total === 1 ? 'proposal' : 'proposals'}.` : ideas.error ? 'The ideas read failed.' : 'Reading the proposals.'}
+        line1=${ideas.data ? `${fmtNum(s.total)} ${s.total === 1 ? 'proposal' : 'proposals'}.` : ideas.error ? 'The ideas read failed.' : 'Reading the proposals.'}
         line2=${ideas.data ? mockupCount : ''}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span style="font-size:var(--fs-sm);color:var(--faint)">
@@ -233,7 +233,7 @@ export function IdeasScreen() {
 
       <${Section} title="PROPOSALS"
         note=${ideas.data
-          ? `${rows.length} of ${all.length} · every row opens its PRD, mockup and chat`
+          ? `${fmtNum(rows.length)} of ${fmtNum(all.length)} · every row opens its PRD, mockup and chat`
           : 'loading'}>
         ${ideas.loading && !ideas.data
           ? html`<${Skeleton} rows=${6} height=${20}/>`

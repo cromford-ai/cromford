@@ -3,7 +3,7 @@ import { html, Link } from '../router.js';
 import { PageHeadline } from '../ui/line.js';
 import { api, AuthError } from '../api.js';
 import { useApi } from '../lib/hooks.js';
-import { agoFromMinutes, minutesSince } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, fmtNum } from '../lib/format.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { useConfirm } from '../ui/Modal.js';
@@ -158,7 +158,7 @@ export function ParticipantsScreen() {
     <div class="page">
       <${Crumbs}/>
       <${PageHeadline} chip="Participants"
-        line1=${l.data ? `${enrolled.length} enrolled. ${pending.length} pending.` : 'Reading the participants.'}
+        line1=${l.data ? `${fmtNum(enrolled.length)} enrolled. ${fmtNum(pending.length)} pending.` : 'Reading the participants.'}
         line2=${l.data ? `${online} online now.` : (l.error ? 'The participants read failed.' : 'Machines that asked to join the fleet.')}/>
       <${Banner} banner=${banner} onDismiss=${() => setBanner(null)}/>
       ${l.loading && !l.data ? html`<${Skeleton} rows=${4} height=${22}/>` : null}
@@ -205,7 +205,7 @@ export function ParticipantScreen({ id }) {
     <div class="page">
       <${Crumbs} tail=${p ? p.name : id}/>
       <${PageHeadline} chip="Participant" line1=${p ? p.name : id}
-        line2=${p ? `${p.status}. ${claims.length} ${claims.length === 1 ? 'claim' : 'claims'}, ${results.length} ${results.length === 1 ? 'result' : 'results'}.`
+        line2=${p ? `${p.status}. ${fmtNum(claims.length)} ${claims.length === 1 ? 'claim' : 'claims'}, ${fmtNum(results.length)} ${results.length === 1 ? 'result' : 'results'}.`
           : notFound ? 'No such participant.' : d.error ? 'The participant read failed.' : 'Reading the participant.'}/>
       <${Banner} banner=${banner} onDismiss=${() => setBanner(null)}/>
       ${d.loading && !d.data ? html`<${Skeleton} rows=${4} height=${22}/>` : null}

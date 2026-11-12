@@ -121,7 +121,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
       key: 'costPerPr', label: 'COST PER PR', sort: (r) => r.costPerPr, align: 'right',
       cell: (r) => (r.costPerPr === null
         ? html`<span class="na" title="none of this repo's merges in the window have a priced row yet">—</span>`
-        : html`<span class="num" title=${`${fmtUsd(r.costUsd)} over ${r.pricedPrs} priced PR${r.pricedPrs === 1 ? '' : 's'} of ${r.merged} merged`}><${UsdCell} value=${r.costPerPr} basis="api"/></span>`)
+        : html`<span class="num" title=${`${fmtUsd(r.costUsd)} over ${fmtNum(r.pricedPrs)} priced PR${r.pricedPrs === 1 ? '' : 's'} of ${fmtNum(r.merged)} merged`}><${UsdCell} value=${r.costPerPr} basis="api"/></span>`)
     },
     {
       key: 'costUsd', label: 'SPEND', sort: (r) => r.costUsd, align: 'right',
@@ -198,7 +198,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
     },
     {
       key: 'trend', label: 'TREND', sort: null,
-      cell: (r) => html`<div class="meter" style="min-width:80px" title=${`${fmtUsd(r.usd)} over ${r.days} measured day${r.days === 1 ? '' : 's'}`}>
+      cell: (r) => html`<div class="meter" style="min-width:80px" title=${`${fmtUsd(r.usd)} over ${fmtNum(r.days)} measured day${r.days === 1 ? '' : 's'}`}>
         <div class=${r.share > 0.8 ? 'meter__fill meter__fill--hi' : 'meter__fill'} style=${`width:${Math.round(r.share * 100)}%`}></div>
       </div>`
     },
@@ -301,7 +301,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
     <div class="page">
       <${PageHeadline} chip="Outcomes"
         line1=${out.data ? `${s.merged} merged in ${days} days. ${s.bad} did not hold.` : failed ? 'The outcomes read failed.' : 'Reading the outcomes.'}
-        line2=${out.data ? `Main went red ${s.mainRed} ${s.mainRed === 1 ? 'time' : 'times'}.` : ''}/>
+        line2=${out.data ? `Main went red ${fmtNum(s.mainRed)} ${s.mainRed === 1 ? 'time' : 'times'}.` : ''}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--faint)">
           did the work hold? Merges that were reverted or reopened, what they cost,
@@ -338,7 +338,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
 
       <${Section} title="REVIEW GATE"
         note=${gateRows.length
-          ? `${gateRows.filter((g) => Number(g.tightened) === 1).length} parked of ${gateRows.length} measured · thresholds are DB rows, not code`
+          ? `${fmtNum(gateRows.filter((g) => Number(g.tightened) === 1).length)} parked of ${fmtNum(gateRows.length)} measured · thresholds are DB rows, not code`
           : 'the steering rule has not written a measurement yet'}>
         ${loading
           ? html`<${Skeleton} rows=${2} height=${20}/>`
@@ -351,7 +351,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
       <//>
 
       <${Section} title="PER REPO"
-        note=${out.data ? `${repoRows.length} repo${repoRows.length === 1 ? '' : 's'} landed something in the last ${days} days` : 'loading'}>
+        note=${out.data ? `${fmtNum(repoRows.length)} repo${repoRows.length === 1 ? '' : 's'} landed something in the last ${days} days` : 'loading'}>
         ${loading
           ? html`<${Skeleton} rows=${5} height=${20}/>`
           : failed
@@ -376,7 +376,7 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
       <//>
 
       <${Section} title="WHAT CAME BACK"
-        note=${out.data ? `${findings.length} finding${findings.length === 1 ? '' : 's'} on record · every row opens its PR` : 'loading'}>
+        note=${out.data ? `${fmtNum(findings.length)} finding${findings.length === 1 ? '' : 's'} on record · every row opens its PR` : 'loading'}>
         ${loading
           ? html`<${Skeleton} rows=${4} height=${20}/>`
           : html`<${SortableTable} columns=${findingColumns} rows=${findings}

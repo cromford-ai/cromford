@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
 import { IdeaActions } from '../ui/IdeaActions.js';
-import { whenLabel, safeHttpsUrl, fmtBytes, minutesSince, agoFromMinutes } from '../lib/format.js';
+import { whenLabel, safeHttpsUrl, fmtBytes, minutesSince, agoFromMinutes, fmtNum } from '../lib/format.js';
 import { statusLabel, statusTone, awaitingDecision, dusLabel, scoreExplain, assetUrl, MOCKUP_HASH } from '../lib/ideas.js';
 import { IDEA_LEGEND } from './Ideas.js';
 
@@ -64,7 +64,7 @@ export function IdeaView({ data, project, slug, shot, onShot, onReload, nowMs = 
         <span class=${TONE_CLASS[statusTone(p.status)]}>${statusLabel(p.status)}</span>
       </div>
 
-      <${PageHeadline} chip="Idea" line1=${p.title || slug} line2=${`${statusLabel(p.status)}. ${assets.length} ${assets.length === 1 ? 'asset' : 'assets'}.`}/>
+      <${PageHeadline} chip="Idea" line1=${p.title || slug} line2=${`${statusLabel(p.status)}. ${fmtNum(assets.length)} ${assets.length === 1 ? 'asset' : 'assets'}.`}/>
       ${p.summary ? html`<p style="margin:8px 0 0;max-width:80ch;color:var(--soft);font-size:var(--fs-md);line-height:1.7">${p.summary}</p>` : null}
 
       ${awaitingDecision(p) ? html`
@@ -120,7 +120,7 @@ export function IdeaView({ data, project, slug, shot, onShot, onReload, nowMs = 
       <div id="mockup" style="scroll-margin-top:12px">
       <${Section} title="MOCKUP"
         note=${assets.length
-          ? `${assets.length} shot${assets.length === 1 ? '' : 's'} as the drafting stage rendered them`
+          ? `${fmtNum(assets.length)} shot${assets.length === 1 ? '' : 's'} as the drafting stage rendered them`
           : 'none on file'}>
         ${assets.length ? html`
           <div class="tabs" style="margin-bottom:10px">
@@ -158,7 +158,7 @@ export function IdeaView({ data, project, slug, shot, onShot, onReload, nowMs = 
           <pre class="term">${p.notes}</pre>
         <//>` : null}
 
-      <${Section} title="IDEA CHAT" note=${chat.length ? `${chat.length} turn${chat.length === 1 ? '' : 's'}` : 'none'}>
+      <${Section} title="IDEA CHAT" note=${chat.length ? `${fmtNum(chat.length)} turn${chat.length === 1 ? '' : 's'}` : 'none'}>
         ${chat.length ? html`
           <div style="display:flex;flex-direction:column;gap:10px">
             ${chat.map((c) => html`

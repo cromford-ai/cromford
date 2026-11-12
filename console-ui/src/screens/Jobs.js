@@ -7,7 +7,7 @@ import { Section, Stat, Skeleton, Empty, ErrorBox, ProjectLink, Legend } from '.
 import { PageHeadline, StatGrid, SectionHead } from '../ui/line.js';
 import { UsdCell } from '../ui/UsdCell.js';
 import { useConfirm } from '../ui/Modal.js';
-import { clockTime, whenLabel, countOrNull } from '../lib/format.js';
+import { clockTime, whenLabel, countOrNull, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { MergeQueueStrip } from '../ui/merge-queue-live.js';
 import { PrStageTrack } from '../ui/pr-stage-track.js';
@@ -82,7 +82,7 @@ export function JobsScreen() {
 
       <${SectionHead} num=${3} title="Jobs" note="Every claim the coordination DB holds, newest first."/>
       <${Section} title=${project ? `JOBS · ${project}` : 'JOBS'}
-        note=${`${rows.length} most recent rows · ${open.length} still claimed · every column sorts`}
+        note=${`${fmtNum(rows.length)} most recent rows · ${fmtNum(open.length)} still claimed · every column sorts`}
         right=${project
           ? html`<${Link} to="/jobs" class="crumb">SHOW ALL PROJECTS<//>`
           : null}>
@@ -120,7 +120,7 @@ export function JobsScreen() {
     </div>`;
 }
 
-const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const plural = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many}`;
 
 // The hero and 01 The line, from the jobs payload and the lanes payload (null
 // while it loads). Exported so it renders in a test with no fetch.
@@ -455,7 +455,7 @@ export function LanesSection({ lanes }) {
           {
             key: 'stale_after_s', label: 'THRESHOLD', sort: (r) => Number(r.stale_after_s) || 0, align: 'right',
             cell: (r) => html`<span class="na"
-              title=${`three missed ticks at this lane's ${Math.round((Number(r.cadence_min) || 10))}m cadence`}
+              title=${`three missed ticks at this lane's ${fmtNum(Math.round((Number(r.cadence_min) || 10)))}m cadence`}
               >${ageLabel(r.stale_after_s)}</span>`
           }
         ]}/>
@@ -471,7 +471,7 @@ function laneStateCell(r) {
   const cls = r.tone === 'dead' ? 'pill pill--dead' : r.tone === 'warn' ? 'pill pill--warn'
     : r.tone === 'ok' ? 'pill' : 'pill pill--muted';
   const title = {
-    stale: `no tick for ${ageLabel(r.silence_s)} - this lane should tick every ${Math.round(Number(r.cadence_min) || 10)}m`,
+    stale: `no tick for ${ageLabel(r.silence_s)} - this lane should tick every ${fmtNum(Math.round(Number(r.cadence_min) || 10))}m`,
     pending: 'declared, but its first tick is not due yet',
     unexpected: 'this box is ticking a lane fleet.conf never declared - visible, but nothing alerts on it',
     retired: 'dropped from fleet.conf; the row is kept, nothing is expected of it',

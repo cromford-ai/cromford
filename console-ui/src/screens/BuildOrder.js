@@ -13,6 +13,7 @@ import { PageHeadline } from '../ui/line.js';
 import { TicketKey } from '../ui/TicketKey.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty } from '../ui/primitives.js';
+import { fmtNum } from '../lib/format.js';
 
 const REFRESH_MS = 30000;
 const msgOf = (e) => (e && e.message ? e.message : String(e));
@@ -113,7 +114,7 @@ export function BuildOrderView({ project, projects, data, loading }) {
   const edgesKnown = !ed.e;
   const line1 = r.e ? 'The scheduler read failed.'
     : noTick ? `the scheduler has not written a tick for ${project}`
-      : `${graph.nodes.length} ${graph.nodes.length === 1 ? 'ticket' : 'tickets'} in the build order of ${project}.`;
+      : `${fmtNum(graph.nodes.length)} ${graph.nodes.length === 1 ? 'ticket' : 'tickets'} in the build order of ${project}.`;
 
   return html`
     <div class="page">
@@ -122,7 +123,7 @@ export function BuildOrderView({ project, projects, data, loading }) {
       ${problems.map((p) => html`<p class="section__note" key=${p}>${p}</p>`)}
       ${graph && graph.edgesTruncated ? html`<p class="section__note">showing the first ${EDGES_LIMIT} edges</p>` : null}
       ${graph ? html`
-        <${Section} title="GRAPH" note=${`${graph.layers.length} ${graph.layers.length === 1 ? 'layer' : 'layers'}`}>
+        <${Section} title="GRAPH" note=${`${fmtNum(graph.layers.length)} ${graph.layers.length === 1 ? 'layer' : 'layers'}`}>
           ${graph.nodes.length ? html`
             <div class="tablewrap" data-testid="build-order-graph" style="overflow-x:auto">
               <div style="display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,max-content);gap:12px;align-items:start">
@@ -138,7 +139,7 @@ export function BuildOrderView({ project, projects, data, loading }) {
             </div>`}
         <//>
         <div data-testid="build-order-list">
-          <${Section} title="LIST" note=${`${graph.nodes.length} row${graph.nodes.length === 1 ? '' : 's'}`}>
+          <${Section} title="LIST" note=${`${fmtNum(graph.nodes.length)} row${graph.nodes.length === 1 ? '' : 's'}`}>
             <${SortableTable} columns=${listColumns(project, nodesByN, edgesKnown)} rows=${graph.nodes}
               rowKey=${(n) => n.n} defaultSort="ticket" defaultDir="asc"
               empty=${html`<${Empty} title="no ticket to list"/>`}/>

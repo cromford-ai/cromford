@@ -108,7 +108,7 @@ export function LaneRunsView({ state, laneSort }) {
   const machines = d && Array.isArray(d.machines) ? d.machines : [];
   const hours = d && d.hours ? d.hours : HOURS;
   const head = html`<${PageHeadline} chip="LANES" asOf=${asOf(d)}
-    line1=${d ? `${lanes.length} ${lanes.length === 1 ? 'lane' : 'lanes'} ran in the last ${hours} h.` : 'Reading lane runs.'}
+    line1=${d ? `${fmtNum(lanes.length)} ${lanes.length === 1 ? 'lane' : 'lanes'} ran in the last ${hours} h.` : 'Reading lane runs.'}
     line2="Queue wait, claims and deaths per lane and per machine."/>`;
   const gate = loadGate(state);
   if (!d) return html`${head}${gate}`;
@@ -125,12 +125,12 @@ export function LaneRunsView({ state, laneSort }) {
       <span class="tag">window ${hours} h</span>
       ${d.cost_available === false ? html`<span class="tag tag--warn">cost not available</span>` : null}
     </div>
-    <${Section} title=${`LANES · ${lanes.length}`} note="wait is enqueue to claim; a lane's name opens its runs">
+    <${Section} title=${`LANES · ${fmtNum(lanes.length)}`} note="wait is enqueue to claim; a lane's name opens its runs">
       ${d.truncated ? note('wait sample capped: p50 and max cover the newest runs only') : null}
       <${SortableTable} columns=${laneColumns(d.wait_alert_min)} rows=${lanes} rowKey=${(r) => r.lane}
         defaultSort=${sortKey} defaultDir=${sortDir}/>
     <//>
-    <${Section} title=${`MACHINES · ${machines.length}`} note="each machine that claimed a run in the window">
+    <${Section} title=${`MACHINES · ${fmtNum(machines.length)}`} note="each machine that claimed a run in the window">
       <${SortableTable} columns=${MACHINE_COLUMNS} rows=${machines} rowKey=${(r) => r.machine}
         empty=${html`<${Empty} title="no machine claimed a run in the window"/>`}/>
     <//>`;
@@ -149,7 +149,7 @@ export function LaneRunListView({ state, lane, machine, status }) {
   const runs = d && Array.isArray(d.runs) ? d.runs : [];
   const what = lane ? `lane ${lane}` : `machine ${machine}`;
   const head = html`<${PageHeadline} chip=${lane ? `LANE · ${lane}` : `MACHINE · ${machine}`} asOf=${asOf(d)}
-    line1=${d ? `${runs.length} ${runs.length === 1 ? 'run' : 'runs'} on ${what}${status ? ` with status ${status}` : ''}.` : `Reading the runs on ${what}.`}
+    line1=${d ? `${fmtNum(runs.length)} ${runs.length === 1 ? 'run' : 'runs'} on ${what}${status ? ` with status ${status}` : ''}.` : `Reading the runs on ${what}.`}
     line2="Newest first. A run number opens that run."/>`;
   const back = html`<div class="footnote" style="margin-bottom:10px"><${Link} to="/lane-runs">← all lanes<//></div>`;
   const gate = loadGate(state);

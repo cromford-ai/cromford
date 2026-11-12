@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
-import { whenLabel } from '../lib/format.js';
+import { whenLabel, fmtNum } from '../lib/format.js';
 import { FLEET_ROWS_LIMIT, FLEET_ROWS_DEFAULT_STATE } from '../lib/alertrows.js';
 import {
   componentNames, shapeComponentRow, countLabel, countSortValue, componentAlertsHref
@@ -67,10 +67,10 @@ export function ComponentsView({ data, loading, error, onRetry, nowMs }) {
       { alertsError: c.alertsError, decisionsError: c.decisionsError }))
     : [];
   const line1 = data
-    ? `${rows.length} ${rows.length === 1 ? 'component holds' : 'components hold'} open alerts.`
+    ? `${fmtNum(rows.length)} ${rows.length === 1 ? 'component holds' : 'components hold'} open alerts.`
     : error ? 'The components read failed.' : 'Reading the components.';
   const notes = names ? [
-    names.unstamped ? `${names.unstamped} ${names.unstamped === 1 ? 'alert has' : 'alerts have'} no component yet.` : null,
+    names.unstamped ? `${fmtNum(names.unstamped)} ${names.unstamped === 1 ? 'alert has' : 'alerts have'} no component yet.` : null,
     names.truncated ? `Built from the newest ${OPEN_LIMIT} open alerts; a component past them has no row.` : null
   ].filter(Boolean) : [];
 
@@ -83,7 +83,7 @@ export function ComponentsView({ data, loading, error, onRetry, nowMs }) {
         ${onRetry ? html`<button type="button" class="btn btn--sm" onClick=${onRetry}
           disabled=${Boolean(loading)}>REFRESH</button>` : null}
       </div>
-      <${Section} title="COMPONENTS" note=${data ? `${rows.length} row${rows.length === 1 ? '' : 's'}` : null}>
+      <${Section} title="COMPONENTS" note=${data ? `${fmtNum(rows.length)} row${rows.length === 1 ? '' : 's'}` : null}>
         ${!data && loading
           ? html`<${Skeleton} rows=${6} height=${20}/>`
           : !data && error
@@ -140,7 +140,7 @@ export function AlertDecisionsView({ id, data, loading, error, onRetry, nowMs })
   const rows = data && Array.isArray(data.decisions) ? data.decisions : [];
   const component = rows.length && rows[0].component ? rows[0].component : null;
   const line1 = data
-    ? `${rows.length} ${rows.length === 1 ? 'decision' : 'decisions'} on this alert.`
+    ? `${fmtNum(rows.length)} ${rows.length === 1 ? 'decision' : 'decisions'} on this alert.`
     : error ? 'The decisions read failed.' : 'Reading the decisions.';
   return html`
     <div class="page">

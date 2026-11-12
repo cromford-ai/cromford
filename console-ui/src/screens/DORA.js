@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, ProjectLink } from '../ui/primitives.js';
-import { safeHttpsUrl, minutesSince } from '../lib/format.js';
+import { safeHttpsUrl, minutesSince, fmtNum } from '../lib/format.js';
 import {
   projectRows, slowRows, basisNote, fmtSeconds, fmtRate, fmtFrequency, isThin, THIN_SAMPLE
 } from '../lib/dora.js';
@@ -47,10 +47,10 @@ const dur = (s, n, evidence) => (!n
 // `noun` is [singular, plural]: a count reads "8 merges", but 0 stays a bare 0.
 const sampleCell = (n, what, noun) => {
   if (!n) return html`<span class="na" title=${`nothing ${what} could be measured in this window`}>0</span>`;
-  const text = noun ? `${n} ${n === 1 ? noun[0] : noun[1]}` : n;
+  const text = noun ? `${fmtNum(n)} ${n === 1 ? noun[0] : noun[1]}` : n;
   return isThin(n)
     ? html`<span class="num" style="color:var(--amber)"
-        title=${`only ${n} sample${n === 1 ? '' : 's'} — under ${THIN_SAMPLE} a p90 is just the slowest one of them`}>${text}</span>`
+        title=${`only ${fmtNum(n)} sample${n === 1 ? '' : 's'} — under ${THIN_SAMPLE} a p90 is just the slowest one of them`}>${text}</span>`
     : html`<span class="num">${text}</span>`;
 };
 
@@ -85,8 +85,8 @@ export function projectColumns(ev, days) {
       // hardcoded label can only ever be right about one of those.
       cell: (r) => html`<span class="num"
         title=${`${r.freqDeployVerified
-          ? `${r.freqCount} verified departure${r.freqCount === 1 ? '' : 's'} carrying ${r.merged} merge${r.merged === 1 ? '' : 's'}${r.freqFailed ? `, ${r.freqFailed} that never arrived` : ''}`
-          : `${r.merged} merge${r.merged === 1 ? '' : 's'}`} over ${days}d — ${r.freqBasis || ''}. ${ev('deployment_frequency')}`}>
+          ? `${fmtNum(r.freqCount)} verified departure${r.freqCount === 1 ? '' : 's'} carrying ${fmtNum(r.merged)} merge${r.merged === 1 ? '' : 's'}${r.freqFailed ? `, ${fmtNum(r.freqFailed)} that never arrived` : ''}`
+          : `${fmtNum(r.merged)} merge${r.merged === 1 ? '' : 's'}`} over ${days}d — ${r.freqBasis || ''}. ${ev('deployment_frequency')}`}>
         ${fmtFrequency(r.perDay)}</span>`
     },
     {
@@ -270,7 +270,7 @@ export function DORAScreen() {
               <code>bin/deploy-train.sh</code> records each verified departure, so for those
               projects LEAD ends when production actually served the change and LANDINGS counts
               departures rather than merges. Every other project still ends at the merge —
-              the BASED ON column says how many merges each figure uses. ${gaps.length} gap${gaps.length === 1 ? '' : 's'} named at the bottom of this page.
+              the BASED ON column says how many merges each figure uses. ${fmtNum(gaps.length)} gap${gaps.length === 1 ? '' : 's'} named at the bottom of this page.
             </span>
           </div>`
         : html`
@@ -280,7 +280,7 @@ export function DORAScreen() {
               <code>bin/deploy-train.sh</code> verifies that production serves the merged sha and
               writes a <code>deploy</code> ledger row for it, but no departure was recorded in this
               window. So LEAD stops at main, and LANDINGS counts merges, which OVERCOUNTS departures
-              because a train carries a batch. ${gaps.length} gap${gaps.length === 1 ? '' : 's'} named at the bottom of this page.
+              because a train carries a batch. ${fmtNum(gaps.length)} gap${gaps.length === 1 ? '' : 's'} named at the bottom of this page.
             </span>
           </div>`) : null}
 
@@ -296,7 +296,7 @@ export function DORAScreen() {
 
       <${Section} title="PER PROJECT"
         note=${out.data
-          ? `${rows.length} project${rows.length === 1 ? '' : 's'} landed something in the last ${days} days · hover any figure for the table it came from`
+          ? `${fmtNum(rows.length)} project${rows.length === 1 ? '' : 's'} landed something in the last ${days} days · hover any figure for the table it came from`
           : 'loading'}>
         ${loading
           ? html`<${Skeleton} rows=${5} height=${20}/>`
@@ -309,7 +309,7 @@ export function DORAScreen() {
 
       <${Section} title="SLOWEST CHANGES"
         note=${out.data
-          ? `the ${slow.length} longest lead time${slow.length === 1 ? '' : 's'} on screen · every row opens its PR, its project and the job that built it`
+          ? `the ${fmtNum(slow.length)} longest lead time${slow.length === 1 ? '' : 's'} on screen · every row opens its PR, its project and the job that built it`
           : 'loading'}>
         ${loading
           ? html`<${Skeleton} rows=${4} height=${20}/>`

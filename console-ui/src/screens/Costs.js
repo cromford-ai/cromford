@@ -71,8 +71,8 @@ export function CostsScreen() {
   return html`
     <div class="page">
       <${PageHeadline} chip="Costs"
-        line1=${`${totalRuns} ${totalRuns === 1 ? 'run' : 'runs'} in ${data.window_days} days. ${totalTickets} ${totalTickets === 1 ? 'ticket' : 'tickets'} built.`}
-        line2=${`${totalFailed} failed ${totalFailed === 1 ? 'run' : 'runs'}.${gaps.length ? ` ${gaps.length} ${gaps.length === 1 ? 'caveat' : 'caveats'} from the API.` : ''}`}/>
+        line1=${`${fmtNum(totalRuns)} ${totalRuns === 1 ? 'run' : 'runs'} in ${data.window_days} days. ${fmtNum(totalTickets)} ${totalTickets === 1 ? 'ticket' : 'tickets'} built.`}
+        line2=${`${fmtNum(totalFailed)} failed ${totalFailed === 1 ? 'run' : 'runs'}.${gaps.length ? ` ${fmtNum(gaps.length)} ${gaps.length === 1 ? 'caveat' : 'caveats'} from the API.` : ''}`}/>
       <${CostsHeader} windowDays=${data.window_days}/>
       ${agent ? html`<${AgentLaneSpendSection} agent=${agent}/>` : null}
 
@@ -359,7 +359,7 @@ export function SpendSection({ costs }) {
         <${Stat} label="UNPRICED CALLS · 7D"
           value=${head.unpriced === null ? 'unknown' : head.unpriced}
           tone=${head.unpricedKnownPositive ? 'warn' : head.unpriced === null ? 'sm' : null}/>
-        <${Stat} label="PROJECTS PRICED" value=${`${priced.length}/${rows.length}`} tone="sm"
+        <${Stat} label="PROJECTS PRICED" value=${`${fmtNum(priced.length)}/${fmtNum(rows.length)}`} tone="sm"
           unit=${unpricedProjects.length ? ` · not priced: ${unpricedProjects.map((r) => r.project).join(', ')}` : null}/>
         <${Stat} label="ROLLED UP" value=${head.ageMin === null ? 'unknown' : agoFromMinutes(head.ageMin) + ' ago'} tone="sm"/>
       </div>
@@ -535,7 +535,7 @@ function AnchoredSection() {
   return html`
     <${Section} title="ANCHORED SPEND"
       note=${head.ready && head.from
-        ? `${head.window} · ${head.metered} of ${head.accounts} account${head.accounts === 1 ? '' : 's'} metered`
+        ? `${head.window} · ${fmtNum(head.metered)} of ${fmtNum(head.accounts)} account${head.accounts === 1 ? '' : 's'} metered`
         : 'cost_rows scaled onto the account cash meter'}
       right=${html`<span style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${head.ready && head.uplift
@@ -611,7 +611,7 @@ export function AnchoredTable({ title, note, columns, rows, rowKey, defaultSort,
       ${rows.length ? html`
         <div class="footnote" style="justify-content:flex-start;gap:16px;flex-wrap:wrap">
           <span><b>TOTAL</b></span>
-          <span>${totalN} row${totalN === 1 ? '' : 's'}</span>
+          <span>${fmtNum(totalN)} row${totalN === 1 ? '' : 's'}</span>
           <span>raw ${usdExact(totalRaw)}</span>
           <span>anchored <span style="color:var(--bright);font-weight:700">${usdExact(totalAnchored, anchoredBasis)}</span></span>
           ${truncated

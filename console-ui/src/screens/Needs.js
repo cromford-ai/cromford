@@ -7,7 +7,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Cursor, Legend } from '../ui/primitives.js';
 import { Clock } from '../ui/icons.js';
-import { minutesSince, clockTime, safeHttpsUrl, prNumberFromUrl, whenLabel, countOrNull } from '../lib/format.js';
+import { minutesSince, clockTime, safeHttpsUrl, prNumberFromUrl, whenLabel, countOrNull, fmtNum } from '../lib/format.js';
 import {
   needRows, summariseNeeds, needSeverityRank, NEED_LABEL, NEED_KINDS, facet, staleBuilds, JOBS_READ_CAP
 } from '../lib/cockpit.js';
@@ -133,8 +133,8 @@ export function NeedsView({ needs, jobs, project, kindFilter, nowMs = Date.now()
   return html`
     <div class="page">
       <${PageHeadline} chip="Needs a human"
-        line1=${total === null ? (needs.error ? 'The needs read failed.' : 'Reading what waits on a person.') : `${total} ${total === 1 ? 'thing needs' : 'things need'} a person.`}
-        line2=${total === null ? '' : `${stale.length} stale ${stale.length === 1 ? 'build' : 'builds'} among them.`}/>
+        line1=${total === null ? (needs.error ? 'The needs read failed.' : 'Reading what waits on a person.') : `${fmtNum(total)} ${total === 1 ? 'thing needs' : 'things need'} a person.`}
+        line2=${total === null ? '' : `${fmtNum(stale.length)} stale ${stale.length === 1 ? 'build' : 'builds'} among them.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span style="font-size:var(--fs-sm);color:var(--faint)">
           everything the harness stopped on and cannot finish by itself. Read-only here —
@@ -175,7 +175,7 @@ export function NeedsView({ needs, jobs, project, kindFilter, nowMs = Date.now()
       <//>
 
       <${Section} title="THE QUEUE"
-        note=${payload ? `${rows.length} of ${total} in view` : 'loading'}>
+        note=${payload ? `${fmtNum(rows.length)} of ${fmtNum(total)} in view` : 'loading'}>
         ${needs.loading && !payload
           ? html`<${Skeleton} rows=${8} height=${20}/>`
           : html`<${SortableTable} columns=${columns} rows=${rows} rowKey=${(r) => r.id}

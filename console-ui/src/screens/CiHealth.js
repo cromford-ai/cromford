@@ -114,12 +114,12 @@ export const repoColumns = [
   { key: 'minutes24h', label: 'MINUTES 24H', align: 'right', sort: (r) => r.minutes24h, cell: (r) => r.minutes24h ?? na(unreadOr(r.minutesState)) },
   {
     key: 'runners', label: 'RUNNERS', sort: (r) => (r.runners ? r.runners.online : null),
-    cell: (r) => (r.runners ? `${r.runners.online}/${r.runners.total}` : na(unreadOr(r.runnersState)))
+    cell: (r) => (r.runners ? `${fmtNum(r.runners.online)}/${fmtNum(r.runners.total)}` : na(unreadOr(r.runnersState)))
   },
   { key: 'flakes7d', label: 'FLAKES 7D', align: 'right', sort: (r) => r.flakes7d, cell: (r) => r.flakes7d ?? na('unread') },
   {
     key: 'flakeRate', label: 'FLAKE RATE', unit: `${FLAKE_WINDOW_DAYS} days`, align: 'right', sort: (r) => r.flakeRate,
-    cell: (r) => (r.flakeRate === null ? na(r.flakes7d === null ? 'unread' : 'no runs in the window') : `${Math.round(r.flakeRate * 100)}%`)
+    cell: (r) => (r.flakeRate === null ? na(r.flakes7d === null ? 'unread' : 'no runs in the window') : `${fmtNum(Math.round(r.flakeRate * 100))}%`)
   },
   { key: 'quarantined', label: 'QUARANTINED', align: 'right', sort: (r) => r.quarantined, cell: (r) => r.quarantined ?? na('unread') },
 ];
@@ -195,7 +195,7 @@ export function CiHealthView({
   const ciAll = settled(health, flakes, quarantine) ? ciHealthRows(ok(health), ok(flakes), ok(quarantine)) : null;
   return html`
     <${PageHeadline} chip="CI health"
-      line1=${ciAll ? `${ciAll.rows.length} ${ciAll.rows.length === 1 ? 'repo' : 'repos'} with CI on record.` : 'Reading CI health.'}
+      line1=${ciAll ? `${fmtNum(ciAll.rows.length)} ${ciAll.rows.length === 1 ? 'repo' : 'repos'} with CI on record.` : 'Reading CI health.'}
       line2=${`Minutes, runners and flakes per repo, last ${FLAKE_WINDOW_DAYS} days.`}/>
     ${msg ? html`<div class=${msg.ok ? 'banner banner--warn' : 'banner'} role="status"
       style=${msg.ok ? 'margin-bottom:10px;border-color:var(--line-active);background:var(--panel-active);color:var(--green-lt)' : 'margin-bottom:10px'}>

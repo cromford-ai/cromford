@@ -6,7 +6,7 @@ import { useApi } from '../lib/hooks.js';
 import { LogPane } from '../ui/LogPane.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, UnavailableChip } from '../ui/primitives.js';
-import { agoFromMinutes, fmtDuration, prNumberFromUrl, whenLabel } from '../lib/format.js';
+import { agoFromMinutes, fmtDuration, prNumberFromUrl, whenLabel, fmtNum } from '../lib/format.js';
 import { stageProgress, buildLane, STEPS, VERDICT_TONE, stageLabel, verdictLabel } from '../lib/stages.js';
 import { tierLabel, plainLabel } from '../lib/labels.js';
 import { UsdCell } from '../ui/UsdCell.js';
@@ -211,10 +211,10 @@ export function BuildMission({ build, live, liveError, jobNote, timeline = [], a
 
   const railNote = spend === null
     ? 'spend not on file yet — no phase has billed, or this build has no live record'
-    : `${phases.length} phase${phases.length === 1 ? '' : 's'} on file, as of the last answer`;
+    : `${fmtNum(phases.length)} phase${phases.length === 1 ? '' : 's'} on file, as of the last answer`;
 
   const logNote = rows.length
-    ? `${rows.length} event${rows.length === 1 ? '' : 's'}, newest at the bottom${live && live.capped ? ' · more still loading' : ''}`
+    ? `${fmtNum(rows.length)} event${rows.length === 1 ? '' : 's'}, newest at the bottom${live && live.capped ? ' · more still loading' : ''}`
     : 'nothing has been emitted for this build yet';
 
   return html`
@@ -328,7 +328,7 @@ export function BuildMission({ build, live, liveError, jobNote, timeline = [], a
             ]}/>
         <//>
 
-        <${Section} title="TIMELINE" note=${`${timeline.length} events`}>
+        <${Section} title="TIMELINE" note=${`${fmtNum(timeline.length)} events`}>
           ${timeline.length
             ? html`<div class="panel panel__pad">
                 ${timeline.map((e, i) => html`

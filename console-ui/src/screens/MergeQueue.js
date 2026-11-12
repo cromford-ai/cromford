@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
-import { whenLabel } from '../lib/format.js';
+import { whenLabel, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { MQ_READ_LIMIT, MQ_STATUSES, mqRows, auditRows, rowsOnlyState, rowsOnlyBanner } from '../lib/merge-queue.js';
 import { MqRowActions, HeldReleaseButton } from './merge-queue-actions.js';
@@ -203,7 +203,7 @@ export function MergeQueueView({ project, mq, held, mqChanges, heldChanges, sett
     if (!rows) return html`<${ErrorBox} error=${errText(held)} onRetry=${held.reload}/>`;
     const total = Number.isFinite(Number(data.n_total)) && data.n_total !== null && data.n_total !== '' ? Number(data.n_total) : null;
     return html`
-      ${rows.length ? note(total === null ? `${rows.length} shown, total unknown` : `${rows.length} of ${total}`) : null}
+      ${rows.length ? note(total === null ? `${fmtNum(rows.length)} shown, total unknown` : `${fmtNum(rows.length)} of ${fmtNum(total)}`) : null}
       <${SortableTable} wide columns=${heldColumns} rows=${rows} rowKey=${(r) => `${r.repo}#${r.number}`}
         empty=${html`<${Empty} title="no held pages"/>`}/>`;
   };

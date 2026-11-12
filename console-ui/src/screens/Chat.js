@@ -11,7 +11,7 @@ import {
 } from '../lib/chat.js';
 import { AgentChat } from './staff/agent-chat.js';
 import { Empty, Skeleton, Cursor } from '../ui/primitives.js';
-import { agoFromMinutes, healthFromAge, minutesSince, whenLabel, fmtDuration } from '../lib/format.js';
+import { agoFromMinutes, healthFromAge, minutesSince, whenLabel, fmtDuration, fmtNum } from '../lib/format.js';
 import { Dot } from '../ui/icons.js';
 
 const POLL_MS = 4000;
@@ -194,7 +194,7 @@ export function ChatScreen({ initialQueue = null } = {}) {
         line1=${hubAge === null || hubAge === undefined ? 'The orchestrator is unseen.' : `The orchestrator was last seen ${agoFromMinutes(hubAge)} ago.`}
         line2=${staffAgent
           ? `The ${staffAgent} thread is read on the agent's next tick.`
-          : `${thread.length} ${thread.length === 1 ? 'message' : 'messages'} in this thread.`}/>
+          : `${fmtNum(thread.length)} ${thread.length === 1 ? 'message' : 'messages'} in this thread.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/" class="crumb">← FLEET<//>
         <span class=${hubHealth === 'ok' ? 'pill' : hubHealth === 'warn' ? 'pill pill--warn' : 'pill pill--dead'}>
@@ -265,7 +265,7 @@ export function ChatScreen({ initialQueue = null } = {}) {
               <span class="msg__who">${isBox ? target : 'orchestrator'}</span>
               <span class="msg__text" style=${wait.patient ? 'color:var(--amber-txt)' : 'color:var(--muted)'}>
                 ${wait.text} <${Cursor} small=${true}/>
-                ${pending.length > 1 ? html`<br/><span style="color:var(--faint)">${pending.length} turns outstanding</span>` : null}
+                ${pending.length > 1 ? html`<br/><span style="color:var(--faint)">${fmtNum(pending.length)} turns outstanding</span>` : null}
                 ${wait.patient && waitingMs >= 20000
                   ? html`<br/><span style="color:var(--faint)">still polling — nothing has failed, and the turn is queued as a command either way</span>`
                   : null}
@@ -285,7 +285,7 @@ export function ChatScreen({ initialQueue = null } = {}) {
         <div class="footnote">
           <span>enter sends · shift+enter for a newline · capped at ${MAX_CHARS} chars</span>
           <span class="footnote__spacer"></span>
-          <span>${thread.length} in this thread · ${messages.length} across all</span>
+          <span>${fmtNum(thread.length)} in this thread · ${fmtNum(messages.length)} across all</span>
         </div>
       </div>`}
     </div>`;

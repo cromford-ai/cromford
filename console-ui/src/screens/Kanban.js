@@ -18,7 +18,7 @@ import {
 } from '../lib/tickets.js';
 import { externalClaims, ticketClaim, claimAge, claimIsStaleBranch, claimIsMerged } from '../lib/lanes.js';
 import { Section, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
-import { agoFromMinutes, minutesSince, snapshotLabel, safeHttpsUrl, prNumberFromUrl } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, snapshotLabel, safeHttpsUrl, prNumberFromUrl, fmtNum } from '../lib/format.js';
 import { tierLabel } from '../lib/labels.js';
 import { stageLabel, verdictLabel } from '../lib/stages.js';
 import { dropStaleClaims } from '../lib/waiting.js';
@@ -79,7 +79,7 @@ export function KanbanScreen() {
         ? html`<${PageHeadline} chip="To do (waiting)" line1=${project ? `Open ${project} tickets not in flight.` : 'Open tickets not in flight.'}
             line2="Every open board ticket with no running build, one reason each: why it waits, since when, on what."/>
           <${WaitingPanel} key=${project || 'all'} project=${project}/>`
-        : html`<${PageHeadline} chip="Boards" line1=${`${projects.length} ${projects.length === 1 ? 'board' : 'boards'}.`} line2="Each project's own product board, from the hub's ticket snapshot."/>
+        : html`<${PageHeadline} chip="Boards" line1=${`${fmtNum(projects.length)} ${projects.length === 1 ? 'board' : 'boards'}.`} line2="Each project's own product board, from the hub's ticket snapshot."/>
           <${Boards} project=${project} projects=${projects}/>`}
     </div>`;
 }
@@ -155,7 +155,7 @@ const COLUMN_LEGEND = [
 // "reviewed, no opinion". No PR and no verdict is still a dash.
 const ownUnreviewed = (hasPr, verdict) => hasPr && !verdict;
 
-const staleClaimWords = (n) => `${n} stale claim${n === 1 ? '' : 's'} not counted`;
+const staleClaimWords = (n) => `${fmtNum(n)} stale claim${n === 1 ? '' : 's'} not counted`;
 
 const emptyNote = (project) => (project
   ? `No build, command or queued ticket for ${project} right now.`
@@ -187,12 +187,12 @@ export function PipelineBoard({ board, external, shipped, showEmpty, emptyNote, 
               ${col.key === 'building' && external.length
                 ? html`<span class="kb__external"
                     title="claimed by a harness that is not ours — real work in flight, but it never reaches our build ledger, so it is counted separately from the number above">
-                    · ${external.length} external
+                    · ${fmtNum(external.length)} external
                   </span>`
                 : null}
               ${col.key === 'building' && view.building_stale > 0
                 ? html`<span class="kb__stale"
-                    title=${`${view.building_stale} unmerged build${view.building_stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not counted above.${view.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
+                    title=${`${fmtNum(view.building_stale)} unmerged build${view.building_stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not counted above.${view.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
                     · ${view.building_stale} stale${view.building_stale_is_fleet_wide ? ' (fleet)' : ''}
                   </span>`
                 : null}
@@ -313,7 +313,7 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
     },
     {
       key: 'ageMin', label: 'AGE', sort: (r) => r.ageMin, align: 'right',
-      cell: (r) => html`<span title=${r.ageMin === null ? 'no timestamp on this row' : `${Math.round(r.ageMin)} minutes`}>
+      cell: (r) => html`<span title=${r.ageMin === null ? 'no timestamp on this row' : `${fmtNum(Math.round(r.ageMin))} minutes`}>
         ${agoFromMinutes(r.ageMin)}</span>`
     }
   ];
@@ -337,7 +337,7 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
           : null}
         ${stale > 0
           ? html`<span class="kb__stale"
-              title=${`${stale} unmerged build${stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not in the BUILDING rows above.${board.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
+              title=${`${fmtNum(stale)} unmerged build${stale === 1 ? '' : 's'} stuck in a build stage past the freshness window — abandoned attempts the hub still has to sweep from the ledger. NOT in flight, and deliberately not in the BUILDING rows above.${board.building_stale_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
               BUILDING · ${stale} stale${board.building_stale_is_fleet_wide ? ' (fleet)' : ''} not shown
             </span>`
           : null}
@@ -349,7 +349,7 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
         ${external.length
           ? html`<span class="kb__external"
               title="claimed by a harness that is not ours — real work, but it never reaches our build ledger, so it is counted apart from our own rows">
-              BUILDING · ${external.length} external
+              BUILDING · ${fmtNum(external.length)} external
             </span>`
           : null}
         ${board.showing_archived || Number(board.dead_archived) > 0 || (board.dead_closed_known && Number(board.dead_closed) > 0)
@@ -395,7 +395,7 @@ function DeadArchiveNote({ view, onToggle }) {
   const fleet = (view.dead_closed_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : '')
     + (view.dead_closed_complete === false ? ' The closed-issue list was read up to its 1000-row cap, so some closed-issue rows may still be showing.' : '');
   const closedNote = closed
-    ? html`<span title=${`${closed} dead build row${closed === 1 ? '' : 's'} whose GitHub issue is closed are hidden. Hidden, not deleted: SHOW ALL returns them flagged.${fleet}`}>
+    ? html`<span title=${`${fmtNum(closed)} dead build row${closed === 1 ? '' : 's'} whose GitHub issue is closed are hidden. Hidden, not deleted: SHOW ALL returns them flagged.${fleet}`}>
         · ${closed} closed-issue${view.dead_closed_is_fleet_wide ? ' (fleet)' : ''}${view.showing_archived ? ' shown' : ''}
       </span>`
     : null;
@@ -411,7 +411,7 @@ function DeadArchiveNote({ view, onToggle }) {
   return html`
     <span class="kb__stale">
       ${n
-        ? html`<span title=${`${n} dead row${n === 1 ? '' : 's'} older than ${windowLabel} are archived out of this view. Archived means HIDDEN, never deleted — every row is still in the database and this button asks for them.${view.dead_archive_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
+        ? html`<span title=${`${fmtNum(n)} dead row${n === 1 ? '' : 's'} older than ${windowLabel} are archived out of this view. Archived means HIDDEN, never deleted — every row is still in the database and this button asks for them.${view.dead_archive_is_fleet_wide ? ' This is a fleet-wide number and cannot be attributed to one project.' : ''}`}>
             · ${n} archived${view.dead_archive_is_fleet_wide ? ' (fleet)' : ''}
           </span>`
         : null}
@@ -435,9 +435,9 @@ function Card({ card, column }) {
             ${agoFromMinutes(card.oldest_queued_min)}
           </span>
         </div>
-        <span class="card__body">${card.queue_depth} ticket${card.queue_depth === 1 ? '' : 's'} waiting · oldest ${agoFromMinutes(card.oldest_queued_min)}</span>
+        <span class="card__body">${fmtNum(card.queue_depth)} ticket${card.queue_depth === 1 ? '' : 's'} waiting · oldest ${agoFromMinutes(card.oldest_queued_min)}</span>
         ${card.pending_commands
-          ? html`<span class="card__foot">${card.pending_commands} pending command${card.pending_commands > 1 ? 's' : ''}</span>`
+          ? html`<span class="card__foot">${fmtNum(card.pending_commands)} pending command${card.pending_commands > 1 ? 's' : ''}</span>`
           : null}
       <//>`;
   }
@@ -553,7 +553,7 @@ function Boards({ project, projects }) {
           ${ageMin === null
             ? 'snapshot age unknown — the hub sent no usable timestamp'
             : `snapshot ${ageMin === 0 ? 'now' : `${agoFromMinutes(ageMin)} ago`}`}
-          · ${grandTotal} tickets across ${carried.length} board${carried.length === 1 ? '' : 's'}
+          · ${fmtNum(grandTotal)} tickets across ${fmtNum(carried.length)} board${carried.length === 1 ? '' : 's'}
           · pushed by the hub, not read live from the client boards
         </span>
       </div>
@@ -581,11 +581,11 @@ function BoardPane({ project, snapshot }) {
   return html`
     <${Section}
       title=${html`BOARD · <${Link} to=${`/p/${encodeURIComponent(project)}`}>${project}<//>`}
-      note=${`${tickets.length} tickets${entry.board_id ? ` · board ${entry.board_id}` : ''}`}>
+      note=${`${fmtNum(tickets.length)} tickets${entry.board_id ? ` · board ${entry.board_id}` : ''}`}>
       ${unknownCols.length ? html`
         <div class="footnote">
           <span style="color:var(--amber-dk)">
-            ${unknownCols.map((c) => `${c.count} ${c.key}`).join(', ')} — status the console does not
+            ${unknownCols.map((c) => `${fmtNum(c.count)} ${c.key}`).join(', ')} — status the console does not
             know, shown in its own column rather than dropped
           </span>
         </div>` : null}
@@ -596,7 +596,7 @@ function BoardPane({ project, snapshot }) {
               <span class=${col.key === 'done' ? 'kb__title' : col.key === 'in_progress' ? 'kb__title kb__title--green' : 'kb__title'}>
                 ${col.label}
               </span>
-              <span class="kb__count">${col.count}</span>
+              <span class="kb__count">${fmtNum(col.count)}</span>
             </div>
             ${col.tickets.slice(0, 40).map((t) => html`
               <${TicketCard} key=${t.key} ticket=${t} project=${project}/>`)}

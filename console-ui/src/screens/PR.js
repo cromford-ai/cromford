@@ -7,7 +7,7 @@ import { LogPane } from '../ui/LogPane.js';
 import { useConfirm } from '../ui/Modal.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { SortableTable } from '../ui/SortableTable.js';
-import { agoFromMinutes, safeHttpsUrl, whenLabel } from '../lib/format.js';
+import { agoFromMinutes, safeHttpsUrl, whenLabel, fmtNum } from '../lib/format.js';
 import { stageLabel, verdictLabel } from '../lib/stages.js';
 import { tierLabel } from '../lib/labels.js';
 import { UsdCell } from '../ui/UsdCell.js';
@@ -82,7 +82,7 @@ export function PRScreen({ project, number }) {
       body: html`Queue a merge of <b>#${number}</b> on <b>${project}</b>?
         The command goes to the box that owns the repo — nothing merges from this browser.
         ${data.checks && data.checks.failure
-          ? html`<br/><br/><span style="color:var(--red-lt)">${data.checks.failure} check${data.checks.failure > 1 ? 's are' : ' is'} failing right now.</span>`
+          ? html`<br/><br/><span style="color:var(--red-lt)">${fmtNum(data.checks.failure)} check${data.checks.failure > 1 ? 's are' : ' is'} failing right now.</span>`
           : ''}`,
       confirmLabel: 'QUEUE MERGE'
     });
@@ -201,7 +201,7 @@ export function PRScreen({ project, number }) {
 
       ${checks && checks.failing && checks.failing.length ? html`
         <div class="banner">
-          <span><b>${checks.failure} failing check${checks.failure > 1 ? 's' : ''}:</b>
+          <span><b>${fmtNum(checks.failure)} failing check${checks.failure > 1 ? 's' : ''}:</b>
             ${checks.failing.map((f) => {
               const href = safeHttpsUrl(f.url);
               return href
@@ -277,7 +277,7 @@ export function PRScreen({ project, number }) {
           ${repo ? html`<${IronLawHold} repo=${repo} number=${number} liveHead=${liveHead}/>` : null}
 
           <${Section} title="BUILD ROWS"
-            note=${`${builds.length} build row${builds.length === 1 ? '' : 's'} point${builds.length === 1 ? 's' : ''} at this PR`}>
+            note=${`${fmtNum(builds.length)} build row${builds.length === 1 ? '' : 's'} point${builds.length === 1 ? 's' : ''} at this PR`}>
             ${builds.length
               ? html`<${SortableTable}
                   columns=${[
@@ -321,7 +321,7 @@ export function PRStats({ builds, data, gh, checks, risk, liveHead }) {
           tone=${top && top.verdict === 'APPROVE' ? 'green' : 'sm'}/>
         <${Stat} label="TIER" value=${top && top.tier ? tierLabel(top.tier) : '—'} tone="sm"/>
         <${Stat} label="CHECKS"
-          value=${checks ? `${checks.success}/${checks.total}` : '—'}
+          value=${checks ? `${fmtNum(checks.success)}/${fmtNum(checks.total)}` : '—'}
           tone=${checks && checks.failure ? 'amber' : checks ? 'green' : 'sm'}/>
         <${Stat} label="DIFF"
           value=${gh ? html`<span style="color:var(--green)">+${gh.additions}</span> <span style="color:var(--red-lt)">−${gh.deletions}</span>` : '—'}

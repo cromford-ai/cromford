@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, ProjectLink } from '../ui/primitives.js';
-import { whenLabel, countOrNull, safeHttpsUrl } from '../lib/format.js';
+import { whenLabel, countOrNull, safeHttpsUrl, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { runOutcome, OUTCOME_LABEL } from '../lib/cockpit.js';
 import { UsdCell } from '../ui/UsdCell.js';
@@ -50,7 +50,7 @@ export function JobView({ data, onReload, nowMs = Date.now() }) {
   return html`
     <div class="page">
       <${PageHeadline} chip="Job" line1=${job.id}
-        line2=${`${plainLabel(state)}. ${phases.length} ${phases.length === 1 ? 'phase' : 'phases'}, ${events.length} ${events.length === 1 ? 'event' : 'events'}.`}/>
+        line2=${`${plainLabel(state)}. ${fmtNum(phases.length)} ${phases.length === 1 ? 'phase' : 'phases'}, ${fmtNum(events.length)} ${events.length === 1 ? 'event' : 'events'}.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/jobs" class="crumb">← JOBS<//>
         <span class=${tone === 'dead' ? 'pill pill--dead' : tone === 'warn' ? 'pill pill--warn' : 'pill'}>
@@ -67,7 +67,7 @@ export function JobView({ data, onReload, nowMs = Date.now() }) {
           value=${job.budget_usd === null || job.budget_usd === undefined || job.budget_usd === ''
             ? countOrNull(null, { uncapped: true })
             : html`<${UsdCell} value=${job.budget_usd}/>`}/>
-        <${Stat} label="OF CAP" value=${use === null ? '-' : `${Math.round(use * 100)}%`}
+        <${Stat} label="OF CAP" value=${use === null ? '-' : `${fmtNum(Math.round(use * 100))}%`}
           tone=${use !== null && use >= 1 ? 'warn' : 'sm'}/>
         <${Stat} label="LAST BEAT"
           value=${job.heartbeating ? `${ageLabel(job.beat_age_s)} ago` : 'never'}
@@ -95,7 +95,7 @@ export function JobView({ data, onReload, nowMs = Date.now() }) {
         </div>` : null}
 
       <${Section} title="PHASES"
-        note=${`${phases.length} on file - one row per stage attempt, with the exit code and the dollars it actually cost`}>
+        note=${`${fmtNum(phases.length)} on file - one row per stage attempt, with the exit code and the dollars it actually cost`}>
         <${SortableTable} rows=${phases} rowKey=${(p) => p.id} defaultSort="id" defaultDir="asc"
           empty=${html`<${Empty} title="NO PHASE ROWS"
             note="This claim opened no stage - it may predate per-phase tracking, or it ended before its first stage started."/>`}
@@ -135,12 +135,12 @@ export function JobView({ data, onReload, nowMs = Date.now() }) {
 
       <${Section} title="TRANSCRIPT"
         note=${transcripts.length
-          ? `${transcripts.length} attempt${transcripts.length === 1 ? '' : 's'} on file - click one to read the conversation`
+          ? `${fmtNum(transcripts.length)} attempt${transcripts.length === 1 ? '' : 's'} on file - click one to read the conversation`
           : 'what the model was actually doing, when a model ran'}>
         <${TranscriptList} jobId=${job.id} rows=${transcripts} emptyNote=${emptyStateNote(data)}/>
       <//>
 
-      <${Section} title="STAGE EVENTS" note=${`${events.length} on file - the atomic record this job left behind`}>
+      <${Section} title="STAGE EVENTS" note=${`${fmtNum(events.length)} on file - the atomic record this job left behind`}>
         <${SortableTable} rows=${events} rowKey=${(e) => e.id} defaultSort="id" defaultDir="asc"
           empty=${html`<${Empty} title="NO STAGE EVENTS"
             note="This job closed without emitting one, or it is still on its first stage."/>`}

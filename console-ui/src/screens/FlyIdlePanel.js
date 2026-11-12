@@ -1,6 +1,6 @@
 import { html } from '../router.js';
 import { api } from '../api.js';
-import { fmtUsd } from '../lib/format.js';
+import { fmtUsd, fmtNum } from '../lib/format.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
@@ -59,7 +59,7 @@ export function FlyIdlePanel() {
         defaultSort="idle" defaultDir="desc"
         empty=${html`<${Empty} title=${body.pass ? 'no started machines' : 'no reaper pass yet'}
           note=${body.pass ? 'The last pass found no started Fly machine.' : 'bin/fly-idle-reaper.sh has not reported a pass.'}/>`}/>
-      <h3 class="section__note" style="margin:14px 0 4px">STOPS IN THE LAST 24 H · ${stops.total} stop${stops.total === 1 ? '' : 's'}
+      <h3 class="section__note" style="margin:14px 0 4px">STOPS IN THE LAST 24 H · ${fmtNum(stops.total)} stop${stops.total === 1 ? '' : 's'}
         · ${fmtUsd(stops.saved_usd_per_hour_24h, { decimals: 3 })}/h saved${stops.unpriced ? ` · ${stops.unpriced} unpriced` : ''}</h3>
       <${SortableTable} wide
         columns=${[
@@ -75,11 +75,11 @@ export function FlyIdlePanel() {
         defaultSort="time" defaultDir="desc"
         empty=${html`<${Empty} title="no stops in the last 24 h" note="The reaper requested no stop in this window."/>`}/>
       ${stops.truncated
-        ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${stops.rows.length} of ${stops.total}; the $/h sum covers the shown rows</p>`
+        ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${fmtNum(stops.rows.length)} of ${fmtNum(stops.total)}; the $/h sum covers the shown rows</p>`
         : null}
       ${destroys.available
         ? html`
-      <h3 class="section__note" style="margin:14px 0 4px">DESTROYED (24 H) · ${destroys.count} destroy${destroys.count === 1 ? '' : 's'}
+      <h3 class="section__note" style="margin:14px 0 4px">DESTROYED (24 H) · ${fmtNum(destroys.count)} destroy${destroys.count === 1 ? '' : 's'}
         · restart ${fmtUsd(destroys.usd_per_hour, { decimals: 3 })}/h${destroys.unpriced ? ` · ${destroys.unpriced} unpriced` : ''}</h3>
       <${SortableTable} wide
         columns=${[
@@ -95,7 +95,7 @@ export function FlyIdlePanel() {
         defaultSort="time" defaultDir="desc"
         empty=${html`<${Empty} title="no destroys in the last 24 h" note="The reaper requested no destroy in this window."/>`}/>
       ${destroys.truncated
-        ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${destroys.rows.length} of ${destroys.count}; the restart $/h sum covers the shown rows</p>`
+        ? html`<p class="section__note" style="margin:6px 0 0">showing the newest ${fmtNum(destroys.rows.length)} of ${fmtNum(destroys.count)}; the restart $/h sum covers the shown rows</p>`
         : null}`
         : html`<p class="section__note" style="margin:14px 0 0">destroy list not available: ${destroys.error || 'the worker did not send it'}</p>`}`;
   }

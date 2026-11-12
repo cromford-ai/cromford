@@ -6,7 +6,7 @@ import { useApi } from '../lib/hooks.js';
 import { useConfirm } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { fmtUsd, fmtDuration, whenLabel } from '../lib/format.js';
+import { fmtUsd, fmtDuration, whenLabel, fmtNum } from '../lib/format.js';
 import { BlockCategoriesSection } from './BlockCategories.js';
 import { LessonsSection } from './Lessons.js';
 import { ReviewCountsPanel } from './ReviewCountsPanel.js';
@@ -186,7 +186,7 @@ function spendText(spend, cap) {
 
 function runningText(running, conc) {
   const jobs = running.data && Array.isArray(running.data.jobs) ? running.data.jobs : null;
-  const n = jobs ? `${jobs.length >= RUNNING_LIMIT ? '≥' : ''}${jobs.length}` : running.error ? 'running unreadable' : '…';
+  const n = jobs ? `${jobs.length >= RUNNING_LIMIT ? '≥' : ''}${fmtNum(jobs.length)}` : running.error ? 'running unreadable' : '…';
   const c = limitState('concurrency', conc);
   const cText = c.kind === 'ok' ? `concurrency ${c.value}` : c.kind === 'none' ? 'default (free slots)'
     : c.kind === 'bad' ? `concurrency ${c.raw} (unreadable)` : c.kind === 'error' ? `concurrency unreadable (${c.text})` : 'concurrency …';
@@ -258,8 +258,8 @@ export function LeadReviewsView({ registry, repos, projects, cap, conc, spend, r
   return html`
     <div class="page">
       <${PageHeadline} chip="Lead reviews"
-        line1=${jobs ? `${jobs.length} ${jobs.length === 1 ? 'lead review' : 'lead reviews'} running.` : 'Reading the lead reviews.'}
-        line2=${repoReads.data ? `${failed.length} ${failed.length === 1 ? 'PR has' : 'PRs have'} a failed review on its head.` : ''}/>
+        line1=${jobs ? `${fmtNum(jobs.length)} ${jobs.length === 1 ? 'lead review' : 'lead reviews'} running.` : 'Reading the lead reviews.'}
+        line2=${repoReads.data ? `${fmtNum(failed.length)} ${failed.length === 1 ? 'PR has' : 'PRs have'} a failed review on its head.` : ''}/>
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <${Link} to="/kanban" class="crumb">← KANBAN<//>
       </div>

@@ -8,7 +8,7 @@ import { useConfirm } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, Legend } from '../ui/primitives.js';
 import { UsdCell } from '../ui/UsdCell.js';
-import { fmtUsd, clockTime, whenLabel } from '../lib/format.js';
+import { fmtUsd, clockTime, whenLabel, fmtNum } from '../lib/format.js';
 import { fleetProjects } from '../lib/kanban.js';
 import { isHub } from '../lib/settings.js';
 import {
@@ -163,8 +163,8 @@ export function ModelsView({
   return html`
     <div class="page">
       ${dialog || null}
-      <${PageHeadline} chip="MODELS" line1=${`${rows.length} ${rows.length === 1 ? 'role' : 'roles'} on a model ladder.`}
-        line2=${`${stageRows.length} pipeline ${stageRows.length === 1 ? 'stage' : 'stages'}, ${roleRows.length} other ${roleRows.length === 1 ? 'role' : 'roles'}.`}/>
+      <${PageHeadline} chip="MODELS" line1=${`${fmtNum(rows.length)} ${rows.length === 1 ? 'role' : 'roles'} on a model ladder.`}
+        line2=${`${fmtNum(stageRows.length)} pipeline ${stageRows.length === 1 ? 'stage' : 'stages'}, ${fmtNum(roleRows.length)} other ${roleRows.length === 1 ? 'role' : 'roles'}.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="section__note">every role, its model ladder, its price and its last ${SPEND_DAYS} days</span>
         <button class="btn btn--sm" style="margin-left:auto" onClick=${onReload}>${loading ? 'REFRESHING…' : 'REFRESH'}</button>
@@ -181,7 +181,7 @@ export function ModelsView({
 
       ${seeded ? html`
         <div class="banner banner--warn">
-          <span><b>${seeded} ${seeded === 1 ? 'role carries' : 'roles carry'} a rung still on its #1510.0 seed value</b>${' '}
+          <span><b>${fmtNum(seeded)} ${seeded === 1 ? 'role carries' : 'roles carry'} a rung still on its #1510.0 seed value</b>${' '}
             (tagged SEED): nobody has decided that rung since the seed copied the code default of 2026-09-22,
             and some of those defaults have since moved in code (#1507). Open the role and either change the
             model and save, or press ${KEEP_SEED_LABEL} to record the seed as reviewed. Nothing here changes on
@@ -190,7 +190,7 @@ export function ModelsView({
 
       ${gapped.length ? html`
         <div class="banner banner--warn">
-          <span><b>${gapped.length} ${gapped.length === 1 ? 'scope carries' : 'scopes carry'} a ladder with no rung 0</b>${' '}
+          <span><b>${fmtNum(gapped.length)} ${gapped.length === 1 ? 'scope carries' : 'scopes carry'} a ladder with no rung 0</b>${' '}
             (a half-written ladder from before #1560). They are ignored by every resolver: a project one falls back
             to the hub, a hub one is no route at all. Open each and press RESET TO HUB (a project scope) or
             SAVE LADDER (either) to repair it.
@@ -518,7 +518,7 @@ export function ModelRoleView({
       <div id="history">
         <${Section} title="HISTORY" note=${project ? `${project}'s changes and the hub's, newest first` : 'every scope, newest first'}>
           <${HistoryTable} changes=${changes} nowMs=${nowMs}/>
-          ${truncated ? html`<p class="section__note">Showing the newest ${changes.length}; older changes exist.</p>` : null}
+          ${truncated ? html`<p class="section__note">Showing the newest ${fmtNum(changes.length)}; older changes exist.</p>` : null}
         <//>
       </div>
     </div>`;

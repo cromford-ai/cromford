@@ -4,6 +4,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { hotspotCells, panelNote, HOTSPOTS_SHOWN } from '../lib/conflict-hotspots-panel.js';
+import { fmtNum } from '../lib/format.js';
 
 const num = (v) => (v === null || v === undefined || v === '' ? '—' : v);
 
@@ -57,7 +58,7 @@ export default function ConflictHotspotsPanel({ project }) {
         defaultSort="conflicts" defaultDir="desc"/>
       ${read.data.truncated
         ? html`<p class="section__note" style="margin:6px 0 0">${Number.isFinite(total) && total > 0
-          ? `showing ${rows.length} of ${total}` : `showing the top ${rows.length}; more files exist`}</p>`
+          ? `showing ${fmtNum(rows.length)} of ${fmtNum(total)}` : `showing the top ${fmtNum(rows.length)}; more files exist`}</p>`
         : null}
     </div>`;
 }

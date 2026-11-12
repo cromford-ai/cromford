@@ -6,7 +6,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, Cursor } from '../ui/primitives.js';
 import { Clock } from '../ui/icons.js';
-import { minutesSince, fmtDuration, prNumberFromUrl, whenLabel } from '../lib/format.js';
+import { minutesSince, fmtDuration, prNumberFromUrl, whenLabel, fmtNum } from '../lib/format.js';
 import { stageProgress, stageLabel, verdictLabel } from '../lib/stages.js';
 import { plainLabel, tierLabel } from '../lib/labels.js';
 import {
@@ -185,7 +185,7 @@ function RunHistory({ project, kind, outcome, setParam, chip }) {
       <//>
 
       <${Section} title="RUNS"
-        note=${pager.total === null ? 'loading' : `${pager.rows.length} of ${pager.total} loaded · newest first`}>
+        note=${pager.total === null ? 'loading' : `${fmtNum(pager.rows.length)} of ${fmtNum(pager.total)} loaded · newest first`}>
         ${pager.error && !pager.rows.length
           ? html`<${ErrorBox} error=${pager.error} onRetry=${pager.reload}/>`
           : pager.loading && !pager.rows.length
@@ -278,7 +278,7 @@ function BuildHistory({ project, setParam, chip }) {
       <//>
 
       <${Section} title="BUILDS"
-        note=${pager.total === null ? 'loading' : `${pager.rows.length} of ${pager.total} loaded · newest first`}>
+        note=${pager.total === null ? 'loading' : `${fmtNum(pager.rows.length)} of ${fmtNum(pager.total)} loaded · newest first`}>
         ${pager.error && !pager.rows.length
           ? html`<${ErrorBox} error=${pager.error} onRetry=${pager.reload}/>`
           : pager.loading && !pager.rows.length
@@ -299,8 +299,8 @@ function More({ pager, noun }) {
     <div class="footnote">
       <${Clock}/>
       ${pager.done
-        ? html`<span>every ${noun} in this filter is loaded · the sort headers reorder all ${pager.rows.length}</span>`
-        : html`<span>${pager.rows.length} of ${pager.total ?? '?'} loaded · the sort headers reorder what is loaded, not the rest</span>`}
+        ? html`<span>every ${noun} in this filter is loaded · the sort headers reorder all ${fmtNum(pager.rows.length)}</span>`
+        : html`<span>${fmtNum(pager.rows.length)} of ${pager.total === null || pager.total === undefined ? '?' : fmtNum(pager.total)} loaded · the sort headers reorder what is loaded, not the rest</span>`}
       <span class="footnote__spacer"></span>
       ${pager.error && pager.rows.length
         ? html`<span style="color:var(--amber)">last page failed — ${pager.error.message}</span>` : null}

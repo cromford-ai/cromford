@@ -6,7 +6,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { Clock } from '../ui/icons.js';
-import { whenLabel } from '../lib/format.js';
+import { whenLabel, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { commandRows, commandTarget, filterCommands, facetValues, FILTER_KEYS } from '../lib/commands.js';
 
@@ -55,7 +55,7 @@ export function CommandHistoryScreen() {
   return html`
     <div class="page">
       <${PageHeadline} chip="Commands"
-        line1=${state.data && Array.isArray(state.data.commands) ? `${state.data.commands.length} ${state.data.commands.length === 1 ? 'command' : 'commands'} on record.` : state.error ? 'The commands read failed.' : 'Reading the commands.'}
+        line1=${state.data && Array.isArray(state.data.commands) ? `${fmtNum(state.data.commands.length)} ${state.data.commands.length === 1 ? 'command' : 'commands'} on record.` : state.error ? 'The commands read failed.' : 'Reading the commands.'}
         line2="Who sent each one, and what became of it."/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/now" class="crumb">← NOW<//>
@@ -116,7 +116,7 @@ export function CommandHistoryView({ state, filters, setFilter }) {
       ${idN !== null && !idLoaded ? html`
         <div class="banner"><span>command #${filters.id} is older than the loaded window</span></div>` : null}
 
-      <${Section} title="COMMANDS" note=${`${shown.length} of ${rows.length} loaded · newest first`}>
+      <${Section} title="COMMANDS" note=${`${fmtNum(shown.length)} of ${fmtNum(rows.length)} loaded · newest first`}>
         ${rows.length
           ? html`<${CommandsTable} rows=${shown} highlight=${idN} setFilter=${setFilter}
               empty=${html`<${Empty} title="NO COMMAND MATCHES THESE FILTERS"
@@ -124,7 +124,7 @@ export function CommandHistoryView({ state, filters, setFilter }) {
           : html`<${Empty} title="NO COMMANDS" note="no console or chat command on record."/>`}
         <div class="footnote">
           <${Clock}/>
-          <span>latest ${rows.length} commands the console returned · sorting and filters apply to these rows only${rows.length >= LIMIT ? ' · older commands are not shown' : ''}</span>
+          <span>latest ${fmtNum(rows.length)} commands the console returned · sorting and filters apply to these rows only${rows.length >= LIMIT ? ' · older commands are not shown' : ''}</span>
         </div>
       <//>
     </div>`;
