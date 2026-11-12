@@ -1,0 +1,11 @@
+{
+  "env": "POOL_WAIT_RECHECK_MAX_MIN",
+  "type": "int",
+  "default": 240,
+  "min": 10,
+  "max": 1440,
+  "unit": "minutes",
+  "read_in": "bin/lib/defer-after-stop.sh",
+  "note": "BH-9283: the largest gap between two open-PR re-checks of a row that dfs_stop_check holds; the doubling from POOL_WAIT_RECHECK_MIN stops here. Read as ${POOL_WAIT_RECHECK_MAX_MIN:-240}; a non-numeric value reads as 240.",
+  "settable": true
+}

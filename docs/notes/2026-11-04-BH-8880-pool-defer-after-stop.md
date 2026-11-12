@@ -62,3 +62,14 @@ PR is still open is then held here instead. The alert text is not changed.
 
 `tests/pool-defer-after-stop.bh-8880-test.sh` drives `bin/fly-pool.sh` with
 stub records and a stub open-PR list (cases D1-D12, G).
+
+## BH-9283 (slice C0): a wider parser, re-check delays, a time limit
+
+BH-9283 extends this gate. `_dfs_blocker` now reads the blocker with
+`defer_wait_key` (`bin/lib/deferral-after.sh`), so a `stack-wait:` line and a
+`Blocked-by #<n>` line also hold the row, not only `After:` and
+`OVERLAP_DEFER`. A held row re-checks the open-PR list on growing delays
+(knobs `POOL_WAIT_RECHECK_MIN` and `POOL_WAIT_RECHECK_MAX_MIN`). A held row
+also gets a time limit with one alert, and the fleet page counts it as held,
+not queued. The full text is in
+`docs/notes/2026-11-11-BH-9283-pool-wait-gates.md`.

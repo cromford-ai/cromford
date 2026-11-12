@@ -1,0 +1,12 @@
+{
+  "env": "POOL_WAIT_RECHECK_MIN",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 240,
+  "unit": "minutes",
+  "zero_means": "off",
+  "read_in": "bin/lib/defer-after-stop.sh",
+  "note": "BH-9283: the first gap between two open-PR re-checks of a row that dfs_stop_check holds. After check c the next re-check is due min(POOL_WAIT_RECHECK_MIN * 2^(c-1), POOL_WAIT_RECHECK_MAX_MIN) minutes later (10, 20, 40, 80, 160, 240 ...). A tick that is not due holds the row with no read and no machine. 0 = re-check every tick (the BH-8880 behavior). Read as ${POOL_WAIT_RECHECK_MIN:-10}; a non-numeric value reads as 10.",
+  "settable": true
+}

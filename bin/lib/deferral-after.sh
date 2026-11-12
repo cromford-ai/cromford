@@ -32,6 +32,32 @@ defer_after_key() {
   printf '%s' "$k"
 }
 
+# defer_wait_key <text> [own-key] — BH-9283: print "<KEY>\t<kind>" for the key
+# any WAIT deferral names, rc 1 when it names none. First match wins:
+#   1. `After: <KEY>` (the defer_after_key rule)               kind after
+#   2. a `stack-wait:` line with a `ticket/<prefix>-<n>[-rN]` token that is not
+#      the own key (bin/lib/rb/gates.sh's four stack-wait RESULT shapes; -rN
+#      dropped, upper-cased)                                     kind stack
+#   3. `Blocked-by #<n>` with an own key: <own prefix>-<n>       kind blocked
+#      (GitHub-Issues projects, where the key is the prefix plus the issue).
+# defer_after_key is NOT changed: the reap callers keep the After-only rule.
+defer_wait_key() {
+  local t="${1:-}" own="${2:-}" k tok
+  if k=$(defer_after_key "$t"); then printf '%s\tafter\n' "$k"; return 0; fi
+  if [[ "$t" == *"stack-wait:"* ]]; then
+    while IFS= read -r tok; do
+      tok="${tok#ticket/}"
+      [[ "$tok" =~ ^(.*)-[rR][0-9]+$ ]] && tok="${BASH_REMATCH[1]}"
+      tok=$(printf '%s' "$tok" | tr '[:lower:]' '[:upper:]')
+      [ -n "$tok" ] && [ "$tok" != "$own" ] && { printf '%s\tstack\n' "$tok"; return 0; }
+    done < <(printf '%s' "$t" | grep -oE 'ticket/[A-Za-z][A-Za-z0-9]*-[0-9]+(\.[0-9]+)*(-[rR][0-9]+)?')
+  fi
+  if [[ "$own" =~ ^([A-Z][A-Z0-9]*)-[0-9]+$ ]] && [[ "$t" =~ Blocked-by\ \#([0-9]+)([^0-9A-Za-z]|$) ]]; then
+    printf '%s-%s\tblocked\n' "${own%-*}" "${BASH_REMATCH[1]}"; return 0
+  fi
+  return 1
+}
+
 # defer_after_loop_n — DEFER_AFTER_LOOP_ALERT, validated (default 12, 0 = off).
 defer_after_loop_n() {
   local v="${DEFER_AFTER_LOOP_ALERT:-12}"
