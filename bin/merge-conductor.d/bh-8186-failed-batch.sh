@@ -23,12 +23,19 @@
 #       and before the READY arm. No record file = one stat and rc 1. Else it
 #       judges the live record (fbh_decide) and, on a hold, sets STATE and WHY
 #       and returns rc 0. A clear appends cleared:<why> and returns rc 1.
+#       BH-9405: each tick a same-patch head is held with no solo run pending
+#       bumps a held-tick counter (fbh_held_bump, <record>.held). At
+#       MC_FAILED_BATCH_STALE_TICKS ticks (hold-stale) it writes one eject-cause
+#       `stale` line for HEAD with the batch's failing checks (ec_record, read by
+#       brec_checks/brec_brief, BH-9229) and parks the row BLOCKED_HUMAN
+#       `queue-ejected-twice: ...`, a reason the resolver owns. A head
+#       dequeue-watch named the culprit (dqwculprit) keeps the hold.
 #   mc_fbh_clear <key> <head> <why>
 #       Appends cleared:<why> when the live record is for <head>.
 #
 # Log lines, one per (key, head, word): FAILED_BATCH_RECORDED,
-# FAILED_BATCH_PENDING, FAILED_BATCH_HELD, FAILED_BATCH_CLEARED,
-# FAILED_BATCH_UNRECORDED; FAILED_BATCH_GC n=<count> when the gc deletes.
+# FAILED_BATCH_PENDING, FAILED_BATCH_HELD, FAILED_BATCH_STALE (BH-9405),
+# FAILED_BATCH_CLEARED, FAILED_BATCH_UNRECORDED; FAILED_BATCH_GC n=<count> when the gc deletes.
 
 # shellcheck source=bin/lib/mc-failed-batch.sh
 [ -r "$H/bin/lib/mc-failed-batch.sh" ] && . "$H/bin/lib/mc-failed-batch.sh"
@@ -147,7 +154,7 @@ _mc_fbh_same() {
 # mc_fbh_apply — see the header. Reads and sets the pr_worker globals SLUG, P,
 #   NUM, KEY, URL, HEAD, REC, STATE, WHY.
 mc_fbh_apply() {
-  local f live ep rh rpid word code d chk same solo="-" age win dec t rc suites rh8 h8 cw
+  local f live ep rh rpid word code d chk same solo="-" age win dec t rc suites rh8 h8 cw held=0 ct
   f=$(fbh_file "$SLUG" "$NUM")
   [ -s "$f" ] || return 1
   fbh_enabled || return 1
@@ -182,8 +189,16 @@ mc_fbh_apply() {
   fi
   age=$(( $(fbh_now) - ${ep:-0} ))
   win=$(fbh_window_s)
-  dec=$(fbh_decide "$same" "$solo" "$age" "$win")
-  cw="$code: $(fbh_checks_text "$chk")"
+  # BH-9405: count the ticks this record held a same-patch head with no proof.
+  # A pending solo run is a proof on its way: it does not count.
+  if [ "$same" = 1 ]; then
+    held=$(fbh_held_bump "$f" "$ep" "$rh" "${MC_TICK_ID:-}" "$([ "$solo" = pending ] && echo 0 || echo 1)")
+  fi
+  dec=$(fbh_decide "$same" "$solo" "$age" "$win" "$held" "$(fbh_stale_ticks)")
+  ct=$(fbh_checks_text "$chk")
+  cw="$code: $ct"
+  # A head dequeue-watch named the culprit has a fix round already: keep the hold.
+  if [ "$dec" = hold-stale ] && mc_attempt_has "dqwculprit $KEY $HEAD" 2>/dev/null; then dec=hold; fi
   case "$dec" in
     clear:*)
       fbh_append "$f" "$(fbh_now)" "$HEAD" - "cleared:${dec#clear:}" - - - || return 1
@@ -194,6 +209,17 @@ mc_fbh_apply() {
       STATE=BLOCKED_HUMAN
       WHY="prequeue-red: $suites (failed in batch #$d on $rh8, reproduced alone; $h8 carries the same patch)"
       _mc_fbh_once "$KEY" "$HEAD" hold-judged "FAILED_BATCH_HELD $KEY $HEAD — batch #$d failed on $rh8 and the solo re-run reproduces it; parked for the resolver"
+      return 0 ;;
+    hold-stale)
+      # The eject-cause line first, so the fix round's brief names the checks
+      # (brec_checks reads the line for the row head). ec_record dedups on
+      # (head, stale): a later tick writes nothing.
+      if [ "$chk" != - ] && command -v ec_record >/dev/null 2>&1; then
+        ec_record "$SLUG" "$NUM" "$HEAD" stale checks "$ct"
+      fi
+      STATE=BLOCKED_HUMAN
+      WHY="queue-ejected-twice: $code in batch #$d ($ct) on $rh8; no solo proof after $held ticks; $h8 carries the same patch"
+      _mc_fbh_once "$KEY" "$HEAD" hold-stale "FAILED_BATCH_STALE $KEY $HEAD — failed in batch #$d ($cw) on $rh8, no solo proof after $held ticks; parked for the resolver"
       return 0 ;;
     wait)
       STATE=WAIT_CI

@@ -1,0 +1,11 @@
+{
+  "env": "MC_FAILED_BATCH_STALE_TICKS",
+  "read_in": "bin/lib/mc-failed-batch.sh",
+  "type": "int",
+  "default": 6,
+  "min": 0,
+  "max": 1000,
+  "unit": "ticks",
+  "zero_means": "off",
+  "note": "BH-9405: how many conductor ticks the BH-8186 failed-batch hold keeps a same-patch head with no solo proof (no line, could-not-run or red; a pending solo run does not count) before it parks the row BLOCKED_HUMAN queue-ejected-twice for the resolver and writes an eject-cause checks line for the head (hold-stale outranks clear:window). Settings row: lane.merge-conductor.mc_failed_batch_stale_ticks. 0 turns the park off: the hold waits for MC_FAILED_BATCH_UNJUDGED_HOLD_S, as before BH-9405."
+}

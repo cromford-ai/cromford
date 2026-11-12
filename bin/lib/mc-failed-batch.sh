@@ -168,17 +168,34 @@ fbh_live() {
               END { if (live != "") print live }' "$1" 2>/dev/null
 }
 
-# fbh_decide <same 0|1|?> <solo word|-> <age_s> <window_s> — PURE. One word:
+# fbh_stale_ticks — MC_FAILED_BATCH_STALE_TICKS, how many conductor ticks a
+#   same-patch head is held with no solo proof before it is parked for the
+#   resolver (BH-9405; fallback 6; row lane.merge-conductor.mc_failed_batch_stale_ticks).
+#   0 turns the park off: the hold waits for the window, as before BH-9405.
+fbh_stale_ticks() {
+  local v; v=$(_fbh_knob MC_FAILED_BATCH_STALE_TICKS 6)
+  case "$v" in ''|*[!0-9]*) v=6 ;; esac
+  printf '%s' "$((10#$v))"
+}
+
+# fbh_decide <same 0|1|?> <solo word|-> <age_s> <window_s> [<held_ticks>] [<stale_ticks>]
+#   PURE. One word:
 #   clear:new-patch  a different patch (a real push)
 #   wait             the patch could not be compared this tick
 #   clear:bystander  the solo re-run passed: the failure was another PR's
 #   hold-judged      the solo re-run reproduced the failure with this patch
+#   hold-stale       no verdict (and no solo run pending) for <stale_ticks>
+#                    held ticks: park the head for the resolver (BH-9405).
+#                    It outranks clear:window. <stale_ticks> 0 = off.
 #   hold             no verdict yet, inside the window
 #   clear:window     no verdict, and the record is a whole window old
+#   <held_ticks> and <stale_ticks> default to 0; a non-integer reads as 0.
 fbh_decide() {
-  local same="$1" solo="${2:--}" age="${3:-0}" win="${4:-86400}"
+  local same="$1" solo="${2:--}" age="${3:-0}" win="${4:-86400}" held="${5:-0}" stale="${6:-0}"
   case "$age" in ''|*[!0-9]*) age=0 ;; esac
   case "$win" in ''|*[!0-9]*) win=86400 ;; esac
+  case "$held" in ''|*[!0-9]*) held=0 ;; esac
+  case "$stale" in ''|*[!0-9]*) stale=0 ;; esac
   case "$same" in
     0) echo clear:new-patch; return 0 ;;
     1) ;;
@@ -187,8 +204,37 @@ fbh_decide() {
   case "$solo" in
     clean) echo clear:bystander ;;
     reproduces) echo hold-judged ;;
-    *) if [ "$age" -ge "$win" ]; then echo clear:window; else echo hold; fi ;;
+    *) if [ "$solo" != pending ] && [ "$((10#$stale))" -gt 0 ] && [ "$((10#$held))" -ge "$((10#$stale))" ]; then echo hold-stale
+       elif [ "$age" -ge "$win" ]; then echo clear:window
+       else echo hold; fi ;;
   esac
+}
+
+# fbh_held_file <record-file> — the held-tick counter of a record (BH-9405).
+#   Not a dotfile, so fbh_gc deletes it with the record after the keep window.
+fbh_held_file() { printf '%s.held' "$1"; }
+
+# fbh_held_bump <record-file> <rec-epoch> <rec-head> <tick-id> <count 0|1>
+#   Prints the held-tick count of the live record (<rec-epoch>, <rec-head>).
+#   The counter is one line: <rec-epoch>\t<rec-head>\t<count>\t<last-tick-id>.
+#   Another (epoch, head) resets the count to 0 before the bump. A tick id that
+#   was already counted does not bump again. <count> 0 (a solo run is pending)
+#   prints the stored count and writes nothing. An empty tick id uses the epoch
+#   second. tmp + mv; a failed write still prints the computed count, and the
+#   next tick counts again from the old file (the park is late, never skipped).
+fbh_held_bump() {
+  local f ep="$2" rh="$3" tk="${4:-}" add="${5:-1}" sep="" srh="" n=0 last=""
+  f=$(fbh_held_file "$1")
+  [ -n "$tk" ] || tk="t$(fbh_now)"
+  if [ -r "$f" ]; then IFS=$'\t' read -r sep srh n last < "$f" 2>/dev/null; fi
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$sep" != "$ep" ] || [ "$srh" != "$rh" ]; then n=0; last=""; fi
+  if [ "$add" = 1 ] && [ "$last" != "$tk" ]; then
+    n=$((10#$n + 1)); last="$tk"
+    { mkdir -p "${f%/*}" && printf '%s\t%s\t%s\t%s\n' "$ep" "$rh" "$n" "$last" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"; } 2>/dev/null \
+      || rm -f "$f.tmp.$$" 2>/dev/null
+  fi
+  printf '%s' "$n"
 }
 
 # fbh_gc — delete record files untouched for MC_FAILED_BATCH_KEEP_DAYS days.
