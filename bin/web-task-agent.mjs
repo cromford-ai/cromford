@@ -12,7 +12,7 @@
 //          [--shot-timeout-s <s>] [--backstop-pad-s <s>]
 //          [--history-actions <n>] [--history-refusals <n>]
 //          [--npm-root-timeout-s <s>] [--close-timeout-s <s>] [--settle-ms <ms>]
-//          [--scroll-wait-ms <ms>] [--scroll-px <px>]
+//          [--scroll-wait-ms <ms>] [--scroll-px <px>] [--session-dir <dir>]
 //
 // The bracketed caps are knobs of catalog/lanes.d/web-task.json
 // (WEB_TASK_TEXT_CHUNK, WEB_TASK_MAX_ELEMENTS, WEB_TASK_DECIDE_MAX_S,
@@ -98,6 +98,17 @@
 // Sub-resources (CSS, images, scripts) of other hosts load; they are not
 // navigations.
 //
+// --session-dir (BH-9577, S4 R1b of #7597): a private directory the lane made
+// outside --out. When the run ends `done` and at least one sign_in action has
+// an `ok:` outcome, the agent writes the browser storageState of the context
+// (cookies and local storage) to <dir>/storage-state.json, mode 600, before
+// the browser closes. The export waits at most --close-timeout-s. Nothing is
+// written when the flag is absent, the path is not an existing directory, the
+// directory is --out or inside it (real paths), the file exists already, or
+// the export fails (a partial file is removed). The session is never put in
+// result.json, the result line, stdout or stderr. The lane saves the file with
+// wt_session_save and then removes it.
+//
 // Writes <out>/obs-NN.json and <out>/shot-NN.jpg per step, then
 // <out>/result.json {status, answer, steps, calls, actions, refusals,
 // final_url, screenshots (the last 5), reason, vault_site (the vault site, or
@@ -116,9 +127,9 @@
 // that holds the TOTP clock in unix seconds. type_otp reads it as now(), and a
 // wait for the next window moves it instead of sleeping.
 import { createRequire } from "module";
-import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from "fs";
+import { writeFileSync, readFileSync, readdirSync, statSync, existsSync, realpathSync, unlinkSync } from "fs";
 import { spawn, execFileSync } from "child_process";
-import { join } from "path";
+import { join, sep } from "path";
 import { hostAllowed, sanitizeTyped, normDomains } from "./lib/web-task/guards.mjs";
 import { createWriteGate, isWriteAction } from "./lib/web-write-step.mjs";
 
@@ -151,6 +162,7 @@ const SCROLL_PX = knob("scroll-px", 700, 100, 5000);
 const OUT = opt.out || "";
 const TASK = opt.task || "";
 const DECIDE = opt.decide || "";
+const SESSION_DIR = opt["session-dir"] || "";
 const DOMAINS = normDomains(opt.domains || "");
 const MAX_STEPS = Number(opt["max-steps"]);
 const MAX_S = Number(opt["max-s"]);
@@ -210,8 +222,42 @@ async function finish(status, extra = {}) {
   });
   if (OUT) { try { writeFileSync(join(OUT, "result.json"), JSON.stringify(res, null, 2) + "\n"); } catch { /* reported below */ } }
   console.log(`WEB_TASK_RESULT status=${status} steps=${st.steps} calls=${st.calls} refusals=${st.refusals.length} reason="${oneLine(res.reason)}"`);
+  if (status === "done") await saveSession();
   if (browser) { await Promise.race([browser.close().catch(() => {}), new Promise((r) => setTimeout(r, CLOSE_MS))]); }
   process.exit({ done: 0, "step-cap": 3, "time-cap": 3, "refused-spend": 4 }[status] ?? 1);
+}
+
+// sessionFile() — <dir>/storage-state.json of --session-dir when the real
+// path is an existing directory that is neither --out nor inside it, else "".
+function sessionFile() {
+  if (!SESSION_DIR || !OUT) return "";
+  try {
+    const d = realpathSync(SESSION_DIR);
+    const o = realpathSync(OUT);
+    if (!statSync(d).isDirectory() || d === o || d.startsWith(o.endsWith(sep) ? o : o + sep)) return "";
+    return join(d, "storage-state.json");
+  } catch { return ""; }
+}
+
+// saveSession() — the storageState export of a done run that signed in (see
+// --session-dir). Every failure is silent: the run's result does not change.
+async function saveSession() {
+  if (!ctx || !st.actions.some((a) => a.action === "sign_in" && String(a.outcome ?? "").startsWith("ok:"))) return;
+  const f = sessionFile();
+  if (!f) return;
+  let timer = null;
+  let opened = false;
+  try {
+    const state = await Promise.race([ctx.storageState(),
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), CLOSE_MS); })]);
+    const json = JSON.stringify(state);
+    // wx: never follow or replace a file that is already there.
+    writeFileSync(f, "", { mode: 0o600, flag: "wx" });
+    opened = true;
+    writeFileSync(f, json, { flag: "w" });
+  } catch {
+    if (opened) { try { unlinkSync(f); } catch { /* gone already */ } }
+  } finally { clearTimeout(timer); }
 }
 
 function resolvePlaywright() {

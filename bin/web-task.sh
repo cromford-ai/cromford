@@ -41,7 +41,14 @@
 #      `Mode: write` on its own line is --mode write; anything else, or a parse
 #      that fails, is read. ALLOW_PAYMENT_SITES is the settings row
 #      lane.web-task.<project>.allow_payment_sites (no row or a failed read is
-#      empty: every payment page is refused)
+#      empty: every payment page is refused). The agent gets --session-dir,
+#      a new mode 700 dir web-session.XXXXXX under ${TMPDIR:-/tmp} (BH-9577;
+#      no dir when mktemp fails, and the run goes on). After the agent, when
+#      the status is done, VAULT_SITE is a host (a sign_in ended ok) and the
+#      agent wrote storage-state.json there, wt_session_save stores it for
+#      (project, VAULT_SITE). One log line `session: saved <site>` (rc 0) or
+#      `session: not saved (rc N)`; the comment, status and labels do not
+#      change. The dir is removed then, and by an EXIT trap if the lane dies
 #   9. the screenshots go to the branch harness-shots/<key>-web-task
 #      (bin/lib/web-task/shots.sh) in ONE publish, at most WEB_TASK_MAX_SHOTS:
 #      the before and after shots of each write first, in write order, then
@@ -374,6 +381,12 @@ esac
 export WEB_TASK_PROJECT="$P" WEB_TASK_MODEL WEB_TASK_DOMAINS="$DOMAINS" WEB_TASK_MODE="$MODE" WEB_TASK_ISSUE="$SLUG#$TICKET" \
   ALLOW_PAYMENT_SITES="$PAY"
 log "start: mode=$MODE domains=$DOMAINS steps<=$WEB_TASK_MAX_STEPS wall<=${WEB_TASK_MAX_S}s run=$RUN"
+# The private dir the agent exports the signed-in session to (BH-9577). It is
+# never under $RUN: the run dir is published as artifacts.
+WT_SESS_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/web-session.XXXXXX" 2>/dev/null) || WT_SESS_DIR=""
+trap '[ -z "$WT_SESS_DIR" ] || rm -rf -- "$WT_SESS_DIR"' EXIT
+SESS_ARGS=()
+[ -n "$WT_SESS_DIR" ] && SESS_ARGS=(--session-dir "$WT_SESS_DIR")
 ARC=0
 timeout -k "$WT_AGENT_KILL_S" $((WEB_TASK_MAX_S + WT_AGENT_PAD_S)) node "$H/bin/web-task-agent.mjs" --task "$RUN/task.md" --out "$RUN" \
   --domains "$DOMAINS" --max-steps "$WEB_TASK_MAX_STEPS" --max-s "$WEB_TASK_MAX_S" --decide "$DECIDE_CMD" --mode "$MODE" \
@@ -382,7 +395,7 @@ timeout -k "$WT_AGENT_KILL_S" $((WEB_TASK_MAX_S + WT_AGENT_PAD_S)) node "$H/bin/
   --nav-timeout-s "$WT_NAV_TIMEOUT_S" --action-timeout-s "$WT_ACTION_TIMEOUT_S" --shot-timeout-s "$WT_SHOT_TIMEOUT_S" \
   --backstop-pad-s "$WT_BACKSTOP_PAD_S" --history-actions "$WT_HISTORY_ACTIONS" --history-refusals "$WT_HISTORY_REFUSALS" \
   --npm-root-timeout-s "$WT_NPM_ROOT_TIMEOUT_S" --close-timeout-s "$WT_CLOSE_TIMEOUT_S" --settle-ms "$WT_SETTLE_MS" \
-  --scroll-wait-ms "$WT_SCROLL_WAIT_MS" --scroll-px "$WT_SCROLL_PX" \
+  --scroll-wait-ms "$WT_SCROLL_WAIT_MS" --scroll-px "$WT_SCROLL_PX" "${SESS_ARGS[@]}" \
   > "$RUN/agent.out" 2> "$RUN/agent.err" || ARC=$?
 R="$RUN/result.json"
 S=$(jq -r '.status // empty' "$R" 2>/dev/null)
@@ -401,6 +414,17 @@ if [ "$S" = done ] && [ -z "$(printf '%s' "$ANSWER" | tr -d '[:space:]')" ]; the
 log "agent: status=$S steps=$STEPS calls=$CALLS rc=$ARC"
 # The spend is done: no re-offer may start another run, whatever the post does.
 unlabel "the run is spent (status $S)"
+# The saved session: only a done run that signed in on a host. The value goes
+# from the file to the worker; no output of the save reaches a log.
+if [ -n "$WT_SESS_DIR" ]; then
+  SESS_FILE="$WT_SESS_DIR/storage-state.json"
+  if [ "$S" = done ] && [ -n "$VAULT_SITE" ] && [ -s "$SESS_FILE" ] && [ ! -L "$SESS_FILE" ]; then
+    SSRC=0
+    wt_session_save "$P" "$VAULT_SITE" "$SESS_FILE" >/dev/null 2>&1 || SSRC=$?
+    if [ "$SSRC" = 0 ]; then log "session: saved $VAULT_SITE"; else log "session: not saved (rc $SSRC)"; fi
+  fi
+  rm -rf -- "$WT_SESS_DIR"; WT_SESS_DIR=""
+fi
 
 # 9. Screenshots and artifacts. The write shots (before, after, in write
 # order) go first, then the step shots, in ONE publish: a second publish moves

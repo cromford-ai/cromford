@@ -14,7 +14,8 @@
 #   R  the terminal words: result-prefix-ok, _job_finish, the gate-release and
 #      split-chain owner checks, and the result-sweep rule in every prompt.
 #   D  the lane-run image: the playwright module block and the browsers path.
-#   Z  the four seam files: each function answers "not available", rc 69.
+#   Z  the four seam files: each stub answers "not available", rc 69; the
+#      filled ones (approval.sh, wt_session_save) never answer rc 0 to a bad call.
 #   Q  the seed fragment on a scratch SQLite DB: the web-task route is copied
 #      from triage rung 0, an operator's cut is kept, a re-apply is a no-op.
 #   X  the lane header gates: lane_gate_or_exit and lane_env_apply run first.
@@ -293,7 +294,7 @@ grep -q '^playwright PLAYWRIGHT_VERSION ' "$DIR/bin/lib/bake-deps.sh" && ok || b
 # ═══════════════════════════════════════════════════════════════════════════
 # Z — the seam files for later slices
 # ═══════════════════════════════════════════════════════════════════════════
-for pair in "vault.sh wt_vault_get" "otp.sh wt_otp_wait" "session.sh wt_session_load" "session.sh wt_session_save"; do
+for pair in "vault.sh wt_vault_get" "otp.sh wt_otp_wait" "session.sh wt_session_load"; do
   set -- $pair
   f="$DIR/bin/lib/web-task/$1"
   bash -n "$f" 2>/dev/null && ok || bad "Z: $1 does not parse"
@@ -310,6 +311,12 @@ for fn in wt_approval_request wt_approval_status; do
   OUT=$(env -u LANE_RUN_ID bash -c '. "$1" || exit 9; declare -F "$2" >/dev/null || exit 8; "$2" a b' _ "$f" "$fn" 2>/dev/null); RC=$?
   [ "$RC" != 0 ] && [ "$RC" != 8 ] && [ "$RC" != 9 ] && ok || bad "Z: $fn must be defined and must not answer rc 0 to a bad call, got rc $RC '$OUT'"
 done
+# wt_session_save is no longer a stub: BH-9577 filled it with wsess_save of
+# bin/lib/web-session.sh (its behaviour is tests/web-task-session.bh-9577-test.sh).
+# The seam contract stays: it is defined, and a bad call (2 args, no
+# LANE_RUN_ID) never answers rc 0 (never claims a save).
+OUT=$(env -u LANE_RUN_ID bash -c '. "$1" || exit 9; declare -F wt_session_save >/dev/null || exit 8; wt_session_save a b' _ "$DIR/bin/lib/web-task/session.sh" 2>/dev/null); RC=$?
+[ "$RC" != 0 ] && [ "$RC" != 8 ] && [ "$RC" != 9 ] && ok || bad "Z: wt_session_save must be defined and must not answer rc 0 to a bad call, got rc $RC '$OUT'"
 ls "$DIR/bin/lib/web-task/vault.sh" "$DIR/bin/lib/web-task/otp.sh" "$DIR/bin/lib/web-task/session.sh" "$DIR/bin/lib/web-task/approval.sh" >/dev/null 2>&1 && ok || bad "Z: a seam file is missing"
 
 # ═══════════════════════════════════════════════════════════════════════════
