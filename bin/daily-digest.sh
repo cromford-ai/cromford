@@ -7,6 +7,7 @@
 #   GET /api/metrics/outcome-gap    (worker/jobs/src/routes/outcome-gap.js, BH-4017)
 #   GET /api/archie/actions         (worker/jobs/src/routes/archie-actions.js, BH-4583)
 #   GET /api/scheduler/agreement    (worker/jobs/src/routes/scheduler.js, BH-6978)
+#   GET /api/metrics/approve-then-block (worker/jobs/src/routes/approve-then-block.js, BH-9501)
 #   dd_summary / dd_render          (bin/lib/daily-digest-{summary,render}.sh)
 #
 # THE RUN, in this order. Steps 1-4 happen before any request of its own.
@@ -38,6 +39,9 @@
 #      with any action is not empty;
 #   7d. GET /api/scheduler/agreement?day=<D> (BH-6978) merged as
 #      .scheduler_shadow, the same way. It never makes the day not empty;
+#   7e. GET /api/metrics/approve-then-block?day=<D>&days=<N> (BH-9501, N is
+#      DAILY_DIGEST_APPROVE_BLOCK_DAYS) merged as .approve_then_block, the
+#      same way. It never makes the day not empty;
 #   8. write state/daily-digest/<D>.json; dd_summary rc 0 hands its file to
 #      dd_render, anything else hands `-`. dd_render non-zero or blank: one
 #      warn `daily-digest-render:<D>` a day, summary ` render-failed`, exit
@@ -206,6 +210,10 @@ if [ "$GAP_LB" -le "$GAP_DAYS" ]; then
   note "warn: DAILY_DIGEST_GAP_LOOKBACK_DAYS=$GAP_LB is not greater than DAILY_DIGEST_GAP_DAYS=$GAP_DAYS; using the defaults 7 and 30"
   GAP_DAYS=7; GAP_LB=30
 fi
+# Lead review after in-build APPROVE (BH-9501): the route's window in days.
+# 14 is the fallback of the settings row DAILY_DIGEST_APPROVE_BLOCK_DAYS
+# (catalog/lanes.d/daily-digest.knobs.d/DAILY_DIGEST_APPROVE_BLOCK_DAYS.json).
+ATB_DAYS=$(knob_int DAILY_DIGEST_APPROVE_BLOCK_DAYS "${DAILY_DIGEST_APPROVE_BLOCK_DAYS:-14}" 14 1 60)
 GAP_STAGES_DEF=plan,preplan,preplan-files,execute,review,fix
 GAP_STAGES=${DAILY_DIGEST_GAP_STAGES:-$GAP_STAGES_DEF}
 if ! [[ $GAP_STAGES =~ ^[a-z0-9._-]+(,[a-z0-9._-]+)*$ ]]; then
@@ -266,6 +274,24 @@ else
   merged=$(jq -c --slurpfile s "$TMP/sched.json" '.scheduler_shadow = $s[0]' <<<"$body") && body=$merged
 fi
 # <<< scheduler shadow (BH-6978)
+# >>> approve-then-block (BH-9501)
+# The share of PRs whose lead review blocked after an in-build APPROVE, over
+# the ATB_DAYS days that end with D, merged as .approve_then_block. Same
+# contract as the blocks above: 404 = the route is not deployed yet, left out
+# with one note; any other failure or an off-contract body is {ok:false}. It
+# never makes the day not empty and never alerts.
+_jobs_req GET "/api/metrics/approve-then-block?day=$D&days=$ATB_DAYS" > "$TMP/atb.json"; arc=$?
+if [ "$arc" = 2 ] && [ "${JOBS_HTTP:-}" = 404 ]; then
+  note "approve-then-block: GET /api/metrics/approve-then-block answered 404 (not deployed yet); the line is left out of $D"
+else
+  if [ "$arc" != 0 ] || ! jq -e 'type == "object" and .ok == true and (.cohort | type) == "number"
+      and (.blocked | type) == "number" and (.days | type) == "number" and (.repos | type) == "array"
+      and all(.repos[]; (.cohort | type) == "number" and (.blocked | type) == "number")' "$TMP/atb.json" >/dev/null 2>&1; then
+    jq -nc --arg e "read failed (http=${JOBS_HTTP:-none})" '{ok: false, error: $e}' > "$TMP/atb.json"
+  fi
+  merged=$(jq -c --slurpfile a "$TMP/atb.json" '.approve_then_block = $a[0]' <<<"$body") && body=$merged
+fi
+# <<< approve-then-block (BH-9501)
 [ "$(jq -r '.empty == true' <<<"$body")" = true ] && EMPTY=1
 if ! { printf '%s\n' "$body" > "$SD/.$D.json.tmp" && mv -f "$SD/.$D.json.tmp" "$SD/$D.json"; }; then
   alert_once render "daily-digest: could not write state/daily-digest/$D.json. Nothing sent."

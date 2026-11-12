@@ -1,0 +1,11 @@
+{
+  "env": "DAILY_DIGEST_APPROVE_BLOCK_DAYS",
+  "read_in": "bin/daily-digest.sh",
+  "type": "int",
+  "default": 14,
+  "min": 1,
+  "max": 60,
+  "zero_means": null,
+  "note": "BH-9501: the window, in days ending with the digest day, of the digest line 'Lead review after in-build APPROVE' (the share of PRs with an in-build APPROVE that the lead review then blocked); sent to GET /api/metrics/approve-then-block as days. Read by bin/daily-digest.sh as ${DAILY_DIGEST_APPROVE_BLOCK_DAYS:-14}; outside 1..60 is one warn line and the default.",
+  "settable": true
+}

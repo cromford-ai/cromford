@@ -29,8 +29,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -203,6 +203,7 @@ worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20
 worker/jobs/test/alert-lines-resolved.bh-6892.test.js:generic-api-key:12
 worker/jobs/test/alert-lines.bh-6889.test.js:generic-api-key:18
+worker/jobs/test/approve-then-block.bh-9501.test.js:generic-api-key:19
 worker/jobs/test/box-health-collector.bh-8553.test.js:generic-api-key:17
 worker/jobs/test/box-ssh.bh-7710.test.js:generic-api-key:14
 worker/jobs/test/br-attempts-indexes.bh-7801.test.js:generic-api-key:12

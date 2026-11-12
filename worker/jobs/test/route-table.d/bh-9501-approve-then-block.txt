@@ -1,0 +1,3 @@
+# APPROVE-THEN-BLOCK (BH-9501): the share of PRs where the lead review blocked
+# after an in-build APPROVE, read by bin/daily-digest.sh into the digest.
+GET /api/metrics/approve-then-block

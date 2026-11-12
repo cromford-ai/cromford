@@ -41,6 +41,11 @@
 #     never a false `applied 0`;
 #   - `Self-healed` (BH-4724) follows Tripwires only when the JSON has a
 #     .self_heals key: one line, the count and `(<source> <n>, ...)`;
+#   - `Lead review after in-build APPROVE` (BH-9501) is the last line, only
+#     when the JSON has an .approve_then_block key (bin/daily-digest.sh merges
+#     it from GET /api/metrics/approve-then-block): `blocked b of c PRs (p%)`
+#     and up to max-items repos by cohort, `no in-build APPROVE` on a cohort
+#     of 0; ok:false is n/a;
 #   - lead precision comes from the named file only: `-` or an unreadable file
 #     is `n/a (no precision run for <D>)`, never an older file;
 #   - the spot-check sample is lrl_spotcheck's (bin/lead-review-land.sh), and
@@ -257,6 +262,16 @@ dd_render() {
        else .projects[] | "Scheduler shadow, \(.project | s): \(if .rate == null then "no compared verdicts"
            else "\(.rate * 1000 | round / 10)% agree" end) (\(.agreed | num) of \(.compared | num) compared, \(.idle | num) idle, \(.ticks | num) ticks).\(
            if (.top | length) == 0 then "" else " Top disagreements: \([.top[:5][] | "\(.reason_class | s) \(.n | num)"] | join(", "))." end) \($c)/"
+       end) else empty end),
+
+      # Lead review after in-build APPROVE (BH-9501): only when the lane merged .approve_then_block
+      (if has("approve_then_block") then (.approve_then_block | if .ok != true then failed("Lead review after in-build APPROVE"; "/")
+       elif .cohort == 0 then "Lead review after in-build APPROVE: no in-build APPROVE in \(.days | num)d to \(.day // $d.day | s). \($c)/"
+       else ((.blocked * 1000 / .cohort) | round) as $p
+         | (.repos | sort_by(-.cohort, .repo)) as $r
+         | "Lead review after in-build APPROVE, \(.days | num)d to \(.day // $d.day | s): blocked \(.blocked | num) of \(.cohort | num) PRs (\($p / 10 | floor).\($p % 10)%).\(
+             if ($r | length) == 0 then "" else " \([$r[:$max][] | "\(.repo | s) \(.blocked | num)/\(.cohort | num)"] | join(", "))\(
+               if ($r | length) > $max then ", +\(($r | length) - $max) more" else "" end)." end) \($c)/"
        end) else empty end)
   ' "$json"
 }
