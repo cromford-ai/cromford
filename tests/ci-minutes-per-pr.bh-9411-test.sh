@@ -190,7 +190,8 @@ CL=$(grep -n 'ci-per-pr repo=Acme/a ' "$LOG" | head -1 | cut -d: -f1); EL=$(grep
 F=$(grep 'fleet:' "$LOG" | tail -1)
 grep -q 'GitHub read(s)); merged_prs_24h=10 min_per_merged_pr=460 unmerged_min_24h=400 unmerged_share=0.09$' <<<"$F" \
   && ok || bad "P10: the fleet line carries the fleet per-PR figures after the reads: $F"
-[ "$(jq -c '.fleet_per_pr' "$J")" = '{"merged_prs_24h":10,"min_per_merged_pr":460,"unmerged_min_24h":400,"unmerged_share":0.09}' ] \
+[ "$(jq -c '.fleet_per_pr | [.merged_prs_24h, .min_per_merged_pr, .unmerged_min_24h, .unmerged_share]' "$J")" = '[10,460,400,0.09]' ] \
+  && [ "$(jq -c '.fleet_per_pr | keys' "$J")" = '["merged_prs_24h","min_per_merged_pr","unmerged_min_24h","unmerged_share"]' ] \
   && ok || bad "P10: latest.json fleet_per_pr: $(jq -c '.fleet_per_pr' "$J")"
 # P11
 PB=$(awk -F'\t' '$1 == "Acme/a" && $2 == "minutes" {print $3}' "$HH/payload.tsv" 2>/dev/null | tail -1)

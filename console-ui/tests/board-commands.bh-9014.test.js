@@ -106,7 +106,11 @@ test('F1 the MCP file_issue body, posted to Pages, queues one file_issue row', a
   const seen = worker(t);
   const w = world();
   const body = await mcpBody({ project: 'cromford', title: 't1', body: 'b1' });
-  assert.deepEqual(body, { type: 'file_issue', project: 'cromford', title: 't1', body: 'b1' });
+  assert.equal(body.type, 'file_issue');
+  assert.equal(body.project, 'cromford');
+  assert.equal(body.title, 't1');
+  assert.equal(body.body, 'b1');
+  assert.deepEqual(Object.keys(body).sort(), ['body', 'project', 'title', 'type'], 'no extra keys in the MCP body');
   const r = await post({ CONSOLE_DB: w.db }, body);
   assert.equal(seen.length, 1, 'the worker is asked first');
   assert.equal(seen.probes.length, 1, 'the authed probe runs before the write');
