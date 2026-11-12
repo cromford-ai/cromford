@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "rb-execute",
+      "file": "bin/lib/rb/execute.sh",
+      "note": "BH-9436: knobs of the execute stage's mined-checks block in bin/lib/rb/execute.sh. Applied there through lib_env_apply rb-execute, fail-open. Note: docs/notes/2026-11-10-BH-9436-iron-law-false-positive-lists.md.",
+      "knobs": [
+        {
+          "env": "CHECKS_NOTE_MAX_LINES",
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 1000,
+          "zero_means": null,
+          "required": false,
+          "note": "CHECK-NOTE lines (hits a check's exclusions.tsv skipped) shown to the reviewer in the mined-checks note. Lines past the cap are counted in one `N more notes not shown` line. Read as ${CHECKS_NOTE_MAX_LINES:-20}; settings row lib.rb-execute.checks_note_max_lines."
+        }
+      ]
+    }
+  ]
+}

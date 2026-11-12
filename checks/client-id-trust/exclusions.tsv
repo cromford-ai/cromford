@@ -1,0 +1,10 @@
+# checks/client-id-trust/exclusions.tsv — known false positives this check applies.
+# Read by checks/client-id-trust/check.sh. 4 TAB fields: kind action pattern why.
+# kind path: pattern is an awk ERE on the file path (no {n} quantifiers: mawk).
+# action note: the hit becomes a CHECK-NOTE the review still sees. skip: nothing prints.
+# A missing file or an invalid row means no exclusion: the check stays strict.
+path	note	(^|/)cron/	a cron route resolves its own job id; no client sends it
+path	note	(^|/)webhooks/	a webhook resolves its own event id; the signature check is the auth
+path	note	(^|/)(fakes?|__fakes__|fixtures?|__fixtures__|test-utils|testing)/	test fake or fixture directory
+path	note	(^|/)([^/]*[.-])?(fake|fixture)s?([.-][^/]*)?[.](ts|tsx|js|mjs|cjs)$	test fake or fixture file (fake.ts, prisma.fake.ts, db-fake.ts)
+path	note	(^|/)(admin|[(]admin[)])/	admin-only route (WHY.md lists it; project-3#649)

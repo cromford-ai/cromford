@@ -1,0 +1,6 @@
+# checks/secret-literals/exclusions.tsv — known false positives this check applies.
+# Read by checks/secret-literals/check.sh. 4 TAB fields: kind action pattern why.
+# kind rule: pattern names a decision rule in check.sh. Only name-only exists.
+# action note: a CHECK-NOTE the review still sees. skip: nothing prints.
+# A missing file or an invalid row means the rule is off: the check stays strict.
+rule	note	name-only	a log line that prints a secret NAME and no value

@@ -1,0 +1,5 @@
+diff --git a/src/app/api/webhooks/stripe/route.ts b/src/app/api/webhooks/stripe/route.ts
+--- a/src/app/api/webhooks/stripe/route.ts
++++ b/src/app/api/webhooks/stripe/route.ts
+@@ -1,0 +1,1 @@
++  const evt = await prisma.webhookEvent.findUnique({ where: { id: event.id } })

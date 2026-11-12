@@ -1,0 +1,5 @@
+diff --git a/src/db.ts b/src/db.ts
+--- a/src/db.ts
++++ b/src/db.ts
+@@ -1,0 +1,1 @@
++  const rows = await db.query(`SELECT * FROM users WHERE email = '${req.query.email}'`)

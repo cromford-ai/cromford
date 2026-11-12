@@ -1,0 +1,5 @@
+diff --git a/app/api/cron/sync/route.ts b/app/api/cron/sync/route.ts
+--- a/app/api/cron/sync/route.ts
++++ b/app/api/cron/sync/route.ts
+@@ -1,0 +1,1 @@
++  const row = await prisma.job.findUnique({ where: { id } })

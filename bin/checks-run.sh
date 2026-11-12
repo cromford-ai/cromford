@@ -24,10 +24,15 @@
 # Env:    CHECKS_DIR   override the catalog directory (default: ../checks)
 #
 # Output: one "CHECK-HIT <slug> <path>:<line> <reason>" line per hit, then one
-#         summary line — "CHECKS: clean (<n> check(s), <m> added line(s))" or
-#         "CHECKS: <n> hit(s) — <slug>(xN) ...".
-# rc 0 = clean, 1 = at least one hit, 2 = could not run (say so, never silently
-#        pass: a check that did not run must not read as a check that passed).
+#         "CHECK-NOTE <slug> <path>:<line> <reason>" line per note (diff mode: a
+#         check line "NOTE<TAB>path:line<TAB>reason", a skip its own
+#         exclusions.tsv decided), then one summary line —
+#         "CHECKS: clean (<n> check(s), <m> added line(s))" or
+#         "CHECKS: <n> hit(s) — <slug>(xN) ...", each with
+#         " — <k> note(s): <slug>(xN) ..." appended when k > 0.
+# rc 0 = clean (notes do not count), 1 = at least one hit, 2 = could not run
+#        (say so, never silently pass: a check that did not run must not read
+#        as a check that passed).
 set -uo pipefail
 SELF="$(cd "$(dirname "$0")" && pwd)"
 CHECKS_DIR="${CHECKS_DIR:-$SELF/../checks}"
@@ -152,7 +157,7 @@ awk '
 ' "$SRC" > "$T/added.tsv"
 
 NLINES=$(wc -l < "$T/added.tsv" | tr -d ' ')
-NCHECKS=0; TOTAL=0; SUMMARY=""
+NCHECKS=0; TOTAL=0; SUMMARY=""; NTOTAL=0; NSUMMARY=""
 for C in "$CHECKS_DIR"/*/check.sh; do
   [ -x "$C" ] || continue
   SLUG=$(basename "$(dirname "$C")")
@@ -164,17 +169,35 @@ for C in "$CHECKS_DIR"/*/check.sh; do
     continue
   fi
   [ -n "$OUT" ] || continue
-  N=$(printf '%s\n' "$OUT" | grep -c . )
+  # A line whose first TAB field is NOTE is a skip the check's own
+  # exclusions.tsv decided. It is shown, never counted: only hits park a PR.
+  NOTES=$(printf '%s\n' "$OUT" | awk -F'\t' '$1 == "NOTE"')
+  HITS=$(printf '%s\n' "$OUT" | awk -F'\t' 'length($0) && $1 != "NOTE"')
+  if [ -n "$NOTES" ]; then
+    K=$(printf '%s\n' "$NOTES" | grep -c . )
+    NTOTAL=$((NTOTAL + K))
+    NSUMMARY="$NSUMMARY $SLUG(x$K)"
+    printf '%s\n' "$NOTES" | while IFS=$'\t' read -r _ LOC REASON; do
+      echo "CHECK-NOTE $SLUG $LOC $REASON"
+    done >> "$T/notes.txt"
+  fi
+  [ -n "$HITS" ] || continue
+  N=$(printf '%s\n' "$HITS" | grep -c . )
   TOTAL=$((TOTAL + N))
   SUMMARY="$SUMMARY $SLUG(x$N)"
-  printf '%s\n' "$OUT" | while IFS=$'\t' read -r LOC REASON; do
+  printf '%s\n' "$HITS" | while IFS=$'\t' read -r LOC REASON; do
     echo "CHECK-HIT $SLUG $LOC $REASON"
   done
 done
 
+# Notes print after every hit, so a reader that takes the head of the output
+# sees the hits first.
+[ -s "$T/notes.txt" ] && cat "$T/notes.txt"
+NSUFFIX=""
+[ "$NTOTAL" -gt 0 ] && NSUFFIX=" — $NTOTAL note(s):$NSUMMARY"
 if [ "$TOTAL" -gt 0 ]; then
-  echo "CHECKS: $TOTAL hit(s) —$SUMMARY"
+  echo "CHECKS: $TOTAL hit(s) —$SUMMARY$NSUFFIX"
   exit 1
 fi
-echo "CHECKS: clean ($NCHECKS check(s), $NLINES added line(s) scanned)"
+echo "CHECKS: clean ($NCHECKS check(s), $NLINES added line(s) scanned)$NSUFFIX"
 exit 0

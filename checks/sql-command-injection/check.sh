@@ -38,11 +38,68 @@
 #   function calls, function-local consts, and any name whose declaration is a
 #   context line the check never sees. When in doubt the answer is a hit.
 #
+# EXCLUSIONS. checks/sql-command-injection/exclusions.tsv, 4 TAB fields
+# (kind action pattern why). A path row (an awk ERE) removes every shape on a
+# matching file. A tag row names a template tag that binds its parameters
+# (sql, Prisma.sql, $queryRaw): a shape-2 line is not a hit when EVERY SQL
+# template on it opens right after a listed tag, with an identifier boundary
+# before the tag, an optional <...> TypeScript generic and optional spaces.
+# sql.unsafe(`...`) is a call, not a tag. Action note prints
+# "NOTE<TAB>path:line<TAB>reason" (shown by bin/checks-run.sh, never counted);
+# skip prints nothing. A missing list or an invalid row is no exclusion.
+#
 # Reads the normalized added-line stream on stdin (path<TAB>line<TAB>text).
 # Prints "path:line<TAB>reason" per hit. rc 0 = clean, rc 1 = hits.
 # DETECTION ONLY: it reads stdin and writes stdout. Nothing else.
 set -uo pipefail
-OUT=$(awk -F'\t' '
+LIST="$(dirname "$0")/exclusions.tsv"
+OUT=$(awk -F'\t' -v LIST="$LIST" '
+# The first tag row whose tag the template opening at s[i] follows, or 0.
+function tag_row(s, i,   pre, n, d, j, c, k, tl) {
+  pre = substr(s, 1, i - 1); sub(/[[:space:]]+$/, "", pre)
+  n = length(pre)
+  if (n > 1 && substr(pre, n, 1) == ">" && substr(pre, n - 1, 1) !~ /[-=]/) {
+    d = 0
+    for (j = n; j >= 1; j--) {
+      c = substr(pre, j, 1)
+      if (c == ">") d++
+      else if (c == "<" && !--d) break
+    }
+    if (j >= 1) { pre = substr(pre, 1, j - 1); sub(/[[:space:]]+$/, "", pre); n = length(pre) }
+  }
+  for (k = 1; k <= NT; k++) {
+    tl = length(TG[k])
+    if (n < tl || substr(pre, n - tl + 1) != TG[k]) continue
+    if (n > tl && substr(pre, n - tl, 1) ~ /[A-Za-z0-9_$]/) continue
+    return TR[k]
+  }
+  return 0
+}
+# The tag row that covers every SQL template on line s, or 0 when one is not
+# tagged (or the line does not balance, which fails toward a hit).
+function tagged(s,   n, i, j, c, body, r, got) {
+  if (!NT) return 0
+  n = length(s); i = 1; got = 0
+  while (i <= n) {
+    c = substr(s, i, 1)
+    if (c == "\"" || c == SQ) { i = skip_str(s, i, c); if (!i) return 0; continue }
+    if (c == BT) {
+      j = skip_tpl(s, i); if (!j) return 0
+      body = substr(s, i, j - i)
+      if (body ~ /(SELECT|INSERT INTO|UPDATE |DELETE FROM|DROP |WHERE |FROM )/ && index(body, "${")) {
+        r = tag_row(s, i); if (!r) return 0
+        if (!got) got = r
+      }
+      i = j; continue
+    }
+    i++
+  }
+  return got
+}
+# Prints the NOTE (action note) for list row r and record i.
+function excluded(r, i, why) {
+  if (XA[r] == "note") printf "NOTE\t%s:%s\t%s [excluded by checks/sql-command-injection/exclusions.tsv row %d: %s]\n", P[i], F2[i], why, XL[r], XW[r]
+}
 function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
 function hashes(k,   o) { o = ""; while (k-- > 0) o = o "#"; return o }
 # The index just past the closing quote of the string opening at s[i], or 0.
@@ -244,6 +301,16 @@ BEGIN {
   # plain call at the start of a line matches too, which only adds hits.
   MHEAD = "^[[:space:]]*((static|async|get|set)[[:space:]]+)*[*#]?[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*[(]"
   ARR = "^[[][[:space:]]*(" LIT "([[:space:]]*,[[:space:]]*" LIT ")*[[:space:]]*,?)?[[:space:]]*[]]$"
+  NX = 0; NT = 0; ln = 0
+  while ((getline row < LIST) > 0) {
+    ln++
+    if (row ~ /^[[:space:]]*(#|$)/) continue
+    if (split(row, a, "\t") != 4 || a[1] !~ /^(path|tag)$/ || a[2] !~ /^(note|skip)$/ || a[3] == "") continue
+    NX++; XK[NX] = a[1]; XA[NX] = a[2]; XW[NX] = a[4]; XL[NX] = ln
+    if (a[1] == "path") { NPATH++; PX[NPATH] = a[3]; PR[NPATH] = NX }
+    else { NT++; TG[NT] = a[3]; TR[NT] = NX }
+  }
+  close(LIST)
 }
 {
   n++; P[n] = $1; L[n] = $2 + 0; F2[n] = $2; F3[n] = $3
@@ -260,18 +327,22 @@ BEGIN {
 }
 END {
   for (i = 1; i <= n; i++) {
-    t = F3[i]
+    t = F3[i]; xr = 0
+    for (k = 1; k <= NPATH; k++) if (P[i] ~ PX[k]) { xr = PR[k]; break }
     if (t ~ /[$](query|execute)RawUnsafe[[:space:]]*\(/) {
       r = "raw SQL through $queryRawUnsafe/$executeRawUnsafe — use the tagged $queryRaw`` form, which parameterizes"
-    } else if (t ~ /[$]queryRaw[[:space:]]*[(`]/ || t ~ /[$]executeRaw[[:space:]]*[(`]/) {
+    } else if (t ~ /[$](queryRaw|executeRaw)[[:space:]]*(<[^`]*>)?[[:space:]]*[(`]/) {
       continue   # the tagged/parameterized form is the fix, not the finding
     } else if (t ~ /`[^`]*(SELECT|INSERT INTO|UPDATE |DELETE FROM|DROP |WHERE |FROM )[^`]*[$][{]/) {
       if (line_safe(i)) continue
       r = "SQL built by string interpolation inside a template literal — parameterize it"
+      if (!xr) xr = tagged(TX[i])
     } else if (t ~ /(execSync|execFileSync|spawnSync|[^A-Za-z_.]exec|^exec)[[:space:]]*\(/ && t ~ /`[^`]*[$][{]/) {
       r = "shell command built by template interpolation — pass an argv array, never an interpolated string"
     } else continue
-    printf "%s:%s\t%s (family 53e19b60469c)\n", P[i], F2[i], r
+    r = r " (family 53e19b60469c)"
+    if (xr) { excluded(xr, i, r); continue }
+    printf "%s:%s\t%s\n", P[i], F2[i], r
   }
 }'); RC=$?
 # A crashed or unparsable program is rc 2, never an empty "clean" answer.

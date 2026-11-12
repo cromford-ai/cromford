@@ -1,0 +1,5 @@
+diff --git a/app/api/admin/members/[id]/route.ts b/app/api/admin/members/[id]/route.ts
+--- a/app/api/admin/members/[id]/route.ts
++++ b/app/api/admin/members/[id]/route.ts
+@@ -1,0 +1,1 @@
++  const member = await prisma.member.findUnique({where:{id:memberId}})

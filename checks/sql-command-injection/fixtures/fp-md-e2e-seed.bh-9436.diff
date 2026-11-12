@@ -1,0 +1,15 @@
+diff --git a/docs/queries.md b/docs/queries.md
+--- a/docs/queries.md
++++ b/docs/queries.md
+@@ -1,0 +1,1 @@
++Run `SELECT * FROM t WHERE id = ${id}` to check.
+diff --git a/e2e/helpers/db.ts b/e2e/helpers/db.ts
+--- a/e2e/helpers/db.ts
++++ b/e2e/helpers/db.ts
+@@ -1,0 +1,1 @@
++  await db.exec(`DELETE FROM users WHERE email = ${email}`)
+diff --git a/prisma/seed.ts b/prisma/seed.ts
+--- a/prisma/seed.ts
++++ b/prisma/seed.ts
+@@ -1,0 +1,1 @@
++  await db.$executeRawUnsafe(`INSERT INTO t VALUES (${v})`)

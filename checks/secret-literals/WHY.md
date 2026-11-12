@@ -32,6 +32,29 @@
 
 Reading `process.env.CRON_SECRET` is fine and is not flagged. Printing it is.
 
+## Applied exclusions (BH-9436)
+
+`checks/secret-literals/exclusions.tsv` holds one rule row, `name-only`. A
+secret-NAMED log line that prints the NAME and no VALUE becomes a
+`CHECK-NOTE` line: the review still sees it, and it does not park the PR.
+cromford#9372 parked on
+`echo "SECRET ANTHROPIC_API_KEY_$(printf ...) needed-by=..."`, which names the
+secret an operator must set and prints nothing secret.
+
+A line still hits when a secret word is in one of these places:
+
+- V1: right after `$`, `${` or `${!` (`echo "$GH_TOKEN"`, `` `${cfg.API_KEY}` ``).
+- V2: inside `$(...)`, or inside backticks on an `echo` line.
+- V3: on a `console.*` / `logger.*` line, outside every string
+  (`console.log(process.env.CRON_SECRET)`).
+- V4: a label then a value (`echo "TOKEN=$t"`, `console.log("API_KEY", key)`,
+  `"SECRET=" + s`).
+
+The credential-SHAPED branch does not read the list: a literal key always hits.
+If the row is absent (or the list is missing), the rule is off and every
+secret-named log line hits, as before. Pinned by
+`tests/checks-false-positives.bh-9436-test.sh`.
+
 ## Known false positives
 
 - A log line whose message text merely mentions the word "token"

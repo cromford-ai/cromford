@@ -1,0 +1,5 @@
+diff --git a/src/server/fakes/prisma.ts b/src/server/fakes/prisma.ts
+--- a/src/server/fakes/prisma.ts
++++ b/src/server/fakes/prisma.ts
+@@ -1,0 +1,1 @@
++  findUnique: ({ where }: Args) => rows.find((r) => r.id === where.id) ?? findBy({ where: { id: where.id } }),

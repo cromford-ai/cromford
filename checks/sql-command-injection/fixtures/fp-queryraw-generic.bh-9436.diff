@@ -1,0 +1,5 @@
+diff --git a/src/lib/search/web-search.ts b/src/lib/search/web-search.ts
+--- a/src/lib/search/web-search.ts
++++ b/src/lib/search/web-search.ts
+@@ -1,0 +1,1 @@
++    const [reserved] = await tx.$queryRaw<{ ok: boolean }[]>`SELECT public.mk_web_search_spend_reserve(${day}::date, ${price}::numeric, ${globalCap}::numeric) AS ok`;

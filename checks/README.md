@@ -41,6 +41,8 @@ justification hatch.
 checks/<slug>/check.sh      the check (executable, reads stdin, writes stdout)
 checks/<slug>/WHY.md        family key, 30-day count, the real findings it was
                             mined from, the objectivity test, known false positives
+checks/<slug>/exclusions.tsv OPTIONAL. The known false positives the check
+                            applies itself, one TAB row each: kind action pattern why
 checks/<slug>/fixtures/violation.diff   a seeded violation — the check MUST fire
 checks/<slug>/fixtures/clean.diff       the same code done right — MUST stay silent
 checks/<slug>/fixtures/tree-bad/        OPTIONAL. A whole checkout shaped wrong —
@@ -62,7 +64,14 @@ A check prints `path:line<TAB>reason` per hit and exits **0 clean / 1 hits**.
 Any other rc is reported as `CHECK-ERROR` — a check that could not run must
 never read as a check that passed.
 
-The runner exits **0 clean / 1 hits / 2 could not run**.
+A check may also print `NOTE<TAB>path:line<TAB>reason` for a line its own
+`exclusions.tsv` excludes. The runner prints it as
+`CHECK-NOTE <slug> <path>:<line> <reason>` after every `CHECK-HIT`, adds
+` — <k> note(s): <slug>(xN)` to the summary, and does not count it as a hit.
+The review prompt shows the notes, so each skip stays visible. A missing list,
+or an invalid row, is no exclusion: the check runs in its strict form.
+
+The runner exits **0 clean (notes only is clean) / 1 hits / 2 could not run**.
 
 ## The catalog
 

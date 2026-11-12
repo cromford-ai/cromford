@@ -1,0 +1,6 @@
+diff --git a/src/lib/vendor.ts b/src/lib/vendor.ts
+--- a/src/lib/vendor.ts
++++ b/src/lib/vendor.ts
+@@ -1,0 +1,2 @@
++const FALLBACK_KEY = "sk-ant-api03-FIXTURE-NOT-A-REAL-KEY"
++console.log("API_KEY", key)

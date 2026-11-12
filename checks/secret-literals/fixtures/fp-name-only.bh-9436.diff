@@ -1,0 +1,5 @@
+diff --git a/bin/selfhost-install.sh b/bin/selfhost-install.sh
+--- a/bin/selfhost-install.sh
++++ b/bin/selfhost-install.sh
+@@ -1,0 +1,1 @@
++    echo "SECRET ANTHROPIC_API_KEY_$(printf '%s' "$p" | tr 'a-z-' 'A-Z_') needed-by=claude_auth.$p where=fly-secret"

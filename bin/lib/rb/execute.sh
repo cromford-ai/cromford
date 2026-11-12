@@ -68,7 +68,7 @@ command -v ecb_write >/dev/null 2>&1 || . "$HARNESS/bin/lib/execute-checkpoint-b
 # lib.agent-call-ledger.*), applied here as bin/agent-call.sh applies them. Fail-open.
 if [ "${LANE_GATE_DISABLE:-0}" != 1 ]; then
   command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
-  command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply agent-call-ledger; lib_env_apply execute-checkpoint-brief; } || true
+  command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply agent-call-ledger; lib_env_apply execute-checkpoint-brief; lib_env_apply rb-execute; } || true
 fi
 # BH-9288: every process of this execute session carries HARNESS_EXEC_TAG
 # (bin/agent-call.sh puts it on the claude line only), so the reap after each
@@ -880,7 +880,17 @@ if [ -n "$CHECKS_RUNNER" ]; then
   CHECKS_RC=$?
   rm -f "$BUILD/checks-input.diff"
   case "$CHECKS_RC" in
-    0) CHECKS_NOTE="MINED CHECKS: clean — $(tail -1 "$BUILD/checks.txt")" ;;
+    0) CHECKS_NOTE="MINED CHECKS: clean — $(tail -1 "$BUILD/checks.txt")"
+       # A CHECK-NOTE is a skip a check's exclusions.tsv decided; show it.
+       # The cap is the settings row lib.rb-execute.checks_note_max_lines
+       # (catalog/lanes.d/_lib.rb-execute.json); 20 is only its fallback.
+       if grep -q '^CHECK-NOTE ' "$BUILD/checks.txt"; then
+         _cn_max=${CHECKS_NOTE_MAX_LINES:-20}
+         case "$_cn_max" in ''|*[!0-9]*|0) _cn_max=20 ;; esac
+         _cn_all=$(grep -c '^CHECK-NOTE ' "$BUILD/checks.txt")
+         CHECKS_NOTE="$CHECKS_NOTE"$'\n'"Excluded by the check's own exclusions.tsv. Read them; they are not hits:"$'\n'"$(grep '^CHECK-NOTE ' "$BUILD/checks.txt" | head -n "$_cn_max")"
+         [ "$_cn_all" -gt "$_cn_max" ] && CHECKS_NOTE="$CHECKS_NOTE"$'\n'"$((_cn_all - _cn_max)) more notes not shown (all $_cn_all are in checks.txt)."
+       fi ;;
     1) CHECKS_NOTE="MINED CHECKS: HIT. These are deterministic matches on ADDED lines, promoted from review-finding families that recurred across projects (checks/README.md names each one's evidence). They are a reason to look, not a verdict: adjudicate every one in your findings, and say plainly which are real and which are the documented false positives listed in that check's WHY.md:"$'\n'"$(head -40 "$BUILD/checks.txt")" ;;
     *) CHECKS_NOTE="MINED CHECKS: could not run (rc=$CHECKS_RC), so these families were NOT checked mechanically on this build — do not read this as passed:"$'\n'"$(head -5 "$BUILD/checks.txt")" ;;
   esac

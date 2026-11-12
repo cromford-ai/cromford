@@ -27,8 +27,67 @@
 # than a quantifier — see gh_token() below, which is how the GitHub prefixes get
 # the 24-character floor (prefix + 20 alnum), and the 40-character ceiling on
 # the shape exclusions, an interval quantifier would have written. No quantifier is added here, which keeps that claim mechanical.
+#
+# NAME-ONLY RULE. checks/secret-literals/exclusions.tsv row "rule <action>
+# name-only <why>" turns a secret-NAMED log line that prints no VALUE into a
+# NOTE (action note: "NOTE<TAB>path:line<TAB>reason", shown by
+# bin/checks-run.sh and never counted; skip: nothing). has_value() below is the
+# test. With no such row (a missing list, an invalid row) the line is a hit.
+# The credential-SHAPED branch never reads the list: a literal key always hits.
 set -uo pipefail
-OUT=$(awk -F'\t' '
+LIST="$(dirname "$0")/exclusions.tsv"
+OUT=$(awk -F'\t' -v LIST="$LIST" '
+# t with every quoted string (with its quotes) removed, so what is left is the
+# code around them. A string that does not close leaves the rest in place.
+function outside(t,   o, n, i, c, j, q) {
+  o = ""; n = length(t); i = 1
+  while (i <= n) {
+    c = substr(t, i, 1)
+    if (c == "\"" || c == SQ || c == BT) {
+      q = c
+      for (j = i + 1; j <= n; j++) { c = substr(t, j, 1); if (c == "\\") { j++; continue }; if (c == q) break }
+      if (j > n) return o substr(t, i)
+      i = j + 1; continue
+    }
+    o = o c; i++
+  }
+  return o
+}
+# 1 when the secret-named log line t prints a VALUE, 0 when it prints only a
+# NAME. A value is a secret word (SW) in one of these places:
+#   V1 right after $, ${ or ${! (a shell or template expansion: $GH_TOKEN, ${cfg.API_KEY})
+#   V2 inside $(...) or, on an echo line, inside backticks ($(printenv GH_TOKEN))
+#   V3 on a console./logger. line, outside every string (console.log(API_TOKEN))
+#   V4 a label then a value: SW then = or : then $ (echo "TOKEN=$t"), SW then
+#      spaces then a $name, or SW (then = or :) then the string closes and a
+#      value follows (console.log("API_KEY", key), "SECRET=" + s)
+function has_value(t,   rest, c, d, i, n, m) {
+  if (t ~ ("[$][{]?[[:space:]]*!?[A-Za-z0-9_.]*" SW)) return 1
+  rest = t
+  while ((i = index(rest, "$("))) {
+    rest = substr(rest, i + 2); n = length(rest); d = 1
+    for (m = 1; m <= n; m++) { c = substr(rest, m, 1); if (c == "(") d++; else if (c == ")" && !--d) break }
+    if (substr(rest, 1, m - 1) ~ SW) return 1
+  }
+  if (t ~ /[^A-Za-z_]echo[[:space:]]|^echo[[:space:]]/ && t ~ ("`[^`]*" SW "[^`]*`")) return 1
+  if (t ~ /(console|logger)[.]/ && outside(t) ~ SW) return 1
+  if (t ~ (SW "[A-Za-z0-9_]*[[:space:]]*[=:][[:space:]]*[$]")) return 1
+  if (t ~ (SW "[A-Za-z0-9_]*[[:space:]]+[$]([{]|[A-Za-z_])")) return 1
+  if (t ~ (SW "[A-Za-z0-9_]*[[:space:]]*[=:]?[[:space:]]*[\"" SQ "`]([[:space:]]*[,+]|[[:space:]]+[$\"" SQ "])")) return 1
+  return 0
+}
+BEGIN {
+  SQ = sprintf("%c", 39); BT = "`"
+  SW = "(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|APIKey|PRIVATE_KEY|CREDENTIAL|Credential)"
+  NAMEONLY = ""; ln = 0
+  while ((getline row < LIST) > 0) {
+    ln++
+    if (row ~ /^[[:space:]]*(#|$)/) continue
+    if (split(row, a, "\t") != 4 || a[1] != "rule" || a[2] !~ /^(note|skip)$/ || a[3] != "name-only") continue
+    if (NAMEONLY == "") { NAMEONLY = a[2]; NROW = ln; NWHY = a[4] }
+  }
+  close(LIST)
+}
 # gh_token(t) -> 1 when the line carries a GitHub token LITERAL, 0 when every
 # gh[pousr]_ run on it is an identifier. BH-1124: six alphanumerics matched
 # `ghs_author`, and 42 of those parked PR #882 for 617 minutes in BLOCKED_HUMAN.
@@ -86,8 +145,12 @@ function gh_token(t,   rest, off, abs, pre, post) {
    || t ~ /eyJhbGciOi[A-Za-z0-9_-]/) {
     r="a credential-shaped literal in source — secrets live in env/ (chmod 600), never in a commit; rotate it if this ever reached a remote"
   } else if (s ~ /(console\.(log|error|warn|info|debug)|logger\.(log|error|warn|info|debug)|[^A-Za-z_]echo[[:space:]])/ \
-          && s ~ /(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|APIKEY|APIKey|PRIVATE_KEY|CREDENTIAL|Credential)/) {
+          && s ~ SW) {
     r="a secret-named value written to a log — logs are read by everyone with log access"
+    if (NAMEONLY != "" && !has_value(s)) {
+      if (NAMEONLY == "note") printf "NOTE\t%s:%s\t%s (family 4d8b31f48fbd) [excluded by checks/secret-literals/exclusions.tsv row %d: %s]\n", $1, $2, "a secret NAME on a log line, with no value printed", NROW, NWHY
+      next
+    }
   } else next
   printf "%s:%s\t%s (family 4d8b31f48fbd)\n", $1, $2, r
 }')

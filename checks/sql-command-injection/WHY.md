@@ -60,6 +60,28 @@ body fields, function calls, function-local consts, and a const that sits on
 an unchanged context line. The check sees only added lines, so it cannot prove
 those safe. Pinned by `tests/sql-command-injection-allowlist.bh-4501-test.sh`.
 
+## Applied exclusions (BH-9436)
+
+`checks/sql-command-injection/exclusions.tsv` lists the exclusions the check
+applies itself:
+
+- **Path rows** (action `skip`): a `.md` file, an `e2e/` path, a `seed/` or
+  `seeds/` directory, and a `seed.ts` / `seed-*.ts` file. `seedling.ts`,
+  `readme.md.ts` and `e2ex/` still hit.
+- **Tag rows** (action `skip`): `sql`, `Prisma.sql`, `$queryRaw` and
+  `$executeRaw`. A shape-2 line is not a hit when every SQL template on it
+  opens right after one of these tags. An identifier boundary must come before
+  the tag, and an optional `<...>` TypeScript generic may follow it, so
+  `` tx.$queryRaw<{ ok: boolean }[]>`SELECT ... ${day}` `` (project-6#3074) is
+  the parameterized form. `mysql`...``, `sql.unsafe(`...`)` and
+  `Prisma.raw(`...`)` still hit, and so does an untagged SQL template on the
+  same line as a tagged one.
+
+The built-in `$queryRaw`/`$executeRaw` exclusion also takes the `<...>`
+generic now, and stays in the script, so a missing list does not re-open it.
+A missing list or an invalid row is no exclusion. Pinned by
+`tests/checks-false-positives.bh-9436-test.sh`.
+
 ## Known false positives
 
 - A query BUILDER that interpolates an identifier it controls

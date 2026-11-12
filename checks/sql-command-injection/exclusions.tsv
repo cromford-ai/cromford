@@ -1,0 +1,14 @@
+# checks/sql-command-injection/exclusions.tsv — known false positives this check applies.
+# Read by checks/sql-command-injection/check.sh. 4 TAB fields: kind action pattern why.
+# kind path: pattern is an awk ERE on the file path (no {n} quantifiers: mawk).
+# kind tag: pattern is a literal template tag that binds its parameters.
+# action skip: nothing prints. note: a CHECK-NOTE the review still sees.
+# A missing file or an invalid row means no exclusion: the check stays strict.
+path	skip	[.]md$	prose, not code
+path	skip	(^|/)e2e/	e2e helpers run against a test DB
+path	skip	(^|/)seeds?/	seed helper directory
+path	skip	(^|/)seed([._-][^/]*)?[.](ts|js|mjs|cjs|sql)$	seed helper file (seed.ts, seed-demo.ts)
+tag	skip	$queryRaw	Prisma tagged form binds parameters
+tag	skip	$executeRaw	Prisma tagged form binds parameters
+tag	skip	sql	sql`...` tag (postgres.js, drizzle, slonik) binds parameters
+tag	skip	Prisma.sql	Prisma fragment tag binds parameters
