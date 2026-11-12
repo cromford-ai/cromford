@@ -194,6 +194,7 @@ tests/trk-prompt-render.bh-8450-test.sh:generic-api-key:67
 tests/unblock-card.bh-7725-test.sh:generic-api-key:141
 tests/wake-loop-lane-rows.bh-9072-test.sh:generic-api-key:27
 tests/webhook-to-triage-linear.bh-8449-test.sh:generic-api-key:44
+tests/wrangler-npx-selfheal.bh-9460-test.sh:generic-api-key:406
 worker/jobs/test/agent-call-ledger.bh-9064.test.js:generic-api-key:21
 worker/jobs/test/ai-accounts.bh-7966.test.js:generic-api-key:16
 worker/jobs/test/alert-decisions.bh-6972.test.js:generic-api-key:20

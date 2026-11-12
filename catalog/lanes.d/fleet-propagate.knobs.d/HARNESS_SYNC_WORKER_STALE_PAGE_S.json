@@ -1,0 +1,11 @@
+{
+  "env": "HARNESS_SYNC_WORKER_STALE_PAGE_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 604800,
+  "zero_means": "off",
+  "read_in": "bin/harness-sync.sh",
+  "note": "BH-9460: seconds. When a worker step fails (deploy, wrangler-tool, npm-ci, a compose, or a schema statement) and the worker's last good deploy (mtime of state/worker-deployed-<w>) is at least this old, bin/harness-sync.sh writes one alert with its own id, so it pages even while the `deploy FAILED` alert is held by HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S. It pages again at most once per this window; a good deploy resets it. Read as ${HARNESS_SYNC_WORKER_STALE_PAGE_S:-}, then this settings row, falling back to HARNESS_SYNC_WORKER_STALE_PAGE_S_DEFAULT (21600, 6 hours). 0 = off; a non-number falls through to the default.",
+  "settable": true
+}

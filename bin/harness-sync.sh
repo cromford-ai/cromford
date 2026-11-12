@@ -488,10 +488,12 @@ CFENV="$HENV/cloudflare.env"
 # Per `--command`, never `--file`: `--file` fails under the hub's OAuth login
 # with `Authentication error [code: 10000]` (the operator, 2026-09-19). --yes: from a
 # TTY `d1 execute` prompts before touching a remote database, and `timeout 120`
-# would turn that prompt into a false failure.
+# would turn that prompt into a false failure. wrangler_run (bin/lib/wrangler-run.sh,
+# BH-9460) returns 87 when wrangler never started (an npm error such as
+# ENOTEMPTY that one cache move and one retry did not fix): no SQL reached D1.
 d1_exec() {
   (cd "$1" && set -a && . "$CFENV" && set +a \
-     && timeout 120 npx --yes wrangler d1 execute "$2" --remote --yes --command "$3" >>"$LOG" 2>&1)
+     && wrangler_run 120 d1 execute "$2" --remote --yes --command "$3" >>"$LOG" 2>&1)
 }
 
 # schema_alert_s — seconds an apply may run before it pages. Env first (the
@@ -521,6 +523,47 @@ deploy_alert_repeat_s() {
     case "$v" in ''|*[!0-9]*) v="" ;; esac
   fi
   printf '%s\n' "${v:-$HARNESS_SYNC_DEPLOY_ALERT_REPEAT_S_DEFAULT}"
+}
+
+# worker_stale_page_s — seconds a failing worker may be behind before it pages
+# again (BH-9460). Same reader: env, then the settings row
+# lane.fleet-propagate.harness_sync_worker_stale_page_s, then this code default.
+# 0 = off.
+HARNESS_SYNC_WORKER_STALE_PAGE_S_DEFAULT=21600
+worker_stale_page_s() {
+  local v="${HARNESS_SYNC_WORKER_STALE_PAGE_S:-}"
+  case "$v" in ''|*[!0-9]*) v="" ;; esac
+  if [ -z "$v" ] && [ -x "$HARNESS/bin/jobs-client.sh" ]; then
+    v=$("$HARNESS/bin/jobs-client.sh" setting-get lane.fleet-propagate.harness_sync_worker_stale_page_s 2>/dev/null | tr -d '[:space:]')
+    case "$v" in ''|*[!0-9]*) v="" ;; esac
+  fi
+  printf '%s\n' "${v:-$HARNESS_SYNC_WORKER_STALE_PAGE_S_DEFAULT}"
+}
+
+# worker_stale_page <wname> — a failing worker step on a worker whose last
+# good deploy (the mtime of state/worker-deployed-<w>) is at least
+# worker_stale_page_s old pages ONCE per that window (BH-9460). deploy_fail_note
+# holds its alert for deploy_alert_repeat_s on a folded --id, so a deploy that
+# failed for two days paged once; this alert has an id per page, so it is a new
+# row and pages. Every caller is a step for a worker whose tree sha is not the
+# deployed sha, so origin/main is ahead. No deployed file (never deployed): no
+# page, the first-failure alert covers it. state/worker-stale-paged/<w> holds the
+# epoch of the last page; a value in the future counts as absent. A good deploy
+# removes it. HARNESS_SYNC_NOW pins the clock for tests.
+worker_stale_page() {
+  local w="$1" win now dep mt pf pl
+  win=$(worker_stale_page_s); [ "$win" -gt 0 ] || return 0
+  dep="$HARNESS/state/worker-deployed-$w"
+  mt=$(stat -c %Y "$dep" 2>/dev/null) || return 0
+  now="${HARNESS_SYNC_NOW:-$(date +%s)}"
+  [ $((now - mt)) -ge "$win" ] || return 0
+  pf="$HARNESS/state/worker-stale-paged/$w"
+  if read -r pl < "$pf" 2>/dev/null && [[ "$pl" =~ ^[0-9]+$ ]] && [ "$pl" -le "$now" ] \
+     && [ $((now - pl)) -lt "$win" ]; then
+    return 0
+  fi
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --id "worker-stale-$w-$(hostname)-$now" "[$(hostname)] worker/$w is $(( (now - mt) / 3600 ))h behind origin/main (last deploy $(date -u -d "@$mt" '+%F %TZ')) — LIVE WORKER IS STALE; the deploy keeps failing, see update-runners.log (pages again every ${win}s, settings row lane.fleet-propagate.harness_sync_worker_stale_page_s)"
+  mkdir -p "$HARNESS/state/worker-stale-paged" && printf '%s\n' "$now" > "$pf.tmp" && mv -f "$pf.tmp" "$pf"
 }
 
 # deploy_fail_note <wname> <wsha> <snap> [<stage> <message>] — one failed
@@ -554,6 +597,7 @@ deploy_fail_note() {
     echo "$(STAMP) worker $wname $stage FAILED again ($count since $since); alert held, next in $((rep - (now - last)))s" >> "$LOG"
   fi
   printf '%s %s %s\n' "$first" "$last" "$count" > "$f.tmp" && mv -f "$f.tmp" "$f"
+  worker_stale_page "$wname"
 }
 
 # deploy_fail_clear <wname> <stage> — the step passed: remove its failing state
@@ -585,21 +629,34 @@ deploy_fail_clear() {
 schema_send() {
   local wdir="$1" wname="$2" wdb="$3"; shift 3
   local -a st=("$@") chunks
-  local m=$# batch=1 rt=0 alerted=0 limit t0 c f l i head
+  local m=$# batch=1 rt=0 alerted=0 limit t0 c f l i head drc single
   limit=$(schema_alert_s); t0=$(date +%s)
   mapfile -t chunks < <(printf '%s\0' "${st[@]}" | d1_chunk_bounds)
   for c in "${chunks[@]}"; do
     read -r f l <<<"$c"
-    if [ "$batch" = 0 ] || [ "$f" = "$l" ] \
-       || { rt=$((rt+1)); ! d1_exec "$wdir" "$wdb" "$(printf '%s\n' "${st[@]:f:l-f+1}")"; }; then
+    single=0
+    if [ "$batch" = 0 ] || [ "$f" = "$l" ]; then
+      single=1
+    else
+      rt=$((rt+1))
+      d1_exec "$wdir" "$wdb" "$(printf '%s\n' "${st[@]:f:l-f+1}")"; drc=$?
+      # BH-9460: wrangler never started, so no statement reached D1 — never
+      # re-run the chunk one statement at a time to name a statement.
+      [ "$drc" = 87 ] && { schema_tool_fail; SCHEMA_RT=$rt; return 1; }
+      [ "$drc" = 0 ] || single=1
+    fi
+    if [ "$single" = 1 ]; then
       [ "$batch" = 1 ] && [ "$f" != "$l" ] \
         && echo "$(STAMP) worker $wname schema apply: round trip for statements $((f+1))-$((l+1))/$m failed — re-running them one statement at a time to name the one that broke" >> "$LOG"
       for ((i=f; i<=l; i++)); do
         rt=$((rt+1))
-        d1_exec "$wdir" "$wdb" "${st[$i]}" && { schema_progress $((i+1)); schema_slow $((i+1)); continue; }
+        d1_exec "$wdir" "$wdb" "${st[$i]}"; drc=$?
+        [ "$drc" = 0 ] && { schema_progress $((i+1)); schema_slow $((i+1)); continue; }
+        [ "$drc" = 87 ] && { schema_tool_fail; SCHEMA_RT=$rt; return 1; }
         # ONE line, so the head of a multi-line statement is flattened first.
         head=$(printf '%s' "${st[$i]}" | tr '\n\t' '  ' | cut -c1-80)
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[$(hostname)] worker/$wname schema.sql statement $((i+1))/$m failed against D1 $wdb ($head) — deploy of $wname SKIPPED so code never runs ahead of its schema; the next update-runners run retries (update-runners.log)"
+        worker_stale_page "$wname"
         SCHEMA_RT=$rt; return 1
       done
       if [ "$batch" = 1 ] && [ "$f" != "$l" ]; then
@@ -613,6 +670,15 @@ schema_send() {
   done
   SCHEMA_RT=$rt
   return 0
+}
+
+# schema_tool_fail — d1_exec returned 87: wrangler could not start, so NO
+# statement reached D1 (BH-9460). One deploy_fail_note at stage wrangler-tool,
+# held by deploy_alert_repeat_s like every other step, never the
+# "statement N/M failed against D1" alert. Reads schema_send's locals and
+# deploy_workers's WSHA and SNAP (bash scoping is dynamic).
+schema_tool_fail() {
+  deploy_fail_note "$wname" "${WSHA:-}" "${SNAP:-}" wrangler-tool "[$(hostname)] worker/$wname wrangler could not start: $(wrangler_tool_code_last) — no SQL reached D1 $wdb; deploy of $wname SKIPPED (update-runners.log)"
 }
 
 # schema_progress <statements-done-in-this-call> — record how far the apply got,
@@ -954,11 +1020,19 @@ deploy_workers() {
     # gets the snapshot sha as a var, so each event names the build it ran.
     local WVAR=()
     grep -rqs HARNESS_SHA "$WDIR/src" && WVAR=(--var "HARNESS_SHA:$SNAP")
-    if (cd "$WDIR" && set -a && . "$CFENV" && set +a \
-        && timeout 300 npx --yes wrangler deploy "${WVAR[@]}" >>"$LOG" 2>&1); then
+    (cd "$WDIR" && set -a && . "$CFENV" && set +a \
+        && wrangler_run 300 deploy "${WVAR[@]}" >>"$LOG" 2>&1)
+    local DRC=$?
+    if [ "$DRC" = 0 ]; then
       echo "$WSHA" > "$WSTATE"
       echo "$(STAMP) worker $WNAME deployed at ${WSHA:0:7} (snapshot of ${SNAP:0:7})" >> "$LOG"
       deploy_fail_clear "$WNAME" deploy
+      # BH-9460: the tool state is cleared only by a good deploy, never by a
+      # schema apply alone, so a deploy that keeps tool-failing stays held.
+      deploy_fail_clear "$WNAME" wrangler-tool
+      rm -f "$HARNESS/state/worker-stale-paged/$WNAME"
+    elif [ "$DRC" = 87 ]; then
+      deploy_fail_note "$WNAME" "$WSHA" "$SNAP" wrangler-tool "[$(hostname)] worker/$WNAME wrangler could not start: $(wrangler_tool_code_last) — deploy of $WNAME SKIPPED, LIVE WORKER IS STALE (update-runners.log)"
     else
       deploy_fail_note "$WNAME" "$WSHA" "$SNAP"
     fi
@@ -1014,6 +1088,22 @@ hs_worker_phase() {
   return 0
 }
 if [ -f "$CFENV" ] && [ -d "$CHECKOUT/worker" ]; then
+  # >>> wrangler helper (BH-9460)
+  # Every wrangler call of the worker phase goes through wrangler_run. Sourced
+  # here, after the rsync, like d1-schema.sh. A box without the library runs
+  # the old bare call, with no self-heal and no pinned install.
+  # shellcheck source=bin/lib/wrangler-run.sh
+  . "$HARNESS/bin/lib/wrangler-run.sh" 2>/dev/null \
+    || . "$(dirname "${BASH_SOURCE[0]}")/lib/wrangler-run.sh" 2>/dev/null \
+    || { wrangler_run() { [ "$1" = --spec ] && shift 2; local t="$1"; shift; timeout "$t" npx --yes wrangler "$@"; }
+         wrangler_install() { :; }; wrangler_spec() { echo wrangler; }; wrangler_tool_code_last() { echo unknown; }; }
+  # Read the spec knob once here, so each d1_exec subshell does not re-read it.
+  WRANGLER_SPEC_V=$(wrangler_spec)
+  # The pinned install is its own step with its own lock, never inside the
+  # deploy step: a timeout here can only leave a stage dir, never a live cache.
+  hs_wrangler_install_step() { wrangler_install >>"$LOG" 2>&1; }
+  hs_step wrangler-install plain hs_wrangler_install_step
+  # <<< wrangler helper
   hs_step worker-phase deploy hs_worker_phase
 fi
 # <<< worker phase

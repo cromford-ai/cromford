@@ -1,0 +1,11 @@
+{
+  "env": "HARNESS_SYNC_WRANGLER_INSTALL_RETRY_S",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 86400,
+  "zero_means": null,
+  "read_in": "bin/lib/wrangler-run.sh",
+  "note": "BH-9460: seconds between two tries of a FAILED pinned wrangler install (bin/harness-sync.sh's wrangler-install step). Each try downloads wrangler into a fresh stage cache, so a failure that repeats must not download on every 5-minute sync. A change of HARNESS_SYNC_WRANGLER_SPEC tries again at once. Read by wr_install_retry_s in bin/lib/wrangler-run.sh as ${HARNESS_SYNC_WRANGLER_INSTALL_RETRY_S:-}, then this settings row, falling back to WRANGLER_INSTALL_RETRY_S_DEFAULT (3600). 0 is a 0-second window: every sync tries again. A non-number falls through to the default.",
+  "settable": true
+}

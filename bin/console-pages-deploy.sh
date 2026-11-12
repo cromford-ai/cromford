@@ -270,10 +270,17 @@ fi
 alert --resolve --id console-pages-deploy-build fleet-propagate "console-ui build green at $C7"
 
 # The token only ever lives in this subshell's env.
+# wrangler_run (bin/lib/wrangler-run.sh, BH-9460): an npm error before wrangler
+# starts (a half-written ~/.npm/_npx, ENOTEMPTY) moves that cache aside and
+# retries once; rc 87 = wrangler could not start. The npx argv is unchanged.
+. "$H/bin/lib/wrangler-run.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/wrangler-run.sh" 2>/dev/null \
+  || { wrangler_run() { local s="" t; [ "$1" = --spec ] && { s=$2; shift 2; }; t=$1; shift; timeout "$t" npx --yes "${s:-wrangler}" "$@"; }
+       wrangler_tool_code_last() { echo unknown; }; }
+export WRANGLER_TOOL_ERR_FILE="$SD/wrangler-tool-error"
 PROJECT=$(console_pages_project)
 ( set -a; . "$CFENV"; set +a
   acct=$(console_pages_account_id "$D") && [ -n "$acct" ] && export CLOUDFLARE_ACCOUNT_ID="$acct"
-  timeout 600 npx --yes wrangler@3 pages deploy dist --project-name "$PROJECT" --branch main \
+  wrangler_run --spec wrangler@3 600 pages deploy dist --project-name "$PROJECT" --branch main \
     --commit-hash "$CSHA" --commit-message "harness-sync $C7" </dev/null ) >"$D/deploy.log" 2>&1
 DRC=$?
 # Scrub the literal token and any Bearer value before anything reads the log.
@@ -282,6 +289,11 @@ CP_TOK=$( set -a; . "$CFENV" >/dev/null 2>&1; printf '%s' "${CLOUDFLARE_API_TOKE
 CP_TOK="$CP_TOK" awk '{t=ENVIRON["CP_TOK"]; if (t!="") while ((i=index($0,t))>0) $0=substr($0,1,i-1) "***" substr($0,i+length(t)); gsub(/Bearer[ \t]+[^ \t]+/,"Bearer ***"); print}' "$D/deploy.log"
 unset CP_TOK
 
+if [ "$DRC" = 87 ]; then
+  WTC=$(wrangler_tool_code_last)
+  alert --severity warn --id console-pages-deploy-failed fleet-propagate "[$(hostname)] wrangler could not start: $WTC at $C7 (npm error before wrangler ran; one cache move and one retry did not fix it) — LIVE CONSOLE IS STALE at $L7; see logs/console-pages-deploy.log"
+  log "wrangler could not start at $C7: $WTC"; cp_stale_check "wrangler could not start at $C7: $WTC"; exit 0
+fi
 if [ "$DRC" != 0 ]; then
   alert --severity warn --id console-pages-deploy-failed fleet-propagate "[$(hostname)] wrangler pages deploy FAILED at $C7 (rc=$DRC) — LIVE CONSOLE IS STALE at $L7; see logs/console-pages-deploy.log"
   log "wrangler pages deploy failed at $C7 (rc=$DRC)"; cp_stale_check "wrangler pages deploy failed at $C7 (rc=$DRC)"; exit 0

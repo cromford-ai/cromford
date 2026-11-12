@@ -1,0 +1,9 @@
+{
+  "env": "HARNESS_SYNC_WRANGLER_SPEC",
+  "type": "string",
+  "default": "wrangler",
+  "zero_means": null,
+  "read_in": "bin/lib/wrangler-run.sh",
+  "note": "BH-9460: the npx spec the hub installs for wrangler (`wrangler` or `wrangler@<version or range>`). bin/harness-sync.sh's wrangler-install step installs it into the private cache state/wrangler-npx/ under its own lock, freezes the exact version it resolved, and the worker deploy and D1 apply then run wrangler@<that version> from that cache. A change of this row installs again on the next sync. Read by wrangler_spec in bin/lib/wrangler-run.sh as ${HARNESS_SYNC_WRANGLER_SPEC:-}, then this settings row, falling back to WRANGLER_SPEC_DEFAULT (wrangler). Any other value falls through to the default.",
+  "settable": true
+}
