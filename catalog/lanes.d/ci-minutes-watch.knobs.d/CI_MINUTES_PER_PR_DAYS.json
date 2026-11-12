@@ -1,0 +1,9 @@
+{
+  "env": "CI_MINUTES_PER_PR_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 1,
+  "max": 30,
+  "zero_means": null,
+  "note": "BH-9411: the rolling window of min_per_merged_pr_7d, in 24 h slots: this tick plus the newest stored tick per earlier slot (1800 s of cron jitter). The field names stay *_7d; days_7d says how many slots the figure holds."
+}

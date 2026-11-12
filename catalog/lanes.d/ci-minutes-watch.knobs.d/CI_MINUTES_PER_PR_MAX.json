@@ -1,0 +1,9 @@
+{
+  "env": "CI_MINUTES_PER_PR_MAX",
+  "type": "int",
+  "default": 400,
+  "min": 0,
+  "zero_means": "off",
+  "project_scoped": true,
+  "note": "BH-9411: estimated billed CI job-minutes per merged PR over the last CI_MINUTES_PER_PR_DAYS days (from state/ci-minutes/ticks.jsonl) above this is ONE critical page a day per repo (ci-minutes:per-pr:<slug>, bin/lib/page-critical.sh). PER REPO: set lane.ci-minutes-watch.<project>.ci_minutes_per_pr_max (bin/harness-ctl.sh set ci-minutes-watch CI_MINUTES_PER_PR_MAX <n> <project>); the project is the first fleet.conf project whose repo is the slug. Strictly greater pages. 0 = measure and log only. docs/CI-RUNNERS.md."
+}

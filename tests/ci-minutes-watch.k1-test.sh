@@ -10,7 +10,8 @@
 #      (a triaged critical beat), deduped for a day
 #   3  under the line: no page, and the log line + state/ci-minutes/latest.json
 #      are written anyway
-#   4  the GitHub budget: exactly pages + sample reads per repo, and a repo whose
+#   4  the GitHub budget: exactly pages + sample reads + one closed-PR read
+#      (BH-9411) per readable repo, and a repo whose
 #      run list fills every page is named a floor
 #   5  a repo nobody can read is named, not counted as zero, and does not stop
 #      the others
@@ -62,6 +63,7 @@ R=$(sed -E 's#^repos/([^/]+)/([^/]+)/.*#\1_\2#' <<<"$P")
 case "$P" in
   */actions/runs/*/jobs*) ID=$(sed -E 's#.*/runs/([0-9]+)/jobs.*#\1#' <<<"$P"); F="$HARNESS/fx/$R.jobs.$ID.json" ;;
   */actions/runs) F="$HARNESS/fx/$R.runs.$PG.json" ;;
+  */pulls) F="$HARNESS/fx/$R.pulls.json"; [ -r "$F" ] || echo '[]' > "$F" ;;
   *) exit 1 ;;
 esac
 [ -r "$F" ] || exit 1
@@ -137,10 +139,12 @@ drive CI_MINUTES_DAY_MAX=0 CI_MINUTES_BILL_MULT=1.5
 grep 'Acme/a:' "$HH/logs/ci-minutes-watch.log" | tail -1 | grep -q 'est 270 billed' && ok \
   || bad "3: a decimal multiplier (1.5) is a number, not a reason to fall back to the default ($(grep 'Acme/a:' "$HH/logs/ci-minutes-watch.log" | tail -1))"
 
-# 4. the budget: a: 1 page + 10 sampled jobs, b: 1 page + 4 (it only has 4), c: 1 failed page = 17
+# 4. the budget: a: 1 page + 10 sampled jobs + 1 closed-PR read, b: 1 page + 4
+# (it only has 4) + 1 closed-PR read, c: 1 failed page and no PR read = 19.
+# TEST-CHANGE (BH-9411): was 17; each readable repo now reads its closed PRs once.
 drive CI_MINUTES_DAY_MAX=1000
-[ "$(calls)" = 17 ] && ok || bad "4: exactly pages + sample reads per repo, and Acme/b listed once though two projects use it (got $(calls): $(cat "$HH/gh-calls.txt"))"
-grep -q '17 GitHub read(s)' "$HH/logs/ci-minutes-watch.log" && ok || bad "4: the fleet line reports the reads it spent"
+[ "$(calls)" = 19 ] && ok || bad "4: exactly pages + sample + 1 pulls reads per readable repo, and Acme/b listed once though two projects use it (got $(calls): $(cat "$HH/gh-calls.txt"))"
+grep -q '19 GitHub read(s)' "$HH/logs/ci-minutes-watch.log" && ok || bad "4: the fleet line reports the reads it spent"
 # a busy repo: 100 runs read of total_count 250 -> the wall minutes are
 # EXTRAPOLATED to 250 runs, not capped at what the pages held
 runs Acme_a 1 100 1000 600 1 250

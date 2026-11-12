@@ -43,6 +43,26 @@
 # distinct head SHAs of its pull_request runs: every push to a PR branch starts
 # one). Both count completed runs only, the ones this lane reads.
 #
+# MINUTES PER MERGED PR (BH-9411). One more read per readable repo: the newest
+# 100 closed PRs (`pulls?state=closed&sort=updated`). Per repo, one
+# `ci-per-pr repo=<slug> ...` line before its estimate line, and in latest.json
+# and the ci_health payload:
+#   merged_prs_24h / min_per_merged_pr — PRs merged in the window and the repo
+#     estimate over them (empty / null when 0 merged, never 0);
+#   unmerged_min_24h / unmerged_share — the estimated minutes of runs whose
+#     head branch is the head of a same-repo PR closed unmerged in the window.
+#     A merge-queue draft (CI_MINUTES_QUEUE_PREFIXES) is never unmerged and
+#     never a merged PR: its minutes stay in the estimate the merged PRs carry;
+#   min_per_merged_pr_7d / merged_prs_7d / days_7d — from the lane's own stored
+#     ticks (state/ci-minutes/ticks.jsonl): this tick plus the newest stored tick
+#     per earlier 24 h slot, CI_MINUTES_PER_PR_DAYS slots, sum of minutes over
+#     sum of merged PRs.
+# Over CI_MINUTES_PER_PR_MAX (a per-project settings row) with at least
+# CI_MINUTES_PER_PR_MIN_MERGED merged PRs in the window, and no floor PR list
+# among the picks: ONE critical page a day per repo (ci-minutes:per-pr:<slug>).
+# Retention: ticks older than CI_MINUTES_TICKS_KEEP_DAYS are dropped only when
+# CI_MINUTES_TICKS_RETENTION_APPLY=1; one `ci-ticks-retention` line per run.
+#
 # usage: ci-minutes-watch.sh [--dry-run]    --dry-run measures and prints; no page
 # Kill switch: bin/harness-ctl.sh off ci-minutes-watch (flags/lane-off-ci-minutes-watch)
 # Tests: tests/ci-minutes-watch.k1-test.sh
@@ -86,18 +106,41 @@ MATCH="${CI_MINUTES_RUNNER_MATCH:-monkci}"
 # rounded job-minutes times this.
 MULT=$(knob CI_MINUTES_BILL_MULT 2)
 SINCE=$(date -u -d "@$(( NOW - 86400 ))" '+%Y-%m-%dT%H:%M:%SZ')
+# BH-9411 knobs (catalog/lanes.d/ci-minutes-watch.knobs.d/; each literal is the
+# documented fallback of that row). CI_MINUTES_PER_PR_MAX is read per repo below.
+MIN_MERGED=$(knob CI_MINUTES_PER_PR_MIN_MERGED 5); MIN_MERGED="${MIN_MERGED%.*}"; [ "${MIN_MERGED:-0}" -ge 1 ] 2>/dev/null || MIN_MERGED=1
+DAYS=$(knob CI_MINUTES_PER_PR_DAYS 7); DAYS="${DAYS%.*}"; [ "${DAYS:-0}" -ge 1 ] 2>/dev/null || DAYS=1; [ "$DAYS" -le 30 ] || DAYS=30
+QPREF="${CI_MINUTES_QUEUE_PREFIXES-mergify/merge-queue/ gh-readonly-queue/}"
+KEEP_DAYS=$(knob CI_MINUTES_TICKS_KEEP_DAYS 35); KEEP_DAYS="${KEEP_DAYS%.*}"
+RET_APPLY=$(knob CI_MINUTES_TICKS_RETENTION_APPLY 0); RET_APPLY="${RET_APPLY%.*}"
+TICKS="$STATE/ticks.jsonl"
+per_pr_max() { # per_pr_max <project> — project row, lane row, env, registry default; else 400
+  local v=""
+  if [ -n "${1:-}" ] && command -v lane_knob >/dev/null 2>&1; then
+    v=$(lane_knob ci-minutes-watch CI_MINUTES_PER_PR_MAX "$1" 2>/dev/null)
+  fi
+  case "$v" in ''|.|*.*.*|*[!0-9.]*) v=$(knob CI_MINUTES_PER_PR_MAX 400) ;; esac
+  printf '%s' "${v%.*}"
+}
 
 if command -v gh_budget_low >/dev/null 2>&1 && gh_budget_low ci-minutes-watch; then
   log "skipped: the GitHub API budget is low (bin/lib/gh-budget.sh) — no reads this tick"
   exit 0
 fi
 
-REPOS=$(for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
-  "$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null
-done | awk 'NF && $1 != "-"' | sort -u)
+# `<slug> <project>` per fleet.conf project; the FIRST project of a repo owns
+# its per-PR settings row (BH-9411).
+REPOMAP=$(for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
+  printf '%s %s\n' "$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)" "$P"
+done | awk 'NF == 2 && $1 != "-" && !seen[$1]++')
+REPOS=$(awk '{print $1}' <<<"$REPOMAP" | sort -u)
 [ -n "$REPOS" ] || { log "no repos: fleet.conf answered nothing"; exit 0; }
 
 CALLS=0; TOTAL=0; ROWS=""; UNREAD=""; COUNTS="{}"
+PERPR="{}"; TICKREC="{}"; ALERTS=""; FM=0; FE=0; FU=0
+# The stored ticks, read once. A line that does not parse is skipped.
+STORED=$(jq -R -s -c '[split("\n")[] | fromjson? | select(type == "object" and (.at | type) == "number")]' "$TICKS" 2>/dev/null) || STORED="[]"
+[ -n "$STORED" ] || STORED="[]"
 for SLUG in $REPOS; do
   if command -v gh_repo_use_token >/dev/null 2>&1; then
     gh_repo_use_token "$SLUG" 2>/dev/null || { UNREAD="${UNREAD:+$UNREAD }$SLUG"; continue; }
@@ -146,14 +189,15 @@ for SLUG in $REPOS; do
   # takes the pooled ratio. Then, when the pages held fewer runs than GitHub's
   # total_count, the result is EXTRAPOLATED by total_count / runs read — a busy
   # repo is estimated, never silently capped.
-  read -r SB SW EST0 <<<"$(jq -r --argjson s "$SAMP" '
+  # RATIO = {rw, pool}, the same ratios, kept for the unmerged minutes (BH-9411).
+  read -r SB SW EST0 RATIO <<<"$(jq -r --argjson s "$SAMP" '
       ($s | map(.b) | add // 0) as $sb | ($s | map(.m) | add // 0) as $sw
       | (if $sw > 0 then $sb / $sw else 0 end) as $pool
       | ($s | group_by(.w) | map({key: (.[0].w | tostring),
             value: ((map(.m) | add) as $m | if $m > 0 then (map(.b) | add) / $m else $pool end)}) | from_entries) as $rw
       | (group_by(.w) | map((map(.m) | add) * ($rw[(.[0].w | tostring)] // $pool)) | add // 0) as $est
-      | "\($sb) \($sw) \($est)"' <<<"$RUNS" 2>/dev/null)"
-  SB="${SB:-0}"; SW="${SW:-0}"; EST0="${EST0:-0}"
+      | "\($sb) \($sw) \($est) \({rw: $rw, pool: $pool} | tojson)"' <<<"$RUNS" 2>/dev/null)"
+  SB="${SB:-0}"; SW="${SW:-0}"; EST0="${EST0:-0}"; [ -n "${RATIO:-}" ] || RATIO='{"rw":{},"pool":0}'
   FLOOR=""; SEEN="$NRUNS run(s)"; XF=1
   if [ "$TOTALC" -gt "$NRUNS" ] 2>/dev/null && [ "$NRUNS" -gt 0 ]; then
     XF=$(awk -v t="$TOTALC" -v n="$NRUNS" 'BEGIN{ printf "%.4f", t / n }')
@@ -184,6 +228,65 @@ for SLUG in $REPOS; do
       + " pushes_per_pr prs=\(.pushes_per_pr.prs)"
       + (if .pushes_per_pr.prs > 0 then " median=\(.pushes_per_pr.median) max=\(.pushes_per_pr.max) (\(.pushes_per_pr.max_branch))" else "" end)
       + " of \($n) run(s) read"' <<<"$CNT" 2>/dev/null)"
+  # BH-9411: the closed-PR read, merged / unmerged / floor, the 7-day figure.
+  CALLS=$(( CALLS + 1 ))
+  PRL=$(gh_ci_api "$SLUG" -X GET "repos/$SLUG/pulls" -f state=closed -f sort=updated -f direction=desc -f per_page=100 \
+          -q '[.[] | {b: (.head.ref // ""), hr: (.head.repo.full_name // ""), m: (.merged_at // ""), c: (.closed_at // ""), u: (.updated_at // "")}]' 2>/dev/null) \
+    && PRS=$(jq -c --arg since "$SINCE" --arg slug "$SLUG" --arg qp "$QPREF" '
+        def isq($q): . as $b | any($q[]; . as $p | $b | startswith($p));
+        ($qp | split(" ") | map(select(length > 0))) as $q
+        | (length >= 100 and ((.[-1].u // "") >= $since)) as $floor
+        | [.[] | select(.b | isq($q) | not)] as $p
+        | [$p[] | select(.m != "" and .m >= $since)] as $mg
+        | ($mg | map(.b) | unique) as $mb
+        | [$p[] | select(.m == "" and .c != "" and .c >= $since and .hr == $slug) | .b
+                | select(. as $b | any($mb[]; . == $b) | not)] | unique
+        | {merged: ($mg | length), heads: ., floor: $floor}' <<<"${PRL:-[]}" 2>/dev/null) && [ -n "$PRS" ] || PRS=""
+  PPMAX=$(per_pr_max "$(awk -v s="$SLUG" '$1 == s {print $2; exit}' <<<"$REPOMAP")")
+  if [ -n "$PRS" ]; then
+    read -r MG PFL HEADS <<<"$(jq -r '"\(.merged) \(.floor) \(.heads | tojson)"' <<<"$PRS")"
+    UNM=$(jq -r --argjson h "$HEADS" --argjson r "$RATIO" \
+        '[.[] | select(.b as $b | any($h[]; . == $b)) | .m * ($r.rw[(.w | tostring)] // $r.pool)] | add // 0' <<<"$RUNS" 2>/dev/null)
+    UNM=$(awk -v u="${UNM:-0}" -v x="$XF" 'BEGIN{ printf "%d", u * x + 0.5 }')
+    TICKREC=$(jq -c --arg r "$SLUG" --argjson e "$EST" --argjson m "$MG" --argjson u "$UNM" --argjson f "$PFL" \
+        '. + {($r): {est: $e, merged: $m, unmerged: $u, floor: $f}}' <<<"$TICKREC")
+    FM=$(( FM + MG )); FE=$(( FE + EST )); FU=$(( FU + UNM ))
+  else
+    MG=null; PFL=null; UNM=null
+    TICKREC=$(jq -c --arg r "$SLUG" --argjson e "$EST" '. + {($r): {est: $e, merged: null, unmerged: null, floor: false}}' <<<"$TICKREC")
+  fi
+  # THE 7-DAY PICKER. This tick, then up to DAYS-1 times the newest stored tick
+  # at least 23.5 h older than the last pick (1800 s of cron jitter) inside the
+  # window that read its PR list: DAYS non-overlapping 24 h slots, never 4 a day.
+  REC=$(jq -c --arg r "$SLUG" --argjson now "$NOW" --argjson d "$DAYS" --argjson ppmax "$PPMAX" \
+        --argjson e "$EST" --argjson m "$MG" --argjson u "$UNM" --argjson f "$PFL" --argjson ticks "$STORED" '
+      (if $m == null then {picks: [], last: $now}
+       else reduce range(1; $d) as $i ({picks: [{est: $e, merged: $m, floor: $f}], last: $now};
+         .last as $l
+         | ([$ticks[] | select(.at <= $l - 86400 + 1800 and .at > $now - $d * 86400 - 1800
+                         and ((.repos[$r].merged // null) | type) == "number")] | max_by(.at)) as $t
+         | if $t == null then . else .picks += [$t.repos[$r]] | .last = $t.at end) end) as $s
+      | ($s.picks | map(.merged) | add // 0) as $m7 | ($s.picks | map(.est // 0) | add // 0) as $e7
+      | {merged_prs_24h: $m,
+         min_per_merged_pr: (if $m == null or $m == 0 then null else ($e / $m + 0.5 | floor) end),
+         unmerged_min_24h: $u,
+         unmerged_share: (if $u == null or $e == 0 then null else ($u / $e * 100 + 0.5 | floor) / 100 end),
+         min_per_merged_pr_7d: (if ($s.picks | length) == 0 or $m7 == 0 then null else ($e7 / $m7 + 0.5 | floor) end),
+         merged_prs_7d: (if ($s.picks | length) == 0 then null else $m7 end),
+         days_7d: ($s.picks | length), per_pr_max: $ppmax, pr_floor: $f,
+         floor_days: ($s.picks | map(select(.floor == true)) | length)}' <<<"null" 2>/dev/null) \
+    || REC='{"merged_prs_24h":null,"min_per_merged_pr":null,"unmerged_min_24h":null,"unmerged_share":null,"min_per_merged_pr_7d":null,"merged_prs_7d":null,"days_7d":0,"per_pr_max":0,"pr_floor":null,"floor_days":0}'
+  PERPR=$(jq -c --arg r "$SLUG" --argjson c "$REC" '. + {($r): ($c | del(.floor_days))}' <<<"$PERPR" 2>/dev/null) || PERPR="{}"
+  PPLINE=$(jq -r '"merged_prs_24h=\(.merged_prs_24h // "") min_per_merged_pr=\(.min_per_merged_pr // "")"
+      + " unmerged_min_24h=\(.unmerged_min_24h // "")"
+      + " unmerged_share=\(if .unmerged_share == null then "" else (.unmerged_share * 100 | round) as $c
+                          | "\($c / 100 | floor).\($c % 100 | tostring | if length < 2 then "0" + . else . end)" end)"
+      + " min_per_merged_pr_7d=\(.min_per_merged_pr_7d // "") merged_prs_7d=\(.merged_prs_7d // "") days_7d=\(.days_7d)"
+      + " line=\(.per_pr_max)"
+      + (if .merged_prs_24h == null then " pr list unread" elif .pr_floor == true then " pr list floor" else "" end)' <<<"$REC" 2>/dev/null)
+  log "ci-per-pr repo=$SLUG $PPLINE"
+  ALERTS="$ALERTS$(jq -r --arg r "$SLUG" --arg p "$(awk -v s="$SLUG" '$1 == s {print $2; exit}' <<<"$REPOMAP")" --arg l "$PPLINE" \
+      '[$r, $p, (.min_per_merged_pr_7d // "-"), (.merged_prs_7d // "-"), .days_7d, .floor_days, .per_pr_max, $l] | join("\t")' <<<"$REC")"$'\n'
   log "$SLUG: $SEEN in 24h, $(printf '%.0f' "$WALL") wall min; sample $SN run(s) billed $(printf '%.0f' "$SB") job-min over $(printf '%.0f' "$SW") wall min -> est $EST billed job-min/24h$FLOOR"
   TOTAL=$(( TOTAL + EST ))
   ROWS="$ROWS$SLUG $EST$FLOOR"$'\n'
@@ -191,15 +294,47 @@ done
 command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 
 TOP=$(printf '%s' "$ROWS" | awk 'NF' | sort -k2 -nr | head -3 | awk '{n=$1" "$2" min"; if (NF > 2) n=n" ("$3")"; printf "%s, ", n}' | sed 's/, $//')
-log "fleet: est $TOTAL billed job-min/24h (runner match '$MATCH', job-minute x$MULT, line $DAY_MAX; $CALLS GitHub read(s))${UNREAD:+; could not read: $UNREAD}"
+# BH-9411: the fleet's 24 h per-PR figures, over the repos whose PR list read.
+FLEETPP=$(jq -nc --argjson m "$FM" --argjson e "$FE" --argjson u "$FU" \
+  '{merged_prs_24h: $m, min_per_merged_pr: (if $m == 0 then null else ($e / $m + 0.5 | floor) end),
+    unmerged_min_24h: $u, unmerged_share: (if $e == 0 then null else ($u / $e * 100 + 0.5 | floor) / 100 end)}')
+FLEETPPL=$(jq -r '"merged_prs_24h=\(.merged_prs_24h) min_per_merged_pr=\(.min_per_merged_pr // "") unmerged_min_24h=\(.unmerged_min_24h)"
+  + " unmerged_share=\(if .unmerged_share == null then "" else (.unmerged_share * 100 | round) as $c
+                       | "\($c / 100 | floor).\($c % 100 | tostring | if length < 2 then "0" + . else . end)" end)"' <<<"$FLEETPP")
+log "fleet: est $TOTAL billed job-min/24h (runner match '$MATCH', job-minute x$MULT, line $DAY_MAX; $CALLS GitHub read(s))${UNREAD:+; could not read: $UNREAD}; $FLEETPPL"
 jq -n --arg at "$(STAMP)" --argjson total "$TOTAL" --argjson max "$DAY_MAX" --argjson calls "$CALLS" \
    --arg match "$MATCH" --arg rows "$ROWS" --arg unread "$UNREAD" --argjson counts "$COUNTS" \
+   --argjson perpr "$PERPR" --argjson fleetpp "$FLEETPP" \
    '{at: $at, est_billed_job_minutes_24h: $total, day_max: $max, gh_reads: $calls, runner_match: $match,
      repos: ($rows | split("\n") | map(select(length > 0) | split(" ") | {repo: .[0], est: (.[1] | tonumber), note: (.[2:] | join(" "))}
-                                       | . + ($counts[.repo] // {}))),
+                                       | . + ($counts[.repo] // {}) + ($perpr[.repo] // {}))),
+     fleet_per_pr: $fleetpp,
      unread: ($unread | split(" ") | map(select(length > 0)))}' > "$STATE/latest.json" 2>/dev/null
 
 [ -n "$DRY" ] && exit 0
+
+# BH-9411: store this tick (after latest.json, before any page, so a page never
+# fires on a figure that was not stored), then the retention pass.
+jq -nc --argjson at "$NOW" --argjson r "$TICKREC" '{at: $at, repos: $r}' >> "$TICKS" 2>/dev/null
+KEEP=$KEEP_DAYS; [ "${KEEP:-0}" -gt "$DAYS" ] 2>/dev/null || KEEP=$(( DAYS + 1 ))
+CUT=$(( NOW - KEEP * 86400 ))
+read -r TN TD TOLD <<<"$(jq -R -s -r --argjson cut "$CUT" '
+    [split("\n")[] | select(length > 0) | (fromjson? // null) | if type == "object" and (.at | type) == "number" then .at else null end] as $a
+    | "\($a | length) \($a | map(select(. == null or . < $cut)) | length) \($a | map(select(. != null)) | min // "-")"' "$TICKS" 2>/dev/null)"
+TN="${TN:-0}"; TD="${TD:-0}"; TOLD="${TOLD:--}"
+[ "$TOLD" = - ] || TOLD=$(date -u -d "@$TOLD" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo -)
+RMODE=dry-run
+if [ "$RET_APPLY" = 1 ]; then
+  RMODE=apply
+  if [ "$TD" -gt 0 ] 2>/dev/null; then
+    jq -R -r --argjson cut "$CUT" 'select(length > 0) | . as $raw | (fromjson? // null)
+        | select(type == "object" and (.at | type) == "number" and .at >= $cut) | $raw' "$TICKS" > "$TICKS.tmp.$$" 2>/dev/null \
+      && mv "$TICKS.tmp.$$" "$TICKS" 2>/dev/null
+    rm -f "$TICKS.tmp.$$" 2>/dev/null
+  fi
+fi
+log "ci-ticks-retention mode=$RMODE window_days=$KEEP ticks=$TN drop=$TD oldest=$TOLD"
+
 if [ "$DAY_MAX" -gt 0 ] && [ "$TOTAL" -gt "$DAY_MAX" ]; then
   if command -v page_critical >/dev/null 2>&1; then
     PAGE_LANE=ci-minutes-watch page_critical 86400 "ci-minutes:fleet" \
@@ -209,6 +344,27 @@ if [ "$DAY_MAX" -gt 0 ] && [ "$TOTAL" -gt "$DAY_MAX" ]; then
   fi
 fi
 
+# BH-9411: one page a day per repo over its per-PR line. Never on a null
+# figure, under MIN_MERGED merged PRs, or when a pick's PR list was a floor.
+while IFS=$'\t' read -r AR AP AV AM AD AF AL APL; do
+  [ -n "$AR" ] || continue
+  [ "${AL:-0}" -gt 0 ] 2>/dev/null || continue
+  case "$AV$AM" in *-*) continue ;; esac
+  [ "$AM" -ge "$MIN_MERGED" ] && [ "$AV" -gt "$AL" ] || continue
+  if [ "${AF:-0}" -gt 0 ]; then
+    log "ci-per-pr repo=$AR $APL over the line but not paged: closed-PR list is a floor on $AF day(s)"
+    continue
+  fi
+  if command -v page_critical >/dev/null 2>&1; then
+    PAGE_LANE=ci-minutes-watch page_critical 86400 "ci-minutes:per-pr:$AR" \
+      "CI on $AR spent an estimated $AV job-minutes per merged PR over the last $AD day(s) ($AM merged PRs) against a line of $AL (settings row CI_MINUTES_PER_PR_MAX, project ${AP:-fleet}). state/ci-minutes/latest.json, logs/ci-minutes-watch.log. Levers: docs/CI-RUNNERS.md." \
+      "${AP:-fleet}"
+  else
+    HARNESS="$H" ALERT_LINE_STAMP="$(STAMP)" "$H/bin/alert-line.sh" --project "${AP:-fleet}" --id "ci-minutes:per-pr:$AR" \
+      "[ci-minutes-watch] CI on $AR est $AV job-min per merged PR over the line $AL — page-critical lib missing, this line is the only copy" >/dev/null 2>&1 || true
+  fi
+done <<<"$ALERTS"
+
 # THE SNAPSHOT PUSH (BH-2633): each repo's line of latest.json becomes the
 # newest (repo, "minutes") row of the worker's ci_health table. AFTER the page on
 # purpose, so a slow worker can never delay it, and it touches nothing the page
@@ -217,7 +373,10 @@ fi
 if command -v ci_health_put >/dev/null 2>&1; then
   if PUSH=$(jq -r '{day_max, runner_match, at} as $c
                    | (.repos[]? | [.repo, ({est_24h: .est, note} + $c
-                                            + (if .dispatches_24h != null then {dispatches_24h, pushes_per_pr} else {} end) | tojson)]),
+                                            + (if .dispatches_24h != null then {dispatches_24h, pushes_per_pr} else {} end)
+                                            + (if has("merged_prs_24h") then {merged_prs_24h, min_per_merged_pr, unmerged_min_24h,
+                                                 unmerged_share, min_per_merged_pr_7d, merged_prs_7d, days_7d, per_pr_max, pr_floor} else {} end)
+                                            | tojson)]),
                      (.unread[]? | [., ({unread: true} + $c | tojson)])
                    | join("\t")' "$STATE/latest.json" 2>/dev/null); then
     PN=0; PFAIL=""

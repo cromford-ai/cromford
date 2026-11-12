@@ -1,0 +1,7 @@
+{
+  "env": "CI_MINUTES_QUEUE_PREFIXES",
+  "type": "string",
+  "default": "mergify/merge-queue/ gh-readonly-queue/",
+  "zero_means": null,
+  "note": "BH-9411: space-separated head-branch prefixes of merge-queue draft PRs. A draft is never an unmerged PR and never a merged PR; its runs stay in the repo estimate the merged PRs carry."
+}

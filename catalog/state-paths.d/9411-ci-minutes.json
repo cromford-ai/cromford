@@ -1,0 +1,3 @@
+[
+    {"path": "ci-minutes", "class": "box-local", "authority": "the hub's CI minutes watch (K1, BH-8049, BH-9411)", "note": "state/ci-minutes/latest.json: the last tick's computed figures, the source of the ci_health push (the jobs worker row is the record). state/ci-minutes/ticks.jsonl: this box's own measurement history, one line per non-dry tick, read only by bin/ci-minutes-watch.sh for the multi-day per-PR figure and pruned by its retention knobs (CI_MINUTES_TICKS_KEEP_DAYS, CI_MINUTES_TICKS_RETENTION_APPLY). Losing it costs the multi-day figure until new ticks land; the 24 h figure stands. Machine-local, never carried"}
+]

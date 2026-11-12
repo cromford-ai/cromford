@@ -145,6 +145,26 @@ Every tick writes `logs/ci-minutes-watch.log` and
 critical once a day through `bin/lib/page-critical.sh`. All five are settings
 rows on the `ci-minutes-watch` lane. Tests: `tests/ci-minutes-watch.k1-test.sh`.
 
+Minutes per merged PR (BH-9411). Each readable repo costs one more read a
+tick: the newest 100 closed PRs. One `ci-per-pr repo=<slug> ...` line per
+repo, the `fleet:` line, `latest.json` and the `ci_health` payload carry
+`merged_prs_24h`, `min_per_merged_pr` (estimate / merged PRs; empty or `null`
+when 0 merged, never 0), `unmerged_min_24h` and `unmerged_share` (runs whose
+head branch is the head of a same-repo PR closed unmerged in the window), and
+per repo `min_per_merged_pr_7d`, `merged_prs_7d`, `days_7d`, `per_pr_max` and
+`pr_floor`. A merge-queue draft (`CI_MINUTES_QUEUE_PREFIXES`) is never an
+unmerged PR and never a merged PR; its minutes stay in the estimate. The 7-day
+figure comes from `state/ci-minutes/ticks.jsonl`: this tick plus the newest
+stored tick per earlier 24 h slot (`CI_MINUTES_PER_PR_DAYS`, 7). Over
+`CI_MINUTES_PER_PR_MAX` (400, a per-project row:
+`bin/harness-ctl.sh set ci-minutes-watch CI_MINUTES_PER_PR_MAX <n> <project>`)
+with at least `CI_MINUTES_PER_PR_MIN_MERGED` (5) merged PRs, it pages critical
+once a day per repo (`ci-minutes:per-pr:<slug>`). A full page of 100 closed
+PRs cut inside the window is logged `pr list floor` and never pages. The ticks
+file keeps `CI_MINUTES_TICKS_KEEP_DAYS` (35); the drop is a dry run until
+`CI_MINUTES_TICKS_RETENTION_APPLY=1`, with one `ci-ticks-retention` line a run.
+Tests: `tests/ci-minutes-per-pr.bh-9411-test.sh`.
+
 ### Merge-queue batch size (BH-8047, 2026-10-22)
 
 The MonkCI invoice for the period to 2026-10-22 was $9,284 for 1,160,553

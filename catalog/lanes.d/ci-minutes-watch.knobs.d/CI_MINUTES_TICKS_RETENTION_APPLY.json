@@ -1,0 +1,9 @@
+{
+  "env": "CI_MINUTES_TICKS_RETENTION_APPLY",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "zero_means": null,
+  "note": "BH-9411: 0 = the retention pass of state/ci-minutes/ticks.jsonl is a dry run (the audit line counts what it would drop); 1 = it rewrites the file without the lines older than CI_MINUTES_TICKS_KEEP_DAYS."
+}

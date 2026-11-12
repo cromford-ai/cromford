@@ -1,0 +1,10 @@
+{
+  "env": "CI_MINUTES_TICKS_KEEP_DAYS",
+  "type": "int",
+  "default": 35,
+  "min": 8,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "note": "BH-9411: retention window of state/ci-minutes/ticks.jsonl (measurement history, one line per non-dry tick). Never under CI_MINUTES_PER_PR_DAYS + 1. Lines older are dropped only when CI_MINUTES_TICKS_RETENTION_APPLY=1; every run writes one ci-ticks-retention audit line."
+}

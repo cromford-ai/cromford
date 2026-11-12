@@ -9,7 +9,8 @@
 #   C3  the ci-counts line comes BEFORE the repo's estimate line, and the
 #       estimate is still the last `<slug>:` line (tests/ci-minutes-watch.k1-test.sh greps it)
 #   C4  the ci_health payload carries both counts
-#   C5  0 new GitHub reads: pages + sample reads only
+#   C5  0 new GitHub reads for the counts: pages + sample reads, plus the one
+#       closed-PR read BH-9411 adds per readable repo
 #
 # A scratch harness, a fake `gh` that serves fixture files and applies -q with
 # jq (the k1 suite's shape), and a fixture jobs client whose ci_health_put
@@ -56,6 +57,7 @@ R=$(sed -E 's#^repos/([^/]+)/([^/]+)/.*#\1_\2#' <<<"$P")
 case "$P" in
   */actions/runs/*/jobs*) ID=$(sed -E 's#.*/runs/([0-9]+)/jobs.*#\1#' <<<"$P"); F="$HARNESS/fx/$R.jobs.$ID.json" ;;
   */actions/runs) F="$HARNESS/fx/$R.runs.$PG.json" ;;
+  */pulls) F="$HARNESS/fx/$R.pulls.json"; [ -r "$F" ] || echo '[]' > "$F" ;;
   *) exit 1 ;;
 esac
 [ -r "$F" ] || exit 1
@@ -116,8 +118,10 @@ PB=$(awk -F'\t' '$1 == "Acme/mk" && $2 == "minutes" {print $3}' "$HH/payload.tsv
   && [ "$(jq -r '.est_24h | type' <<<"$PB" 2>/dev/null)" = number ] \
   && ok || bad "C4: the ci_health payload carries dispatches_24h and pushes_per_pr: $PB"
 
-# C5: one runs page + 4 sampled jobs reads, nothing more
-[ "$(grep -c '' "$HH/gh-calls.txt")" = 5 ] && ok || bad "C5: 0 new reads (want 1 page + 4 samples = 5): $(cat "$HH/gh-calls.txt")"
+# C5: one runs page + 4 sampled jobs reads + 1 closed-PR read, nothing more.
+# TEST-CHANGE (BH-9411): was 5; the per-PR figures read the closed PRs once per repo.
+[ "$(grep -c '' "$HH/gh-calls.txt")" = 6 ] && [ "$(grep -c '/pulls ' "$HH/gh-calls.txt")" = 1 ] \
+  && ok || bad "C5: 0 new reads for the counts (want 1 page + 4 samples + 1 pulls = 6): $(cat "$HH/gh-calls.txt")"
 
 # A repo with no dispatch and no PR run: zeros, never a missing key
 printf '{"total_count":1,"workflow_runs":[%s]}\n' "$(jq -nc --arg s "$(iso 7800)" --arg u "$(iso 7200)" '{id:5000,workflow_id:1,event:"push",name:"ci",head_branch:"main",head_sha:"z",run_started_at:$s,updated_at:$u}')" > "$HH/fx/Acme_mk.runs.1.json"

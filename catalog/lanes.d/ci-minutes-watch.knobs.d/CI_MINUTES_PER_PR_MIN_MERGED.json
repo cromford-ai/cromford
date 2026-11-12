@@ -1,0 +1,8 @@
+{
+  "env": "CI_MINUTES_PER_PR_MIN_MERGED",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "zero_means": null,
+  "note": "BH-9411: a repo with fewer merged PRs than this in the CI_MINUTES_PER_PR_DAYS window never pages on its per-PR figure (a quiet repo's ratio is noise)."
+}
