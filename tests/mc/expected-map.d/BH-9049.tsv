@@ -1,0 +1,3 @@
+# tests/mc/expected-map.d/BH-9049.tsv — mc_iron_law_lines, the line-numbered twin of
+# mc_iron_law_names that bin/compact-recheck.sh reads (BH-9049).
+classify	mc_iron_law_lines	lib

@@ -445,6 +445,14 @@ elif [ -r "$HARNESS/bin/lib/call-guard.sh" ];    then . "$HARNESS/bin/lib/call-g
 command -v call_guard_precall >/dev/null 2>&1 || call_guard_precall() { CG_STATE=off; return 0; }
 command -v call_guard_rung_ok >/dev/null 2>&1 || call_guard_rung_ok() { return 0; }
 command -v call_guard_finish  >/dev/null 2>&1 || call_guard_finish()  { return 0; }
+# THE COMPACTION RE-CHECK (BH-9049, bin/lib/compact-recheck.sh): a SessionStart
+# hook (matcher "compact") on plan, execute and fix, gated by the row
+# build.compact_recheck.<project>.enabled. A box whose sync has not landed the
+# lib gets the stub: no hook, exactly the behaviour before BH-9049.
+# shellcheck source=bin/lib/compact-recheck.sh
+if   [ -r "$(dirname "$0")/lib/compact-recheck.sh" ]; then . "$(dirname "$0")/lib/compact-recheck.sh"
+elif [ -r "$HARNESS/bin/lib/compact-recheck.sh" ];    then . "$HARNESS/bin/lib/compact-recheck.sh"; fi
+command -v compact_recheck_settings >/dev/null 2>&1 || compact_recheck_settings() { CR_SETTINGS=""; return 0; }
 CG_STATE=""; CG_REASON=""
 # THE DEDUP LEDGER (BH-9064, bin/lib/agent-call-ledger.sh): a persisted check on
 # the call's fingerprint before the model call (replay an ok answer, stop on a
@@ -2967,6 +2975,12 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
             && mv -f "$_eph.tmp.$$" "$_eph" 2>/dev/null && _sets+=("$_eph")
         fi
         # <<< exec proc hook
+        #   6. COMPACTION RE-CHECK (BH-9049): the SessionStart "compact" hook
+        #      bin/compact-recheck.sh puts the iron-law block back into the
+        #      context and scans the diff. Before the guard, so the guard stays
+        #      last for the merge-failure fallback.
+        compact_recheck_settings "$STAGE" "$PROJECT" "$OUT" 2>/dev/null || CR_SETTINGS=""
+        [ -n "${CR_SETTINGS:-}" ] && [ -f "$CR_SETTINGS" ] && _sets+=("$CR_SETTINGS")
         # ACT-TIME IRON-LAW GUARD (SDLC item 1, 2026-08-29). A PreToolUse hook
         # that mechanically DENIES the five irreversible families on the build
         # and triage lanes — merging a PR, pushing main, prisma at a live DB, a

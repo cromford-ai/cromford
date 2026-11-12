@@ -307,6 +307,37 @@ mc_iron_law_names() {
          if (match($0, /window\.(confirm|alert|prompt)\(|claude-(fable|opus|sonnet|haiku)[A-Za-z0-9.-]*|VERCEL_URL/)) print f " (" substr($0, RSTART, RLENGTH) ")" }' "$1" 2>/dev/null
 }
 
+# mc_iron_law_lines <diff-file> — the same hits as mc_iron_law_names, with the
+#   new-file line number: one "<file>:<line>\t<match>" per hit (BH-9049, the
+#   compaction re-check bin/compact-recheck.sh). Same file-skip, comment-skip
+#   and match regexes. A hunk is read by its @@ counts, so a removed "-- x"
+#   or an added "++x" line inside it is content, not a file header.
+#   mc_iron_law_names keeps its own output: the conductor's hold reason and
+#   console-ui IronLawHold.js parse it. The match regex is a string split
+#   at "VERCEL" "_URL", so this line does not match the scan it implements.
+mc_iron_law_lines() {
+  awk 'BEGIN { re = "window\\.(confirm|alert|prompt)\\(|claude-(fable|opus|sonnet|haiku)[A-Za-z0-9.-]*|VERCEL" "_URL" }
+       function cnt(s) { return (s == "") ? 1 : s + 0 }
+       inh {
+         ch = substr($0, 1, 1)
+         if (ch == "+") {
+           if (!skip && $0 !~ /^\+[[:space:]]*(\/\/|\*|\/\*|#|--|<!--)/ \
+               && match($0, re))
+             print f ":" ln "\t" substr($0, RSTART, RLENGTH)
+           ln++; nl--
+         } else if (ch == "-") { ol-- }
+         else if (ch == " " || $0 == "") { ln++; ol--; nl-- }
+         if (ol <= 0 && nl <= 0) inh = 0
+         next
+       }
+       /^\+\+\+ / { p = substr($0, 5); sub(/\t.*$/, "", p); f = (p ~ /^b\//) ? substr(p, 3) : p
+                    skip = (("b/" f) ~ /\.(test|spec)\.|__tests__\/|__mocks__\/|\/tests?\/|scripts\/migrations\/|\.harness\/specs\/|^b\/tasks\/|^b\/docs\/|\.md$|\.txt$/); next }
+       /^@@ / { h = $0; sub(/^@@ -/, "", h); sub(/ @@.*$/, "", h)
+                split(h, sides, " +"); split(sides[1], o, ","); split(sides[2], n, ",")
+                ol = (2 in o) ? cnt(o[2]) : 1; nl = (2 in n) ? cnt(n[2]) : 1; ln = n[1] + 0
+                inh = (ol > 0 || nl > 0); next }' "$1" 2>/dev/null
+}
+
 # mc_merge_verdict_put <key> <head> <hold|clear> <reason>
 #   Publish the conductor's verdict for this head to the jobs ledger (BH-5914):
 #   kind mc-merge-verdict, key <slug>#<n>, detail "<head> <reason>". Every other

@@ -1,0 +1,3 @@
+[
+    {"path": "compact-recheck-settings.json", "class": "cache", "authority": "the build.compact_recheck.* settings rows (BH-9049)", "note": "state/compact-recheck-settings.json: the --settings file that adds the SessionStart compact hook, written tmp+mv by bin/lib/compact-recheck.sh compact_recheck_settings before each plan, execute or fix stage. It holds only the hook command path and the timeout, so parallel builds write the same bytes. Rebuilt on every call, one file, no growth. Machine-local, never carried"}
+]
