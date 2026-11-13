@@ -87,12 +87,14 @@ import json, sys
 bad = 0
 for line in sys.stdin:
     b = json.loads(line)
-    if not (b.get("op") == "add" and b.get("added_by") == "seed:BH-4140" and b.get("repo") == "example-org/cromford" and b.get("glob")):
+    if not (b.get("op") == "add" and b.get("added_by") == "seed:BH-4140" and b.get("repo") in ("example-org/cromford", "example-org/project-3") and b.get("glob")):
         bad += 1
 print(bad)')
 [ "$BAD" = 0 ] && ok || bad "S1 $BAD PUT bodies were not {repo:example-org/cromford, op:add, added_by:seed:BH-4140}"
-SENT=$(cut -d' ' -f3- "$REQS" | python3 -c 'import json,sys; print("\n".join(json.loads(l)["glob"] for l in sys.stdin))')
-WANT=$(grep -v '^#' "$TSV" | grep -v '^$' | cut -f2)
+# TEST-CHANGE BH-9625: the TSV also holds example-org/project-3, so each PUT is
+# pinned to its own line's (repo, glob) pair, in order.
+SENT=$(cut -d' ' -f3- "$REQS" | python3 -c 'import json,sys; print("\n".join(json.loads(l)["repo"] + "\t" + json.loads(l)["glob"] for l in sys.stdin))')
+WANT=$(grep -v '^#' "$TSV" | grep -v '^$')
 [ "$SENT" = "$WANT" ] && ok || bad "S1 the globs sent are not the TSV's, in order"
 
 # S2 ────────────────────────────────────────────────────────────────────────────

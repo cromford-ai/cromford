@@ -6,6 +6,7 @@
 // so this file changed where the code lives and nothing about what it answers.
 // src/index.js holds the ordered table that decides which of these runs.
 
+import { clientModeGlobalRefusal, clientModeLoosening } from "../lib/client-mode-guard.js";
 import { d1Guarded, json, nowIso } from "../lib/http.js";
 import {
   LANES_REGISTRY, hmacSha256Hex, PRUNE_SEED_SQL, REGISTRY_SEED_ACTOR, SEED_REGISTRY_SQL, SETTING_KEY_RE,
@@ -430,6 +431,15 @@ export const routes = [
       // BH-5035: the removed `human` value of tier_gate_mode / lead_authority_mode.
       const retired = retiredModeRefusal(key, value);
       if (retired) return json(400, { error: retired, key });
+      const globalClient = clientModeGlobalRefusal(key, value);
+      if (globalClient) return json(400, { error: globalClient, key });
+      // The client approval gate: leaving lead_authority_mode=client needs the human token.
+      if (/^lead_authority_mode(\.|$)/.test(key) && !humanTokenOk(req, env)) {
+        const cur = await env.DB.prepare("SELECT value FROM settings WHERE key=?1").bind(key).first();
+        if (clientModeLoosening(key, cur?.value, value)) {
+          return json(403, { error: `${key} client -> ${value} switches off the client approval gate and needs the human verdict token (x-human-verdict-token)`, key });
+        }
+      }
       // BH-4090: a bearer write that LOOSENS a lead_* row needs the human token,
       // judged against the effective current value, so a raw D1 write cannot be
       // laundered by a "tightening" on top of it. Not mode-gated. Before every write.

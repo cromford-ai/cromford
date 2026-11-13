@@ -288,8 +288,10 @@ R=$(decide "$IN" 7 lead)
 # F ────────────────────────────────────────────────────────────────────────────
 FIX="$DIR/tests/fixtures/lead-protected-paths.bh-4148.txt"
 SEEDF="$DIR/catalog/lead-protected-paths.seed.tsv"
-[ "$(grep -v '^#' "$SEEDF" | cut -f2 | sort)" = "$(grep -v '^#' "$FIX" | sort)" ] && ok || bad "F the seed file and the fixture hold different globs"
-[ "$(grep -v '^#' "$SEEDF" | cut -f1 | sort -u)" = example-org/cromford ] && ok || bad "F the seed file names a repo other than example-org/cromford"
+# TEST-CHANGE BH-9625: the seed file also holds example-org/project-3 (the client
+# approval gate); the fixture pins the cromford lines, and the repos are pinned exactly.
+[ "$(awk -F'\t' '!/^#/ && $1 == "example-org/cromford" { print $2 }' "$SEEDF" | sort)" = "$(grep -v '^#' "$FIX" | sort)" ] && ok || bad "F the seed file and the fixture hold different globs"
+[ "$(grep -v '^#' "$SEEDF" | cut -f1 | sort -u | tr '\n' ' ')" = "example-org/cromford example-org/project-3 " ] && ok || bad "F the seed file names a repo other than example-org/cromford and example-org/project-3"
 mkdir -p "$H/catalog"; cp "$SEEDF" "$H/catalog/"
 want_all=$(grep -v '^#' "$FIX" | sort)
 # unseeded: the live table has no row at all (production on 2026-10-05)

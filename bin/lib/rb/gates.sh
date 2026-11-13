@@ -1447,10 +1447,11 @@ LIVE_SUITE() { # LIVE_SUITE <suite-file> <prefix>
 # The merge-queue provider probe, from the conductor's lib (sourced, never
 # copied — a second answer to "does this repo have a queue" that drifted would be
 # a silent double merge). It decides what the tier-1 gate's own `gh pr merge`
-# would do. A tree without the lib answers "no queue", i.e. today's behaviour.
+# would do. A tree without the lib answers "conductor only" (BH-9625: fail closed).
 # shellcheck source=bin/lib/merge-conductor-lib.sh
 if [ -r "$HARNESS/bin/lib/merge-conductor-lib.sh" ]; then . "$HARNESS/bin/lib/merge-conductor-lib.sh"
-else mc_queue_conductor_only() { return 1; }; mc_pr_queued() { return 1; }; fi
+# BH-9625: a tree without the lib never merges directly: the conductor owns it.
+else mc_queue_conductor_only() { return 0; }; mc_pr_queued() { return 1; }; fi
 # Judge provenance as a (runner, model) pair — bin/lib/review-provenance.sh,
 # which the lib above also sources. This script is where the provenance WORD is
 # written (the verdict artifact below), so the shim matters: a tree without the

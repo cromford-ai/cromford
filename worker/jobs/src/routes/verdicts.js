@@ -32,6 +32,7 @@
 // NOT /api/verdict. That route answers the BUILD ledger's verdict artifact on a
 // job (routes/verdict.js); this table is a PR's reviewed-head record, keyed by
 // (repo, pr, head) and written by whoever read the code. Two different facts.
+import { repoInClientMode } from "../lib/client-mode-guard.js";
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable, hexEqual, hmacSha256Hex, strictInt } from "../lib/core.js";
 import { participantAuth } from "./participants.js";
@@ -427,6 +428,18 @@ export const routes = [
             human_verdict_mode: "enforce",
           });
         }
+        // BH-9625: on a repo in lead_authority_mode=client a human MERGE stands in
+        // for the client decision maker. It needs the human token whatever
+        // human_verdict_mode says, and a note with the https link to the
+        // client's written approval. A BLOCK is never asked.
+        if (r.source === "human" && r.verdict !== "BLOCK" && await repoInClientMode(env, r.repo)) {
+          if (auth !== "human-token") {
+            return json(403, { error: `${r.repo} is in lead_authority_mode=client: a source=human ${r.verdict} needs the human verdict token (x-human-verdict-token), whatever human_verdict_mode says` });
+          }
+          if (!/https:\/\/\S/.test(r.note || "")) {
+            return json(400, { error: `${r.repo} is in lead_authority_mode=client: a source=human ${r.verdict} needs a note with the https link to the client's written approval` });
+          }
+        }
         // BH-3846: a human-token row is signed before the INSERT (the table
         // refuses UPDATE, so the signature rides the row). No key: under sig
         // enforce the row could never read as proven, so nothing is written.
@@ -575,7 +588,10 @@ export const routes = [
             console.warn("[verdicts] BH-5773 human_verdict_mode unreadable; no source=human row on this head, standing answered without it", `${repo}#${pr}`, head.slice(0, 12));
           }
           // IS, not =: an auth NULL row must never be caught by NULL logic.
-          const unproven = mode === "enforce" ? "\n               AND NOT (source='human' AND auth IS 'lead-token')" : "";
+          // BH-9625: a repo in lead_authority_mode=client never lets a lead-token
+          // human row stand, whatever the mode (an older shadow-mode row included).
+          const unproven = mode === "enforce" || await repoInClientMode(env, repo)
+            ? "\n               AND NOT (source='human' AND auth IS 'lead-token')" : "";
           // sql-ident-ok: STANDING_SOURCES is a frozen export const in lib/verdict-sources.js; unproven is a literal picked by mode, order a literal
           const standingSql = (order) => `SELECT * FROM verdicts WHERE repo=?1 AND pr=?2 AND head_sha=?3
                AND source IN (${STANDING_SOURCES.map((s) => `'${s}'`).join(",")})${unproven}

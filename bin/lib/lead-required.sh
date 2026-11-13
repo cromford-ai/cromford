@@ -94,6 +94,14 @@ lr_lead_stands() {
 }
 
 lr_clear_context() {
+  # BH-9625: a repo in lead_authority_mode=client clears on harness-verdict
+  # only, the one context its queue and branch protection require. The
+  # conductor publishes it after la_decide passed (a human MERGE stands on a
+  # member-facing head), so one status means "cleared" on that repo.
+  if command -v _la_mode >/dev/null 2>&1 && _la_mode "${1:-}" 2>/dev/null && [ "$LA_MODE" = client ]; then
+    LR_CTX=$(command -v vs_builder_context >/dev/null 2>&1 && vs_builder_context || echo harness-verdict)
+    return 0
+  fi
   LR_CTX=lead-verdict
   lr_lead_stands - "${1:-}" "${2:-}" "${3:-}" >/dev/null 2>&1 && return 0
   LR_CTX=$(command -v vs_builder_context >/dev/null 2>&1 && vs_builder_context || echo harness-verdict)

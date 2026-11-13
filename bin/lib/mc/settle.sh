@@ -1121,8 +1121,13 @@ mc_rebind_publish() {
       || mc_log "$key WOULD publish lead-verdict=success on ${head:0:8} (rebound from ${rev:0:12}) — merges are off this tick; owed until they are on"
     return 0
   fi
+  # BH-9625: no decider loaded is a hold, never a publish.
   if command -v mc_la_decide >/dev/null 2>&1; then
     mc_la_decide "$slug" "$num" "$head" || lac=$?
+  elif command -v la_decide >/dev/null 2>&1; then
+    la_decide "$slug" "$num" "$head" conductor || lac=$?
+  else
+    lac=2; LA_REASON="no lead-authority decider is loaded"
   fi
   case "$lac" in
     0) ;;

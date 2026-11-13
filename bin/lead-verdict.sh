@@ -130,6 +130,10 @@
 # `authority:human-required`, NO status is published, and the exit is 5. A
 # `--source human` verdict then publishes it. A mode row that reads `human`, the
 # value BH-5035 removed, is refused the same way. A BLOCK always publishes failure.
+# THE CLIENT MODE (BH-9625): under lead_authority_mode.<owner>.<name>=client a
+# protected hit is withheld (exit 5, `authority:human-required`), and a human
+# MERGE on that repo needs --note with the https link to the client decision
+# maker's written approval.
 # THE RISK TIER (BH-5022). Gate 60 (bin/lib/lead-gates.d/60-risk.sh) signs off a head that
 # bin/lib/risk-tier.sh classified low with --source risk-tier: a MERGE only (the
 # worker refuses any other word), posted with the lead token, put through the
@@ -445,6 +449,16 @@ lv_post() {
       lane_hit="$LA_PROTECTED_PATHS"
       note="${note:+$note }authority:lane-protected"
     fi
+  fi
+  # THE CLIENT MODE (project-3, 2026-11-12): on a repo whose lead_authority_mode is
+  # client, a human MERGE stands in for the client decision maker, so it must
+  # carry the link to their written approval (the ticket comment that quotes it).
+  if [ "$source" = human ] && [ "$verdict" != BLOCK ] && command -v _la_mode >/dev/null 2>&1 \
+     && _la_mode "$repo" && [ "$LA_MODE" = client ]; then
+    case "$note" in
+      *https://*) ;;
+      *) die "$repo is in lead_authority_mode=client: a human $verdict needs --note \"approved by <name>: <https link to the written approval>\"" ;;
+    esac
   fi
   # BH-5022: a withheld risk-tier sign-off writes NO row. risk-tier is a standing
   # source, so an advice row would stand on the head and make the lead gates skip it

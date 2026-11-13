@@ -11,7 +11,8 @@
 // new row: there is no DELETE, so the table is its own history.
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureTable } from "../lib/core.js";
-import { REPO_RE } from "./verdicts.js";
+import { REPO_RE, humanTokenOk } from "./verdicts.js";
+import { repoInClientMode } from "../lib/client-mode-guard.js";
 
 const COLS = "repo, glob, added_by, added_at, removed_at";
 
@@ -48,7 +49,7 @@ export const routes = [
   ],
   [
     "PUT", "/api/lead-protected-paths",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       return d1Guarded("lead_protected_paths", async () => {
         const b = body || {};
         const repo = normRepo(b.repo);
@@ -71,6 +72,11 @@ export const routes = [
           ).bind(repo, b.glob, b.added_by, t).run();
           const created = Number(ins?.meta?.changes) === 1;
           return json(created ? 201 : 200, { created, row: await live() });
+        }
+        // The client approval gate (lib/client-mode-guard.js): a remove on a
+        // repo in lead_authority_mode=client needs the human verdict token.
+        if (!humanTokenOk(req, env) && await repoInClientMode(env, repo)) {
+          return json(403, { error: `${repo} is in lead_authority_mode=client: removing a protected path needs the human verdict token (x-human-verdict-token)` });
         }
         await ensureTable(env, "lead_protected_paths");
         const up = await env.DB.prepare(

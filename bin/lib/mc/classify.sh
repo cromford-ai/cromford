@@ -3821,8 +3821,13 @@ mc_vs_ttl_republish() {
     mc_log "$key stuck in $st past its TTL — lead-verdict was already republished once on ${head:0:8} and is still $vst; the alert is the action"; return 0; fi
   if [ "${ACTIONS:-0}" != 1 ] || [ "${MERGES:-0}" != 1 ]; then
     mc_log "$key stuck in $st past its TTL — WOULD republish lead-verdict=success on ${head:0:8} (it is $vst); merges are off this tick"; return 0; fi
+  # BH-9625: no decider loaded is a hold, never a publish.
   if command -v mc_la_decide >/dev/null 2>&1; then
     mc_la_decide "$slug" "$num" "$head" || lac=$?
+  elif command -v la_decide >/dev/null 2>&1; then
+    la_decide "$slug" "$num" "$head" conductor || lac=$?
+  else
+    lac=2; LA_REASON="no lead-authority decider is loaded"
   fi
   case "$lac" in
     0) ;;

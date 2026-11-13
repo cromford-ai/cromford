@@ -52,7 +52,18 @@
 # coerced: rc 2 (hold) with LA_MODE_RETIRED=1 and a reason that names the row
 # and the fix. An unreadable mode row, or any other value after trimming and
 # lowercasing, is rc 2 too.
-#   Set it: bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane
+# THE CLIENT MODE (project-3, 2026-11-12; BH-9625). A per-repo row value `client` (the
+# global row may not hold it: rc 2) makes a
+# protected hit WITHHELD: rc 1, LA_PROTECTED_HIT=1 and a reason naming the
+# paths. The lane, the conductor, the risk tier and every caller that keeps its
+# rc-1 branch then publish nothing and ask no queue. Only a --source human
+# MERGE on that exact head clears it (la_decide human is rc 0; conductor reads
+# the standing human row first). It is for a client repo whose decision maker
+# must approve every change members see or receive: the protected globs are the
+# member-facing paths, and a PR that touches none of them merges on the lane as
+# under `lane`. bin/lead-verdict.sh post --source human on a client repo needs
+# --note with the https link to the client's written approval.
+#   Set it: bin/jobs-client.sh setting-set lead_authority_mode[.<owner>.<name>] lane|client
 # A repo with no live rows is not governed at all: it costs the one GET of its
 # rows and no other read (not even the mode row).
 #
@@ -60,8 +71,8 @@
 #   rc 0  this writer may publish success. Under lane, LA_PROTECTED_HIT=1 when
 #         the PR touches a protected path (empty otherwise), and
 #         LA_PROTECTED_PATHS names up to five of them (`, +N more`).
-#   rc 1  no longer returned (the human mode it served was removed by
-#         BH-5035); callers keep their rc-1 branch, and it holds.
+#   rc 1  mode client only: the PR touches a protected path and needs a
+#         --source human verdict (THE CLIENT MODE); callers hold.
 #   rc 2  could not decide; LA_REASON says what was unreadable. Callers publish
 #         nothing on rc 2.
 # _la_mode <owner/repo>   LA_MODE and LA_MODE_SRC; rc 0 only for lane, rc 2
@@ -252,10 +263,10 @@ _la_authority() {
 }
 
 # _la_mode <owner/repo> — BH-4145: the lead_authority_mode row in force into
-# LA_MODE (`lane` when neither row exists) and LA_MODE_SRC (the key read, or
+# LA_MODE (`lane` when neither row exists; `client` is also rc 0) and LA_MODE_SRC (the key read, or
 # `no row`). The per-repo row lead_authority_mode.<owner>.<name> beats the
 # global lead_authority_mode. Trimmed and lowercased once, here. rc 2 when a
-# read fails or the value is not exactly lane (LA_MODE keeps the value); a
+# read fails or the value is not lane or client (LA_MODE keeps the value); a
 # `human` value, removed by BH-5035, also sets LA_MODE_RETIRED=1.
 _la_mode() {
   local k v rc=0
@@ -276,6 +287,9 @@ _la_mode() {
   LA_MODE=$(printf '%s' "$v" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr 'A-Z' 'a-z')
   case "$LA_MODE" in
     lane) return 0 ;;
+    # BH-9625: client is a per-repo value only. The worker refuses it on the
+    # global key; a global row that reads client anyway (a raw D1 write) holds.
+    client) [ "$LA_MODE_SRC" = lead_authority_mode ] && return 2; return 0 ;;
     human) LA_MODE_RETIRED=1; return 2 ;;
     *) return 2 ;;
   esac
@@ -322,7 +336,7 @@ la_decide() {
     if [ "${LA_MODE_RETIRED:-}" = 1 ]; then
       LA_REASON="the mode row $LA_MODE_SRC reads 'human', a value BH-5035 retired: delete the row or set it to lane (bin/jobs-client.sh setting-set $LA_MODE_SRC lane)"
     else
-      LA_REASON="the mode row ${LA_MODE_SRC:-lead_authority_mode[.$(_la_key "$slug")]} could not be read or reads '$LA_MODE', not lane"
+      LA_REASON="the mode row ${LA_MODE_SRC:-lead_authority_mode[.$(_la_key "$slug")]} could not be read or reads '$LA_MODE', not lane or client"
     fi
     return 2
   fi
@@ -352,6 +366,10 @@ EOF
   if [ "$n" -gt 0 ]; then
     [ "$n" -gt 5 ] && hit="$hit, +$((n - 5)) more"
     LA_PROTECTED_HIT=1; LA_PROTECTED_PATHS="$hit"
+    if [ "$LA_MODE" = client ]; then
+      LA_REASON="touches member-facing paths: $hit; withheld until the client decision maker approves (lead_authority_mode=client)"
+      return 1
+    fi
     LA_REASON="touches protected paths: $hit; cleared to merge on the lead verdict (lead_authority_mode=lane)"
     return 0
   fi
