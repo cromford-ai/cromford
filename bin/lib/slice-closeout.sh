@@ -168,6 +168,13 @@ _sco_partial() {
 #               row sits under a `###`+ sub-heading that is one, until the
 #               next heading of the same or a higher level. The ticket rules
 #               that work out, so it is never the rest (TK-2593 -> #2605).
+# The requirement and Task columns come from the header row of each table
+# (BH-9622): the Task column is the first header that starts with "task" or
+# "delivered", the requirement column the first other header that is no ID
+# label (`#`, `id`, `req` ...). A header with no Task-like cell keeps cells 2
+# and 3. Before, cell 2 was always the requirement, so the BH-9580 table
+# `| # | Ticket words | Task |` filed #9622 with the items `1` to `24`.
+# A row with no requirement cell is skipped.
 _sco_rows() {
   awk -v K="${2:--1}" -v EX="$(slr_exclude_headings)" "$_SLR_EXCL_AWK"'
     function lead(s, c,   n) { n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
@@ -219,7 +226,21 @@ _sco_rows() {
       if (t ~ /^(all|all tasks|every task|scope)$/) return "covered"
       return "undecided"
     }
-    BEGIN { fch = ""; sec = 0; seen = 0; hdr = 0; xs = 0; exinit() }
+    # cols(row): read the header row of a table. TC = the first cell that
+    # starts with "task" or "delivered"; RC = the first other cell that is no
+    # ID label (#, no, id, req ...). No Task-like cell: the old cells 2 and 3.
+    function cols(row,   hc, hn, i, h) {
+      TC = 0; RC = 0; hn = split(row, hc, "|")
+      for (i = 2; i < hn; i++) { h = norm(hc[i]); if (h ~ /^(task|delivered)/) { TC = i; break } }
+      if (!TC) { TC = 3; RC = 2; return }
+      for (i = 2; i < hn; i++) {
+        if (i == TC) continue
+        h = norm(hc[i])
+        if (h !~ /^(#|n|no|no\.|nr|id|row|req|ref)$/) { RC = i; break }
+      }
+      if (!RC) RC = (TC != 2) ? 2 : 3
+    }
+    BEGIN { fch = ""; sec = 0; seen = 0; hdr = 0; xs = 0; TC = 3; RC = 2; exinit() }
     { sub(/\r$/, "") }
     {
       t = $0; sub(/^[ \t]+/, "", t)
@@ -237,13 +258,13 @@ _sco_rows() {
       next
     }
     sec && /^[ \t]*\|/ {
-      if (!hdr) { hdr = 1; next }
+      if (!hdr) { hdr = 1; cols($0); next }
       r = $0; gsub(/[ \t|:-]/, "", r); if (r == "") next
       n = split($0, c, "|")
-      if (n < 3) next
-      req = trim(c[2]); gsub(/\t/, " ", req)
-      rest = ""; for (i = 4; i < n; i++) rest = rest " " c[i]
-      printf "%s\t%s\n", ((xs || isexcl(req)) ? "excluded" : klass(c[3], rest)), substr(req, 1, 200)
+      if (n <= RC) next
+      req = trim(c[RC]); gsub(/\t/, " ", req)
+      rest = ""; for (i = 2; i < n; i++) if (i != RC && i != TC) rest = rest " " c[i]
+      printf "%s\t%s\n", ((xs || isexcl(req)) ? "excluded" : klass(c[TC], rest)), substr(req, 1, 200)
     }
     END { if (!seen) print "NOSEC" }
   ' "$1"
