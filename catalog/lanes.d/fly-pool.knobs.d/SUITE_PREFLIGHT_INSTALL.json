@@ -1,0 +1,13 @@
+{
+  "env": "SUITE_PREFLIGHT_INSTALL",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "required": false,
+  "settable": true,
+  "read_in": "bin/lib/suite-preflight.sh",
+  "note": "BH-7695. 1 = when the build's harness suite run (HARNESS_SUITE_RUN, npm arm) finds a repo with npm dependencies and no node_modules, it makes ONE setup attempt (npm ci, or npm install --no-package-lock with no lockfile) in the build's own worktree and checks again. Still missing: the suite does not run, the record is HARNESS_EXIT: could-not-run: node_modules, and one infra alert per project per box per UTC day. 0 = no install, the same could-not-run. The lead review never installs. Per project: lane.fly-pool.<project>.suite_preflight_install."
+}

@@ -255,6 +255,16 @@ HARNESS_SUITE_RUN() {
   # command -v, because a block test may source this block without the timing
   # one. A stage that cannot be timed is a missing log line, never a stopped run.
   t0=""; command -v STAGE_START >/dev/null 2>&1 && t0=$(STAGE_START)
+  # THE PREFLIGHT (BH-7695, bin/lib/suite-preflight.sh). A repo with npm
+  # dependencies and no node_modules gets ONE setup attempt and one re-check.
+  # Still missing: no prelude, no suite, `HARNESS_EXIT: could-not-run:
+  # node_modules` (a box fault is no verdict on the code). No lib: today's bytes.
+  command -v sp_build_pre >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/suite-preflight.sh" ] && . "$HARNESS/bin/lib/suite-preflight.sh"; }
+  if command -v sp_build_pre >/dev/null 2>&1 && ! sp_build_pre "$outfile" "$phase"; then
+    case "$phase" in lenses) stage=suite ;; *) stage="suite-$phase" ;; esac
+    command -v STAGE_END >/dev/null 2>&1 && STAGE_END "$stage" "$t0"
+    return 0
+  fi
   # THE PRELUDE (BH-1955). A prisma repo's suite imports the generated client,
   # which a fresh checkout does not have, so a unit run without it is red for a
   # reason no diff caused. Unpiped, rc recorded as the number it is; the suite
@@ -371,6 +381,14 @@ HARNESS_SUITE_RUN() {
   fi
   # The teardown runs on every suite exit (green, red, 124), before HARNESS_EXIT.
   [ -n "${PGT_DIR:-}" ] && pgt_stop "$BUILD/$outfile"
+  # A red suite with a SOFT miss (BH-7695: DATABASE_URL with a DB-error signature
+  # in the output, or a SUITE_PREFLIGHT_ENV name unset) is the box's red, not the
+  # code's. Only an integer rc is read: the ENOSPC, serial and CI-locale
+  # could-not-run above stay. The harness Postgres (one cluster, or one per file
+  # on the serial path) is a provided DB.
+  local sp_db=0; [ "$serial" = 1 ] && sp_db=1
+  case " ${pgenv[*]-} " in *" DATABASE_URL="?*) sp_db=1 ;; esac
+  command -v sp_build_post >/dev/null 2>&1 && sp_build_post "$outfile" "$rc" "$sp_db" "$n0" "$phase" && rc="$SP_RC"
   RB_TOKEN_REDACT "$BUILD/$outfile"
   echo "HARNESS_EXIT: $rc" >> "$BUILD/$outfile"
   case "$phase" in lenses) stage=suite ;; *) stage="suite-$phase" ;; esac
@@ -1439,6 +1457,7 @@ LIVE_SUITE() { # LIVE_SUITE <suite-file> <prefix>
        LIVE tests_green pass "${pre}tests green${pass:+: $pass}" ;;
     no-test-script) LIVE tests_green none "${pre}this repo has no test script — nothing was run, and that is not green" ;;
     could-not-run) LIVE tests_green not-run "${pre}the suite could not run (the impact gate could not start or timed out, or the disk ran out: see HARNESS_DISK) — not green and not red; the CI run on the PR head is the verdict" ;;
+    could-not-run:*) LIVE tests_green not-run "${pre}the box could not run the suite (${ex#could-not-run: }) — not green and not red; the CI run on the PR head is the verdict" ;;
     '') LIVE tests_green not-run "${pre}the suite wrote no HARNESS_EXIT line — no verdict, not a pass" ;;
     *) LIVE tests_green fail "${pre}tests FAILED (exit $ex): $(grep -iE 'fail|error' "$f" 2>/dev/null | tail -1)" ;;
   esac

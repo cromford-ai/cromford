@@ -1258,8 +1258,15 @@ review_one() {
     suite_line="host suite: skipped (CI green on ${sha:0:12}: $LR_CI_N checks)"
     printf '%s\n' "The host suite was not run on this box. CI's required checks passed on this exact head ${sha:0:12}: $(printf '%s' "$LR_CI_REQ" | sed 's/^/"/; s/$/"/' | paste -sd, - | sed 's/,/, /g'). That is the only test evidence for this review, and CI may run only part of the repo's tests on a PR head. Do not claim local test evidence." > "$WT.suite"
   elif suite_cmd=$(lr_verify_cmd "$WT/CLAUDE.md"); then
-    ( cd "$WT" && timeout "$((left / 2))" bash -c "$suite_cmd" ) 7>&- 8>&- > "$WT.suite" 2>&1; suite_rc=$?
-    suite_line="host suite: $suite_cmd rc=$suite_rc"
+    # BH-7695 (bin/lib/suite-preflight.sh via libs.d): a box that cannot run the
+    # suite records `host suite: could-not-run: <item>` and the review goes on.
+    if command -v sp_lead_suite >/dev/null 2>&1; then
+      sp_lead_suite "$WT" "$suite_cmd" "$((left / 2))" "$project" "$WT.suite"; suite_line="$SP_LINE"
+      case "$SP_LINE" in "host suite: could-not-run:"*) log "$key: $SP_LINE; the review goes on with no local test evidence" ;; esac
+    else
+      ( cd "$WT" && timeout "$((left / 2))" bash -c "$suite_cmd" ) 7>&- 8>&- > "$WT.suite" 2>&1; suite_rc=$?
+      suite_line="host suite: $suite_cmd rc=$suite_rc"
+    fi
   else
     suite_line="host suite: no host suite declared"; : > "$WT.suite"
   fi

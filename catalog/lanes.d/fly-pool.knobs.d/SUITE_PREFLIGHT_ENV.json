@@ -1,0 +1,13 @@
+{
+  "env": "SUITE_PREFLIGHT_ENV",
+  "type": "string",
+  "default": "",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "read_in": "bin/lib/suite-preflight.sh",
+  "note": "BH-7695. Space-separated env names a project's suite needs (A-Z, 0-9, _ only). The suite preflight treats each empty one as a SOFT item: the suite still runs, a green stays green, and a red becomes HARNESS_EXIT: could-not-run: <name> (suite rc <n>) in the build and host suite: could-not-run: <name> (suite rc <n>) in the lead review. Empty = only node_modules and DATABASE_URL (prisma repos, on a DB-error signature) are checked. Per project: lane.fly-pool.<project>.suite_preflight_env."
+}
