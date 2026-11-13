@@ -49,6 +49,8 @@ bin/lib/console-qa-gate.sh
 bin/lib/data-lane-pending.sh
 bin/lib/dep-verify-lib.sh
 bin/lib/dequeue-watch/gather.sh
+# landed by BH-9289 (#9302) with main red on this ratchet since: issue GET, search/issues and sub_issues reads of a GitHub epic; the seam has no search or sub-issue read yet (#9513)
+bin/lib/epic-blocker.sh
 bin/lib/fc-board.sh
 bin/lib/fc-issues.sh
 bin/lib/file-children.sh
@@ -112,6 +114,8 @@ bin/lib/selection-gate.sh
 bin/lib/sentry-triage.sh
 bin/lib/silence-scan.sh
 bin/lib/slice-closeout.sh
+# landed by BH-8739 (#8761) with main red on this ratchet: the issues-lane fallback of sr_thread (issue GET) and a DRYRUN print of the comment call; the tracker_read and tracker_comment paths are already the first choice (#9513)
+bin/lib/slice-gate.sh
 bin/lib/slice-prs.sh
 bin/lib/slice-remainder.sh
 bin/lib/spec-repos.sh

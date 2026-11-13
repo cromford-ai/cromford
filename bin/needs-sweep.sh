@@ -294,7 +294,9 @@ issue_state() { # issue_state <project> <ticket> -> sets IST
   elif [ "$READS" -ge "$MAX_READS" ]; then IST=unknown; INCOMPLETE=1; return 0
   else
     READS=$((READS+1))
-    rc=0; gh_rest GET "repos/$TRK_SLUG/issues/$n" > "$WORK/issue.json" || rc=$?
+    # The seam's one issue GET (bin/lib/tracker/github-issues.sh); tracker_context
+    # above loaded the adapter and set TRK_SLUG.
+    rc=0; trk_gh_issue_raw "$n" > "$WORK/issue.json" || rc=$?
     body=$(cat "$WORK/issue.json" 2>/dev/null)
     if [ "$rc" = 0 ]; then
       IST=$(printf '%s' "$body" | jq -r 'if (.state == "closed" or .state == "open") then .state else "unknown" end' 2>/dev/null)
