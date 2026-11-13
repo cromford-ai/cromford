@@ -1,0 +1,3 @@
+[
+    {"path": "gh-quota-alert", "class": "box-local", "authority": "the sustained gh quota alert day marker (BH-9455)", "note": "state/gh-quota-alert/<YYYY-MM-DD>: an empty marker bin/gh-quota-sustained-alert.sh writes after it appends the one logs/ALERTS.log line for that UTC day, so the alert fires at most once a day. Retention: each run deletes markers older than GH_QUOTA_ALERT_MARKER_DAYS (default 30). Losing the directory costs at most one repeated alert line that day. Machine-local, never carried"}
+]

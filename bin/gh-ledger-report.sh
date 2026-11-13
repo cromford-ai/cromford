@@ -2,11 +2,12 @@
 # bin/gh-ledger-report.sh — BH-4477: which caller spends this box's GitHub REST
 # requests, on which endpoint shape, over the last N hours or minutes.
 #
-#   bin/gh-ledger-report.sh [--last <N>h|<N>m] [--top <N>] [--dir <path>]
+#   bin/gh-ledger-report.sh [--last <N>h|<N>m] [--top <N>] [--dir <path>] [--per-merged-pr]
 #
 #   --last  the window, ending now (default 1h). <N> is a positive integer.
 #   --top   ranked rows to print (default 10, 0 = all). TOTAL always sums all.
 #   --dir   the ledger directory (default $HARNESS/state/gh-rest-ledger).
+#   --per-merged-pr  add one line: counted requests / PRs merged in the window.
 #
 # WHY. the operator's 2026-10-04 diagnosis of the hub's gh api volume was done by hand
 # over state/gh-rest-ledger/2026-10-04T19.tsv. bin/gh-quota-report.sh shows the
@@ -24,8 +25,26 @@
 # torn appends and are skipped. A swept hour file (older than 48h) is simply
 # absent, so the header names how many hour files were actually read.
 #
-# Reads files only: no API call, no write. GH_LEDGER_REPORT_NOW (an epoch) pins
+# Reads files only: no API call without --per-merged-pr, no write. GH_LEDGER_REPORT_NOW (an epoch) pins
 # the clock for tests.
+#
+# --per-merged-pr (BH-9455, BH-9417's observable outcome). After the report,
+# ONE more line: the window's TOTAL counted divided by the PRs merged in the
+# same window over every registry repo (bin/fleet-conf.sh --projects, field
+# repo, owner/repo shapes, deduplicated):
+#   per_merged_pr=<n> counted=<c> merged=<m>      n = c / m, rounded half up
+#   per_merged_pr=n/a (0 merged) counted=<c> merged=0
+#   per_merged_pr=unknown (<why>)                 a repo, the registry or the
+#                                                 seam file could not be read
+# A number is printed only when EVERY repo's count is known: a ratio over a
+# partial count is wrong, not rough. The merged count is one gh_rest read per
+# repo (GET search/issues ... is:merged merged:<since>..<now>, .total_count;
+# rc != 0, no numeric total_count or incomplete_results => unknown), after
+# gh_repo_use_token arms the credential that can see the repo. That read is the
+# ONLY API call this script makes, and only with the flag. Test seam:
+# GH_LEDGER_REPORT_MERGED_FILE, `repo<TAB>count` lines, read instead of GitHub
+# and the registry; a count that is not digits marks that repo unreadable.
+# Without the flag the output is byte-identical to the report before BH-9455.
 #
 # Exit: 0 report printed (including an empty window), 2 bad arguments or an
 # unreadable ledger directory.
@@ -33,15 +52,16 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 
 usage() {
-  sed -n '5,9p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,10p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
-LAST=1h TOP=10 DIR=""
+LAST=1h TOP=10 DIR="" PER_MERGED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --last) [ $# -ge 2 ] || { usage; exit 2; }; LAST="$2"; shift 2 ;;
     --top)  [ $# -ge 2 ] || { usage; exit 2; }; TOP="$2"; shift 2 ;;
     --dir)  [ $# -ge 2 ] || { usage; exit 2; }; DIR="$2"; shift 2 ;;
+    --per-merged-pr) PER_MERGED=1; shift ;;
     -h|--help) usage 2>&1; exit 0 ;;
     *) usage; exit 2 ;;
   esac
@@ -68,6 +88,58 @@ fi
 
 since_iso=$(date -u -d "@$SINCE" '+%Y-%m-%dT%H:%M:%SZ')
 now_iso=$(date -u -d "@$NOW" '+%Y-%m-%dT%H:%M:%SZ')
+
+# The live merged read's libraries, sourced at top level: gh-repo-token.sh
+# declares its caches with `declare -A`, which a function would make local.
+GH_LIB_WHY=""
+if [ "$PER_MERGED" = 1 ] && [ -z "${GH_LEDGER_REPORT_MERGED_FILE:-}" ]; then
+  # shellcheck source=bin/lib/gh-rest.sh
+  . "$H/bin/lib/gh-rest.sh" 2>/dev/null || GH_LIB_WHY="bin/lib/gh-rest.sh unreadable"
+  # shellcheck source=bin/lib/gh-repo-token.sh
+  [ -n "$GH_LIB_WHY" ] || . "$H/bin/lib/gh-repo-token.sh" 2>/dev/null || GH_LIB_WHY="bin/lib/gh-repo-token.sh unreadable"
+fi
+
+# merged_count — sets MERGED (digits) or MERGED_WHY (the `unknown (...)` text).
+# Never prints. Stops at the first repo it cannot read.
+merged_count() {
+  MERGED=0; MERGED_WHY=""
+  local repo n f="${GH_LEDGER_REPORT_MERGED_FILE:-}" repos p r body
+  if [ -n "$f" ]; then
+    [ -f "$f" ] && [ -r "$f" ] || { MERGED_WHY="merged file unreadable"; return 0; }
+    while IFS=$'\t' read -r repo n || [ -n "$repo" ]; do
+      [ -n "$repo" ] || continue
+      case "$n" in ''|*[!0-9]*) MERGED_WHY="$repo unreadable"; return 0 ;; esac
+      MERGED=$(( MERGED + 10#$n ))
+    done < "$f"
+    return 0
+  fi
+  p=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null) || { MERGED_WHY="registry unreadable"; return 0; }
+  repos=$(for r in $p; do "$H/bin/fleet-conf.sh" "$r" repo 2>/dev/null; echo; done \
+    | awk '$0 ~ /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/' | LC_ALL=C sort -u)
+  [ -n "$repos" ] || { MERGED_WHY="registry unreadable"; return 0; }
+  [ -z "$GH_LIB_WHY" ] || { MERGED_WHY="$GH_LIB_WHY"; return 0; }
+  body=$(mktemp "${TMPDIR:-/tmp}/gh-ledger-report.XXXXXX") || { MERGED_WHY="mktemp failed"; return 0; }
+  for repo in $repos; do
+    gh_repo_use_token "$repo" || { MERGED_WHY="$repo unreadable"; break; }
+    # Plain command with `> file` (bin/lib/gh-rest.sh READING THE STATUS).
+    gh_rest GET "search/issues?q=repo:$repo+is:pr+is:merged+merged:$since_iso..$now_iso&per_page=1" > "$body" 2>/dev/null \
+      || { MERGED_WHY="$repo unreadable"; break; }
+    n=$(jq -r 'if (.total_count | type) == "number" and (.incomplete_results != true) then .total_count else "x" end' "$body" 2>/dev/null)
+    case "$n" in ''|*[!0-9]*) MERGED_WHY="$repo unreadable"; break ;; esac
+    MERGED=$(( MERGED + n ))
+  done
+  rm -f "$body"
+  return 0
+}
+# per_merged_line <counted> — the --per-merged-pr line.
+per_merged_line() {
+  local c=$1
+  merged_count
+  if [ -n "$MERGED_WHY" ]; then echo "per_merged_pr=unknown ($MERGED_WHY)"
+  elif [ "$MERGED" -eq 0 ]; then echo "per_merged_pr=n/a (0 merged) counted=$c merged=0"
+  else echo "per_merged_pr=$(( (2 * c + MERGED) / (2 * MERGED) )) counted=$c merged=$MERGED"
+  fi
+}
 
 # The hour files whose hour overlaps [since, now]; the ts filter trims the ends.
 files=()
@@ -100,6 +172,7 @@ if [ "${#files[@]}" -gt 0 ]; then
 fi
 if [ -z "$groups" ]; then
   echo "no ledger rows in window"
+  [ "$PER_MERGED" = 1 ] && per_merged_line 0
   exit 0
 fi
 printf '%s\n' "$groups" | awk -F'\t' -v window="$WINDOW" -v top="$TOP" '
@@ -110,4 +183,7 @@ printf '%s\n' "$groups" | awk -F'\t' -v window="$WINDOW" -v top="$TOP" '
     for (i = 1; i <= NR && (top == 0 || i <= top); i++)
       printf "%4d  %6d  %7d  %9d  %-30s  %s\n", i, c[i], k[i], c[i] - k[i], who[i], ep[i]
   }'
+if [ "$PER_MERGED" = 1 ]; then
+  per_merged_line "$(printf '%s\n' "$groups" | awk -F'\t' '{ s += $2 } END { printf "%d", s }')"
+fi
 exit 0

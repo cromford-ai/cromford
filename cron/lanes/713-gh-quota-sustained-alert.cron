@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── GITHUB APP QUOTA SUSTAINED ALERT ────────────────────────────────────────
+# Hourly at :19 (after gh-ledger-push has landed the previous hour from every
+# box, and after gh-pat-charge-alert at :17): read the fleet gh_ledger for the
+# last GH_QUOTA_ALERT_HOURS complete UTC hours and write ONE logs/ALERTS.log
+# line per UTC day when an App bucket's counted requests stayed at or above
+# GH_QUOTA_ALERT_PCT of its limit in every one of them. Zero GitHub calls.
+# Off via GH_QUOTA_ALERT=0 or flags/lane-off-gh-quota-sustained-alert.
+19 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/gh-quota-sustained-alert.sh hub >/dev/null 2>&1

@@ -1,0 +1,75 @@
+{
+  "id": "gh-quota-sustained-alert",
+  "name": "GitHub App quota sustained alert",
+  "scope": "hub",
+  "script": "bin/gh-quota-sustained-alert.sh",
+  "cadence": "19 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-gh-quota-sustained-alert",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "GH_QUOTA_ALERT",
+      "type": "int",
+      "default": 1,
+      "zero_means": "off",
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT:-1}; 0 stops the lane before it reads the ledger or writes anything."
+    },
+    {
+      "env": "GH_QUOTA_ALERT_PCT",
+      "type": "int",
+      "default": 60,
+      "min": 1,
+      "unit": "percent",
+      "zero_means": null,
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT_PCT:-60}: an hour is over when an App bucket's counted requests * 100 >= this * its limit. Not an integer in 1..100 falls back to 60."
+    },
+    {
+      "env": "GH_QUOTA_ALERT_HOURS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "unit": "hours",
+      "zero_means": null,
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT_HOURS:-3}: how many complete UTC hours in a row the bucket must be over before the once-a-day ALERTS.log line. Not an integer in 1..24 falls back to 3."
+    },
+    {
+      "env": "GH_QUOTA_ALERT_LIMIT",
+      "type": "int",
+      "default": 7050,
+      "min": 1,
+      "unit": "requests/hour",
+      "zero_means": null,
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT_LIMIT:-7050}: the App bucket's hourly limit when the fleet ledger rows of that bucket and hour carry no positive limit_max (GitHub's X-RateLimit-Limit). Not a positive integer falls back to 7050."
+    },
+    {
+      "env": "GH_QUOTA_ALERT_MARKER_DAYS",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "unit": "days",
+      "zero_means": null,
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT_MARKER_DAYS:-30}: day markers in state/gh-quota-alert/ older than this many days are deleted. Not a positive integer falls back to 30."
+    },
+    {
+      "env": "GH_QUOTA_ALERT_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Read by bin/gh-quota-sustained-alert.sh as ${GH_QUOTA_ALERT_NOW:-$(date -u +%s)}: the epoch the lane treats as now. A test seam, so NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/gh-quota-sustained-alert.log"
+  }
+}
