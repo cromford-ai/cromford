@@ -1,0 +1,11 @@
+{
+  "env": "BR_FIX_TIMEOUT_RETRIES",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 5,
+  "unit": "rounds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9404-timeout-retry.sh",
+  "note": "BH-9404 (TK-3699): a fix round whose agent call timed out (rc 124) gets this many more rounds per PR head before the ticket goes to its terminal. Each retry marks the head in timeout_retry, refunds the round (fixround_refunds) and keeps brfix/<cap-key>. A review-changes-requested head is un-marked from review_fix_heads so the next tick offers it again. Any other rc stays terminal. 0 = off: a timed-out round is terminal, as before BH-9404."
+}

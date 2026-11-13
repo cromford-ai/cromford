@@ -6109,12 +6109,12 @@ $live$brief"
     if [ "$reason" != review-changes-requested ] && [ "$((n+1))" -lt "$cap" ]; then
       say "$p/$rkey [$reason]: fix round $((n+1)) of $cap did not land — fix round $((n+2)) next tick (agent rc=$rc, verify rc=$vrc)"
       br_wt_drop "the round did not land and another one is owed"
-      # A foreign-authored checkpoint is never reused: the next round would
-      # start from the same commit and fail on it again.
+      # A foreign-authored checkpoint is never reused: the next round would start from the same commit and fail on it again.
       [ "$br_author_bad" = 1 ] && git -C "$REPOS/$p" branch -D "brfix/$ck" >/dev/null 2>&1
       mc_git_auth_clear 2>/dev/null
       return 0
     fi
+    command -v brtr_take >/dev/null 2>&1 && brtr_take "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$rc" "$br_author_bad" && return 0   # BH-9404: one more round after a timeout
     say "$p/$rkey [$reason]: fix round did not produce a verified commit (agent rc=$rc, verify rc=$vrc) — $(br_fix_terminal_word "$reason")"
     br_xpr_wait_line "$p" "$rkey" "$reason" "$n" "$cap"
     br_wt_drop "the round produced no verified commit"
