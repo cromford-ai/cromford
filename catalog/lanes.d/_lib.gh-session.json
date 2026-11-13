@@ -1,0 +1,75 @@
+{
+  "libs": [
+    {
+      "id": "gh-session",
+      "file": "bin/lib/gh-session-token.sh",
+      "note": "BH-9354 (2026-11-13). A triage tick mints one App token and exports it, and bin/gh-ledger/gh only picks an identity when GH_TOKEN is empty, so a token that went bad stayed in the session (2026-11-09: four triage sessions got HTTP 401 while the box credentials answered 200). triage_gh_session_arm (bin/lib/triage-gh-token.sh) puts bin/gh-session/gh first on the tick's PATH; it re-mints the armed token per call, tries gh-token.sh --fresh and then env/gh-pat on a 401, and on a 401 from every credential writes one [gh-session] alert with the box's own probe and a marker that makes call_guard_finish settle the tick unbilled. Resolved once per tick by the arm (lib_env_apply gh-session) and exported. Off switch: the GH_SESSION_REMINT row (0). There is no flags/ file.",
+      "knobs": [
+        {
+          "env": "GH_SESSION_REMINT",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = a triage tick arms bin/gh-session/gh. 0 = no arming: the session's gh runs on the tick's token as before BH-9354. Read as ${GH_SESSION_REMINT:-1}."
+        },
+        {
+          "env": "GH_SESSION_MIN_LIFE_S",
+          "type": "int",
+          "default": 600,
+          "min": 300,
+          "max": 3300,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Life the cached App token must still have to be handed to a session gh call (bin/gh-token.sh --min-life). The same 600 as GH_APP_DEFAULT_MIN_LIFE_S, so one cache row serves both. Read as ${GH_SESSION_MIN_LIFE_S:-600}."
+        },
+        {
+          "env": "GH_SESSION_MINT_TIMEOUT_S",
+          "type": "int",
+          "default": 15,
+          "min": 1,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The longest one bin/gh-token.sh call inside the wrapper may take before the call keeps the token it has. Read as ${GH_SESSION_MINT_TIMEOUT_S:-15}."
+        },
+        {
+          "env": "GH_SESSION_PROBE_TIMEOUT_S",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 60,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The longest each box-probe GET repos/<slug> may take on the all-401 path (one on a box App token, one on env/gh-pat). Read as ${GH_SESSION_PROBE_TIMEOUT_S:-10}."
+        },
+        {
+          "env": "GH_SESSION_ALERT_EVERY_S",
+          "type": "int",
+          "default": 3600,
+          "min": 0,
+          "max": 86400,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "One [gh-session] ALERTS line per repo slug per this window (stamp state/gh-session.alerted/<slug>). 0 = every all-401 call alerts. Read as ${GH_SESSION_ALERT_EVERY_S:-3600}."
+        },
+        {
+          "env": "GH_SESSION_PAT_FALLBACK",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = after a 401 on both App rungs the call is tried once on env/gh-pat (it then acts as the PAT's user). 0 = no PAT rung; the box probe still reads env/gh-pat. Read as ${GH_SESSION_PAT_FALLBACK:-1}."
+        }
+      ]
+    }
+  ]
+}

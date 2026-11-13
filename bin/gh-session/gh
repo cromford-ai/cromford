@@ -1,0 +1,184 @@
+#!/bin/bash
+# bin/gh-session/gh — BH-9354: the triage session's gh. It re-mints the token
+# the tick armed on every call, and tries the next credential on a 401.
+#
+# WHY. A triage tick mints ONE App token and exports it (bin/run-triage.sh,
+# `# >>> triage github auth`). Every shard and every agent session inherits it,
+# and bin/gh-ledger/gh only picks an identity when GH_TOKEN is EMPTY, so a token
+# that went bad after the tick started stayed in the session until the session
+# ended. On 2026-11-09 four triage sessions on box-small got `HTTP 401
+# Bad credentials` while the box's own App token and PAT answered 200.
+#
+# WHERE IT RUNS. Only on the PATH of a triage tick: triage_gh_session_arm
+# (bin/lib/triage-gh-token.sh) prepends this directory, which holds only this
+# file, and exports GH_SESSION_SLUG, GH_SESSION_PROJECT and
+# GH_SESSION_TOKEN_FP (a sha256 prefix of the armed token, never the value).
+# It sits in front of bin/gh-ledger/gh, so the ledger and its cache still see
+# every call.
+#
+# WHAT IT DOES, per call:
+#   pass-through (exec the next gh, nothing changed) when: GH_SESSION_DEPTH,
+#     GH_LEDGER_NO_APP or GH_LEDGER_DEPTH is set (a gh run by a gh, a mint or
+#     this file); the session is not armed; GH_TOKEN is not the armed token (a
+#     caller that set its own token keeps it); a local command (config, help,
+#     version, …); GH_SESSION_REMINT=0 (the off switch: knob row
+#     lib.gh-session.gh_session_remint); no lib.
+#   rung 0: the token from bin/gh-token.sh --min-life GH_SESSION_MIN_LIFE_S
+#     (a cache read; a mint about once per 50 minutes), else the armed token.
+#     A call that may not run twice (stdin, watch, auth: gh_session_retry_ok)
+#     execs on it, and its output streams as before.
+#   on a 401 (gh_session_is_401: rc != 0 and gh's stderr says HTTP 401 or Bad
+#     credentials): rung 1 = gh-token.sh --fresh, rung 2 = env/gh-pat when
+#     GH_SESSION_PAT_FALLBACK is 1. A rung whose token was already tried, or
+#     that has none, is skipped. Only the LAST attempt's stdout and stderr
+#     reach the caller, so a recovered call prints one response.
+#   recovered: one line in logs/<project>.log names the refused token's prefix,
+#     length, armed time and expiry. No alert.
+#   every rung 401: the last output, one stderr line for the agent, one
+#     [gh-session] ALERTS line (deduped per slug per GH_SESSION_ALERT_EVERY_S)
+#     that names each credential tried and the box's own probe of
+#     repos/<slug> (gh_session_probe), and an empty file at
+#     $GH_SESSION_AUTH_FAIL_FILE, which call_guard_finish reads so the tick
+#     does not spend a call-guard slot. The exit code is gh's.
+#
+# THE NEXT gh is the first `gh` on PATH that is not this file, not a copy of
+# it (its second line is this file's marker), and not in a directory holding
+# _fence.sh (the lane fence execs the next gh, which is this file). When the
+# next gh is a bin/gh-ledger/gh copy, GH_LEDGER_REAL is set to the real binary
+# for that run, so the ledger cannot resolve back to this file.
+#
+# rc: whatever gh returned; 127 when no gh exists.
+# Never `set -e`: every exit here is written out on purpose.
+set -u
+
+_gsw_self=$(readlink -f "$0" 2>/dev/null) || _gsw_self=""
+[ -n "$_gsw_self" ] || _gsw_self="$0"
+_gsw_dir="${_gsw_self%/*}"
+_GSW_MARKER='# bin/gh-session/gh — BH-9354: the triage session'"'"'s gh. It re-mints the token'
+_GSW_LEDGER_MARKER='# bin/gh-ledger/gh — BH-1574: the `gh` every lane reaches first on PATH. It runs'
+
+# _gsw_line2 <file> — the second line of a script; rc 1 for a binary.
+_gsw_line2() {
+  local head="" l1="" l2=""
+  IFS= read -r -n 2 head < "$1" 2>/dev/null || true
+  [ "$head" = '#!' ] || return 1
+  { IFS= read -r l1; IFS= read -r l2; } < "$1" 2>/dev/null || return 1
+  printf '%s' "$l2"
+}
+
+# _gsw_ok <candidate> <skip-ledger 0|1> — rc 0 when <candidate> may be run.
+_gsw_ok() {
+  local r l2
+  [ -x "$1" ] && [ ! -d "$1" ] || return 1
+  r=$(readlink -f "$1" 2>/dev/null) || r="$1"
+  [ "$r" = "$_gsw_self" ] && return 1
+  l2=$(_gsw_line2 "$r") || l2=""
+  [ "$l2" = "$_GSW_MARKER" ] && return 1
+  [ "$2" = 1 ] && [ "$l2" = "$_GSW_LEDGER_MARKER" ] && return 1
+  return 0
+}
+# _gsw_find <skip-ledger 0|1> — the next gh (0) or the real binary (1):
+# PATH first, then GH_LEDGER_FALLBACK (/usr/bin/gh), the ledger's own last resort.
+_gsw_find() {
+  local d dirs=()
+  IFS=: read -r -a dirs <<<"${PATH:-}"
+  for d in "${dirs[@]}"; do
+    [ -n "$d" ] || continue
+    [ -e "$d/_fence.sh" ] && continue
+    _gsw_ok "$d/gh" "$1" && { printf '%s' "$d/gh"; return 0; }
+  done
+  _gsw_ok "${GH_LEDGER_FALLBACK:-/usr/bin/gh}" "$1" && { printf '%s' "${GH_LEDGER_FALLBACK:-/usr/bin/gh}"; return 0; }
+  return 1
+}
+
+_gsw_next=$(_gsw_find 0) || { echo "gh-session: no gh binary found on PATH" >&2; exit 127; }
+_gsw_real=$(_gsw_find 1) || _gsw_real=""
+_gsw_in_depth="${GH_SESSION_DEPTH:-}"
+export GH_SESSION_DEPTH=1
+if [ -z "${GH_LEDGER_REAL:-}" ] && [ -n "$_gsw_real" ] && [ "$_gsw_real" != "$_gsw_next" ]; then
+  export GH_LEDGER_REAL="$_gsw_real"
+fi
+_gsw_through() { exec "$_gsw_next" "$@"; }
+
+# ── pass-through, before anything is spent ──────────────────────────────────
+[ -z "$_gsw_in_depth" ] || _gsw_through "$@"
+_gsw_ld="${GH_LEDGER_DEPTH:-0}"; case "$_gsw_ld" in ''|*[!0-9]*) _gsw_ld=0 ;; esac
+[ "$_gsw_ld" = 0 ] || _gsw_through "$@"
+[ -z "${GH_LEDGER_NO_APP:-}" ] || _gsw_through "$@"
+[ -n "${GH_SESSION_SLUG:-}" ] && [ -n "${GH_SESSION_TOKEN_FP:-}" ] && [ -n "${GH_TOKEN:-}" ] || _gsw_through "$@"
+case "${1:-}" in
+  config|completion|help|version|alias|extension|--version|-h|--help|'') _gsw_through "$@" ;;
+esac
+_gsw_h="${HARNESS:-}"
+[ -n "$_gsw_h" ] || _gsw_h="${_gsw_dir%/bin/gh-session}"
+HARNESS="$_gsw_h"
+# shellcheck source=bin/lib/gh-session-token.sh
+. "$_gsw_dir/../lib/gh-session-token.sh" 2>/dev/null || . "$_gsw_h/bin/lib/gh-session-token.sh" 2>/dev/null || _gsw_through "$@"
+command -v gh_session_tok_fp >/dev/null 2>&1 || _gsw_through "$@"
+[ "$(gh_session_tok_fp "$GH_TOKEN")" = "$GH_SESSION_TOKEN_FP" ] || _gsw_through "$@"
+gh_session_knobs
+[ "$_GSS_REMINT" = 1 ] || _gsw_through "$@"
+
+_gsw_slug="$GH_SESSION_SLUG"
+_gsw_armed="$GH_TOKEN"
+
+# ── rung 0: the cache's token for the armed slug ────────────────────────────
+_gsw_tok0=$(gh_session_mint "$_gsw_slug" min-life) || _gsw_tok0="$_gsw_armed"
+# gh-token.sh prints the PAT when a mint fails: that is not an App rung (the
+# PAT is rung 2, and only under GH_SESSION_PAT_FALLBACK=1).
+case "$_gsw_tok0" in ghs_*) ;; *) _gsw_tok0="$_gsw_armed" ;; esac
+if ! gh_session_retry_ok "$@"; then
+  GH_TOKEN="$_gsw_tok0" exec "$_gsw_next" "$@"
+fi
+_gsw_out=$(mktemp "${TMPDIR:-/tmp}/gh-session.out.XXXXXX" 2>/dev/null) || GH_TOKEN="$_gsw_tok0" exec "$_gsw_next" "$@"
+_gsw_err=$(mktemp "${TMPDIR:-/tmp}/gh-session.err.XXXXXX" 2>/dev/null) || { rm -f "$_gsw_out"; GH_TOKEN="$_gsw_tok0" exec "$_gsw_next" "$@"; }
+
+_gsw_src() { case "$1" in ghs_*) printf 'App' ;; *) printf 'PAT' ;; esac; }
+_gsw_tried=" "; _gsw_chain=""; _gsw_rc=0; _gsw_is401=0; _gsw_bad=""; _gsw_rung=0; _gsw_ran=0
+for _gsw_r in 0 1 2; do
+  case "$_gsw_r" in
+    0) _gsw_t="$_gsw_tok0"; _gsw_how="cache re-mint"
+       [ "$_gsw_t" = "$_gsw_armed" ] && _gsw_how="the armed token" ;;
+    1) _gsw_t=$(gh_session_mint "$_gsw_slug" fresh) || continue
+       case "$_gsw_t" in ghs_*) ;; *) continue ;; esac
+       _gsw_how="gh-token.sh --fresh" ;;
+    2) _gsw_t=$(gh_session_pat) || continue; _gsw_how="env/gh-pat" ;;
+  esac
+  _gsw_f=$(gh_session_tok_fp "$_gsw_t")
+  case "$_gsw_tried" in *" $_gsw_f "*) continue ;; esac
+  _gsw_tried="$_gsw_tried$_gsw_f "
+  GH_TOKEN="$_gsw_t" "$_gsw_next" "$@" > "$_gsw_out" 2> "$_gsw_err"
+  _gsw_rc=$?
+  _gsw_ran=1; _gsw_rung="$_gsw_r"
+  _gsw_chain="${_gsw_chain:+$_gsw_chain; }rung $_gsw_r $(gh_session_tok_desc "$_gsw_t") ($(_gsw_src "$_gsw_t"), $_gsw_how)"
+  if gh_session_is_401 "$_gsw_rc" "$_gsw_err"; then
+    _gsw_is401=1
+    [ -n "$_gsw_bad" ] || _gsw_bad=$(gh_session_tok_desc "$_gsw_t")
+    continue
+  fi
+  _gsw_is401=0
+  break
+done
+
+cat "$_gsw_out"
+cat "$_gsw_err" >&2
+rm -f "$_gsw_out" "$_gsw_err"
+[ "$_gsw_ran" = 1 ] || exit "$_gsw_rc"
+
+if [ "$_gsw_is401" = 0 ]; then
+  if [ "$_gsw_rc" = 0 ] && [ -n "$_gsw_bad" ]; then
+    gh_session_log_recovered "$_gsw_slug" "$_gsw_bad" "${GH_SESSION_ARMED_AT:-}" "${GH_SESSION_EXPIRES_AT:-}" "$_gsw_rung"
+  fi
+  exit "$_gsw_rc"
+fi
+
+# ── every rung got 401 ──────────────────────────────────────────────────────
+[ "$_GSS_PAT_FB" = 1 ] || _gsw_chain="$_gsw_chain; pat rung off (GH_SESSION_PAT_FALLBACK=0)"
+_gsw_exp=$(gh_session_mint "$_gsw_slug" expires-at) || _gsw_exp="unknown"
+_gsw_chain="$_gsw_chain; armed token $(gh_session_tok_desc "$_gsw_armed") armed at ${GH_SESSION_ARMED_AT:--} expiring ${GH_SESSION_EXPIRES_AT:--}; cached App token expires $_gsw_exp"
+_gsw_probe=$(gh_session_probe "$_gsw_real" "$_gsw_slug")
+printf 'gh-session: every credential this session holds got 401 for %s (tried %s). The box probe answered %s. %s\n' \
+  "$_gsw_slug" "$_gsw_chain" "$_gsw_probe" "$(gh_session_verdict "$_gsw_probe")" >&2
+gh_session_alert "$_gsw_slug" "$_gsw_chain" "$_gsw_probe"
+[ -z "${GH_SESSION_AUTH_FAIL_FILE:-}" ] || : > "$GH_SESSION_AUTH_FAIL_FILE" 2>/dev/null || true
+exit "$_gsw_rc"

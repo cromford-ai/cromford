@@ -61,6 +61,7 @@ elif [ -n "$TRIAGE_GH_SLUG" ] && command -v gh_auth_for >/dev/null 2>&1 && gh_au
   echo "$(date -u +%Y-%m-%d\ %H:%M:%SZ) [$PROJECT] triage github auth: App installation token for $TRIAGE_GH_SLUG (this tick's shards bill the installation, not the box login)" >> "$LOG"
 fi
 # <<< triage github auth
+command -v triage_gh_session_arm >/dev/null 2>&1 && { triage_gh_session_arm "$TRIAGE_GH_SLUG" "$PROJECT" || true; }  # BH-9354: the session gh re-mints per call, falls back on a 401
 
 # The shard vocabulary, sourced HERE rather than beside the dispatcher at the
 # bottom of this file (where it used to live). Three decisions above the

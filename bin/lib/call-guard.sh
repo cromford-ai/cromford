@@ -26,6 +26,10 @@
 # as paid, unbilled (no rung ran) frees the slot. An `empty` result — the vendor
 # answered with nothing and billed for it — is a paid call like any other, so
 # success-with-nothing-in-it can never loop.
+# A triage session whose gh got 401 on every credential it holds (BH-9354:
+# bin/gh-session/gh touches the per-call GH_SESSION_AUTH_FAIL_FILE this guard
+# exports) also settles unbilled, unless a METERED runner ran: a refused
+# credential is not a paid answer, and cash stays capped.
 #
 # PER-WORK OVERRIDE: AGENT_CALL_GUARD_FORCE=1 (a hand-run path) records the
 # call as paid even at the ceiling, and logs FORCED. An operator who wants the
@@ -230,6 +234,31 @@ _cg_once() {
   return 0
 }
 
+# THE GH 401 MARKER (BH-9354). An allowed call exports GH_SESSION_AUTH_FAIL_FILE
+# (one path per call id, a stale copy removed), and the runner inherits it.
+# bin/gh-session/gh, the triage session's gh, touches it only when a gh call got
+# 401 on EVERY credential it holds. Such a session did no work it can be
+# charged for, so call_guard_finish settles it `unbilled` and the fingerprint
+# keeps its slot. Only when no runner that ran is METERED: a cash call stays a
+# paid call, so a persistent 401 cannot buy unlimited cash calls.
+_cg_gh401_arm() {
+  # Not `f`: _cg_once gives `f` a flags/ path, and tests/no-flag-files reads a
+  # same-file variable as every value the file gives it.
+  local gh401
+  gh401="${TMPDIR:-/tmp}/cg-gh401.$(_cg_slug "$CG_CALL_ID")"
+  rm -f "$gh401" 2>/dev/null
+  export GH_SESSION_AUTH_FAIL_FILE="$gh401"
+}
+# _cg_gh401_seen — rc 0 when the marker exists and no ran runner is metered.
+_cg_gh401_seen() {
+  local r
+  [ -n "${GH_SESSION_AUTH_FAIL_FILE:-}" ] && [ -e "$GH_SESSION_AUTH_FAIL_FILE" ] || return 1
+  for r in ${CG_RAN_RUNNERS:-}; do
+    call_guard_metered "$r" && return 1
+  done
+  return 0
+}
+
 # call_guard_precall <agent-call-stage> <project> <primary-runner> <prompt-sha>
 #   rc 0 -> run the call. rc 1 -> REFUSE it (CG_REASON says why; nothing has
 #   been called). Sets CG_STATE: off | unconfigured | allowed | refused |
@@ -237,6 +266,7 @@ _cg_once() {
 call_guard_precall() {
   local stage="${1:-}" project="${2:-}" runner="${3:-}" psha="${4:-}" resp win to allowed force crc
   CG_STATE=off; CG_REASON=""; CG_CALL_ID=""; CG_COUNT=""; CG_TOP=""; CG_SETTLED=""
+  unset GH_SESSION_AUTH_FAIL_FILE
   CG_STAGE=$(call_guard_stage "$stage")
   call_guard_enabled "$CG_STAGE" || return 0
   CG_MAX=$(call_guard_max "$CG_STAGE")
@@ -276,6 +306,7 @@ call_guard_precall() {
     CG_COUNT=$(printf '%s' "$resp" | jq -r '.count // ""' 2>/dev/null)
     if [ "$allowed" = true ]; then
       CG_STATE=allowed
+      _cg_gh401_arm
       [ "$force" = 1 ] && _cg_log "FORCED [$project] $CG_STAGE fp=$CG_FP paid=${CG_COUNT:-?}/$CG_MAX (AGENT_CALL_GUARD_FORCE=1) — recorded as paid"
       return 0
     fi
@@ -339,11 +370,16 @@ call_guard_rung_ok() {
 #   ok        rc 0 and a non-whitespace byte in <outfile>
 #   empty     rc 0 and <outfile> blank: billed, and TERMINAL (it keeps its slot)
 #   failed    anything else that ran
+#   (BH-9354) unbilled too when GH_SESSION_AUTH_FAIL_FILE exists and no runner
+#             in CG_RAN_RUNNERS is metered: see THE GH 401 MARKER above
 call_guard_finish() {
   local rc="${1:-1}" ran="${2:-}" out="${3:-}" nobill="${4:-}" oc
   [ "$CG_STATE" = allowed ] && [ -n "$CG_CALL_ID" ] && [ -z "$CG_SETTLED" ] || return 0
   CG_SETTLED=1
   if [ -z "$ran" ]; then oc=unbilled
+  elif _cg_gh401_seen; then
+    oc=unbilled
+    _cg_log "settled UNBILLED: $CG_STAGE fp=$CG_FP rc=$rc — the session's gh got 401 on every credential (bin/gh-session/gh), so the slot is not spent"
   elif [ "$rc" != 0 ] && [ -n "$nobill" ]; then
     # a subscription lane's quota / auth / 429 failure: nothing was billed
     oc=unbilled
@@ -351,6 +387,7 @@ call_guard_finish() {
   elif [ "$rc" = 0 ] && grep -q '[^[:space:]]' "$out" 2>/dev/null; then oc=ok
   elif [ "$rc" = 0 ]; then oc=empty
   else oc=failed; fi
+  [ -z "${GH_SESSION_AUTH_FAIL_FILE:-}" ] || rm -f "$GH_SESSION_AUTH_FAIL_FILE" 2>/dev/null
   command -v call_guard_settle >/dev/null 2>&1 || return 0
   JOBS_TIMEOUT="${CALL_GUARD_TIMEOUT_S:-5}" call_guard_settle "$CG_CALL_ID" "$oc" >/dev/null 2>&1 \
     || _cg_log "settle $CG_CALL_ID=$oc did not land — the row stays claimed and counts as paid"

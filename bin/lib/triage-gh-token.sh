@@ -1,6 +1,6 @@
 #!/bin/bash
 # bin/lib/triage-gh-token.sh — a triage tick arms a GitHub App token that
-# outlives the tick. Sourced, never executed; defines one function and runs
+# outlives the tick. Sourced, never executed; defines functions and runs
 # nothing on source. Its own file so bin/run-triage.sh stays under the driver
 # ceiling (tests/rt-split-layout-test.sh A6).
 #
@@ -29,4 +29,38 @@ triage_gh_premint() {
   [ "$life" -gt 3500 ] && life=3500
   [ -n "$slug" ] && command -v gh_app_premint >/dev/null 2>&1 || return 1
   gh_app_premint "$slug" "$life"
+}
+
+# triage_gh_session_arm <owner/repo> [project] — BH-9354: put bin/gh-session/gh
+# first on this tick's PATH, so every gh the tick's shards and agent sessions
+# run re-mints the armed token per call and tries the next credential on a 401
+# (the wrapper's header says how). Arms only when GH_TOKEN is a ghs_ App token
+# (the box minted it) and GH_SESSION_REMINT is 1 (knob row
+# lib.gh-session.gh_session_remint, the off switch); otherwise rc 1 and the env is untouched. The knobs are resolved ONCE
+# here (lib_env_apply gh-session, when the shell has it) and exported, so the
+# wrapper reads env and never a settings row per call. The token value is never
+# exported under a new name: GH_SESSION_TOKEN_FP is a sha256 prefix.
+triage_gh_session_arm() {
+  local slug="${1:-}" project="${2:-${PROJECT:-}}" h exp
+  h="${HARNESS:-${H:-}}"
+  [ -n "$slug" ] && [ -n "$h" ] || return 1
+  case "${GH_TOKEN:-}" in ghs_*) ;; *) return 1 ;; esac
+  [ -x "$h/bin/gh-session/gh" ] || return 1
+  # shellcheck source=bin/lib/gh-session-token.sh
+  . "${BASH_SOURCE[0]%/*}/gh-session-token.sh" 2>/dev/null || . "$h/bin/lib/gh-session-token.sh" 2>/dev/null || return 1
+  command -v lib_env_apply >/dev/null 2>&1 && { lib_env_apply gh-session >/dev/null 2>&1 || true; }
+  gh_session_knobs
+  [ "$_GSS_REMINT" = 1 ] || return 1
+  export GH_SESSION_REMINT="$_GSS_REMINT" GH_SESSION_MIN_LIFE_S="$_GSS_MIN_LIFE" \
+         GH_SESSION_MINT_TIMEOUT_S="$_GSS_MINT_TO" GH_SESSION_PROBE_TIMEOUT_S="$_GSS_PROBE_TO" \
+         GH_SESSION_ALERT_EVERY_S="$_GSS_ALERT_EVERY" GH_SESSION_PAT_FALLBACK="$_GSS_PAT_FB"
+  exp=$(gh_session_mint "$slug" expires-at) || exp=""
+  export GH_SESSION_SLUG="$slug" GH_SESSION_PROJECT="$project" \
+         GH_SESSION_TOKEN_FP="$(gh_session_tok_fp "$GH_TOKEN")" \
+         GH_SESSION_ARMED_AT="$(date -u +%s)" GH_SESSION_EXPIRES_AT="$exp"
+  case ":${PATH:-}:" in
+    *":$h/bin/gh-session:"*) ;;
+    *) export PATH="$h/bin/gh-session${PATH:+:$PATH}" ;;
+  esac
+  return 0
 }
