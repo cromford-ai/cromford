@@ -175,9 +175,17 @@ test("R5: a non-overload error on GET /api/flags/paused-x still rejects (Sentry 
   assert.equal(db.execs, 1, "no retry, no guard: one call");
 });
 
-test("R6: a non-ported name (wip-limit-x) is untouched: the overload still rejects", async () => {
+// BH-9249: the flags guard still does not touch a non-ported name: its give-up
+// reaches the worker-wide answer (lib/d1-overload-answer.js), whose body is
+// "D1 overloaded", not the flags guard's "harness_flags unavailable".
+test("R6: a non-ported name (wip-limit-x) is untouched by the flags guard: the worker-wide 503 answers", async (t) => {
+  t.mock.method(console, "warn", () => {});
   const db = failingDb(Infinity);
-  await assert.rejects(() => call(db, "GET", "/api/flags/wip-limit-x"), /D1 DB is overloaded/);
+  const res = await call(db, "GET", "/api/flags/wip-limit-x");
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.equal(body.error, "D1 overloaded");
+  assert.equal(body.route, "GET /api/flags/wip-limit-x");
 });
 
 // ── a committed write whose read-back overloads ──────────────────────────

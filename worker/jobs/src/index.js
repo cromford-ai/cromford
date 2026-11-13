@@ -86,7 +86,7 @@ import { CREATED_TABLES, MACHINE_STATES, MACHINE_TERMINAL } from "./lib/core.js"
 import { matchRoute } from "./lib/router.js";
 import { ROUTES } from "#routes";
 import { withHarnessSentry } from "./lib/sentry.js";
-import { retryingDb } from "./lib/d1-retry.js";
+import { retryingDb, withOverloadAnswer } from "./lib/d1-overload-answer.js"; // BH-9249: D1 give-up -> 503
 import { withStmtStats } from "./lib/stmt-stats.js";
 
 import { routes as webhooks } from "./routes/webhooks.js";
@@ -138,7 +138,7 @@ export default withHarnessSentry(withStmtStats({
   MACHINE_TERMINAL,
   ROUTES,
   OPEN_ROUTES,
-  async fetch(req, env) {
+  fetch: withOverloadAnswer({ async fetch(req, env) { // BH-9249: the wrap sits on fetch, inside withStmtStats (BH-9076 pins the line above)
     const url = new URL(req.url);
     const path = url.pathname;
     // The server clock, taken ONCE per request and shared by every route. It is
@@ -167,5 +167,5 @@ export default withHarnessSentry(withStmtStats({
     // THIS body as "the route is not deployed here", and any other 404 — a
     // Cloudflare 1042 for a deleted host, a proxy, an HTML page — as unknown.
     return json(404, { error: "unknown endpoint", worker: "harness-jobs" });
-  },
+  } }).fetch,
 }), { worker: "harness-jobs", pauseFlags: true });

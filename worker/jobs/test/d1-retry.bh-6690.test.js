@@ -236,13 +236,19 @@ test("E1: the real worker answers GET /api/flags 200 after two D1 overloads", as
     "the first statement ran 3 times: 2 overloads, then success");
 });
 
-test("E2: the real worker gives up after 5 attempts with d1Attempts=5 on the error", async () => {
+// BH-9249: the give-up no longer leaves worker.fetch as a throw. The global
+// answer (lib/d1-overload-answer.js) turns it into a retryable 503 that
+// carries d1_attempts. The retry contract pinned here is unchanged: 5 attempts.
+test("E2: the real worker gives up after 5 attempts and answers 503 with d1_attempts=5", async (t) => {
+  t.mock.method(console, "warn", () => {});
   const db = overloadedDb(Infinity);
-  await assert.rejects(
-    () => worker.fetch(flagsReq(), { DB: db, HARNESS_SECRET: "test-secret" }),
-    (e) => /D1 DB is overloaded/.test(e.message) && e.d1Attempts === 5,
-  );
-  assert.equal(db.execs, 5);
+  const res = await worker.fetch(flagsReq(), { DB: db, HARNESS_SECRET: "test-secret" });
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.match(body.detail, /D1 DB is overloaded/);
+  assert.equal(body.d1_attempts, 5);
+  // 5 attempts, + 1: the give-up streak upsert on the RAW binding (no retry).
+  assert.equal(db.execs, 6);
 });
 
 test("S1: beforeSend tags d1_attempts from the marked error", async () => {
@@ -294,10 +300,11 @@ test("S3: a give-up on the real worker sends exactly one event with d1_attempts=
   // pause_flags is read through the same DB by the kill switch; that read
   // fails (overloaded), which is fail-open, so the event still sends.
   const ctx = new Ctx();
-  await assert.rejects(
-    () => worker.fetch(flagsReq(), { DB: db, HARNESS_SECRET: "test-secret", HARNESS_SENTRY_DSN: DSN }, ctx),
-    /D1 DB is overloaded/,
-  );
+  // BH-9249: the give-up answers 503 and reports on every Nth give-up of a
+  // streak; N=1 here, so this one give-up is the one event.
+  t.mock.method(console, "warn", () => {});
+  const res = await worker.fetch(flagsReq(), { DB: db, HARNESS_SECRET: "test-secret", HARNESS_SENTRY_DSN: DSN, HARNESS_D1_GIVEUP_REPORT_AFTER: "1" }, ctx);
+  assert.equal(res.status, 503);
   await settle(ctx);
   assert.equal(posts.length, 1, "exactly one envelope reaches Sentry");
   assert.match(posts[0], /"d1_attempts":"5"/);

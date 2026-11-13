@@ -204,15 +204,18 @@ test("S1: a give-up on the real worker sends one event with d1_attempts=5, d1_op
   const posts = stubSentry(t);
   const db = overloadedDb(Infinity);
   const ctx = new Ctx();
-  const env = { DB: db, HARNESS_SECRET: "test-secret", HARNESS_SENTRY_DSN: DSN, HARNESS_SHA: "abc123" };
-  await assert.rejects(
-    () => worker.fetch(flagsReq(), env, ctx),
-    (e) => /D1 DB is overloaded/.test(e.message) && e.d1Attempts === 5 && e.d1Op === "all PRAGMA pause_flags",
-  );
+  // BH-9249: the give-up answers 503 (lib/d1-overload-answer.js) and reports
+  // on every Nth give-up of a streak; N=1 here, so this give-up is the event.
+  const env = { DB: db, HARNESS_SECRET: "test-secret", HARNESS_SENTRY_DSN: DSN, HARNESS_SHA: "abc123", HARNESS_D1_GIVEUP_REPORT_AFTER: "1" };
+  t.mock.method(console, "warn", () => {});
+  const res = await worker.fetch(flagsReq(), env, ctx);
+  assert.equal(res.status, 503);
+  assert.equal((await res.json()).d1_attempts, 5);
   await settle(ctx);
-  // 5 attempts of the first statement, + 1: the kill switch reads pause_flags
-  // once on the RAW binding (no retry), that read overloads too, and it fails open.
-  assert.equal(db.execs, 6);
+  // 5 attempts of the first statement, + 1 give-up streak upsert on the RAW
+  // binding, + 1: the kill switch reads pause_flags once on the RAW binding
+  // (no retry), that read overloads too, and it fails open.
+  assert.equal(db.execs, 7);
   assert.equal(posts.length, 1, "exactly one envelope reaches Sentry");
   assert.match(posts[0], /"d1_attempts":"5"/);
   assert.match(posts[0], /"d1_op":"all PRAGMA pause_flags"/);
