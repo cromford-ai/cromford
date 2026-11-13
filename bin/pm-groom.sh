@@ -1,7 +1,8 @@
 #!/bin/bash
 # bin/pm-groom.sh <project> [--force] — BH-7261 (BH-7244.3): the PM agent's
-# weekly grooming brief. A per-project lane, Monday 11:0x UTC
-# (cron/lanes/737-pm-groom.cron), two hours after run-product.
+# weekly grooming brief. Run on the hub for every project, Monday 11:0x UTC
+# (cron/boxes/hub.d/737-pm-groom.cron, BH-8953: the Telegram bot token is
+# hub-only), two hours after run-product.
 #
 # ONE RUN:
 #   1. lane_gate_or_exit / lane_env_apply pm-groom. run-product's switch
@@ -24,8 +25,9 @@
 #   5. Stale: an idea whose updated_at is pm.stale_days days old or more. An
 #      updated_at that does not parse is not stale (one warn line).
 #   6. Evidence: the `ok` rows of the newest products/<project>/*/data-signals.json
-#      (bin/pm-signals.sh), plus one stale.<idea_id> row per stale idea. A
-#      not-configured or error row is never evidence.
+#      (bin/pm-signals.sh). With no such file (the hub, BH-8953), the lane runs
+#      bin/pm-signals.sh <project> into its temp dir and uses that. Plus one
+#      stale.<idea_id> row per stale idea. A not-configured or error row is never evidence.
 #   7. CLAIM BEFORE THE SPEND: POST /api/pm/briefs/claim makes the (project,
 #      week) row. Not won: a ready row with sent_tg=0 is sent again (no call);
 #      anything else is "already billed", rc 0. --force (a person) re-claims a
@@ -197,6 +199,15 @@ NSTALE=$(jq 'length' "$TMPD/stale-list.json")
 # ── evidence ─────────────────────────────────────────────────────────────────
 SIG=""
 for f in "$H/products/$P"/*/data-signals.json; do [ -f "$f" ] && SIG="$f"; done
+# BH-8953: the lane runs on the hub, and run-product writes products/ on the
+# project box only. With no local file, take a fresh read-only snapshot here.
+if [ -z "$SIG" ] && [ -x "$H/bin/pm-signals.sh" ]; then
+  if HARNESS="$H" "$H/bin/pm-signals.sh" "$P" "$TMPD/data-signals.json" </dev/null >/dev/null 2>"$TMPD/pm-signals.err"; then
+    SIG="$TMPD/data-signals.json"; log "no products/$P data-signals.json; bin/pm-signals.sh made the snapshot"
+  else
+    log "warn: bin/pm-signals.sh $P failed: $(head -c 200 "$TMPD/pm-signals.err" | tr '\n' ' ')"
+  fi
+fi
 SNAP=null
 if [ -n "$SIG" ] && jq -e '.evidence | type == "array"' "$SIG" >/dev/null 2>&1; then
   jq -c '[.evidence[] | select(.status == "ok" and (.id | type) == "string")

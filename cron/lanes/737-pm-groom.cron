@@ -6,19 +6,8 @@
 # sends a Telegram text with Mission Control links. It shares the run-product
 # flock (flock -n: a held lock is a skip). It never posts or builds.
 # Off: flags/lane-off-pm-groom, or bin/harness-ctl.sh off pm-groom.
-# @box project-4
-8 11 * * 1 /root/harness/bin/pm-groom.sh project-4 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-1
-2 11 * * 1 /root/harness/bin/pm-groom.sh project-1 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-2
-4 11 * * 1 /root/harness/bin/pm-groom.sh project-2 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-3
-6 11 * * 1 /root/harness/bin/pm-groom.sh project-3 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-9
-5 11 * * 1 /root/harness/bin/pm-groom.sh project-9 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-5
-9 11 * * 1 /root/harness/bin/pm-groom.sh project-5 >> /root/harness/logs/pm-groom.log 2>&1
-# @box small
-1 11 * * 1 /root/harness/bin/pm-groom.sh project-8 >> /root/harness/logs/pm-groom.log 2>&1
-# @box project-6-os
-1 11 * * 1 /root/harness/bin/pm-groom.sh project-6-os >> /root/harness/logs/pm-groom.log 2>&1
+# pm-groom runs on the hub: cron/boxes/hub.d/737-pm-groom.cron (BH-8953). The
+# Telegram bot token is hub-only, so a box-side send could never deliver. This
+# file stays as a comment stub: in REGISTRY_SOURCE=db mode the D1 lane_boxes
+# rows may still list a project box, and render-cron.sh refuses a registry lane
+# with no fragment. A stub renders no schedule line on any box.

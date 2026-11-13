@@ -5,14 +5,7 @@
   "script": "bin/pm-groom.sh",
   "cadence": "1 11 * * 1; 2 11 * * 1; 4 11 * * 1; 5 11 * * 1; 6 11 * * 1; 8 11 * * 1; 9 11 * * 1",
   "boxes": [
-    "project-4",
-    "project-6-os",
-    "project-1",
-    "project-3",
-    "project-9",
-    "small",
-    "project-2",
-    "project-5"
+    "hub"
   ],
   "switch": {
     "kind": "flag",

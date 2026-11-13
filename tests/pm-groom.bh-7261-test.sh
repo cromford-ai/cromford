@@ -9,7 +9,8 @@
 # WHAT IS STUBBED. bin/agent-call.sh (it logs its argv and env, copies the
 # prompt and answers the file $PG_ANSWER, with rc $T/ac.rc) and
 # bin/archie-tg-send.sh (it logs the akey and the text, rc $T/tg.rc) and
-# bin/alert-line.sh (it appends its text to logs/ALERTS.log). `gh` on
+# bin/alert-line.sh (it appends its text to logs/ALERTS.log) and
+# bin/pm-signals.sh (it copies $T/sig.json, else rc 1). `gh` on
 # PATH and every curl to a host that is not the fake worker count into
 # $T/net.log. Nothing here reaches a model, Telegram, GitHub or the real worker.
 # The lane clock (PM_GROOM_NOW) and the worker clock are pinned (D60). Each case
@@ -44,7 +45,7 @@ ROUTES="$DIR/worker/jobs/src/routes/pm-brief.js"
 FRAG="$DIR/worker/jobs/schema.d/202610291810-bh-7261-pm-briefs.sql"
 REG="$DIR/catalog/lanes.d/pm-groom.json"
 SITE="$DIR/catalog/llm-sites.d/7261-pm-groom.json"
-CRON="$DIR/cron/lanes/737-pm-groom.cron"
+CRON="$DIR/cron/boxes/hub.d/737-pm-groom.cron"
 W7FX="$DIR/worker/jobs/test/fixtures/pm-brief-create.bh-7261.json"
 # The console half (D41: every new source is named here).
 CON_VIEW="$DIR/console-ui/src/screens/roadmap/brief-view.js"
@@ -56,8 +57,9 @@ for f in "$LANE" "$PROMPT_MD" "$WDRV" "$ROUTES" "$FRAG" "$REG" "$SITE" "$CRON" "
 done
 check "T1 the prompt states the evidence rule" '[ "$(grep -c evidence "$PROMPT_MD" 2>/dev/null)" -ge 1 ]'
 check "M1 no hardcoded model string in the lane or the prompt" '! grep -nE "claude-(opus|sonnet|haiku|fable)|gpt-[0-9]|grok-[0-9]" "$LANE" "$PROMPT_MD"'
-check "R1 registry: project lane, flag lane-off-pm-groom, cost stage pm, the 8 run-product boxes" \
-  '[ "$(jq -r "[.scope, .switch.name, (.stats.cost_stage | tostring), .script, (.boxes | sort | join(\",\"))] | @tsv" "$REG" 2>/dev/null)" = "$(printf "project\tlane-off-pm-groom\tpm\tbin/pm-groom.sh\tproject-4,project-6-os,project-1,project-3,project-9,small,project-2,project-5")" ]'
+# BH-8953: the lane runs on the hub only (the Telegram bot token is hub-only).
+check "R1 registry: project lane, flag lane-off-pm-groom, cost stage pm, the hub only" \
+  '[ "$(jq -r "[.scope, .switch.name, (.stats.cost_stage | tostring), .script, (.boxes | sort | join(\",\"))] | @tsv" "$REG" 2>/dev/null)" = "$(printf "project\tlane-off-pm-groom\tpm\tbin/pm-groom.sh\thub")" ]'
 check "R2 llm-site: through agent-call, stage pm, role product.pm marker found in the lane" \
   'm=$(jq -r ".[0].marker" "$SITE" 2>/dev/null); [ "$(jq -r ".[0] | [.kind, .stage, .through_agent_call] | @tsv" "$SITE")" = "$(printf "agent-call\tpm\ttrue")" ] && grep -qF "$m" "$LANE"'
 for pair in "project-4 8 project-4" "project-1 2 project-1" "project-2 4 project-2" "project-3 6 project-3" "project-9 5 project-9" \
@@ -65,9 +67,11 @@ for pair in "project-4 8 project-4" "project-1 2 project-1" "project-2 4 project
   read -r cbox cmin cproj <<<"$pair"
   # The expected cron line goes in a variable, not in the eval'd text: a literal
   # `>> /root/...` inside an eval argument is a trace-safety HIT (BH-7261 fix).
-  cwant="$cmin 11 * * 1 /root/harness/bin/pm-groom.sh $cproj >> /root/harness/logs/pm-groom.log 2>&1"
-  check "C1 cron: $cbox runs $cproj at minute $cmin past 11 on Monday" \
-    'awk -v b="$cbox" "/^# @box /{s=\$3; next} s==b" "$CRON" | grep -qxF "$cwant"'
+  # BH-8953: the same line, moved from $cbox's '# @box' section to the hub
+  # fragment behind the hub lease. $cbox stays in the list as the box it left.
+  cwant="$cmin 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh $cproj >> /root/harness/logs/pm-groom.log 2>&1"
+  check "C1 cron: the hub runs $cproj (was $cbox) at minute $cmin past 11 on Monday" \
+    'grep -qxF "$cwant" "$CRON"'
 done
 check "G12 the lane never names a drafting, posting, build or GitHub path" \
   '! grep -vE "^[[:space:]]*#" "$LANE" | grep -nE "post-proposal|run-build|draft-proposal|gh-rest|(^|[^_a-z-])gh |curl "'
@@ -138,6 +142,16 @@ printf '%s\n' "$1" >> "$FXT/tg.akeys"
 printf '%s\n' "$2" > "$FXT/tg.text"
 exit "$(cat "$FXT/tg.rc" 2>/dev/null || echo 0)"
 SH
+# The pm-signals seam (BH-8953): with no products/ file the lane runs
+# bin/pm-signals.sh. The stub logs its argv and copies $FXT/sig.json to <out>;
+# no sig.json = rc 1 (the snapshot failed). Its real adapters never run here.
+cat > "$H/bin/pm-signals.sh" <<'SH'
+#!/bin/bash
+printf '%s|%s\n' "$*" "${HARNESS:-}" >> "$FXT/sigcalls"
+[ -f "$FXT/sig.json" ] || exit 1
+cp "$FXT/sig.json" "$2"
+SH
+chmod +x "$H/bin/pm-signals.sh"
 cat > "$T/fakebin/curl" <<'SH'
 #!/bin/bash
 method=GET; data=""; url=""
@@ -177,7 +191,7 @@ unset PM_MODEL PM_GROOM_TIMEOUT_S CONSOLE_PAGES_URL 2>/dev/null || true
 
 reset() {
   local p
-  for p in reqlog order agentcalls out rc ac.rc tg.rc tg.akeys tg.text; do scratch_rm "$T/$p" || exit 1; done
+  for p in reqlog order agentcalls out rc ac.rc tg.rc tg.akeys tg.text sigcalls sig.json; do scratch_rm "$T/$p" || exit 1; done
   rm -f "$T"/prompt.* "$T"/fail.*
   for p in state locks flags products; do scratch_rm "$H/$p" || exit 1; done
   rm -f "$H/logs/"*
@@ -364,6 +378,29 @@ eq "G8 the brief is ready" "$(bf $P status)" ready
 eq "G8 the move cites only stale.* ids" "$(moves $P | jq -c '[.[].evidence | fromjson | .[]]')" '["stale.pg8-d31"]'
 check "G8 one log line names the missing file" 'grep -q "no data-signals.json for pg8" "$LOGF"'
 eq "G8 snapshot_hash is null" "$(body $P | jq -c '.snapshot_hash')" null
+eq "G8 the lane asked bin/pm-signals.sh once" "$(n "$T/sigcalls")" 1
+check "G8 a failed pm-signals.sh snapshot logs one warn line" '[ "$(grep -c "warn: bin/pm-signals.sh pg8 failed" "$LOGF")" = 1 ]'
+
+# ═════ G8b: the hub (BH-8953): no products/ dir, pm-signals.sh gives the rows ═
+reset; P=pg8b; five $P
+jq -n '{snapshot_hash:"hash-hub", generated_at:"2026-10-19T11:00:00Z", evidence:[
+    {id:"signal.hub-ok", source:"board", metric:"open_tickets", value:7, window:"7d", link:"", status:"ok"},
+    {id:"signal.hub-err", source:"cost", metric:"usd", value:null, window:"7d", link:"", status:"error"}]}' > "$T/sig.json"
+answer "$(jq -nc --argjson m "[$(mv1 pg8b-d31 next discarded '["signal.hub-ok","stale.pg8b-d31"]')]" \
+  '{summary:"Hub signals.", moves:$m, now:[{idea_id:"pg8b-d10", reason:"board load", evidence:["signal.hub-ok"]}]}')"
+run -- $P
+eq "G8b rc 0" "$(cat "$T/rc")" 0
+check "G8b no products dir" '[ ! -d "$H/products" ]'
+eq "G8b pm-signals.sh ran once" "$(n "$T/sigcalls")" 1
+check "G8b pm-signals.sh got the project, a data-signals.json out path and the lane's HARNESS" \
+  'grep -qE "^$P [^ |]+/data-signals\.json\|$H\$" "$T/sigcalls"'
+eq "G8b the brief is ready" "$(bf $P status)" ready
+check "G8b the prompt holds the snapshot ok id" 'grep -qF "signal.hub-ok" "$T/prompt.1"'
+check "G8b the prompt holds no error id" '! grep -qF "signal.hub-err" "$T/prompt.1"'
+eq "G8b the move keeps the signal id" "$(moves $P | jq -c '[.[].evidence | fromjson | .[]]')" '["signal.hub-ok","stale.pg8b-d31"]'
+eq "G8b the now entry keeps the signal id" "$(body $P | jq -c '.now[] | select(.idea_id == "pg8b-d10") | .evidence')" '["signal.hub-ok"]'
+eq "G8b snapshot_hash is the snapshot's" "$(body $P | jq -r '.snapshot_hash')" hash-hub
+check "G8b one log line names the snapshot" 'grep -q "bin/pm-signals.sh made the snapshot" "$LOGF"'
 
 # ═════ G9: Telegram fails: sent_tg=0, brief readable; G10: the rerun sends ════
 reset; P=pg9; five $P

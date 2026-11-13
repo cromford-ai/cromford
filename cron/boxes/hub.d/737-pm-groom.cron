@@ -1,0 +1,16 @@
+# ── PM-GROOM ON THE HUB (BH-8953; lane BH-7261) ────────────────────────────
+# Monday 11:0x UTC: bin/pm-groom.sh <project> writes each product project's
+# weekly brief and sends it through bin/archie-tg-send.sh. The Telegram bot
+# token lives on the hub only (the fleet:telegram envelope), so the lane runs
+# here and not on the project boxes. One line per project, each at the minute
+# its box used. The hub lease gates them like every other Archie lane.
+# Off: flags/lane-off-pm-groom, or bin/harness-ctl.sh off pm-groom.
+# @hub-lanes
+8 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-4 >> /root/harness/logs/pm-groom.log 2>&1
+2 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-1 >> /root/harness/logs/pm-groom.log 2>&1
+4 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-2 >> /root/harness/logs/pm-groom.log 2>&1
+6 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-3 >> /root/harness/logs/pm-groom.log 2>&1
+5 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-9 >> /root/harness/logs/pm-groom.log 2>&1
+9 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-5 >> /root/harness/logs/pm-groom.log 2>&1
+1 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-8 >> /root/harness/logs/pm-groom.log 2>&1
+1 11 * * 1 /root/harness/bin/hub-lease.sh check && /root/harness/bin/pm-groom.sh project-6-os >> /root/harness/logs/pm-groom.log 2>&1

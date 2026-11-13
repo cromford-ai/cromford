@@ -29,6 +29,7 @@
 # rc 0   sent now, or already sent for this akey
 # rc 1   Telegram refused or did not answer (nothing recorded; the caller retries)
 # rc 2   no token or no target (ONE ALERTS line a day each; nothing is lost)
+#        (no token also prints the cause and the fix on stderr, BH-8953)
 # rc 3   the jobs ledger did not answer (nothing sent without the dedupe read)
 # rc 64  usage: an empty akey or a blank text
 #
@@ -117,10 +118,16 @@ if [[ $TGT == */* ]]; then
 fi
 
 # 3. The token.
+# BH-8953: the bot token lives on the hub only (the fleet:telegram envelope), so
+# a send from a box is a placement bug. Say the cause and the fix on stderr and
+# in archie.log, never quietly; the line names the variable, never a value.
 TOK="${TELEGRAM_BOT_TOKEN:-}"
 if [ -z "$TOK" ]; then
+  why="archie-tg-send: no TELEGRAM_BOT_TOKEN on $(hostname); the bot token lives on the hub only (BH-8953); run this send from a hub lane (cron/boxes/hub.d or # @box hub); nothing sent for $AKEY"
+  printf '%s\n' "$why" >&2
+  log "$why"
   command -v _lg_alert_once >/dev/null 2>&1 && _lg_alert_once archie-tg-token \
-    "archie: TELEGRAM_BOT_TOKEN is not set in env/global.env on $(hostname); Archie messages stay queued until it is"
+    "archie: TELEGRAM_BOT_TOKEN is not set on $(hostname); the bot token lives on the hub only (BH-8953), so run this send from a hub lane; nothing was sent"
   done_rc 2
 fi
 
