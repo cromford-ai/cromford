@@ -5849,13 +5849,12 @@ br_fix_round() {
     cilog=$(br_ci_log "$slug" "$head" "$(mc_num_of_url "$url" 2>/dev/null)")
     [ -n "$cilog" ] && brief="$brief"$'\n\n'"THE FAILING CI JOBS ON THIS HEAD (tail of each failed job's log):"$'\n'"$cilog"
   fi
+  command -v brfr_pre >/dev/null 2>&1 && brfr_pre "$p" "$ck" "$rkey" "$reason" "$url" "$slug" "$wt" "${head:-}" "$rec" "$tkey" "$n" && return 0   # BH-9472: a ci-red test that is green here is NOT REPRODUCED, no agent call
   # >>> red checks brief (BH-7241) — mst_red_brief, bin/lib/mc-stuck-timers.sh
   command -v mst_red_brief >/dev/null 2>&1 && brief="$brief$(mst_red_brief "$slug#$(mc_num_of_url "$url" 2>/dev/null)" "${head:-}")"
   # <<< red checks brief
   # >>> eject runs brief (BH-6000)
-  # A queue-ejected-twice park: the two failing merge-queue batch runs the
-  # conductor handed over (mc_eject_fix_now). They are the evidence; the PR's
-  # own head CI is green by construction (the queue only takes green heads).
+  # A queue-ejected-twice park: the two failing batch runs from mc_eject_fix_now are the evidence (the queue only takes green heads).
   if [ "$reason" = queue-ejected-twice ] && ejruns=$(br_eject_runs "$url" "${head:-}"); then
     brief="$brief"$'\n\n'"THE MERGE QUEUE EJECTED THIS PR TWICE. Its batch build (this branch merged onto current main together with the PRs queued ahead of it) failed both times, while this branch's own checks are green. Open these failing batch runs first; fixing what they show is the job:"$'\n'"$ejruns"
   fi
@@ -6062,6 +6061,7 @@ $live$brief"
     else echo "== ci-local =="; echo "CI_LOCAL_EXIT: skipped (bin/lib/ci-local-verify.sh not on this box)"; fi
     # <<< br ci-local verify
     command -v br_sg_verify >/dev/null 2>&1 && br_sg_verify "$wt" "origin/${mref:-main}" "$ST/$p/$ck.selection-gate" "$p"   # BH-8062
+    command -v brfr_verify >/dev/null 2>&1 && ! brfr_verify "$wt" "$ST/$p/$ck" && vrc=1   # BH-9472: the reproduced CI test, re-run on the round's tree; still-red or could-not-run refuses the push
   } > "$out" 2>&1
   grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]|SELECTION_GATE_EXIT: 1' "$out" && vrc=1
   grep -q '^CI_LOCAL_EXIT: 1' "$out" && { vrc=1; say "$p/$rkey [$reason]: the CI lint steps are red on the round's head ($(grep -c '^CI-LOCAL ' "$out") finding line(s), see $out) — not pushed"; }

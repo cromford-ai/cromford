@@ -1,0 +1,42 @@
+{
+  "libs": [
+    {
+      "id": "fixround-repro",
+      "file": "bin/lib/fixround-repro.sh",
+      "note": "BH-9472 (BH-9285 Fix 4): a ci-red fix round runs the failing CI test files on the box (CI locale, throwaway Postgres, CI_LOCAL_BUDGET_S) before the agent call. Green here = NOT REPRODUCED: no agent call, no push, one PR comment, one counted fix round. Red here = the round runs and pushes only after the same files pass on its tree. bin/blocked-resolver.d/bh-9472-fixround-repro.sh calls it; tests/fixround-repro.bh-9472-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "FIXROUND_REPRO_GATE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "flag",
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = a ci-red fix round reproduces the failing CI test before the agent call and pushes only after it passes here. 0 = off: every fix round runs as before. Any other answer is this default. Read by bin/lib/fixround-repro.sh (frr_on) with no literal."
+        },
+        {
+          "env": "FIXROUND_REPRO_LOG_MAX_KB",
+          "type": "int",
+          "default": 2048,
+          "min": 1,
+          "max": 65536,
+          "unit": "KiB",
+          "required": false,
+          "note": "The tail of each failed CI job log that is read for FAIL lines. A FAIL line before the tail is not read: that job then names no test file and the round runs as before (never a false NOT REPRODUCED). Read by bin/lib/fixround-repro.sh (_frr_log_max_kb); 2048 is its documented last fallback."
+        },
+        {
+          "env": "FIXROUND_REPRO_VERIFY_TAIL_BYTES",
+          "type": "int",
+          "default": 4000,
+          "min": 1,
+          "max": 1048576,
+          "unit": "bytes",
+          "required": false,
+          "note": "The tail of a still-red repro-verify log that goes into the round's verify output (fix-verify.txt, which the next round's brief reads). Read by bin/lib/fixround-repro.sh (frr_verify_tail_bytes); 4000 is its documented last fallback."
+        }
+      ]
+    }
+  ]
+}
