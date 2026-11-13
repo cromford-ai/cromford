@@ -40,7 +40,8 @@ export function redactTokens(s) {
     .replace(/gh[pousr]_[0-9]+_[A-Za-z0-9._-]{20,}/g, "<redacted:github-token>")
     .replace(/gh[pousr]_[A-Za-z0-9]{30,}/g, "<redacted:github-token>")
     .replace(/github_pat_[A-Za-z0-9_]{22,}/g, "<redacted:github-token>")
-    .replace(/x-access-token:[^@\s]+@/g, "x-access-token:<redacted:github-token>@");
+    .replace(/x-access-token:[^@\s]+@/g, "x-access-token:<redacted:github-token>@")
+    .replace(/sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}/g, "<redacted:anthropic-key>");
 }
 
 // The turn body, validated. Returns { error } naming the first bad field, or { row }.

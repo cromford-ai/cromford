@@ -17,7 +17,7 @@ import { invalidateSettings, settingsRows } from "../lib/settings-cache.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
 import { retiredModeRefusal } from "../lib/retired-mode-values.js";
 import {
-  PROTECTED_HUMAN_KEYS, PROTECTED_PREFIXES, SERVICE_MANAGED_KEYS, humanTokenOk, isProtectedSetting, protectedMode, settingProof,
+  BILLING_PREFIXES, PROTECTED_HUMAN_KEYS, PROTECTED_PREFIXES, SERVICE_MANAGED_KEYS, humanTokenOk, isProtectedSetting, protectedMode, settingProof,
   settingSigMessage, settingSigMessageV2, sigKeyOf,
 } from "./verdicts.js";
 import {
@@ -152,6 +152,28 @@ async function effectiveLead(env, key, row) {
   }
   console.warn(`[settings] BH-3905 unproven ${key} (${why}): answering 409`);
   return { kind: "conflict" };
+}
+
+// BH-9334: the allowed values of the BILLING_PREFIXES rows. Enums, not knobs.
+// The project segment holds no dot, like the bash reader's project name.
+const BILLING_ROWS = {
+  "claude_auth.": { values: ["oauth", "api-key"], error: "claude_auth.<project> must be oauth or api-key" },
+  "runner_lock.": { values: ["claude"], error: "runner_lock.<project> must be claude" },
+};
+const BILLING_PROJECT_RE = /^[a-z0-9_-]+$/;
+
+// null when the PUT may go on, else { status, error }.
+function billingRefusal(key, value, human) {
+  const pre = BILLING_PREFIXES.find((p) => key.startsWith(p));
+  if (!pre) return null;
+  const rule = BILLING_ROWS[pre];
+  if (!BILLING_PROJECT_RE.test(key.slice(pre.length)) || !rule.values.includes(value)) {
+    return { status: 400, error: rule.error };
+  }
+  if (!human) {
+    return { status: 403, error: `${key} changes billing and vendor routing and needs the human verdict token (x-human-verdict-token); use bin/protected-setting.sh` };
+  }
+  return null;
 }
 
 // Is `to` looser than `from` (the current value as judged; null = no row,
@@ -440,6 +462,12 @@ export const routes = [
           return json(403, { error: `${key} client -> ${value} switches off the client approval gate and needs the human verdict token (x-human-verdict-token)`, key });
         }
       }
+      // BH-9334: claude_auth.<project> / runner_lock.<project>. A value outside
+      // the list is 400 with or without the token, and the error never echoes
+      // the value (a pasted API key must not come back). A valid value without
+      // the human token is 403, either direction. Both before any DB touch.
+      const billing = billingRefusal(key, value, humanTokenOk(req, env));
+      if (billing) return json(billing.status, { error: billing.error, key });
       // BH-4090: a bearer write that LOOSENS a lead_* row needs the human token,
       // judged against the effective current value, so a raw D1 write cannot be
       // laundered by a "tightening" on top of it. Not mode-gated. Before every write.

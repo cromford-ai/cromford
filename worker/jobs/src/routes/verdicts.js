@@ -196,13 +196,20 @@ async function firstRowBySig(env, repo, pr, rows) {
 // setting_sigs row (BH-3905) and the v1 `<key>.sig` row (routes/settings.js).
 export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mode"];
 
+// BH-9334: claude_auth.<project> (oauth | api-key) decides how a project pays
+// for Claude, and runner_lock.<project> (claude) decides which vendors see the
+// project's code. Signed like the rows below, and every write needs the human
+// verdict token, whatever the value (routes/settings.js PUT).
+export const BILLING_PREFIXES = ["claude_auth.", "runner_lock."];
+
 // BH-3905: the key families that are signed into setting_sigs on every
 // accepted PUT too: lead_authority.* and risk_tier.*. A code constant, not a
 // settings row: a row would let a D1 writer un-protect a key. BH-5022:
 // risk_tier.* decides which PRs merge with no review at all, so its globs,
 // limits and modes are signed the same way. BH-9212: archie.merge.* is Archie's
 // merge authority; a bearer may only tighten it (routes/settings.js leadLoosening).
-export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier.", "archie.merge."];
+// BH-9334: BILLING_PREFIXES join them. Each write needs the human token.
+export const PROTECTED_PREFIXES = ["lead_authority.", "risk_tier.", "archie.merge.", ...BILLING_PREFIXES];
 
 // Settings rows a service writes itself, never the generic PUT /api/settings:
 // any box holds the bearer, so a box could swap the key a caller seals secrets

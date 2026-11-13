@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/lib/token-redact.sh — scrub GitHub-token-shaped strings out of text
+# bin/lib/token-redact.sh — scrub GitHub-token- and Anthropic-key-shaped strings out of text
 # before it lands in a build file a reader or a model sees (BH-6672).
 # Sourced, never executed. Defines functions and does nothing else.
 #
@@ -14,6 +14,10 @@
 #                                           2026-10-14)
 #   github_pat_ + 22 or more [A-Za-z0-9_]   fine-grained PAT
 #   x-access-token:<anything>@              the credential in a clone URL
+# BH-9334: the Anthropic API key. It becomes `<redacted:anthropic-key>`:
+#   sk-ant-api + 2 digits + - + 20 or more [A-Za-z0-9_-]
+# The OAuth token shape (sk-ant-oat...) is NOT matched here: its handling is
+# unchanged. Neither is sk-ant-admin..., nor a key body under 20 characters.
 # NOT a token shape: an identifier with an underscore after letters
 # (ghs_fixture_installation_token, gh_app_only_for), a bare prefix, and a run
 # under the floor. sed -E only, no awk interval: mawk lacks it.
@@ -30,7 +34,8 @@ token_redact() {
     -e 's/gh[pousr]_[0-9]+_[A-Za-z0-9._-]{20,}/<redacted:github-token>/g' \
     -e 's/gh[pousr]_[A-Za-z0-9]{30,}/<redacted:github-token>/g' \
     -e 's/github_pat_[A-Za-z0-9_]{22,}/<redacted:github-token>/g' \
-    -e 's/x-access-token:[^@[:space:]]+@/x-access-token:<redacted:github-token>@/g'
+    -e 's/x-access-token:[^@[:space:]]+@/x-access-token:<redacted:github-token>@/g' \
+    -e 's/sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}/<redacted:anthropic-key>/g'
 }
 
 token_redact_file() {

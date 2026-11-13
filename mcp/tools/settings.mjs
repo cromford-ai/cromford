@@ -49,9 +49,31 @@ const registryOf = (data) => {
   return reg && Array.isArray(reg.lanes) && Array.isArray(reg.libs) ? reg : null;
 };
 
+// BH-9334: per-project rows that are not lane or lib knobs. `<name>.<project>`
+// resolves here, before the registry. Both are signed settings the worker takes
+// only with the human verdict token, which this proxy cannot send, so they are
+// known and typed but never settable from here.
+const SIGNED_NOTE = 'signed setting; write it with bin/protected-setting.sh (human verdict token)';
+const PROJECT_KNOBS = Object.freeze({
+  claude_auth: Object.freeze({ type: 'enum', values: Object.freeze(['oauth', 'api-key']), default: 'oauth', zero_means: null }),
+  runner_lock: Object.freeze({ type: 'enum', values: Object.freeze(['claude']), default: null, zero_means: 'no lock: the full model ladder' }),
+});
+
+function projectKnob(key) {
+  const parts = key.split('.');
+  if (parts.length !== 2 || !parts[1] || !Object.hasOwn(PROJECT_KNOBS, parts[0])) return null;
+  const k = PROJECT_KNOBS[parts[0]];
+  return {
+    owner: parts[0], kind: 'setting', env: parts[0], type: k.type, values: [...k.values], default: k.default,
+    min: null, max: null, unit: null, zero_means: k.zero_means, note: SIGNED_NOTE, settable: false, project_scoped: true,
+  };
+}
+
 // `<lane|lib>.<id>.<env>` or `<lane|lib>.<id>.<project>.<env>` → the knob,
 // else null. Lane and lib ids hold no dots, so the split is exact.
 function resolveKnob(reg, key) {
+  const pk = projectKnob(key);
+  if (pk) return pk;
   if (!reg) return null;
   const parts = key.split('.');
   if (parts.length !== 3 && parts.length !== 4) return null;
@@ -92,6 +114,9 @@ function badValue(knob, raw) {
   } else if (knob.type === 'float' || knob.type === 'number') {
     n = Number(v);
     if (v === '' || !Number.isFinite(n)) return `value_type: ${knob.env} wants ${knob.type}`;
+  } else if (knob.type === 'enum') {
+    const vals = Array.isArray(knob.values) ? knob.values : [];
+    return vals.includes(v) ? null : `value_not_allowed: ${v} (one of: ${vals.join(', ')})`;
   } else {
     return v === '' ? `value_type: ${knob.env} wants ${knob.type}` : null;
   }
@@ -188,7 +213,7 @@ async function settingSet(a, ctx) {
   if (!knob && !forced) {
     return fail(`unknown_knob: ${a.key} (pass force: true to write a key the knob registry does not list)`);
   }
-  if (knob && !knob.settable) return fail(`not_settable: ${knob.env}`);
+  if (knob && !knob.settable) return fail(`not_settable: ${knob.env}${knob.kind === 'setting' ? ` (${knob.note})` : ''}`);
   if (knob) {
     const bad = badValue(knob, a.value);
     if (bad) return fail(bad);
