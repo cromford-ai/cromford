@@ -19,7 +19,7 @@
 #   EVIDENCE_BLOCK EVIDENCE_GATE_ENFORCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C EV_COUNTS
 #   EV_ENFORCE EV_I EV_N EV_R EV_RC EV_T EV_WHY HARNESS HB_NOT HB_OUTCOME HB_PROMPT
 #   HB_RETRIED HB_WHY HEADBOUND_ENFORCE HEADBOUND_N HEADBOUND_NOW HEADBOUND_REREVIEW
-#   HEADBOUND_SCOPE HEADBOUND_SHA HM_D HM_HOTFIX HM_RC HM_W HOTFIX HOTFIX_ISSUE JOB_ID
+#   HEADBOUND_SCOPE HEADBOUND_SHA HM_BM HM_D HM_HOTFIX HM_RC HM_VERDICT HM_W HOTFIX HOTFIX_ISSUE JOB_ID
 #   KEY KIND_D KIND_D_ENFORCE KIND_D_MISS KIND_D_REPRO KIND_GATE_ENFORCE MERGE_SHA
 #   MIG_NOTE MQ_COM MQ_ENQUEUED MQ_PRNUM MRG_FLAG PDGOUT PDGRC PRNUM PROJECT
 #   PR_CREATE_ERR PR_URL QA_LAST QA_NOTE QA_SCREENS QA_SHOTS RB_MFLAG RB_PIN REBASE_NOTE
@@ -32,7 +32,7 @@
 # Writes: BD_NOTE BD_PR BD_PRNUM BD_RLINE BD_TIER BD_VERDICT BGOUT BG_HEAD BG_ISSUE BG_NUM
 #   BUILDER_DIRECT_META CONDUCTOR_OWNS_MERGES EVIDENCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C
 #   EV_COUNTS EV_I EV_R EV_T EV_WHY HB_NOT HB_OUTCOME HB_PROMPT HB_RETRIED HEADBOUND_N
-#   HEADBOUND_NOW HEADBOUND_SCOPE HEADBOUND_SHA HM_HOTFIX HM_RC IFS KIND_D KIND_D_MISS
+#   HEADBOUND_NOW HEADBOUND_SCOPE HEADBOUND_SHA HM_BM HM_HOTFIX HM_RC HM_VERDICT IFS KIND_D KIND_D_MISS
 #   KIND_D_REPRO MERGE_NOTE MERGE_SHA MQ_COM MQ_ENQUEUED MQ_PRNUM PDGOUT PRNUM PR_URL
 #   QA_LAST QA_NOTE QA_SCREENS QA_SHOTS RB_MFLAG RB_PIN REPAIRS REPAIR_MAX SCOPE_BASE
 #   SCOPE_COUNTS SCOPE_HEAD_NOW SCOPE_N SCOPE_OUT SCOPE_PROT SCOPE_SCORED_HEAD
@@ -812,9 +812,31 @@ if [ "$HM_HOTFIX" = 0 ]; then
   fi
 fi
 if command -v hotfix_lane_on >/dev/null 2>&1 && [ "$(hotfix_lane_on "$HARNESS")" = 0 ]; then HM_HOTFIX=0; fi
-if [ "$HM_HOTFIX" = 1 ] && [ -n "$PR_URL" ] && [ -x "$HARNESS/bin/hotfix-migrate.sh" ]; then
-  echo "$(STAMP) [$PROJECT/$KEY] HOTFIX MIGRATE stage" >> "$BUILD/pipeline.log"
+# BEFORE-MERGE (BH-9403): a NORMAL PR of a project whose settings row
+# hotfix_migrate.conf.<project> has "before_merge":1 runs the same stage, but
+# only when this build's own review verdict is APPROVE and that verdict judged
+# the head the worktree holds now. The hotfix kill flag above zeroes HM_HOTFIX
+# only; before-merge has its own switch, the row's before_merge key.
+HM_BM=0; HM_VERDICT="${VERDICT_WORD:-}"
+if [ "$HM_HOTFIX" = 0 ] && [ -r "$HARNESS/bin/lib/hotfix-migrate-knobs.sh" ]; then
+  # shellcheck source=bin/lib/hotfix-migrate-knobs.sh
+  command -v hmk_before_merge >/dev/null 2>&1 || . "$HARNESS/bin/lib/hotfix-migrate-knobs.sh" 2>/dev/null
+  if command -v hmk_before_merge >/dev/null 2>&1 && hmk_before_merge "$PROJECT"; then
+    if [ -z "$HM_VERDICT" ] && command -v verdict_is >/dev/null 2>&1; then
+      HM_VERDICT=BLOCK; verdict_is APPROVE -L "$BUILD/review.md" 2>/dev/null && HM_VERDICT=APPROVE
+    fi
+    if [ "$HM_VERDICT" = APPROVE ] && [ -n "${HEADBOUND_SHA:-}" ] \
+       && [ "$HEADBOUND_SHA" = "$(git -C "$WT" rev-parse HEAD 2>/dev/null)" ]; then
+      HM_BM=1
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] BEFORE-MERGE MIGRATE: skipped (verdict ${HM_VERDICT:-none}, reviewed head $(printf %.8s "${HEADBOUND_SHA:-}"))" >> "$BUILD/pipeline.log"
+    fi
+  fi
+fi
+if { [ "$HM_HOTFIX" = 1 ] || [ "$HM_BM" = 1 ]; } && [ -n "$PR_URL" ] && [ -x "$HARNESS/bin/hotfix-migrate.sh" ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] HOTFIX MIGRATE stage (before-merge $HM_BM)" >> "$BUILD/pipeline.log"
   PR_URL="$PR_URL" WT="$WT" BRANCH="$BRANCH" BASE="$BASE" SLUG="$SLUG" \
+    HM_VERDICT="$HM_VERDICT" HM_REVIEWED_SHA="${HEADBOUND_SHA:-}" HM_BEFORE_MERGE="$HM_BM" \
     "$HARNESS/bin/hotfix-migrate.sh" "$PROJECT" "$BUILD" > "$BUILD/hotfix-migrate.txt" 2>&1
   HM_RC=$?
   case "$HM_RC" in
@@ -823,7 +845,9 @@ if [ "$HM_HOTFIX" = 1 ] && [ -n "$PR_URL" ] && [ -x "$HARNESS/bin/hotfix-migrate
     4) : ;;   # no migration files in this PR — the stage has nothing to say
     *) case "$HM_RC" in
          2)  HM_W=flagged ;;
-         3)  HM_W=hold ;;
+         3)  HM_W=hold
+             # BH-9403: a before-merge stop before any dispatch is `retry`
+             [ "$(jq -r '.decision // ""' "$BUILD/hotfix-migrate.json" 2>/dev/null)" = retry ] && HM_W=retry ;;
          5)  HM_W=no-path ;;
          75) HM_W=busy ;;
          *)  HM_W=failed ;;

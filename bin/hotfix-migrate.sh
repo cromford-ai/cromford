@@ -19,7 +19,10 @@
 #   usage: hotfix-migrate.sh <project> <build-dir>
 #   exit 0 applied or deferred-to-deploy | 2 gate FLAGGED the SQL | 3 hold (checks
 #   not green, a failure word, a proof that would not post) | 4 no migration files
-#   here | 5 no-path, neither shape | 75 busy, we never wait.
+#   here, or a before-merge PR with no workflow to dispatch (HM_BEFORE_MERGE=1: one
+#   alert, no proof) | 5 no-path, neither shape | 75 busy, we never wait.
+#   HM_BEFORE_MERGE=1 (run-build's stage block, BH-9403) runs it for a NORMAL PR of
+#   a project whose hotfix_migrate.conf.<project> row has "before_merge":1.
 set -uo pipefail
 HARNESS="${HARNESS:-/root/harness}"
 
@@ -29,7 +32,7 @@ HARNESS="${HARNESS:-/root/harness}"
 # passes none, so hm_main resolves whatever is missing. Seeded here, never blanked.
 PROJECT=""; BUILD=""; FP=""; FILES=(); LEDGER=""; MODE=""; KEY=""
 SLUG="${SLUG:-}"; PR_URL="${PR_URL:-}"; BRANCH="${BRANCH:-}"; WT="${WT:-}"; BASE="${BASE:-}"
-HM_COMMENT_ID=""
+HM_COMMENT_ID=""; HM_GATE_NOTE=""
 
 # shellcheck source=bin/lib/env-path.sh
 . "$HARNESS/bin/lib/env-path.sh" 2>/dev/null \
@@ -37,6 +40,9 @@ HM_COMMENT_ID=""
 [ -f "$HARNESS/bin/lib/gh-repo-token.sh" ] && . "$HARNESS/bin/lib/gh-repo-token.sh"
 [ -f "$HARNESS/bin/lib/gh-ci-read.sh" ] && . "$HARNESS/bin/lib/gh-ci-read.sh"
 [ -f "$HARNESS/bin/lib/migrations-glob.sh" ] && . "$HARNESS/bin/lib/migrations-glob.sh"
+# The per-project row hotfix_migrate.conf.<project> (BH-9403): read in hm_main
+# AFTER the env files, so a row key beats the env knob of the same meaning.
+[ -f "$HARNESS/bin/lib/hotfix-migrate-knobs.sh" ] && . "$HARNESS/bin/lib/hotfix-migrate-knobs.sh"
 
 # hm_checks_red / hm_checks_unreadable <file>: `gh pr checks` exits 1 for two
 # opposite reasons, and conflating them lets a weaker secondary read overrule an
@@ -117,6 +123,63 @@ hm_wait_checks() {
       return 1
     fi
     [ "$remain" -gt 30 ] && remain=30
+    sleep "$remain"
+  done
+}
+
+# hm_wait_checks_except: hm_wait_checks for a PR whose migration-ledger gate is
+# itself a required check (BH-9403). That gate is red until the SQL is applied,
+# and the apply is what this stage is about to do, so waiting on it never ends.
+# The checks named in HMK_GATE_CHECKS (row mc.migration_gate_checks.<project>,
+# EXACT names) are dropped from the read, and the Actions runs of the workflow
+# files in HMK_GATE_WORKFLOWS are dropped from the fallback.
+#   green  every remaining row is pass/skipping, and at least one row remains
+#   red    a remaining row failed -> rc 1 at once
+#   wait   anything else, polled every HOTFIX_QUIET_POLL seconds (default 30)
+#          until HOTFIX_CI_WAIT; no answer by then is NOT green.
+hm_wait_checks_except() {
+  local wait deadline poll ex gw verdict head runs remain
+  wait="${HOTFIX_CI_WAIT:-1200}"
+  case "$wait" in ''|*[!0-9]*) wait=1200 ;; esac
+  [ "$wait" -ge 1 ] || wait=1
+  poll="${HOTFIX_QUIET_POLL:-30}"
+  case "$poll" in ''|*[!0-9]*) poll=30 ;; esac
+  [ "$poll" -ge 1 ] || poll=1
+  deadline=$(( $(date +%s) + wait ))
+  ex=" ${HMK_GATE_CHECKS:-} "; gw=" ${HMK_GATE_WORKFLOWS:-} "
+  head=$(git -C "$WT" rev-parse HEAD 2>/dev/null)
+  while :; do
+    gh pr checks "$PR_URL" --required > "$BUILD/hotfix-checks.txt" 2>&1
+    verdict=$(awk -F'\t' -v ex="$ex" '
+      NF >= 2 { n++
+        if ($1 != "" && index(ex, " " $1 " ")) next
+        k++; s = tolower($2)
+        if (s ~ /^(fail|failure|cancel|cancelled|timed_out|action_required|startup_failure)$/) r++
+        else if (s ~ /^(pass|success|skipping|skipped|neutral)$/) g++ }
+      END { if (r) print "red"; else if (k && g == k) print "green"; else if (n) print "wait"; else print "none" }' \
+      "$BUILD/hotfix-checks.txt")
+    if [ "$verdict" = none ] && [ -n "$head" ] && command -v gh_ci_api >/dev/null 2>&1; then
+      runs=$(gh_ci_api "$SLUG" "repos/$SLUG/actions/runs?head_sha=$head&per_page=20" 2>/dev/null)
+      verdict=$(jq -r --arg gw "$gw" '
+        [(.workflow_runs // [])[] | select(((.path // "") | split("/") | last) as $b
+          | ($b != "" and ($gw | contains(" " + $b + " "))) | not)] as $r
+        | if ($r | length) == 0 then "wait"
+          elif any($r[]; .conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required" or .conclusion == "startup_failure") then "red"
+          elif any($r[]; .status != "completed") then "wait"
+          elif all($r[]; .conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral") then "green"
+          else "red" end' <<<"${runs:-}" 2>/dev/null)
+      [ -n "$verdict" ] || verdict=wait
+    fi
+    case "$verdict" in
+      green) echo "checks green: every required check outside the migration gate (${HMK_GATE_CHECKS:-}${HMK_GATE_WORKFLOWS:+ $HMK_GATE_WORKFLOWS}) passed" >> "$BUILD/hotfix-checks.txt"; return 0 ;;
+      red)   echo "checks not green: a required check outside the migration gate failed" >> "$BUILD/hotfix-checks.txt"; return 1 ;;
+    esac
+    remain=$(( deadline - $(date +%s) ))
+    if [ "$remain" -le 0 ]; then
+      echo "checks not green: no passing check outside the migration gate within ${wait}s" >> "$BUILD/hotfix-checks.txt"
+      return 1
+    fi
+    [ "$remain" -gt "$poll" ] && remain="$poll"
     sleep "$remain"
   done
 }
@@ -319,6 +382,8 @@ hm_main() {
   [ -f "$henv/global.env" ] && . "$henv/global.env"
   [ -f "$henv/$PROJECT.env" ] && . "$henv/$PROJECT.env"
   set +a
+  # The settings row beats the env file (BH-9403). No row: nothing changes.
+  if declare -F hmk_conf >/dev/null 2>&1; then hmk_conf "$PROJECT"; fi
 
   LEDGER="$BUILD/hotfix-migrate.json"
   KEY=$(basename "$BUILD"); KEY="${KEY#"$PROJECT"-}"; KEY="${KEY%-*}"
@@ -394,12 +459,27 @@ hm_main() {
   wf="${HOTFIX_MIGRATE_GLOB:-prisma/migrations/manual/*.sql}"
   case "$MODE" in
     endpoint) globs=("${eps[@]}") ;;
-    workflow) globs=("$wf") ;;
+    workflow) globs=("$wf")
+              # The row's glob (project-6: prisma/sql/*.sql), IN ADDITION to the
+              # env glob, with `*` kept inside its one directory.
+              if [ -n "${HMK_GLOB:-}" ] && [ "$HMK_GLOB" != "$wf" ]; then globs+=(":(glob)$HMK_GLOB"); fi ;;
     none)     globs=("${eps[@]}" "$wf") ;;
   esac
   mapfile -t FILES < <(git -C "$WT" diff --name-only --diff-filter=A "$BASE"...HEAD -- "${globs[@]}" 2>/dev/null)
   if [ "${#FILES[@]}" -eq 0 ]; then
     echo "hotfix-migrate: $BRANCH adds no migration files (looked under: ${globs[*]}; endpoint glob from $epsrc). Nothing to do" >&2
+    return 4
+  fi
+
+  # A before-merge PR (not a hotfix) of a project whose row names no usable
+  # workflow has no way to apply its SQL before the merge. That is a config gap,
+  # not a decision about this SQL: one alert, no proof, and rc 4 so the build's
+  # tier is left alone and the PR takes the ordinary path.
+  if [ "${HM_BEFORE_MERGE:-0}" = 1 ] && [ "$MODE" = none ]; then
+    local ar="$HARNESS/bin/alert-line.sh"
+    [ -x "$ar" ] && HARNESS="$HARNESS" "$ar" --id "hotfix-migrate-no-workflow-$PROJECT" --project "$PROJECT" \
+      "hotfix-migrate: $PROJECT has before_merge on but no usable workflow in hotfix_migrate.conf.$PROJECT; $PR_URL adds SQL and nothing applied it before the merge" >/dev/null 2>&1
+    echo "hotfix-migrate: before-merge is on for $PROJECT but there is no workflow to dispatch. Nothing applied" >&2
     return 4
   fi
 
@@ -439,6 +519,15 @@ hm_main() {
   # so this exit sits before the mode dispatch on purpose.
   "$HARNESS/bin/check-migration-appliable.sh" "$PROJECT" "$WT" "${FILES[@]}" > "$BUILD/hotfix-gate.txt" 2>&1
   local grc=$?
+  HM_GATE_NOTE=""
+  if [ "$grc" = 1 ] && [ "$MODE" = workflow ] && [ "${HMK_LOCAL_GATE:-strict}" = advisory ]; then
+    # local_gate=advisory: the workflow's own allow-list runs from main and
+    # decides. Our gate's report rides in the proof, and a refusal comes back as
+    # the outcome word `refused`.
+    HM_GATE_NOTE=$(printf 'The local appliability gate flagged these; the workflow'"'"'s allow-list decides:\n\n```\n%s\n```' \
+      "$(head -c 1500 "$BUILD/hotfix-gate.txt")")
+    grc=0
+  fi
   if [ "$grc" = 1 ]; then
     local body; body=$(mktemp)
     { printf 'We did not apply this hotfix: the appliability gate flagged these statements, and the endpoint'"'"'s classifier would refuse them anyway.\n\n'

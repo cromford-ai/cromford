@@ -21,6 +21,17 @@
 mc_mig_hold() {
   [ "${STATE:-}" = READY ] || return 0
   [ -n "${P:-}" ] && [ -n "${KEY:-}" ] && [ -n "${HEAD:-}" ] && [ -n "${SLUG:-}" ] && [ -n "${NUM:-}" ] || return 0
+  # BEFORE-MERGE PROOF (BH-9403, fragment bh-9403-before-merge-proof.sh): a
+  # `hold` proof parks the row. An `ok` proof is the stage's own word, so it does
+  # NOT replace the production ledger: when this project has a migration-hold
+  # row, mmh_decide below still asks production, and a file production does not
+  # hold is HELD_MIGRATION whatever the proof says (BH-9403 refute review).
+  if command -v mc_bm_proof >/dev/null 2>&1; then
+    mc_bm_proof
+    [ "${MC_BM_APPLIED:-0}" = 1 ] && \
+      mc_log "$KEY migration hold: the before-merge workflow says applied on ${HEAD:0:8} (proof fp matches); production decides"
+    [ "${STATE:-}" = READY ] || return 0
+  fi
   command -v mmh_decide >/dev/null 2>&1 || return 0
   command -v mc_step >/dev/null 2>&1 && mc_step migration-hold
   mmh_decide "$P" "$SLUG" "$NUM" "$KEY" "$HEAD"

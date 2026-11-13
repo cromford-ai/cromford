@@ -70,7 +70,14 @@ case "\$*" in
   "workflow run"*)
     printf '%s\n' "\$*" >> "$T/dispatch.log"
     exit "\$(cat "$T/dispatch.rc" 2>/dev/null || echo 0)" ;;
-  "run list"*) cat "$T/runs.json" 2>/dev/null || echo '[]'; exit 0 ;;
+  "run list"*)
+    # A dispatched run exists only AFTER its dispatch, as on GitHub: before the
+    # first \`workflow run\` of the case the list holds only the runs that
+    # predate it (the 2000-01-01 neighbours). The lib reads this list once
+    # before its dispatch (BH-9403: a run listed then is never ours).
+    if [ -s "$T/dispatch.log" ]; then cat "$T/runs.json" 2>/dev/null || echo '[]'
+    else jq -c '[.[] | select(.createdAt < "2099")]' "$T/runs.json" 2>/dev/null || echo '[]'; fi
+    exit 0 ;;
   "run watch"*)
     # a run that never settles, so the lib's own \`timeout\` (rc 124) is real
     [ -f "$T/watch.hang" ] && exec sleep infinity

@@ -1308,7 +1308,11 @@ mc_hotfix_proof() {
   # "is this the emergency" (exact whole-name match, the HOTFIX_LABEL knob, the
   # kill flag, the build record's ticket-meta.json); the literal match is the
   # fallback for a tree that has not sourced bin/lib/hotfix-lib.sh.
-  if command -v hotfix_pr_is >/dev/null 2>&1; then
+  # MC_HFP_ANY_LABEL=1 (BH-9403's before-merge fragment, for a normal PR of a
+  # before-merge project) skips ONLY this label gate; everything below is the same.
+  if [ "${MC_HFP_ANY_LABEL:-0}" = 1 ]; then
+    :
+  elif command -v hotfix_pr_is >/dev/null 2>&1; then
     hotfix_pr_is "$csv" "$rec" || { echo n/a; return 0; }
   else
     case ",$csv," in *,hotfix,*) ;; *) echo n/a; return 0 ;; esac
@@ -1369,6 +1373,9 @@ mc_hotfix_proof() {
   case "$dec" in
     applied|deferred-to-deploy) echo ok ;;
     hold|flagged|no-path)       echo hold ;;
+    # retry (BH-9403): a before-merge stop before any dispatch, for a cause a
+    # later run clears. It parks nothing; the PR takes the ordinary path.
+    retry)                      echo stale ;;
     *)                          echo stale ;;
   esac
   return 0

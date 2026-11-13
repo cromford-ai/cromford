@@ -73,6 +73,39 @@ The WORKFLOW shape adds its own, all with defaults, all read inside
 
 A non-integer value falls back to the default, the same way `HOTFIX_CI_WAIT` does.
 
+**Before-merge apply for NORMAL PRs (BH-9403).** The settings row
+`hotfix_migrate.conf.<project>` (one JSON object, read by
+`bin/lib/hotfix-migrate-knobs.sh`) beats the env knobs above. With
+`"before_merge":1` the `# >>> hotfix migrate stage` block also runs the stage for
+a PR that is NOT a hotfix, when this build's verdict is APPROVE and that verdict
+judged the head the worktree holds. Seeded on: `project-6-os` (dispatch
+`migrate-branch.yml` from `main` with `-f file=<basename> -f ref=<branch>`, one
+file per dispatch, an APPROVED review on the reviewed head first) and
+`project-5` (Migrate Manual SQL, `migrate-manual.yml -f file=<path>` from the PR
+branch). No row: hotfix PRs only, as before. Kill switch: `"before_merge":0`.
+The keys and their validation are in the lib's header. In per-file mode
+(`"per_file":1`) the stage reads the run log for one word per file: `applied` /
+`already-applied` go on to the next file; `refused` stops with 0 retries, one
+ALERTS line (`--id hotfix-migrate-refused-<project>-<pr>-<fp12>`) and a `hold`
+proof; `inert` stops with one alert per project per UTC day (the day is in the
+alert id; no state/ file); `failed` stops.
+Those three are terminal for the fingerprint: a re-run never dispatches them.
+Before EVERY dispatch, under the dispatch lock, the stage reads the PR's live
+head and dispatches nothing if it is not the reviewed sha (both projects, every
+file). A stop before any dispatch (checks not green, the quiet window, the
+dispatch lock, a failed dispatch call, the approval POST, a moved head) writes a
+`retry` proof, not `hold`.
+The merge conductor (fragment `bin/merge-conductor.d/bh-9403-before-merge-proof.sh`,
+called from `mc_mig_hold`) reads the proof of a normal PR: an `applied` proof
+is logged and production (`mmh_decide`) still decides; a `hold` proof parks the
+PR BLOCKED_HUMAN, so it gets no merge-queue label; a `retry` proof parks
+nothing, and the PR takes the ordinary path.
+
+| what | how |
+|---|---|
+| the row, the dispatch argv, the approval gate, the per-file loop, the outcome words, the checks wait that ignores the migration gate, the run-build trigger and the conductor proof read, against stubs | `HARNESS_TEST_SANDBOX=1 bash tests/hotfix-migrate-before-merge.bh-9403-test.sh` |
+| a REAL proof | the first add-only project-6 PR after the merge: its proof comment carries the run link; record it in `example-org/project-6#3687` (`docs/notes/2026-11-12-BH-9403-before-merge-apply.md`) |
+
 **What must never regress:**
 
 - **The stage never blocks the PR and never merges.** Its only lever is `TIER`
