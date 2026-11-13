@@ -31,6 +31,7 @@
 // 8 attempts wait at most 7 x D1_RETRY_MAX_MS = 7 s, under the 8 s timeout.
 // D1_RETRY_MAX_MS stays a code constant.
 import { peekSetting } from "./settings-cache.js";
+import { markWrapper, rootDb } from "./db-root.js";
 
 export const D1_RETRY_ATTEMPTS = 5; // fallback for settings row d1_retry.attempts
 export const D1_RETRY_BASE_MS = 100; // fallback for settings row d1_retry.base_ms
@@ -123,7 +124,7 @@ function passThrough(target, prop) {
   return typeof v === "function" ? v.bind(target) : v;
 }
 
-// db is the retryingDb proxy: settings-cache keys its snapshot on it.
+// db is the retryingDb proxy; peekSetting finds the snapshot of its root binding.
 function wrapStatement(stmt, sql, db) {
   if (!stmt || typeof stmt !== "object") return stmt;
   const p = new Proxy(stmt, {
@@ -140,13 +141,14 @@ function wrapStatement(stmt, sql, db) {
   return p;
 }
 
-// The raw binding behind a retryingDb proxy, else db itself. lib/core.js keys
-// its ensureTable/ensureColumns caches on it, so a caller that holds the raw
-// binding and the wrapped env share one cache entry.
+// The raw binding behind every wrapper this worker puts on env.DB (the retry
+// proxy, and the stmt-stats proxy of a sampled request), else db itself
+// (lib/db-root.js, BH-9657). lib/core.js keys its ensureTable/ensureColumns
+// caches on it, so a caller that holds the raw binding and the wrapped env
+// share one cache entry.
 export function rawDb(db) {
-  return rawDbOf.get(db) || db;
+  return rootDb(db);
 }
-const rawDbOf = new WeakMap(); // db proxy -> raw binding
 
 // Memoised per raw binding: ensureTable/ensureColumns, settings-cache and the
 // verdicts modeCache key their caches on env.DB, so a new proxy per request
@@ -173,6 +175,6 @@ export function retryingDb(db) {
     },
   });
   dbProxies.set(db, p);
-  rawDbOf.set(p, db);
+  markWrapper(p, db);
   return p;
 }

@@ -41,7 +41,7 @@ function sqliteDB(db) {
         return { meta: { changes: Number(r.changes) || 0, last_row_id: Number(r.lastInsertRowid) || 0 } };
       },
     });
-    return { ...bindAndRun([]), bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
+    return { ...bindAndRun([]), _sql: sql, _binds: [], bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
   };
   return {
     prepare,

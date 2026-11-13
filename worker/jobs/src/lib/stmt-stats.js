@@ -32,6 +32,8 @@
 // Knobs (settings rows, worker/jobs/schema.d/202611070338-bh-9076-d1-stmt-stats.sql):
 // read with one statement, again when older than d1.stmt_stats_refresh_s.
 
+import { markWrapper } from "./db-root.js";
+
 const KNOB_KEYS = {
   pct: "d1.stmt_stats_sample_pct",
   refreshS: "d1.stmt_stats_refresh_s",
@@ -181,6 +183,7 @@ export function stmtStatsDb(db) {
     },
   });
   statsDbs.set(db, p);
+  markWrapper(p, db); // BH-9657: caches key on the binding under this proxy
   return p;
 }
 

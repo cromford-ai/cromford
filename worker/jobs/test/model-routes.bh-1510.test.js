@@ -32,7 +32,7 @@ function sqliteDB(db) {
     // worker builds them (catalog.js, model-routes.js): each carries its own
     // sql+binds, and D1's batch just runs them in order inside one transaction.
     bound._sql = sql;
-    return { ...bindAndRun([]), bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
+    return { ...bindAndRun([]), _sql: sql, _binds: [], bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
   };
   return {
     prepare,

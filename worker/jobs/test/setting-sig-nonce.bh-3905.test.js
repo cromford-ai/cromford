@@ -7,6 +7,7 @@ import { createHmac } from 'node:crypto';
 import worker from '../src/index.js';
 import * as verdicts from '../src/routes/verdicts.js';
 import { jobsSchemaSql } from './lib/jobs-schema.js';
+import { isEnsureTableBatch } from './lib/ensure-batch.bh-9657.js';
 
 const { PROTECTED_PREFIXES, isProtectedSetting, settingProof, settingSigMessageV2 } = verdicts;
 
@@ -34,7 +35,7 @@ function sqliteDB(db) {
     },
   });
   return {
-    prepare: (sql) => ({ ...bindAndRun(sql, []), bind: (...b) => bindAndRun(sql, b.map((v) => (v === undefined ? null : v))) }),
+    prepare: (sql) => ({ ...bindAndRun(sql, []), _sql: sql, bind: (...b) => bindAndRun(sql, b.map((v) => (v === undefined ? null : v))) }),
     batch: async (stmts) => { const out = []; for (const s of stmts) out.push(await s.run()); return out; },
   };
 }
@@ -174,6 +175,7 @@ test('N6 a seq race answers 409 and writes nothing', async () => {
   const wrap = (d) => ({
     ...d,
     batch: async (stmts) => {
+      if (isEnsureTableBatch(stmts)) return d.batch(stmts); // BH-9657: the race is on the route's write batch
       const n = db.prepare("SELECT COALESCE(MAX(seq),0)+1 AS n FROM setting_sigs WHERE key='human_verdict_mode'").get().n;
       db.prepare("INSERT INTO setting_sigs (key, seq, sig, actor, at) VALUES ('human_verdict_mode', ?, 'other', 'x', 'now')").run(n);
       return d.batch(stmts);
@@ -186,7 +188,7 @@ test('N6 a seq race answers 409 and writes nothing', async () => {
   assert.equal(setting(db, 'human_verdict_mode.sig'), null);
   assert.equal(sigCount(db), 1);
   // any other batch failure is not a 409
-  const boom = (d) => ({ ...d, batch: async () => { throw new Error('D1_ERROR: network lost'); } });
+  const boom = (d) => ({ ...d, batch: async (stmts) => { if (isEnsureTableBatch(stmts)) return d.batch(stmts); throw new Error('D1_ERROR: network lost'); } });
   const r2 = await putSetting(db, 'human_verdict_mode', 'enforce', { human: HUMAN, wrap: boom });
   assert.equal(r2.status, 503, JSON.stringify(r2.body));
 });

@@ -1132,7 +1132,11 @@ export async function ensureTable(env, table) {
   if (!per) { per = new Map(); createdTablesReady.set(rawDb(db), per); }
   if (per.has(table)) return per.get(table);
   const p = (async () => {
-    for (const sql of CREATED_TABLES[table] || []) await db.prepare(sql).run();
+    // BH-9657: one D1 call for the whole create when the binding can batch.
+    // The root binding is asked: the retry and stats proxies always expose batch.
+    const sqls = CREATED_TABLES[table] || [];
+    if (sqls.length > 1 && typeof rawDb(db).batch === "function") await db.batch(sqls.map((sql) => db.prepare(sql)));
+    else for (const sql of sqls) await db.prepare(sql).run();
   })();
   per.set(table, p);
   // Same rule as ensureColumns: a failed create is not cached as "done".

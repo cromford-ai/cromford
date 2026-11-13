@@ -1,4 +1,5 @@
 import worker from '../../src/index.js';
+import { isEnsureTableBatch, runOneByOne } from './ensure-batch.bh-9657.js';
 
 export const SECRET = 'test-secret';
 export const now = Date.now();  // determinism: ok the single anchor; every fixture below is iso(msAgo) off it
@@ -582,11 +583,15 @@ export function fakeDB(state) {
     }),
     first: async () => result(sql, []).rows[0] || null,
     all: async () => ({ results: result(sql, []).rows }),
-    run: async () => { result(sql, []); return { meta: { changes: 1, last_row_id: 1 } }; }
+    run: async () => { result(sql, []); return { meta: { changes: 1, last_row_id: 1 } }; },
+    _sql: sql, _binds: [],
   });
   return {
     prepare: stmt,
     batch: async (xs) => {
+      // BH-9657: ensureTable sends its CREATE statements as one batch. They are
+      // logged as the runs they replaced, so `_batches` stays the route's own.
+      if (isEnsureTableBatch(xs)) return runOneByOne(xs);
       batches.push(xs.map((x) => ({ sql: x._sql.replace(/\s+/g, ' ').trim(), binds: x._binds })));
       return xs.map((x) => {
         result(x._sql, x._binds);

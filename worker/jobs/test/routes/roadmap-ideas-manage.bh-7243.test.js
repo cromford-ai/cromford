@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../../src/index.js';
 import { openDb } from '../lib/d1-sqlite.bh-1030.js';
+import { isEnsureTableBatch } from '../lib/ensure-batch.bh-9657.js';
 
 // BH-7264 (BH-7243.1): move, edit, detail and summary of roadmap ideas.
 //
@@ -227,7 +228,7 @@ test('M9 detail: the row and its newest 50 of 60 events; another project is 404 
   const ins = o.db.prepare(`INSERT INTO roadmap_idea_events (idea_id, project, kind, from_lane, to_lane, actor, at) VALUES (?, 'cromford', 'moved', 'ideas', 'next', 'operator', ?)`);
   for (let i = 1; i <= 59; i++) ins.run(idea.id, new Date(NOW_MS + i * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'));
   const batches = [];
-  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { batches.push(s.length); return o.DB.batch(s); } };
+  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { if (!isEnsureTableBatch(s)) batches.push(s.length); return o.DB.batch(s); } }; // BH-9657: an ensureTable batch is not the route's
   const r = await detail(spy, idea.id);
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual(batches, [2], 'one batch of 2 statements');
@@ -253,7 +254,7 @@ test('M10 summary: one row per project with lane counts; an empty project is lis
   await move(o.DB, { id: c.id, to_lane: 'discarded', expected_version: 1 });
   assert.equal((await add(o.DB, { project: 'proj-b', title: 'B1' })).status, 201);
   const batches = [];
-  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { batches.push(s.length); return o.DB.batch(s); } };
+  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { if (!isEnsureTableBatch(s)) batches.push(s.length); return o.DB.batch(s); } }; // BH-9657: an ensureTable batch is not the route's
   const r = await summary(spy);
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual(batches, [2], 'one batch of 2 statements');

@@ -34,36 +34,68 @@ export const D1_MAX_BINDS = 100;
 export function d1(db, hooks = {}) {
   return {
     prepare(sql) {
-      const stmt = db.prepare(sql);
+      // Compiled at first use, not here, like D1: D1 sends the SQL only when a
+      // statement runs, so one batch can CREATE a table and then index it (BH-9657).
+      let compiled = null;
+      const stmt = {
+        get: (...b) => (compiled ??= db.prepare(sql)).get(...b),
+        all: (...b) => (compiled ??= db.prepare(sql)).all(...b),
+        run: (...b) => (compiled ??= db.prepare(sql)).run(...b),
+      };
       let binds = [];
       const api = {
+        _sql: sql,
         _isRead: /^\s*(SELECT|WITH)\b/i.test(sql),
         bind(...v) {
           if (v.length > D1_MAX_BINDS) throw new Error('too many SQL variables');
           binds = v.map(normalize);
           return api;
         },
-        async first(col) {
+        // The sync bodies run here and in batch(), which must not yield
+        // inside its transaction.
+        _first(col) {
           const row = stmt.get(...binds);
           if (row === undefined || row === null) return null;
           if (col === undefined) return row;
           return row[col] === undefined ? null : row[col];
         },
-        async all() {
+        _all() {
           return { results: stmt.all(...binds), meta: {} };
         },
-        async run() {
+        _run() {
           if (typeof hooks.beforeRun === 'function') hooks.beforeRun(sql, binds);
           const r = stmt.run(...binds);
           return { meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
         },
+        async first(col) { return api._first(col); },
+        async all() { return api._all(); },
+        async run() { return api._run(); },
       };
       return api;
     },
     // D1's batch answers a read with its rows in `results` (BH-6823, lead
     // review of #7155: the staff chat routes batch their reads). A write keeps
-    // run()'s answer and its beforeRun hook.
-    async batch(stmts) { return Promise.all(stmts.map((s) => (s._isRead ? s.all() : s.run()))); },
+    // run()'s answer and its beforeRun hook. Like D1's, the batch is one
+    // transaction: a statement that fails rolls back the ones before it
+    // (BH-9657: with compile-at-first-use, a missing table now fails at run).
+    // A statement this shim did not make (a test's own wrapper) keeps the old
+    // path: each statement on its own, no transaction.
+    async batch(stmts) {
+      if (!stmts.every((s) => s && typeof s._run === 'function')) {
+        return Promise.all(stmts.map((s) => (s._isRead ? s.all() : s.run())));
+      }
+      // A savepoint, so a test that opens its own transaction around the batch still can.
+      db.exec('SAVEPOINT d1_batch');
+      try {
+        const out = stmts.map((s) => (s._isRead ? s._all() : s._run()));
+        db.exec('RELEASE d1_batch');
+        return out;
+      } catch (e) {
+        db.exec('ROLLBACK TO d1_batch');
+        db.exec('RELEASE d1_batch');
+        throw e;
+      }
+    },
   };
 }
 

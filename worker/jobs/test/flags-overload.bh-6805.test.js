@@ -12,6 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
 import { D1_RETRY_ATTEMPTS } from "../src/lib/d1-retry.js";
+import { isEnsureTableBatch, runOneByOne } from './lib/ensure-batch.bh-9657.js';
 
 // Loaded per test, so the route cases run (and fail) against a tree without
 // the guard, instead of the whole file failing to import.
@@ -46,6 +47,7 @@ function failingDb(failFirst, msg = OVERLOAD) {
     if (db.failed < failFirst) { db.failed += 1; throw new Error(msg); }
   };
   const stmt = (sql) => ({
+    _sql: sql,
     bind() { return stmt(sql); },
     async first() { exec(sql); return null; },
     async all() { exec(sql); return { results: [] }; },
@@ -53,7 +55,9 @@ function failingDb(failFirst, msg = OVERLOAD) {
     async raw() { exec(sql); return []; },
   });
   db.prepare = (sql) => stmt(sql);
-  db.batch = async (stmts) => { db.batches += 1; exec("batch"); return stmts.map(() => ({ results: [] })); };
+  db.batch = async (stmts) => {
+    if (isEnsureTableBatch(stmts)) return runOneByOne(stmts); // BH-9657: an ensureTable batch runs as the statements it replaced
+    db.batches += 1; exec("batch"); return stmts.map(() => ({ results: [] })); };
   return db;
 }
 
@@ -144,7 +148,10 @@ test("R2: PUT /api/flags (ported, expected_set_at) on an overloaded D1 is a 503,
 test("R2b: PUT /api/flags overload in the write batch (writePorted) is a 503 too", async () => {
   // Every statement answers; only the upsert batch overloads.
   const db = failingDb(0);
-  db.batch = async () => { db.batches += 1; throw new Error(OVERLOAD); };
+  db.batch = async (stmts) => {
+    if (isEnsureTableBatch(stmts)) return runOneByOne(stmts); // BH-9657: an ensureTable batch runs as the statements it replaced
+    db.batches += 1; throw new Error(OVERLOAD);
+  };
   const { out, err } = await warns(() => call(db, "PUT", "/api/flags", { name: "paused-x", active: 1 }));
   assert.equal(err, undefined, `worker.fetch must not throw: ${err && err.message}`);
   assert.equal(out.status, 503);
@@ -203,6 +210,7 @@ function afterBatchDb({ row = null, after = OVERLOAD } = {}) {
     if (db.committed) throw new Error(after);
   };
   const stmt = (sql) => ({
+    _sql: sql,
     bind() { return stmt(sql); },
     async first() { exec(sql); return /FROM harness_flags/i.test(sql) ? row : null; },
     async all() { exec(sql); return { results: [] }; },
@@ -211,6 +219,7 @@ function afterBatchDb({ row = null, after = OVERLOAD } = {}) {
   });
   db.prepare = (sql) => stmt(sql);
   db.batch = async (stmts) => {
+    if (isEnsureTableBatch(stmts)) return runOneByOne(stmts); // BH-9657: an ensureTable batch runs as the statements it replaced
     exec("batch");
     db.batches += 1;
     db.committed = true;

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../../src/index.js';
 import { openDb, d1 } from '../lib/d1-sqlite.bh-1030.js';
+import { isEnsureTableBatch } from '../lib/ensure-batch.bh-9657.js';
 
 // BH-7263 (BH-7243.0): the roadmap ideas contract and tracer.
 //
@@ -218,7 +219,7 @@ test('I9 GET runs one batch of 2 statements; lane= filters; a bad lane or no pro
   await post(o.DB, { ...TRACER, idem_key: 'k2', title: 'Second' });
   o.db.prepare("UPDATE roadmap_ideas SET lane = 'next' WHERE id = ?").run(a.body.idea.id);
   const batches = [];
-  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { batches.push(s.length); return o.DB.batch(s); } };
+  const spy = { prepare: (sql) => o.DB.prepare(sql), batch: (s) => { if (!isEnsureTableBatch(s)) batches.push(s.length); return o.DB.batch(s); } }; // BH-9657: an ensureTable batch is not the route's
   const g = await list(spy, 'project=cromford&lane=next');
   assert.equal(g.status, 200);
   assert.deepEqual(batches, [2]);

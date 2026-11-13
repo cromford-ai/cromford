@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.js";
 import { D1_RETRY_ATTEMPTS } from "../src/lib/d1-retry.js";
 import { openDb } from "./lib/d1-sqlite.bh-1030.js";
+import { isEnsureTableBatch, runOneByOne } from './lib/ensure-batch.bh-9657.js';
 
 const OVERLOAD = "D1_ERROR: D1 DB is overloaded. Requests queued for too long.";
 const OVERLOAD_2 = "D1 DB is overloaded. Too many requests queued.";
@@ -54,6 +55,7 @@ function failingDb(failFirst, msg = OVERLOAD) {
     if (db.failed < failFirst) { db.failed += 1; throw new Error(msg); }
   };
   const stmt = (sql) => ({
+    _sql: sql,
     bind() { return stmt(sql); },
     async first() { exec(sql); return null; },
     async all() { exec(sql); return { results: [] }; },
@@ -61,7 +63,9 @@ function failingDb(failFirst, msg = OVERLOAD) {
     async raw() { exec(sql); return []; },
   });
   db.prepare = (sql) => stmt(sql);
-  db.batch = async (stmts) => { db.batches += 1; exec("batch"); return stmts.map(() => ({ results: [] })); };
+  db.batch = async (stmts) => {
+    if (isEnsureTableBatch(stmts)) return runOneByOne(stmts); // BH-9657: an ensureTable batch runs as the statements it replaced
+    db.batches += 1; exec("batch"); return stmts.map(() => ({ results: [] })); };
   return db;
 }
 
@@ -79,6 +83,7 @@ async function sqliteDb(t, { batchFails = 0, readBackFails = false } = {}) {
       const w = {
         _isRead: s._isRead,
         _inner: s,
+        _sql: sql,
         bind(...v) { s.bind(...v); return w; },
         async first(col) {
           if (readBackFails && /^\s*SELECT \* FROM pause_flags WHERE name=\?1\s*$/.test(sql)) throw new Error(OVERLOAD);
@@ -90,6 +95,7 @@ async function sqliteDb(t, { batchFails = 0, readBackFails = false } = {}) {
       return w;
     },
     async batch(stmts) {
+      if (isEnsureTableBatch(stmts)) return runOneByOne(stmts); // BH-9657: an ensureTable batch runs as the statements it replaced
       c.batches += 1;
       if (c.batches <= batchFails) throw new Error(OVERLOAD);
       c.batchStmts += stmts.length;

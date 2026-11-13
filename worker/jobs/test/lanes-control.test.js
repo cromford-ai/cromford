@@ -60,7 +60,8 @@ function fakeDB(state) {
     }),
     first: async () => result(sql, []).rows[0] || null,
     all: async () => ({ results: result(sql, []).rows }),
-    run: async () => { result(sql, []); return { meta: { changes: 1 } }; }
+    run: async () => { result(sql, []); return { meta: { changes: 1 } }; },
+    _sql: sql, _binds: [], // D1's batch takes an unbound statement too (BH-9657: ensureTable)
   });
   // BH-2376: an ordinary knob PUT batches its config_changes row with the upsert.
   const batch = async (xs) => xs.map((x) => { result(x._sql, x._binds); return { meta: { changes: 1 } }; });

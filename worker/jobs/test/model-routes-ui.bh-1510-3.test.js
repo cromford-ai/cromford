@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/index.js';
 import { jobsSchemaSql } from './lib/jobs-schema.js';
+import { isEnsureTableBatch, runOneByOne } from './lib/ensure-batch.bh-9657.js';
 
 // BH-1510.3 — the three things the console Models screen needs from the worker
 // that #1510.0's contract did not carry:
@@ -33,7 +34,7 @@ function sqliteDB(db) {
         return { meta: { changes: Number(r.changes) || 0, last_row_id: Number(r.lastInsertRowid) || 0 } };
       },
     });
-    return { ...bindAndRun([]), bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
+    return { ...bindAndRun([]), _sql: sql, _binds: [], bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; } };
   };
   return {
     prepare,
@@ -253,7 +254,8 @@ function gated(DB) {
   let release, armed = false;
   const wait = new Promise((r) => { release = r; });
   return {
-    DB: { ...DB, batch: async (xs) => { if (armed) { armed = false; await wait; } return DB.batch(xs); } },
+    // An ensureTable batch (BH-9657) is not the write being raced.
+    DB: { ...DB, batch: async (xs) => { if (armed && !isEnsureTableBatch(xs)) { armed = false; await wait; } return DB.batch(xs); } },
     arm: () => { armed = true; },
     release: () => release(),
   };

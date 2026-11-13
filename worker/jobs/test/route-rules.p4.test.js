@@ -37,6 +37,7 @@ function sqliteDB(db) {
     });
     return {
       ...bindAndRun([]),
+      _sql: sql, _binds: [], // D1's batch takes an unbound statement too (BH-9657: ensureTable)
       bind: (...binds) => { const s = bindAndRun(binds); s._sql = sql; s._binds = binds; return s; },
     };
   };
