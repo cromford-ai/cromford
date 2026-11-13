@@ -205,7 +205,7 @@ frr_failing_tests() {
   kb=$(_frr_log_max_kb)
   while IFS= read -r jid; do
     [ -n "$jid" ] || continue
-    log=$(GH_CI_READ_WHAT=actions/job-log gh_ci_api "$slug" "repos/$slug/actions/jobs/$jid/logs") || return 2
+    log=$(GH_CI_READ_WHAT=actions/job-log gh_ci_api "$slug" "repos/$slug/actions/jobs/$jid/logs" --allow-escape-sequences) || return 2
     names=$(tail -c "$((kb * 1024))" <<<"$log" | _frr_parse "$tree")
     [ -n "$names" ] || return 3
     files="$files$names"$'\n'
