@@ -135,16 +135,16 @@ set -uo pipefail
 # instead of a fourth row. On 2026-10-10 the triage-tick reconcile found 34
 # orphans every tick and launched none: each was held back as
 # awaiting-closeout by a QUEUED_FLY routing stub nothing ever closes.
-# The fourth difference (BH-7116): a ticket whose queue row says its last build
-# ended PLAN_BLOCKED, with no human comment created or edited since, is skipped
-# as `<KEY>:plan-blocked` (bin/lib/plan-blocked.sh pb_stranded_skip). It is not
-# counted toward NEEDS_HUMAN: the builder's notice on the ticket is the ask.
-# STRANDED_SKIP_PLAN_BLOCKED=0 (the lane row) re-offers it as before. On
-# 2026-10-16 the watch re-offered eight such tickets 2-6 times each.
-# BOTH MODES (BH-8707): the triage tick runs the same skip, on the same lane
-# row, and logs it with its own `reconcile:` prefix. On 2026-10-27/28 the watch
-# skipped BH-8467 while box-small's triage tick relaunched it 5 times
-# in one night, each relaunch a critical "reconciliation enqueued" alert.
+# The fourth difference, BOTH MODES (BH-9457): the ticket's build_queue phase
+# decides a relaunch, through the pool's own spawn gate (bin/lib/plan-blocked-stop.sh
+# pbs_stop_check). Phase plan_blocked, abandoned, ejected or in_queue is skipped
+# as `<KEY>:phase-<phase>`: no launch, no queue row, no re-offer count, no
+# alert, never NEEDS_HUMAN. The issue thread and the queue reason decide
+# nothing (the BH-7116 thread scan and its stranded-watch knob are gone). An
+# unreadable phase launches, with one line. In the stranded watch the worker's
+# own phase refusal (queue_put rc 3, BH-9160) is the same skip. On
+# 2026-10-27/28 box-small's triage tick relaunched BH-8467 5 times in
+# one night, each relaunch a critical "reconciliation enqueued" alert.
 EXPLAIN=0; STRANDED_MODE=0; PROJECT=""
 for _arg in "$@"; do
   case "$_arg" in
@@ -230,27 +230,6 @@ if [ "$STRANDED_MODE" = 1 ]; then
   REOFFER_WIN_H="${STRANDED_REOFFER_WINDOW_H:-24}"
   case "$REOFFER_WIN_H" in ''|*[!0-9]*) REOFFER_WIN_H=24 ;; esac
 fi
-# The PLAN_BLOCKED skip's knob, both modes (BH-7116, BH-8707): the stranded-watch
-# lane row STRANDED_SKIP_PLAN_BLOCKED. Stranded mode applied that row above. The
-# triage tick resolves it in a subshell, the _OR_TFM shape, so a fail-closed exit
-# in the lane gate never stops this lane and no other stranded-watch knob leaks
-# into the tick. Code fallback 1 (the row's documented default).
-if [ "$STRANDED_MODE" = 1 ]; then
-  SKIP_PB="${STRANDED_SKIP_PLAN_BLOCKED:-1}"; _OR_PFX=stranded-watch
-else
-  SKIP_PB=$(
-    exec 3>&1
-    trap 'printf "%s" "${STRANDED_SKIP_PLAN_BLOCKED:-}" >&3' EXIT
-    command -v lane_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" >/dev/null 2>&1 || exit 0
-    lane_env_apply stranded-watch >/dev/null 2>&1)
-  SKIP_PB="${SKIP_PB:-1}"; _OR_PFX=reconcile
-fi
-case "$SKIP_PB" in
-  0|1) ;;
-  *) log "$_OR_PFX: STRANDED_SKIP_PLAN_BLOCKED='$SKIP_PB' is not 0 or 1; read as 1"; SKIP_PB=1 ;;
-esac
-unset _OR_PFX
-
 command -v jq >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 # The classifier below is written to $TD and RUN BY PATH, so this file is a
@@ -314,10 +293,11 @@ PFX=$(preplan_key_prefix "$HARNESS" "$PROJECT" 2>/dev/null) || exit 0
 [ -r "$HARNESS/bin/lib/hold.sh" ] && . "$HARNESS/bin/lib/hold.sh" 2>/dev/null
 # shellcheck source=bin/lib/closeout-overdue.sh
 [ -r "$HARNESS/bin/lib/closeout-overdue.sh" ] && . "$HARNESS/bin/lib/closeout-overdue.sh" 2>/dev/null
-# The stranded watch's PLAN_BLOCKED skip (BH-7116). Optional: without it the
-# watch re-offers exactly as before.
-# shellcheck source=bin/lib/plan-blocked.sh
-[ -r "$HARNESS/bin/lib/plan-blocked.sh" ] && . "$HARNESS/bin/lib/plan-blocked.sh" 2>/dev/null
+# The phase gate, both modes (BH-9457): the pool's spawn gate, so one rule
+# decides a relaunch for the pool and for this lane. It sources
+# bin/lib/pool-lifecycle.sh itself. Optional: without it every orphan launches.
+# shellcheck source=bin/lib/plan-blocked-stop.sh
+[ -r "$HARNESS/bin/lib/plan-blocked-stop.sh" ] && . "$HARNESS/bin/lib/plan-blocked-stop.sh" 2>/dev/null
 
 # Whichever token can SEE this repo (the hub's default PAT 404s on
 # example-org/project-5, and an empty issue list there reads exactly like a board
@@ -1343,9 +1323,19 @@ stranded_reoffer() {
     SKIP="${SKIP:+$SKIP,}$key:needs-human"
     return 1
   fi
-  local qout=""
-  if ! command -v queue_put >/dev/null 2>&1 \
-     || ! qout=$(queue_put "$PROJECT" "$key" "$num" "" "" "$(jq -nc --argjson n "$((n + 1))" '{stranded_reoffer:$n}')" 2>/dev/null); then
+  local qout="" qrc=1
+  if command -v queue_put >/dev/null 2>&1; then
+    qout=$(queue_put "$PROJECT" "$key" "$num" "" "" "$(jq -nc --argjson n "$((n + 1))" '{stranded_reoffer:$n}')" 2>/dev/null); qrc=$?
+  fi
+  # rc 3 is the worker's phase refusal (`refused <phase>`, BH-9160): a decision
+  # by the same phase the gate above reads, not an outage (BH-9457).
+  if [ "$qrc" = 3 ]; then
+    local rph="${qout#refused }"; rph="${rph%% *}"; rph="${rph:-unknown}"
+    log "stranded: $key (issue #$num) skip :: ticket phase $rph; only the lifecycle actor re-enters it"
+    SKIP="${SKIP:+$SKIP,}$key:phase-$rph"
+    return 1
+  fi
+  if [ "$qrc" != 0 ]; then
     log "stranded: $key (issue #$num) is stranded ($why) but the queue did not take a row — retried next run"
     SKIP="${SKIP:+$SKIP,}$key:queue-unreachable"
     return 1
@@ -1416,19 +1406,22 @@ while IFS=$'\t' read -r KEY NUM VERDICT WHY; do
     SKIP="${SKIP:+$SKIP,}$KEY:awaiting-closeout"
     continue
   fi
-  # GUARD RAIL, both modes (BH-7116; the triage tick since BH-8707): the last
-  # build ended PLAN_BLOCKED and nobody has answered since. A re-offer or a
-  # relaunch only blocks it again. Unknown (rc 2: the queue or the thread could
-  # not be read) launches, as before. Before the cap, so a skip takes no slot.
-  if [ "${SKIP_PB:-1}" = 1 ] && command -v pb_stranded_skip >/dev/null 2>&1; then
-    PB_CNT=$(jq -r --argjson n "$NUM" 'first(.[] | select(.number == $n)) | .commentCount // 0' "$TD/open.json" 2>/dev/null)
-    PB_TH=""; [ -f "$TD/extra/thread-$NUM.json" ] && PB_TH="$TD/extra/thread-$NUM.json"
-    if PB_AT=$(pb_stranded_skip "$PROJECT" "$KEY" "$PB_TH" "${PB_CNT:-0}"); then
-      SKIP="${SKIP:+$SKIP,}$KEY:plan-blocked"
-      if [ "$STRANDED_MODE" = 1 ]; then PB_PFX=stranded; else PB_PFX=reconcile; fi
-      log "$PB_PFX: $KEY (issue #$NUM) skip :: last build ended PLAN_BLOCKED at $PB_AT and no human comment since"
+  # GUARD RAIL, both modes (BH-9457): the DB phase decides, through the pool's
+  # spawn gate pbs_stop_check. rc 1 (plan_blocked, abandoned, ejected,
+  # in_queue): re-entry is the lifecycle actor's move, so no launch. The thread
+  # and the queue reason decide nothing. An unreadable phase passes with one
+  # line (fail open). Before the cap, so a skip takes no slot. `say` exists
+  # only inside the substitution: it takes the gate's one line.
+  if command -v pbs_stop_check >/dev/null 2>&1; then
+    if [ "$STRANDED_MODE" = 1 ]; then PG_PFX=stranded; else PG_PFX=reconcile; fi
+    PG_LINE=$(say() { printf '%s' "$*"; }; pbs_stop_check "$PROJECT" "$KEY" "$NUM"); PG_RC=$?
+    if [ "$PG_RC" = 1 ]; then
+      PG_PH=unknown; [[ "$PG_LINE" =~ phase\ ([a-z_]+) ]] && PG_PH="${BASH_REMATCH[1]}"
+      SKIP="${SKIP:+$SKIP,}$KEY:phase-$PG_PH"
+      log "$PG_PFX: $KEY (issue #$NUM) skip :: ${PG_LINE:-phase gate refused}"
       continue
     fi
+    [ -z "$PG_LINE" ] || log "$PG_PFX: $KEY (issue #$NUM) $PG_LINE"
   fi
   if [ -n "$MAX_RUN" ] && [ "$N_ENQ" -ge "$MAX_RUN" ]; then
     SKIP="${SKIP:+$SKIP,}$KEY:cap"

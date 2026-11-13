@@ -1,7 +1,8 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/plan-blocked.sh — BH-7116: a PLAN_BLOCKED build says WHY on its
-# ticket, and the stranded watch stops re-offering it until somebody answers.
+# ticket, and the hub keeps a copy of its plan. (The relaunch stop is the DB
+# phase now: bin/lib/plan-blocked-stop.sh, BH-8733, BH-9457.)
 # Sourced, never run; defines functions only.
 #
 # On 2026-10-16 eight tickets went PLAN_BLOCKED 2-4 times each. The stranded
@@ -13,14 +14,13 @@
 #   pb_notice <harness> <project> <ticket> <key> <build-dir>
 #                                                   the builder's one comment
 #   pb_hub_copy <harness> <project> <local-dir>     plan.md into the hub record
-#   pb_stranded_skip <project> <key> <thread-json> <comment-count>
-#                                                   the reconcile's skip (both modes)
 #
 # Callers: bin/lib/rb/gates.sh `# >>> plan-blocked notice` (pb_notice, inside
-# _job_finish on a builder), bin/fly-pool.sh's reap (pb_hub_copy) and
-# bin/orphan-reconcile.sh in both modes, the triage tick and --stranded
-# (pb_stranded_skip; the triage tick since BH-8707). Every dependency is
-# sourced inside the function that needs it, so loading this file costs nothing.
+# _job_finish on a builder) and bin/fly-pool.sh's reap (pb_hub_copy). The
+# reconcile's thread-scan skip is gone (BH-9457): both modes of
+# bin/orphan-reconcile.sh read the DB phase through bin/lib/plan-blocked-stop.sh
+# pbs_stop_check. Every dependency is sourced inside the function that needs
+# it, so loading this file costs nothing.
 
 # pb_excerpt <plan-file> -> the plan's blocked section, scrubbed, at most 40
 # lines and 3000 bytes, cut on a line end. Prints NOTHING when there is no
@@ -110,7 +110,8 @@ _pb_last_epoch() {
 }
 
 # _pb_answers_since <repo> <num> <epoch> — prints how many HUMAN comments on
-# the issue were created or edited after <epoch> (the pb_stranded_skip rule).
+# the issue were created or edited after <epoch>. Callers: pb_notice and
+# bin/lib/defer-after-stop.sh.
 # rc non-zero when the thread could not be read.
 _pb_answers_since() {
   local repo="$1" num="$2" ep="$3" since def apps
@@ -277,46 +278,3 @@ pb_hub_copy() {
   return 1
 }
 
-# pb_stranded_skip <project> <key> <thread-json-file-or-empty> <comment-count>
-#   Must the stranded watch skip this ticket? One queue point read (build_queue
-#   is keyed by project + ticket_key) and the thread pass 1 already fetched.
-#   rc 0 SKIP (prints the block's updated_at): the row is not queued/claimed, its
-#        reason's first word is exactly PLAN_BLOCKED, and no HUMAN comment was
-#        created or edited after the row's updated_at
-#   rc 1 RE-OFFER: the last reason is something else, or a human answered since
-#   rc 2 UNKNOWN (the caller re-offers, today's behaviour): the queue did not
-#        answer or has no row, updated_at does not parse, or comments were
-#        counted and the thread is missing or is not an array
-#   A HUMAN comment: user.type is not Bot and hs_ours (bin/lib/harness-self.sh)
-#   is false. The PAT login counts as human, as in bin/lib/plan-thread.sh.
-pb_stranded_skip() {
-  local p="${1:-}" k="${2:-}" th="${3:-}" cnt="${4:-0}" resp row st why upd w1 tb apps def n
-  [ -n "$p" ] && [ -n "$k" ] || return 2
-  command -v _jobs_req >/dev/null 2>&1 || return 2
-  resp=$(_jobs_req GET "/api/queue?project=$p&key=$k&limit=1" 2>/dev/null) || return 2
-  row=$(printf '%s' "$resp" | jq -c '.queue[0] // empty' 2>/dev/null)
-  [ -n "$row" ] || return 2
-  st=$(jq -r '.status // ""' <<<"$row"); why=$(jq -r '.reason // ""' <<<"$row"); upd=$(jq -r '.updated_at // ""' <<<"$row")
-  case "$st" in queued|claimed) return 1 ;; esac
-  read -r w1 _ <<<"$why"
-  [ "$w1" = PLAN_BLOCKED ] || return 1
-  tb=$(jq -rn --arg u "$upd" 'try ($u | sub("\\.[0-9]+"; "") | sub(" "; "T") | (if endswith("Z") then . else . + "Z" end) | fromdateiso8601) catch empty' 2>/dev/null)
-  case "$tb" in ''|*[!0-9]*) return 2 ;; esac
-  case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
-  if [ -z "$th" ] || [ ! -s "$th" ]; then
-    [ "$cnt" = 0 ] && { printf '%s' "$upd"; return 0; }
-    return 2
-  fi
-  jq -e 'type == "array"' "$th" >/dev/null 2>&1 || return 2
-  [ -n "${HARNESS_SELF_JQ_DEF:-}" ] || . "${BASH_SOURCE[0]%/*}/harness-self.sh" 2>/dev/null
-  def="${HARNESS_SELF_JQ_DEF:-def hs_ours(\$apps): false;}"
-  apps='[]'; command -v harness_self_apps_json >/dev/null 2>&1 && apps=$(harness_self_apps_json)
-  n=$(jq --argjson tb "$tb" --argjson apps "${apps:-[]}" "$def"'
-    def ts: (. // "") | tostring | sub("\\.[0-9]+"; "") | (try fromdateiso8601 catch 0);
-    [ .[] | select(((.user.type // "") | tostring | ascii_downcase) != "bot" and (hs_ours($apps) | not))
-          | select(([(.created_at | ts), (.updated_at | ts)] | max) > $tb) ] | length' "$th" 2>/dev/null)
-  case "$n" in ''|*[!0-9]*) return 2 ;; esac
-  [ "$n" = 0 ] || return 1
-  printf '%s' "$upd"
-  return 0
-}

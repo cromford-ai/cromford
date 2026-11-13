@@ -1,19 +1,21 @@
 #!/bin/bash
-# tests/orphan-reconcile-triage-plan-blocked.bh-8707-test.sh — BH-8707: the
-# triage-tick reconcile (`orphan-reconcile.sh <project>`, no `--stranded`) does
-# not relaunch a ticket whose last build ended PLAN_BLOCKED, unless a human
-# comment arrived after that build ended. Before BH-8707 only the stranded watch
-# ran the BH-7116 guard (bin/lib/plan-blocked.sh pb_stranded_skip).
+# tests/orphan-reconcile-triage-plan-blocked.bh-8707-test.sh — BH-8707, as
+# BH-9457 changed it: the triage-tick reconcile (`orphan-reconcile.sh
+# <project>`, no `--stranded`) does not relaunch a ticket whose build_queue
+# PHASE is plan_blocked. Since BH-9457 the phase is read through the pool's
+# spawn gate (bin/lib/plan-blocked-stop.sh pbs_stop_check); the queue reason
+# and the issue thread decide nothing, and STRANDED_SKIP_PLAN_BLOCKED is gone.
 #
 # On 2026-10-27/28 box-small relaunched BH-8467 five times in one
 # night; each build blocked again, and each relaunch fired a critical
 # "reconciliation enqueued" alert. BH-8634, BH-8646 and BH-8666 hit the pool
 # spawn cap the same way.
 #
-#   P1-P7  the guard in triage mode: skip, a human comment (created or edited)
-#          re-opens, an older human comment does not, the queue down fails open,
-#          another reason launches, a skip takes no cap slot
-#   K1-K2  the knob STRANDED_SKIP_PLAN_BLOCKED: unset = 1, 0 = off, junk = 1
+#   P1-P7  the gate in triage mode: phase plan_blocked skips; a human comment
+#          (created or edited) does not lift it; phase NULL launches whatever
+#          the reason and the thread say; the queue down fails open; a skip
+#          takes no cap slot
+#   K1     the removed knob STRANDED_SKIP_PLAN_BLOCKED changes nothing
 #   A1-A2  the "reconciliation enqueued" alert counts enqueues only
 #
 # The rig is tests/orphan-reconcile-plan-blocked.bh-7116-test.sh's. Run from
@@ -36,7 +38,7 @@ export HARNESS="$H"
 P=project-5
 for L in bin/orphan-reconcile.sh bin/jobs-client.sh bin/lib/preplan-lib.sh bin/lib/gh-budget.sh bin/lib/hold.sh \
          bin/lib/closeout-overdue.sh bin/lib/gh-rest.sh bin/lib/gh-rest-var.sh bin/lib/gh-rest-list.sh bin/fleet-conf.sh \
-         bin/lib/plan-blocked.sh; do
+         bin/lib/plan-blocked-stop.sh bin/lib/pool-lifecycle.sh; do
   [ -f "$DIR/$L" ] || { bad "setup: $L is not in the tree"; continue; }
   ( cd "$DIR" && scratch_install_closure "$L" "$H" ) >/dev/null || { echo "setup: could not install $L"; exit 1; }
 done
@@ -103,9 +105,10 @@ TBISO=$(ISO "$TB")
 RES_LINE="PLAN_BLOCKED /data/harness/builds/project-5-TK-101-202610161100/plan.md$(printf ' | CLOSED-OUT: the builder posted the board close-out on %s' 'example-org/project-5#101')"
 REASON=$(head -c 200 <<<"$RES_LINE
 BUILD_DIR: /data/harness/builds/project-5-TK-101-202610161100")
-qrow() { # qrow <KEY> <status> <reason> [updated_at]
-  jq -nc --arg k "$1" --arg s "$2" --arg r "$3" --arg u "${4:-$TBISO}" \
-    '{project:"project-5",ticket_key:$k,status:$s,reason:$r,updated_at:$u,finished_at:$u,enqueued_at:$u}' > "$H/fixture/queue-$1.json"
+qrow() { # qrow <KEY> <status> <reason> [phase]   (no phase = NULL, BH-9457)
+  jq -nc --arg k "$1" --arg s "$2" --arg r "$3" --arg u "$TBISO" --arg ph "${4:-}" \
+    '{project:"project-5",ticket_key:$k,status:$s,reason:$r,updated_at:$u,finished_at:$u,enqueued_at:$u,
+      phase:(if $ph == "" then null else $ph end),phase_at:(if $ph == "" then null else $u end)}' > "$H/fixture/queue-$1.json"
 }
 cmt() { # cmt <login> <type> <created-ago-s> [updated-ago-s]
   jq -nc --arg l "$1" --arg t "$2" --arg c "$(ISO "$3")" --arg u "$(ISO "${4:-$3}")" \
@@ -139,75 +142,70 @@ launched() { grep -q "project-5 $1 TK-$1" "$H/launches.log" 2>/dev/null; }
 MARK() { find "$H/state" -name "TK-$1.enqueued" 2>/dev/null | grep -q .; }
 BOTN=$(cmt 'cromford-board[bot]' Bot $((TB - 60)))   # our notice, newer than the block
 
-# ── P1: THE POINT. The block is the newest human word; only our own bot notice
-# is newer. The triage tick skips it: no launch, no marker, no alert.
-reset; board "[$BOTN]"; qrow TK-101 done "$REASON"
+# ── P1: THE POINT. Phase plan_blocked; only our own bot notice is newer than
+# the block. The triage tick skips it: no launch, no marker, no alert.
+reset; board "[$BOTN]"; qrow TK-101 done "$REASON" plan_blocked
 WANT=0 tick
-grep -q 'skipped=[^ ]*TK-101:plan-blocked' <<<"$(summary)" && ok || bad "P1: TK-101 is in the skip list as plan-blocked: $(summary)"
+grep -q 'skipped=[^ ]*TK-101:phase-plan_blocked' <<<"$(summary)" && ok || bad "P1: TK-101 is in the skip list as phase-plan_blocked: $(summary)"
 grep -q 'enqueued=- ' <<<"$(summary)" && ok || bad "P1: nothing is enqueued: $(summary)"
 [ "$(nlaunch)" = 0 ] && ok || bad "P1: no run-build.sh launch: $(cat "$H/launches.log" 2>/dev/null)"
 MARK 101 && bad "P1: no TK-101.enqueued marker is written" || ok
-grep -q "reconcile: TK-101 (issue #101) skip :: last build ended PLAN_BLOCKED at $TBISO and no human comment since" "$H/logs/$P.log" && ok \
-  || bad "P1: one line names the block time: $(grep 'TK-101' "$H/logs/$P.log" | tail -2)"
+grep -q "reconcile: TK-101 (issue #101) skip :: skipping TK-101: phase plan_blocked since $TBISO" "$H/logs/$P.log" && ok \
+  || bad "P1: one line names the phase and its time: $(grep 'TK-101' "$H/logs/$P.log" | tail -2)"
 [ "$(nalerts)" = 0 ] && ok || bad "P1: no alert line: $(cat "$H/alerts-called.log" 2>/dev/null)"
 
-# ── P2: a human comment created after the block -> launched.
-reset; board "[$BOTN,$(cmt client-fixture User $((TB - 120)))]"; qrow TK-101 done "$REASON"
-tick
-launched 101 && ok || bad "P2: a human answer after the block relaunches it: $(summary)"
-
-# ── P3: a human comment EDITED after the block -> launched.
-reset; board "[$(cmt client-fixture User $((TB + 600)) $((TB - 60)))]"; qrow TK-101 done "$REASON"
-tick
-launched 101 && ok || bad "P3: a human comment edited after the block relaunches it: $(summary)"
-
-# ── P4: a human comment 1 s OLDER than the block -> still skipped.
-reset; board "[$(cmt operator-fixture User $((TB + 1)))]"; qrow TK-101 done "$REASON"
+# ── P2: a human comment created after the block does not lift the phase.
+reset; board "[$BOTN,$(cmt client-fixture User $((TB - 120)))]"; qrow TK-101 done "$REASON" plan_blocked
 WANT=0 tick
-grep -q 'TK-101:plan-blocked' <<<"$(summary)" && [ "$(nlaunch)" = 0 ] && ok || bad "P4: an older human comment is not an answer: $(summary)"
+grep -q 'TK-101:phase-plan_blocked' <<<"$(summary)" && [ "$(nlaunch)" = 0 ] && ok || bad "P2: a human answer does not relaunch a plan_blocked phase: $(summary)"
 
-# ── P5: the queue does not answer -> unknown -> launched (fail-open, as before).
-reset; board "[$BOTN]"; qrow TK-101 done "$REASON"; : > "$H/queue-down"
+# ── P3: a human comment EDITED after the block does not lift it either.
+reset; board "[$(cmt client-fixture User $((TB + 600)) $((TB - 60)))]"; qrow TK-101 done "$REASON" plan_blocked
+WANT=0 tick
+grep -q 'TK-101:phase-plan_blocked' <<<"$(summary)" && [ "$(nlaunch)" = 0 ] && ok || bad "P3: an edited human comment does not relaunch it: $(summary)"
+
+# ── P4: phase NULL, PLAN_BLOCKED reason, no answer on the thread -> launched.
+# The thread scan that skipped this is gone (BH-9457).
+reset; board "[$(cmt operator-fixture User $((TB + 1)))]"; qrow TK-101 done "$REASON"
+tick
+launched 101 && ok || bad "P4: phase NULL launches whatever the reason and the thread say: $(summary)"
+
+# ── P5: the queue does not answer -> phase unreadable -> launched (fail open).
+reset; board "[$BOTN]"; qrow TK-101 done "$REASON" plan_blocked; : > "$H/queue-down"
 tick
 launched 101 && ok || bad "P5: the queue down fails open (launch): $(summary)"
 
-# ── P6: another block reason -> launched.
+# ── P6: phase NULL with another block reason -> launched.
 reset; board "[$BOTN]"; qrow TK-101 failed "REVIEW_BLOCKED /x/review.md"
 tick
-launched 101 && ok || bad "P6: REVIEW_BLOCKED is not this guard's: $(summary)"
+launched 101 && ok || bad "P6: REVIEW_BLOCKED with phase NULL launches: $(summary)"
 reset; board "[$BOTN]"; qrow TK-101 failed "RESULT_UNVERIFIED PLAN_BLOCKED /x/plan.md"
 tick
-launched 101 && ok || bad "P6: PLAN_BLOCKED not as the first word is not this guard's: $(summary)"
+launched 101 && ok || bad "P6: RESULT_UNVERIFIED with phase NULL launches: $(summary)"
 
-# ── P7: a skip takes no cap slot. Cap 1, TK-101 plan-blocked, TK-102 plain.
-reset; board "[$BOTN]" '[]'; qrow TK-101 done "$REASON"
+# ── P7: a skip takes no cap slot. Cap 1, TK-101 plan_blocked, TK-102 plain.
+reset; board "[$BOTN]" '[]'; qrow TK-101 done "$REASON" plan_blocked
 ORPHAN_MAX_PER_RUN=1 tick
 launched 102 && ok || bad "P7: TK-102 is launched inside the cap of 1: $(summary)"
 grep -q 'TK-102:cap' <<<"$(summary)" && bad "P7: TK-102 is not held back by the cap: $(summary)" || ok
 launched 101 && bad "P7: TK-101 is not launched" || ok
 
-# ── K1: no env, no settings row -> the code fallback 1 skips.
-reset; board '[]'; qrow TK-101 done "$REASON"
-( unset STRANDED_SKIP_PLAN_BLOCKED; WANT=0 tick )
-grep -q 'TK-101:plan-blocked' <<<"$(summary)" && [ "$(nlaunch)" = 0 ] && ok || bad "K1: the default skips: $(summary)"
-
-# ── K2: 0 turns the skip off; a junk value is read as 1 with one log line.
-reset; board '[]'; qrow TK-101 done "$REASON"
-STRANDED_SKIP_PLAN_BLOCKED=0 tick
-launched 101 && ok || bad "K2: STRANDED_SKIP_PLAN_BLOCKED=0 launches as before: $(summary)"
-reset; board '[]'; qrow TK-101 done "$REASON"
+# ── K1: the removed knob changes nothing: =0 does not lift the phase, and no
+# value is read or named in the log.
+reset; board '[]'; qrow TK-101 done "$REASON" plan_blocked
+STRANDED_SKIP_PLAN_BLOCKED=0 WANT=0 tick
+grep -q 'TK-101:phase-plan_blocked' <<<"$(summary)" && [ "$(nlaunch)" = 0 ] && ok || bad "K1: STRANDED_SKIP_PLAN_BLOCKED=0 does not relaunch it: $(summary)"
+reset; board '[]'; qrow TK-101 done "$REASON" plan_blocked
 STRANDED_SKIP_PLAN_BLOCKED=maybe WANT=0 tick
-grep -q 'TK-101:plan-blocked' <<<"$(summary)" && ok || bad "K2: a bad value is read as 1: $(summary)"
-[ "$(grep -c "reconcile: STRANDED_SKIP_PLAN_BLOCKED='maybe'" "$H/logs/$P.log")" = 1 ] && ok \
-  || bad "K2: a bad value is said once, with the reconcile prefix: $(grep STRANDED_SKIP "$H/logs/$P.log")"
+grep -q 'STRANDED_SKIP_PLAN_BLOCKED' "$H/logs/$P.log" && bad "K1: the knob is not read: $(grep STRANDED_SKIP "$H/logs/$P.log")" || ok
 
 # ── A1: the only orphan is skipped -> no lane-alert.sh call at all.
-reset; board '[]'; qrow TK-101 done "$REASON"
+reset; board '[]'; qrow TK-101 done "$REASON" plan_blocked
 WANT=0 tick
 [ "$(nalerts)" = 0 ] && ok || bad "A1: a skip alone never pages: $(cat "$H/alerts-called.log" 2>/dev/null)"
 
 # ── A2: TK-101 skipped, TK-102 launched -> one alert that names TK-102 only.
-reset; board '[]' '[]'; qrow TK-101 done "$REASON"
+reset; board '[]' '[]'; qrow TK-101 done "$REASON" plan_blocked
 tick
 MSG=$(cat "$H/alerts-called.log" 2>/dev/null)
 [ "$(nalerts)" = 1 ] && ok || bad "A2: one alert call: $MSG"
@@ -215,7 +213,7 @@ grep -q 'enqueued 1 ai-build issue(s)' <<<"$MSG" && ok || bad "A2: the alert cou
 EACH=$(sed -n 's/.*Each had\(.*\)The event-wake.*/\1/p' <<<"$MSG")
 grep -q 'TK-102 (' <<<"$EACH" && ok || bad "A2: the per-key list names TK-102: $MSG"
 grep -q 'TK-101 (' <<<"$EACH" && bad "A2: the per-key list does not name the skipped TK-101: $EACH" || ok
-grep -q 'Held back this run: TK-101:plan-blocked' <<<"$MSG" && ok || bad "A2: the skip is named as held back: $MSG"
+grep -q 'Held back this run: TK-101:phase-plan_blocked' <<<"$MSG" && ok || bad "A2: the skip is named as held back: $MSG"
 
 echo "orphan-reconcile-triage-plan-blocked (BH-8707): $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
