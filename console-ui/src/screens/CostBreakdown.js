@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { fmtUsd } from '../lib/format.js';
+import { fmtUsd, fmtNum } from '../lib/format.js';
 import {
   BREAKDOWN_WINDOWS, BREAKDOWN_VIEWS, viewOf, windowParams, billingLabel, breakdownRows,
   childRequest, ticketHref, leafRows, cashLine
@@ -94,7 +94,7 @@ export function LeafRows({ data }) {
   ];
   return html`
     ${data && data.truncated ? html`<div class="footnote" style="margin-bottom:6px"><span style="color:var(--faint)">
-      capped: newest ${rows.length} rows</span></div>` : null}
+      capped: newest ${fmtNum(rows.length)} rows</span></div>` : null}
     <${SortableTable} wide columns=${columns} rows=${rows} rowKey=${(r) => r.key} defaultSort="ts" defaultDir="desc"
       empty=${html`<${Empty} title="no cost rows" note="No cost row matches this group in the window."/>`}/>`;
 }
@@ -129,7 +129,7 @@ function Level({ viewKey, depth, data, filters, open, onOpen, kids, onRetryChild
 
   return html`
     ${data && data.truncated ? html`<div class="footnote" style="margin-bottom:6px"><span style="color:var(--faint)">
-      capped: the top ${rows.length} groups by spend; the total above is still exact</span></div>` : null}
+      capped: the top ${fmtNum(rows.length)} groups by spend; the total above is still exact</span></div>` : null}
     <${SortableTable} wide columns=${[identity, ...countColumns]} rows=${rows} rowKey=${(r) => r.key}
       defaultSort="usd" defaultDir="desc"
       empty=${html`<${Empty} title="no spend in this window" note="No cost row falls in this window."/>`}/>

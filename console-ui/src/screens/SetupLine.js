@@ -13,6 +13,7 @@ import { PageHeadline, StationTrack } from '../ui/line.js';
 import { Skeleton, ErrorBox, Empty } from '../ui/primitives.js';
 import { useConfirm } from '../ui/Modal.js';
 import { useApi } from '../lib/hooks.js';
+import { fmtNum } from '../lib/format.js';
 
 // The contract's seven stations, in ord order. Station 3 is `label` for a
 // github-issues tracker and `tracker` for the board.
@@ -60,8 +61,8 @@ export function formatDuration(startIso, endIso, nowMs) {
   const s = Math.max(0, Math.floor((end - start) / 1000));
   const pad = (n) => String(n).padStart(2, '0');
   if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
-  return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
+  if (s < 3600) return `${fmtNum(Math.floor(s / 60))}m ${pad(s % 60)}s`;
+  return `${fmtNum(Math.floor(s / 3600))}h ${pad(Math.floor((s % 3600) / 60))}m`;
 }
 
 // A poll answer paints only when it is the newest request's.
@@ -89,7 +90,7 @@ export function setupView(data, nowMs) {
   });
   const done = run.state === 'done';
   return {
-    eyebrow: `STATION ${at} OF ${total}`,
+    eyebrow: `STATION ${fmtNum(at)} OF ${fmtNum(total)}`,
     at,
     stations,
     log: steps.filter((s) => s.log_excerpt).map((s) => ({ station: s.station, excerpt: s.log_excerpt })),

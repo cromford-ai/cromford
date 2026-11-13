@@ -11,7 +11,7 @@ import { SortableTable } from '../ui/SortableTable.js';
 import {
   Section, Skeleton, Empty, ErrorBox, HealthPill, Age, Cursor
 } from '../ui/primitives.js';
-import { agoFromMinutes, minutesSince, snapshotLabel, prNumberFromUrl, fmtBytes, whenLabel } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, snapshotLabel, prNumberFromUrl, fmtBytes, whenLabel, fmtNum } from '../lib/format.js';
 import { plainLabel, tierLabel } from '../lib/labels.js';
 import { stageProgress, buildLane, STEPS } from '../lib/stages.js';
 import {
@@ -121,7 +121,7 @@ export function ProjectScreen({ project }) {
     <div class="page">
       ${dialog}
       <${PageHeadline} chip="Project" line1=${project}
-        line2=${`${builds.length} ${builds.length === 1 ? 'build' : 'builds'} on file. ${alerts.length} open ${alerts.length === 1 ? 'alert' : 'alerts'}.`}
+        line2=${`${fmtNum(builds.length)} ${builds.length === 1 ? 'build' : 'builds'} on file. ${fmtNum(alerts.length)} open ${alerts.length === 1 ? 'alert' : 'alerts'}.`}
         lede=${lastRunAge === null ? 'No tick on record.' : `Last tick ${agoFromMinutes(lastRunAge)}.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <${Link} to="/" class="crumb">← FLEET<//>
@@ -178,19 +178,19 @@ export function ProjectScreen({ project }) {
 
       ${alerts.length ? html`
         <div class="banner banner--warn">
-          <span><b>${alerts.length} open alert${alerts.length > 1 ? 's' : ''}</b> — ${alerts[0].line}</span>
+          <span><b>${fmtNum(alerts.length)} open alert${alerts.length > 1 ? 's' : ''}</b> — ${alerts[0].line}</span>
           <${Link} to="/alerts" class="btn btn--sm" style="margin-left:auto">TRIAGE ALERTS<//>
         </div>` : null}
 
       <div class="split">
         <div class="split__col">
-          <${Section} title="RECENT RUNS" note=${`${runs.length} most recent`}
+          <${Section} title="RECENT RUNS" note=${`${fmtNum(runs.length)} most recent`}
             right=${html`<${Link} to=${`/history?project=${encodeURIComponent(project)}`}
               style="font-size:var(--fs-xs);letter-spacing:1px">ALL RUNS ›<//>`}>
             <${RunsTable} runs=${runs}/>
           <//>
 
-          <${Section} title="BUILDS" note=${`${builds.length} most recent`}
+          <${Section} title="BUILDS" note=${`${fmtNum(builds.length)} most recent`}
             right=${html`<${Link} to=${`/history?tab=builds&project=${encodeURIComponent(project)}`}
               style="font-size:var(--fs-xs);letter-spacing:1px">ALL BUILDS ›<//>`}>
             <${BuildsTable} builds=${builds} project=${project}/>

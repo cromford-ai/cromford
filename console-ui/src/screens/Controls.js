@@ -7,7 +7,7 @@ import { useApi } from '../lib/hooks.js';
 import { CONTROL_KINDS, controlBody, controlHref, fieldLabel, fieldMeaning, fieldDisplay, displayValue } from '../lib/controls.js';
 import { configHref } from '../lib/config.js';
 import { ceilingRows, runningSummary, RUNNING_LIMIT } from '../lib/ceilings.js';
-import { whenLabel } from '../lib/format.js';
+import { whenLabel, fmtNum } from '../lib/format.js';
 import { Modal } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Skeleton, Empty, ErrorBox, Legend, Section } from '../ui/primitives.js';
@@ -138,7 +138,7 @@ export function ControlsView({ desc, kinds = CONTROL_KINDS, state, onReload, onN
     <div class="page">
       ${dialog}
       <${PageHeadline} chip="Controls"
-        line1=${Array.isArray(rows) ? `${rows.length} ${desc.title} ${rows.length === 1 ? 'row' : 'rows'}.` : data ? `The ${desc.title} read answered no list.` : `Reading the ${desc.title}.`}
+        line1=${Array.isArray(rows) ? `${fmtNum(rows.length)} ${desc.title} ${rows.length === 1 ? 'row' : 'rows'}.` : data ? `The ${desc.title} read answered no list.` : `Reading the ${desc.title}.`}
         line2="Every edit is recorded with its reason."/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="section__note">${desc.title} · every edit is recorded with its reason</span>

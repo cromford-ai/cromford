@@ -6,7 +6,7 @@ import { useApi } from '../lib/hooks.js';
 import { useFleet } from '../app.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { agoFromMinutes } from '../lib/format.js';
+import { agoFromMinutes, fmtNum } from '../lib/format.js';
 import { fleetProjects } from '../lib/kanban.js';
 import { utilizationRows, cellText, pauseAge, verdictRank } from '../lib/utilization.js';
 
@@ -69,7 +69,7 @@ export function UtilizationView({ util, projects, open, onOpen, now = Date.now()
     return html`
       ${out.fleetUnread ? note('fleet list unread, showing the projects that have a snapshot') : null}
       ${out.extra.length ? note(`not in fleet.conf, not shown: ${out.extra.join(', ')}`) : null}
-      ${stale ? note(`${stale} row${stale === 1 ? '' : 's'} older than 2h: the hourly lane may have stopped`) : null}
+      ${stale ? note(`${fmtNum(stale)} row${stale === 1 ? '' : 's'} older than 2h: the hourly lane may have stopped`) : null}
       <${SortableTable} wide columns=${columns} rows=${out.rows} rowKey=${(r) => r.project}
         defaultSort="verdict" defaultDir="asc"/>
       ${row ? html`<${PayloadPanel} row=${row} now=${now}/>` : null}`;
@@ -78,7 +78,7 @@ export function UtilizationView({ util, projects, open, onOpen, now = Date.now()
   const uo = util && util.data ? utilizationRows(util.data, projects, now) : null;
   return html`
     <${PageHeadline} chip="Utilization"
-      line1=${uo ? `${uo.rows.length} ${uo.rows.length === 1 ? 'project' : 'projects'}, ${uo.snapshots} with a snapshot.` : util && util.error ? 'The utilization read failed.' : 'Reading the utilization snapshots.'}
+      line1=${uo ? `${fmtNum(uo.rows.length)} ${uo.rows.length === 1 ? 'project' : 'projects'}, ${fmtNum(uo.snapshots)} with a snapshot.` : util && util.error ? 'The utilization read failed.' : 'Reading the utilization snapshots.'}
       line2="How much of each project's capacity the last hour used."/>
     <${Section} title="UTILIZATION" note="newest hourly snapshot per fleet project; click a verdict for its payload">
       ${body()}

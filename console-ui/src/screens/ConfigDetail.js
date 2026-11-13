@@ -9,7 +9,7 @@ import { api } from '../api.js';
 import { usePolledApi } from '../lib/poll.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { clockTime, minutesSince } from '../lib/format.js';
+import { clockTime, minutesSince, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { CONFIG_KIND_MEANING } from './Config.js';
 import { isKnownKind, historyRows, sideText, currentFor, DETAIL_LIMIT, FLAG_LIST_CAP } from '../lib/config-detail.js';
@@ -135,7 +135,7 @@ function History({ kind, name, state, onRetry }) {
   return html`
     ${state.error ? html`<${ErrorBox} error=${state.error} onRetry=${onRetry}/>` : null}
     ${truncated ? html`
-      <div class="footnote"><span style="color:var(--faint)">showing the newest ${rows.length} changes; sorting covers only these</span></div>` : null}
+      <div class="footnote"><span style="color:var(--faint)">showing the newest ${fmtNum(rows.length)} changes; sorting covers only these</span></div>` : null}
     ${rows.length
       ? html`<${ChangesTable} rows=${rows}/>`
       : html`<${Empty} title="no changes recorded yet" note=${`config_changes has nothing for ${kind} · ${name}`}/>`}`;

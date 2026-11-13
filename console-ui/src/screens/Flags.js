@@ -12,7 +12,7 @@ import { useApi } from '../lib/hooks.js';
 import { Modal } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { minutesSince } from '../lib/format.js';
+import { minutesSince, fmtNum } from '../lib/format.js';
 import { fleetProjects } from '../lib/kanban.js';
 import { configHref } from '../lib/config.js';
 import {
@@ -227,16 +227,16 @@ export function FlagsView({ flags, switches = null, projects = [], filter = '', 
       <${SortableTable} wide columns=${flagColumns({ projects, onClear, busy })} rows=${res.rows}
         rowKey=${(r) => `${r.scope}|${r.name}`} defaultSort="name"
         empty=${html`<${Empty} title=${f ? `no flag matches '${f}'` : 'no flags'}
-          note=${res.hidden ? `${res.hidden} cleared, turn on show cleared to see them` : null}/>`}/>
-      ${!showCleared && res.hidden && res.rows.length ? html`<p style="color:var(--faint)">${res.hidden} cleared not shown</p>` : null}`;
+          note=${res.hidden ? `${fmtNum(res.hidden)} cleared, turn on show cleared to see them` : null}/>`}/>
+      ${!showCleared && res.hidden && res.rows.length ? html`<p style="color:var(--faint)">${fmtNum(res.hidden)} cleared not shown</p>` : null}`;
   }
 
   return html`
     <div class="page">
       ${dialog}
       <${PageHeadline} chip="Flags"
-        line1=${res ? `${res.rows.length} ${res.rows.length === 1 ? 'flag' : 'flags'} set.` : flags && flags.loading ? 'Reading the flags.' : 'The flags read failed.'}
-        line2=${res && res.hidden ? `${res.hidden} cleared, not shown.` : 'Each flag is a switch the fleet reads.'}/>
+        line1=${res ? `${fmtNum(res.rows.length)} ${res.rows.length === 1 ? 'flag' : 'flags'} set.` : flags && flags.loading ? 'Reading the flags.' : 'The flags read failed.'}
+        line2=${res && res.hidden ? `${fmtNum(res.hidden)} cleared, not shown.` : 'Each flag is a switch the fleet reads.'}/>
       ${note ? html`<div class="banner banner--warn" role="status"
         style="margin-bottom:10px;border-color:var(--line-active);background:var(--panel-active);color:var(--green-lt)">
         <span style="overflow-wrap:anywhere">${note}</span></div>` : null}

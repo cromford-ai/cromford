@@ -26,7 +26,7 @@ import { useTicketHold, TicketHoldControl } from '../ui/TicketHold.js';
 import { AgentSession } from '../ui/AgentSession.js';
 import { jobRows, ageLabel } from '../lib/jobs.js';
 import { lineTickets, STATIONS } from '../lib/line.js';
-import { clockTime } from '../lib/format.js';
+import { clockTime, fmtNum } from '../lib/format.js';
 import { transcriptRows } from '../lib/transcripts.js';
 import {
   ticketJob, ticketFacts, stageCosts, eventTimeline, firstEventOf,
@@ -133,7 +133,7 @@ export function TicketView({
       <${PageHeadline} chip=${f.line ? STATE_CHIP[f.line.state] || 'Ticket' : 'Ticket'}
         asOf=${`Coordination DB${asOf ? ` · as of ${clockTime(asOf)}` : ''}`}
         line1=${ticket}
-        line2=${f.title || `${rows.length} ${rows.length === 1 ? 'job' : 'jobs'} in ${projects.length} ${projects.length === 1 ? 'project' : 'projects'}.`}
+        line2=${f.title || `${fmtNum(rows.length)} ${rows.length === 1 ? 'job' : 'jobs'} in ${fmtNum(projects.length)} ${projects.length === 1 ? 'project' : 'projects'}.`}
         lede=${where}/>
 
       <div class="d-meta">
@@ -204,7 +204,7 @@ export function TicketView({
           </div>
           ${files.length ? html`
             <div class="tp-card">
-              <h3 class="tp-card__head"><span>Files changed</span><span>${files.length}</span></h3>
+              <h3 class="tp-card__head"><span>Files changed</span><span>${fmtNum(files.length)}</span></h3>
               <ul class="files">
                 ${files.map((x) => html`
                   <li key=${x.filename}>

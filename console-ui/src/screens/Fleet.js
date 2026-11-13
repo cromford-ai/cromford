@@ -6,7 +6,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { useFleet } from '../app.js';
 import {
-  agoFromMinutes, healthFromAge, minutesFromPingText, minutesSince, snapshotLabel, shortSha, safeHttpsUrl, countOrNull
+  agoFromMinutes, healthFromAge, minutesFromPingText, minutesSince, snapshotLabel, shortSha, safeHttpsUrl, countOrNull, fmtNum
 } from '../lib/format.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, healthColor, Cursor, Legend } from '../ui/primitives.js';
 import { runOutcome, OUTCOME_LABEL, OUTCOME_TONE } from '../lib/cockpit.js';
@@ -289,7 +289,7 @@ export function FleetScreen() {
       <div class="stats">
         <${Stat} label="BOXES UP" to="/machines"
           value=${machines.data ? boxesUp : '…'}
-          unit=${machines.data ? `/${boxNames.length}` : null}
+          unit=${machines.data ? `/${fmtNum(boxNames.length)}` : null}
           tone=${machines.data && boxNames.length && boxesUp < boxNames.length ? 'warn' : null} />
         <${Stat} label="BUILDING NOW"
           value=${projects.data && machines.data ? building : '…'} tone="green" />
@@ -348,7 +348,7 @@ export function FleetScreen() {
       <${Section} title="PROJECTS"
         right=${html`<${Link} to="/projects/new" class="btn btn--sm onboard-new">NEW<//>`}
         note=${projects.data
-          ? `${rows.length} ${projects.data.projects_source === 'fleet_status'
+          ? `${fmtNum(rows.length)} ${projects.data.projects_source === 'fleet_status'
               ? 'from the fleet registry'
               : 'from the fallback constant — no fleet beat yet'} · ${snapshotLabel(projects.data.snapshot_age_min)}`
           : ''}>
@@ -465,7 +465,7 @@ export function FlyTile({ project, fly, flyErrors }) {
         <span class="tile__name">fly · ${project}</span>
         ${reason
           ? html`<span class="tile__ping" style="color:var(--amber-dk)">cannot read</span>`
-          : html`<span class="tile__ping" style="color:var(--cyan-dk)">${live}/${machines.length} up</span>`}
+          : html`<span class="tile__ping" style="color:var(--cyan-dk)">${fmtNum(live)}/${fmtNum(machines.length)} up</span>`}
       </div>
       ${jobs.length
         ? jobs.slice(0, 3).map((j) => html`
@@ -478,7 +478,7 @@ export function FlyTile({ project, fly, flyErrors }) {
         ? html`<span class="tile__meta tile__meta--warn">fly not readable · ${reason}</span>`
         : orphans.length ? html`
           <span class="tile__meta tile__meta--warn">
-            ${orphans.length} job${orphans.length > 1 ? 's' : ''} whose machine Fly no longer returns
+            ${fmtNum(orphans.length)} job${orphans.length > 1 ? 's' : ''} whose machine Fly no longer returns
           </span>` : null}
     <//>`;
 }
@@ -506,7 +506,7 @@ function ExternalTile({ lane, snapshotAgeMin }) {
       <span class="tile__meta">
         ${lane.projects.map((p, i) => html`
           <span key=${p}>${i > 0 ? ', ' : ''}<${Link} to=${`/p/${encodeURIComponent(p)}`}>${p}<//></span>`)}
-        ${` · ${lane.lanes.length} lane${lane.lanes.length === 1 ? '' : 's'}`}
+        ${` · ${fmtNum(lane.lanes.length)} lane${lane.lanes.length === 1 ? '' : 's'}`}
       </span>
       <span class="tile__meta">
         ${withPr.length
@@ -806,7 +806,7 @@ export function PauseBanner({ rows, truncated, onEnd, busyId = null }) {
   ];
   return html`
     <${Section} title="PAUSES"
-      note=${`${rows.length} live${truncated ? ' · first 500 shown' : ''}`}>
+      note=${`${fmtNum(rows.length)} live${truncated ? ' · first 500 shown' : ''}`}>
       <${SortableTable} columns=${columns} rows=${rows} rowKey=${(r) => r.id}
         defaultSort="expiresInMin" defaultDir="asc" />
     <//>`;

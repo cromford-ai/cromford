@@ -10,7 +10,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Stat, Skeleton, Empty, ErrorBox, Age, healthColor, Cursor, Legend } from '../ui/primitives.js';
 import { Dot, Clock } from '../ui/icons.js';
-import { agoFromMinutes, minutesSince, clockTime, healthFromAge, prNumberFromUrl, whenLabel, countOrNull } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, clockTime, healthFromAge, prNumberFromUrl, whenLabel, countOrNull, fmtNum } from '../lib/format.js';
 import { stageProgress, stageLabel, STEPS } from '../lib/stages.js';
 import { plainLabel, tierLabel } from '../lib/labels.js';
 import {
@@ -52,7 +52,7 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
   // nothing stale.
   const bn = jobs.data ? buildingNow(jobs.data, builds) : null;
   const stale = staleBuilds(builds, jobs.data, nowMs);
-  const buildingValue = bn ? (bn.capped ? `${bn.count}+` : bn.count)
+  const buildingValue = bn ? (bn.capped ? `${fmtNum(bn.count)}+` : bn.count)
     : jobs.loading && !jobs.data ? '…' : countOrNull(null);
   // BH-9117: the NEEDS count split by kind; its total is the NEEDS A HUMAN value.
   const split = needsSplit(nowData.data ? needs : null, jobs.data ? stale.length : null);
@@ -93,7 +93,7 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
         <${Stat} label="NEEDS A HUMAN" value=${nowData.data ? countOrNull(needsTotal) : '…'}
           tone=${needsTotal ? 'warn' : null} to="/needs"/>
         <${Stat} label="BOARDS" value=${nowData.data ? boards.length : '…'}/>
-        <${Stat} label=${`FAILED OF LAST ${runs.length} TICKS`} value=${nowData.data ? failing : '…'}
+        <${Stat} label=${`FAILED OF LAST ${fmtNum(runs.length)} TICKS`} value=${nowData.data ? failing : '…'}
           tone=${failing ? 'warn' : null} to="/history?outcome=failed"/>
       </div>
 
@@ -143,7 +143,7 @@ export function NowView({ data: nowData, jobs, nowMs = Date.now() }) {
 
           <${Section} title="LATEST TICKS"
             note=${oldest
-              ? `${runs.length} newest ticks, fleet-wide, ${whenLabel(oldest.started_at, nowMs)} to now`
+              ? `${fmtNum(runs.length)} newest ticks, fleet-wide, ${whenLabel(oldest.started_at, nowMs)} to now`
               : 'no ticks in view'}
             right=${html`<${Link} to="/history" style="font-size:var(--fs-xs);letter-spacing:1px">FULL HISTORY ›<//>`}>
             ${nowData.loading && !nowData.data

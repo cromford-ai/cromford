@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { html } from '../../router.js';
 import { api, AuthError } from '../../api.js';
 import { Modal } from '../../ui/Modal.js';
+import { fmtNum } from '../../lib/format.js';
 
 // The poll of an approved or filing wave: every `ms`, at most `max` polls.
 // A module object so a test can shorten it; the screen mounts WaveActions
@@ -154,7 +155,7 @@ export function WaveActions({ project, wave: initial }) {
   } else if (status === 'filed') {
     body = html`
       <div style="margin:14px 0">
-        <span role="status">Filed ${issues.length} issues in ${repo}.</span>
+        <span role="status">Filed ${fmtNum(issues.length)} issues in ${repo}.</span>
         <ul data-wave-issues style="margin:8px 0;padding-left:20px">
           ${issues.map((i) => html`
             <li key=${`${i.repo}#${i.issue}`} style="min-height:44px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">

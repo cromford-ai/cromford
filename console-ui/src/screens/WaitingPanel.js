@@ -7,6 +7,7 @@ import { WAITING_REASONS, REASON_LABEL } from '../lib/waiting.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { TicketKey } from '../ui/TicketKey.js';
 import { Skeleton, Empty, ErrorBox, Age, ProjectLink, Legend } from '../ui/primitives.js';
+import { fmtNum } from '../lib/format.js';
 
 // The "To do (waiting)" view (BH-9116): every open board ticket that is not in
 // flight, one reason each, from GET /api/dash/kanban/waiting. On the KANBAN
@@ -71,13 +72,13 @@ export function WaitingView({ state, project = null, fleetProjects = [], onRetry
   return html`
     <div style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        ${WAITING_REASONS.filter((r) => counts[r] > 0).map((r) => html`<span key=${r} class="tag" title=${REASON_LABEL[r]}>${`${r} ${counts[r]}`}</span>`)}
-        <span class="tag tag--idle" title="open tickets with a running build, a fresh claim or a PR in review">${`in flight ${d.in_flight || 0}`}</span>
+        ${WAITING_REASONS.filter((r) => counts[r] > 0).map((r) => html`<span key=${r} class="tag" title=${REASON_LABEL[r]}>${`${r} ${fmtNum(counts[r])}`}</span>`)}
+        <span class="tag tag--idle" title="open tickets with a running build, a fresh claim or a PR in review">${`in flight ${fmtNum(d.in_flight || 0)}`}</span>
         ${(d.stale_claims || []).length
-          ? html`<span class="tag tag--warn" title="claimed queue rows with no running build; KANBAN does not count them as building">${`stale claims ${d.stale_claims.length}`}</span>`
+          ? html`<span class="tag tag--warn" title="claimed queue rows with no running build; KANBAN does not count them as building">${`stale claims ${fmtNum(d.stale_claims.length)}`}</span>`
           : null}
       </div>
-      ${d.truncated ? html`<span class="section__note">${`Only the first ${d.knobs ? d.knobs.max_tickets : ''} open tickets were read; ${d.unread || 0} more are not shown (knob waiting.max_tickets).`}</span>` : null}
+      ${d.truncated ? html`<span class="section__note">${`Only the first ${d.knobs ? fmtNum(d.knobs.max_tickets) : ''} open tickets were read; ${fmtNum(d.unread || 0)} more are not shown (knob waiting.max_tickets).`}</span>` : null}
       ${uncovered.length ? html`<span class="section__note">${`not covered: ${uncovered.join(', ')} — no OS board snapshot`}</span>` : null}
       ${rows.length === 0
         ? html`<${Empty} title="nothing waiting" note=${project ? `Every open ${project} ticket is in flight.` : 'Every open ticket on the OS boards is in flight.'}/>`

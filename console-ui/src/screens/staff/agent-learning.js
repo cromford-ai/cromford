@@ -16,7 +16,7 @@ import { useApi } from '../../lib/hooks.js';
 import { Modal } from '../../ui/Modal.js';
 import { SortableTable } from '../../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../../ui/primitives.js';
-import { safeHttpsUrl } from '../../lib/format.js';
+import { safeHttpsUrl, fmtNum } from '../../lib/format.js';
 import { displayName, na } from '../../lib/staff.js';
 import {
   learningState, pct, COUNT_KEYS, countLabel, outcomeHref, decideBody, errorText, readBackText, REASON_MAX
@@ -191,7 +191,7 @@ function OutcomesSection({ drill, onCount, onOlder }) {
   } else {
     body = html`
       ${drill.error ? html`<${ErrorBox} error=${drill.error} onRetry=${onOlder}/>` : null}
-      ${n < drill.total ? html`<p style="color:var(--faint)">${n} of ${drill.total} loaded; sort covers the loaded rows</p>` : null}
+      ${n < drill.total ? html`<p style="color:var(--faint)">${fmtNum(n)} of ${fmtNum(drill.total)} loaded; sort covers the loaded rows</p>` : null}
       <${SortableTable} wide columns=${OUTCOME_COLUMNS} rows=${drill.rows} rowKey=${outcomeKey} defaultSort="resolved_at" defaultDir="desc"
         empty=${html`<${Empty} title=${`no ${what} outcomes in the last ${drill.days} days now`}/>`}/>
       ${drill.truncated ? html`<p>${btn(drill.loading ? 'LOADING…' : 'OLDER', drill.loading, onOlder)}</p>` : null}`;
@@ -224,7 +224,7 @@ function ProposalSection({ s, onDecide, busy }) {
         ${btn('APPROVE…', busy, () => onDecide && onDecide('approve', p))}
         ${btn('VOID…', busy, () => onDecide && onDecide('void', p))}
       </div>
-      ${ev.truncated ? html`<p style="color:var(--faint)">showing ${ev.rows.length} of ${ev.total}, the newest first</p>` : null}
+      ${ev.truncated ? html`<p style="color:var(--faint)">showing ${fmtNum(ev.rows.length)} of ${fmtNum(ev.total)}, the newest first</p>` : null}
       <${SortableTable} wide columns=${OUTCOME_COLUMNS} rows=${ev.rows} rowKey=${outcomeKey} defaultSort="resolved_at" defaultDir="desc"
         empty=${html`<${Empty} title="no outcomes since the last level change"/>`}/>
     <//>`;

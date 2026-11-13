@@ -217,11 +217,11 @@ export function OutcomesView({ out, repo, days, setFilter, nowMs = Date.now() })
     },
     {
       key: 'apiCalls', label: 'API CALLS', sort: (r) => r.apiCalls, align: 'right',
-      cell: (r) => html`<span class="num">${r.apiCalls.toLocaleString()}</span>`
+      cell: (r) => html`<span class="num">${fmtNum(r.apiCalls)}</span>`
     },
     {
       key: 'peakCacheRead', label: 'PEAK CACHE READ', sort: (r) => r.peakCacheRead, align: 'right',
-      cell: (r) => html`<span class="num" title="the runaway-session signal, not the volume one">${r.peakCacheRead.toLocaleString()}</span>`
+      cell: (r) => html`<span class="num" title="the runaway-session signal, not the volume one">${fmtNum(r.peakCacheRead)}</span>`
     }
   ];
 

@@ -14,6 +14,7 @@ import { SortableTable } from '../../ui/SortableTable.js';
 import { useConfirm } from '../../ui/Modal.js';
 import { laneLabel, writeError, when } from '../../lib/roadmap.js';
 import { WaveSelectBar } from './wave-select.js';
+import { fmtNum } from '../../lib/format.js';
 
 const COLUMNS = [
   { key: 'ideas', label: 'IDEAS', hand: true },
@@ -33,7 +34,7 @@ const StatusLine = ({ text }) => (text ? html`
   <div class="banner banner--warn" role="status" data-testid="roadmap-status"><span>${text}</span></div>` : null);
 
 const ColumnHead = ({ label, count }) => html`
-  <div class="kb__head"><span class="kb__title">${label}</span>${' '}<span class="kb__count">${count}</span></div>`;
+  <div class="kb__head"><span class="kb__title">${label}</span>${' '}<span class="kb__count">${typeof count === 'number' ? fmtNum(count) : count}</span></div>`;
 
 function BoardSkeleton() {
   return html`
@@ -282,14 +283,14 @@ export function RoadmapBoardView({ project }) {
   return html`
     <div class="page">
       <${PageHeadline} chip="Roadmap" line1=${project}
-        line2=${data ? `${shown} ${shown === 1 ? 'card' : 'cards'} on the board.` : b.error ? 'The read failed.' : 'Reading the board.'}/>
+        line2=${data ? `${fmtNum(shown)} ${shown === 1 ? 'card' : 'cards'} on the board.` : b.error ? 'The read failed.' : 'Reading the board.'}/>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <${Link} to="/roadmap" class="btn btn--sm">ALL ROADMAPS<//>
         <${Link} to=${`${listPath(project)}?view=list`} class="btn btn--sm">LIST VIEW<//>
       </div>
       <${StatusLine} text=${status}/>
       <${Section} title="BOARD" note=${truncated
-        ? `Showing the newest ${shown}. Older items are not on this board.`
+        ? `Showing the newest ${fmtNum(shown)}. Older items are not on this board.`
         : 'Drag a card between Ideas and Next. Now and Shipped follow the linked issues.'}>
         ${b.loading && !data
           ? html`<${BoardSkeleton}/>`

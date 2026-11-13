@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { usePolledApi } from '../lib/poll.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { clockTime } from '../lib/format.js';
+import { clockTime, fmtNum } from '../lib/format.js';
 import { changeRows } from '../lib/cost-cap-changes.js';
 
 // BH-2567 (BH-2511.4): the Costs page's CAP HISTORY section, mounted on /costs
@@ -51,7 +51,7 @@ export function CostCapHistoryView({ state, filterKey = null, onFilter, onClear,
           ? html`<${ChangesTable} rows=${rows} onFilter=${onFilter}/>`
           : html`<${Empty} title=${filterKey ? `no cap changes for ${filterKey} yet` : 'no cap changes yet'}/>`}
         ${truncated ? html`
-          <div class="footnote"><span style="color:var(--faint)">showing the newest ${rows.length}</span></div>` : null}`;
+          <div class="footnote"><span style="color:var(--faint)">showing the newest ${fmtNum(rows.length)}</span></div>` : null}`;
     }
   }
 

@@ -7,7 +7,7 @@ import { useConfirm } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
 import { UsdCell } from '../ui/UsdCell.js';
-import { clockTime, minutesSince, whenLabel, countOrNull } from '../lib/format.js';
+import { clockTime, minutesSince, whenLabel, countOrNull, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import {
   settingsRows, findLaneRow, tabsFrom, makeLaneActions, zeroLabel, isHub, checkSettingKey, cadenceWords, firstSentence
@@ -124,8 +124,8 @@ export function SettingsView({
     <div class="page">
       ${dialog}
       <${PageHeadline} chip="Settings"
-        line1=${`${rows.length} automatic ${rows.length === 1 ? 'mechanism' : 'mechanisms'}.`}
-        line2=${`${rows.filter((r) => r.off === true).length} switched off.`}/>
+        line1=${`${fmtNum(rows.length)} automatic ${rows.length === 1 ? 'mechanism' : 'mechanisms'}.`}
+        line2=${`${fmtNum(rows.filter((r) => r.off === true).length)} switched off.`}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="section__note">every automatic mechanism, its switch and its knobs</span>
         <${Link} to="/config" class="crumb">ALL SETTINGS & FLAGS →<//>
@@ -260,7 +260,7 @@ const BOXES_OFF_COL = {
   key: 'boxes_off', label: 'BOXES OFF', sort: (r) => r.boxes_off, align: 'right',
   cell: (r) => (r.boxes === null || r.boxes === undefined
     ? html`<span class="na">${countOrNull(null)}</span>`
-    : html`<span class=${r.boxes_off ? 'num tag tag--warn' : 'num'}>${r.boxes_off}/${r.boxes.length}</span>${r.boxes_off > 0
+    : html`<span class=${r.boxes_off ? 'num tag tag--warn' : 'num'}>${fmtNum(r.boxes_off)}/${fmtNum(r.boxes.length)}</span>${r.boxes_off > 0
       ? html`<span class="na"> off: ${r.boxes.filter((b) => b.off === true).map((b) => b.box).join(', ')}</span>` : null}`)
 };
 

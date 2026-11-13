@@ -14,7 +14,7 @@ import { SortableTable } from '../ui/SortableTable.js';
 import { Modal } from '../ui/Modal.js';
 import { PageHeadline } from '../ui/line.js';
 import { Empty, ErrorBox, Age } from '../ui/primitives.js';
-import { minutesSince } from '../lib/format.js';
+import { minutesSince, fmtNum } from '../lib/format.js';
 import {
   ADAPTERS, connectionRows, checkConnectionForm, credentialSummary, draftFor, fieldsFor, probeCommand, probeNote,
   PROBE_STALE_KEY, PROBE_STALE_MIN, probeStaleMin
@@ -128,7 +128,7 @@ export function ConnectionsView({ data, error, loading, highlight, onSave, onPro
   return html`
     <div class="page">
       <${PageHeadline} chip="Connections" line1="Tracker connections."
-        line2=${data ? `${rows.length} ${rows.length === 1 ? 'project' : 'projects'}. ${failed} failed ${failed === 1 ? 'probe' : 'probes'}.` : 'Reading the connections.'}
+        line2=${data ? `${fmtNum(rows.length)} ${rows.length === 1 ? 'project' : 'projects'}. ${fmtNum(failed)} failed ${failed === 1 ? 'probe' : 'probes'}.` : 'Reading the connections.'}
         lede=${'API keys stay in env/<project>.env on each box. This page shows var names, never values.'}/>
       ${note ? html`
         <div class="banner" role="status">

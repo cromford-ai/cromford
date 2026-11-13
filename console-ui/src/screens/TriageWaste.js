@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
-import { fmtUsd } from '../lib/format.js';
+import { fmtUsd, fmtNum } from '../lib/format.js';
 import { LeafRows } from './CostBreakdown.js';
 
 // BH-3926 (BH-3921.3): how many triage tickets the model was paid to re-read
@@ -92,7 +92,7 @@ export function TriageWasteView({ data, error, loading, reload, open = null, onO
     if (error && !data) return html`<${ErrorBox} error=${error} onRetry=${reload}/>`;
     return html`
       ${data && data.truncated ? html`<div class="footnote" style="margin-bottom:6px"><span style="color:var(--faint)">
-        capped: the newest ${rows.length} day · project rows</span></div>` : null}
+        capped: the newest ${fmtNum(rows.length)} day · project rows</span></div>` : null}
       <${SortableTable} wide columns=${columns} rows=${rows} rowKey=${rowKeyOf} defaultSort="day" defaultDir="desc"
         empty=${html`<${Empty} title="no triage calls in this window" note="No successful triage cost row falls in this window."/>`}/>
       ${openRow ? html`

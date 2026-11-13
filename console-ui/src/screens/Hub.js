@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { Section, Skeleton, Empty, Legend } from '../ui/primitives.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { useConfirm } from '../ui/Modal.js';
-import { agoFromMinutes } from '../lib/format.js';
+import { agoFromMinutes, fmtNum } from '../lib/format.js';
 import {
   leaseView, roleView, backupRows, promoteTargets, promoteFormState, promoteBody,
   promoteOutcome, promoteResult, loadError, createLoader
@@ -22,7 +22,7 @@ import { ChatBindingsPanel } from './hub/ChatBindings.js';
 // never as "no data". There is no polling: a refresh under an open promote
 // dialog buys nothing, so RELOAD is the refresh.
 
-const remainingLabel = (s) => (s === null ? '—' : s < 60 ? `${s}s left` : `${Math.floor(s / 60)}m left`);
+const remainingLabel = (s) => (s === null ? '—' : s < 60 ? `${s}s left` : `${fmtNum(Math.floor(s / 60))}m left`);
 const asOf = (ms) => (typeof ms === 'number' ? `as of ${new Date(ms).toISOString().slice(11, 19)}Z` : '');
 const PILL = { ok: 'pill', warn: 'pill pill--warn', dead: 'pill pill--dead', unknown: 'pill pill--muted' };
 const pillLabel = (b) => b.badge || b.text;
@@ -111,7 +111,7 @@ export function HubView({ state, now, onReload, onPromote, promoteMsg }) {
     <div class="page">
       <${PageHeadline} chip="HUB"
         line1=${lease ? `${lease.holder || 'A box'} holds the hub lease.` : data ? 'No hub lease recorded.' : error ? 'The hub read failed.' : 'Reading the hub.'}
-        line2=${data ? `${rows.length} ${rows.length === 1 ? 'backup' : 'backups'} on record.` : ''}/>
+        line2=${data ? `${fmtNum(rows.length)} ${rows.length === 1 ? 'backup' : 'backups'} on record.` : ''}/>
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <button class="btn btn--sm" type="button" onClick=${onReload} disabled=${loading}>RELOAD</button>
         ${data ? html`<button class="btn btn--sm btn--danger" type="button" onClick=${onPromote}

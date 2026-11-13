@@ -17,6 +17,7 @@ import {
 } from '../../lib/roadmap.js';
 import { pmRuns } from '../../lib/roadmap-api/pm-flesh.js';
 import { FleshSection } from './flesh-section.js';
+import { fmtNum } from '../../lib/format.js';
 
 const listPath = (project) => `/roadmap/${encodeURIComponent(project)}`;
 const ideaPath = (project, id) => `${listPath(project)}/idea/${encodeURIComponent(id)}`;
@@ -41,7 +42,7 @@ export function RoadmapIndexView() {
   return html`
     <div class="page">
       <${PageHeadline} chip="Roadmap" line1="Roadmaps"
-        line2=${s.data ? `${rows.length} ${rows.length === 1 ? 'project' : 'projects'}.` : s.error ? 'The read failed.' : 'Reading the projects.'}/>
+        line2=${s.data ? `${fmtNum(rows.length)} ${rows.length === 1 ? 'project' : 'projects'}.` : s.error ? 'The read failed.' : 'Reading the projects.'}/>
       <${Section} title="PROJECTS" note="one row per project. Open a project to add and move its ideas.">
         ${s.loading && !s.data
           ? html`<${Skeleton} rows=${4} height=${20}/>`
@@ -162,7 +163,7 @@ export function RoadmapListView({ project }) {
   return html`
     <div class="page">
       <${PageHeadline} chip="Roadmap" line1=${project}
-        line2=${d ? `${total} ${total === 1 ? 'idea' : 'ideas'}.` : list.error ? 'The read failed.' : 'Reading the ideas.'}/>
+        line2=${d ? `${fmtNum(total)} ${total === 1 ? 'idea' : 'ideas'}.` : list.error ? 'The read failed.' : 'Reading the ideas.'}/>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <${Link} to="/roadmap" class="btn btn--sm">ALL ROADMAPS<//>
         <${Link} to=${`${listPath(project)}?view=board`} class="btn btn--sm">BOARD<//>
@@ -171,7 +172,7 @@ export function RoadmapListView({ project }) {
         <${AddIdeaForm} project=${project} onAdded=${list.reload}/>
       <//>
       <${StatusLine} text=${status}/>
-      <${Section} title="IDEAS" note=${d && d.truncated ? `Showing the newest ${ideas.length}. Filter by lane to see the rest.` : 'newest change first. Click a title for its page and history.'}>
+      <${Section} title="IDEAS" note=${d && d.truncated ? `Showing the newest ${fmtNum(ideas.length)}. Filter by lane to see the rest.` : 'newest change first. Click a title for its page and history.'}>
         <div class="tabs" style="margin-bottom:8px">
           ${chip('ALL', null)}
           ${IDEA_LANES.map((l) => chip(laneLabel(l).toUpperCase(), l))}

@@ -11,7 +11,7 @@ import { useApi } from '../lib/hooks.js';
 import { useConfirm } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { agoFromMinutes, minutesSince } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import {
   changesStatus, configHref, CONFIG_CHANGES_LIMIT, RECENT_CHANGES_LIMIT,
@@ -249,7 +249,7 @@ export function ConfigView({ settings, flags, changes, filter = '', showLane = f
   return html`
     <div class="page">
       <${PageHeadline} chip="ALL SETTINGS & FLAGS" line1="Every setting and every flag."
-        line2=${Array.isArray(recent) ? `${recent.length} recent ${recent.length === 1 ? 'change' : 'changes'}, each with its reason.` : 'Each change is recorded with its reason.'}/>
+        line2=${Array.isArray(recent) ? `${fmtNum(recent.length)} recent ${recent.length === 1 ? 'change' : 'changes'}, each with its reason.` : 'Each change is recorded with its reason.'}/>
       ${note ? html`<div class=${note.ok ? 'banner banner--warn' : 'banner'} role="status"
         style=${note.ok ? 'margin-bottom:10px;border-color:var(--line-active);background:var(--panel-active);color:var(--green-lt)' : 'margin-bottom:10px'}>
         <span style="overflow-wrap:anywhere">${note.text}</span></div>` : null}

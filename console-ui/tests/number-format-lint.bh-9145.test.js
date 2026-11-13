@@ -30,16 +30,8 @@ const SITE_ALLOW = [
   ['Outcomes.js', 'style=${`width:${Math.round(r.share * 100)}%`}', 'a CSS meter width'],
 ];
 const siteAllowed = (name, line) => SITE_ALLOW.some(([f, slice]) => f === name && line.includes(slice));
-// A ratchet, not zero tolerance: a file's count may go down, never up.
-// C1 of #9145 converts these files and DELETES this map.
-const BASELINE = {
-  'Fleet.js': 6, 'Project.js': 5, 'Staff.js': 4, 'Now.js': 3, 'Settings.js': 3,
-  'SetupLine.js': 3, 'Ticket.js': 3, 'roadmap/list-view.js': 3, 'staff/agent-learning.js': 3,
-  'Connections.js': 2, 'CostBreakdown.js': 2, 'Hub.js': 2, 'Utilization.js': 2,
-  'roadmap/board-view.js': 2, 'Config.js': 1, 'ConfigDetail.js': 1, 'Controls.js': 1,
-  'CostCapHistory.js': 1, 'Flags.js': 1, 'Lessons.js': 1, 'LlmSites.js': 1,
-  'TriageWaste.js': 1, 'WaitingPanel.js': 1, 'roadmap/wave-actions.js': 1,
-};
+// Zero tolerance since BH-9629 (C1 of #9145): every screen file outside
+// ALLOW counts 0. The per-file ratchet baseline is gone.
 
 const PATH = String.raw`[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*`;
 const PURE_PATH = new RegExp(`^${PATH}$`);
@@ -112,17 +104,17 @@ const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
 const files = walk(ROOT).map((p) => ({ name: relative(ROOT, p), src: readFileSync(p, 'utf8') }));
 const sites = (f) => f.src.split('\n').flatMap((line, i) => (siteAllowed(f.name, line) ? [] : scanLine(line)).map(() => `${f.name}:${i + 1}: ${line.trim()}`));
 
-test('L1: no screen adds a bare number interpolation over its baseline', () => {
+test('L1: no screen has a bare number interpolation', () => {
   const over = files.filter((f) => !ALLOW[f.name])
-    .filter((f) => countFile(f.src, f.name) > (BASELINE[f.name] ?? 0));
-  const detail = over.map((f) => `${f.name}: ${countFile(f.src, f.name)} > baseline ${BASELINE[f.name] ?? 0}\n  `
+    .filter((f) => countFile(f.src, f.name) > 0);
+  const detail = over.map((f) => `${f.name}: ${countFile(f.src, f.name)} site(s)\n  `
     + sites(f).join('\n  '));
   assert.deepEqual(over.map((f) => f.name), [],
     'wrap the number in fmtNum(...) from lib/format.js:\n' + detail.join('\n'));
 });
 
-test('L2: every baseline, allowlist and site-allow entry is live', () => {
-  for (const name of [...Object.keys(BASELINE), ...Object.keys(ALLOW)]) {
+test('L2: every allowlist and site-allow entry is live', () => {
+  for (const name of Object.keys(ALLOW)) {
     assert.ok(files.find((x) => x.name === name), `listed file ${name} exists`);
   }
   for (const name of Object.keys(ALLOW)) {

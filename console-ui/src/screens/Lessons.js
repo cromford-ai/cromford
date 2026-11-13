@@ -5,6 +5,7 @@ import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
 import { FindingRows } from './BlockCategories.js';
+import { fmtNum } from '../lib/format.js';
 
 // BH-5808 (BH-5794.3): the weekly lesson digest, on /lead-reviews. The numbers
 // are GET /api/lessons/digest's (worker/jobs/src/routes/lessons.js), the same
@@ -128,10 +129,10 @@ export function LessonsView({ data, error, loading, reload, open = null, onOpen,
         </div>` : null}
       <div class="section__note" style="margin:12px 0 6px">uncovered causes (no lesson measuring or working)</div>
       ${unc.length
-        ? html`<ul data-testid="lessons-uncovered" style="margin:0;padding-left:18px">${unc.map((u) => html`<li>${u.name} <span class="na">${u.id}</span> · ${u.blocks} BLOCKs</li>`)}</ul>`
+        ? html`<ul data-testid="lessons-uncovered" style="margin:0;padding-left:18px">${unc.map((u) => html`<li>${u.name} <span class="na">${u.id}</span> · ${fmtNum(u.blocks)} BLOCKs</li>`)}</ul>`
         : html`<div class="na">none</div>`}
-      ${(data.other_blocks || 0) > 0 ? html`<div class="section__note">other: ${data.other_blocks} BLOCKs with no category</div>` : null}
-      <div class="section__note" style="margin:12px 0 6px">lessons${l.list_truncated ? ` · the newest ${lessons.length} shown` : ''}</div>
+      ${(data.other_blocks || 0) > 0 ? html`<div class="section__note">other: ${fmtNum(data.other_blocks)} BLOCKs with no category</div>` : null}
+      <div class="section__note" style="margin:12px 0 6px">lessons${l.list_truncated ? ` · the newest ${fmtNum(lessons.length)} shown` : ''}</div>
       <${SortableTable} wide columns=${lessonColumns} rows=${lessons} rowKey=${(x) => x.id} defaultSort="merged_at" defaultDir="desc"
         empty=${html`<${Empty} title="no lesson recorded" note="bin/lesson-measure.sh records each merged lesson PR or issue of bin/lesson-propose.sh."/>`}/>`;
   };

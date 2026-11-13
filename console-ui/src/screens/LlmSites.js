@@ -9,7 +9,7 @@ import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
-import { agoFromMinutes, minutesSince } from '../lib/format.js';
+import { agoFromMinutes, minutesSince, fmtNum } from '../lib/format.js';
 import {
   runnerColumns, siteViewRows, money, BADGE_TITLES, drillHref, incompleteText
 } from '../lib/llm-sites.js';
@@ -107,7 +107,7 @@ export function LlmSitesView({ state }) {
       ${data ? html`<span style="font-size:var(--fs-sm);color:var(--faint)">as of ${agoFromMinutes(minutesSince(data.as_of))}</span>` : null}
     </div>
     <${PageHeadline} chip="LLM SITES"
-      line1=${data ? `${siteViewRows(data).length} places in the code call a model.` : error ? 'The LLM sites read failed.' : 'Reading the LLM call sites.'}
+      line1=${data ? `${fmtNum(siteViewRows(data).length)} places in the code call a model.` : error ? 'The LLM sites read failed.' : 'Reading the LLM call sites.'}
       line2="Each with its runner, its model and what it spent."/>`;
 
   if (!data) {

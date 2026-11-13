@@ -17,7 +17,7 @@ import { useApi } from '../lib/hooks.js';
 import { Modal } from '../ui/Modal.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { Section, Skeleton, Empty, ErrorBox, Age, Legend } from '../ui/primitives.js';
-import { minutesSince, safeHttpsUrl, fmtUsd } from '../lib/format.js';
+import { minutesSince, safeHttpsUrl, fmtUsd, fmtNum } from '../lib/format.js';
 import { configHref } from '../lib/config.js';
 import { clearFormState } from '../lib/flags.js';
 import {
@@ -197,7 +197,7 @@ export function StaffView({ roster, flags, onKill, busy = false, note = null, di
     <div class="page">
       ${dialog}
       <${PageHeadline} chip="Staff"
-        line1=${res ? `${res.rows.length} ${res.rows.length === 1 ? 'agent' : 'agents'} on the roster.` : roster && roster.loading ? 'Reading the roster.' : 'The roster read failed.'}
+        line1=${res ? `${fmtNum(res.rows.length)} ${res.rows.length === 1 ? 'agent' : 'agents'} on the roster.` : roster && roster.loading ? 'Reading the roster.' : 'The roster read failed.'}
         line2="Archie and the mill staff, with their open findings."/>
       ${note ? html`<div class="banner banner--warn" role="status"
         style="margin-bottom:10px;border-color:var(--line-active);background:var(--panel-active);color:var(--green-lt)">
@@ -298,7 +298,7 @@ const FINDING_COLUMNS = [
   }
 ];
 
-const fmtDuration = (s) => (s === null || s === undefined ? 'n/a' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
+const fmtDuration = (s) => (s === null || s === undefined ? 'n/a' : s < 60 ? `${s}s` : `${fmtNum(Math.floor(s / 60))}m ${s % 60}s`);
 const usd4 = (v) => (v === null || v === undefined ? null : fmtUsd(v, { decimals: 4 }));
 // BH-9127: an Archie turn carries a duration and a cost, the same as a tick.
 const COSTED = new Set(['tick', 'turn']);
@@ -331,7 +331,7 @@ function ActivityBody({ activity, older, onOlder, olderBusy, olderError }) {
   }
   const rows = older ? mergePages(first.rows, older.rows) : first.rows;
   const next = older ? older.next : first.next;
-  const note = `sorts the ${rows.length} loaded rows; OLDER loads more${first.costStatus === 'unread' ? '; cost unread' : ''}`;
+  const note = `sorts the ${fmtNum(rows.length)} loaded rows; OLDER loads more${first.costStatus === 'unread' ? '; cost unread' : ''}`;
   return html`
     ${activity.error ? html`<${ErrorBox} error=${activity.error} onRetry=${activity.reload}/>` : null}
     <p style="color:var(--faint);margin:0 0 6px">${note}</p>
@@ -381,7 +381,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
     <div class="page">
       <${PageHeadline} chip="Staff"
         line1=${displayName(agent)}
-        line2=${res ? `${res.rows.length} open ${res.rows.length === 1 ? 'finding' : 'findings'}${res.truncated ? ' (capped)' : ''}.` : 'Open findings.'}/>
+        line2=${res ? `${fmtNum(res.rows.length)} open ${res.rows.length === 1 ? 'finding' : 'findings'}${res.truncated ? ' (capped)' : ''}.` : 'Open findings.'}/>
       <p><${Link} to="/staff">← the roster<//></p>
       <dl class="lanekv">
         ${facts.map(([k, v]) => html`<dt key=${`t-${k}`}>${k}</dt><dd key=${`d-${k}`}>${na(v)}</dd>`)}
