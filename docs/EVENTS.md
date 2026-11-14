@@ -60,7 +60,7 @@ and writes no row. The subscription list is `bin/webhook-rearm.sh --print-events
 
 | Delivery | Condition | Wake kind (key) | Lane |
 |---|---|---|---|
-| `pull_request` | `opened` `synchronize` `reopened` `closed` `ready_for_review` | `pr` (number) | `bin/merge-conductor.sh` (hub) + the `pr-ci`/`pr-closed` wake classes |
+| `pull_request` | `opened` `synchronize` `reopened` `closed` `ready_for_review` | `pr` (number) | `bin/merge-conductor.sh` (hub) + the `pr-ci`/`pr-closed` wake classes + the `pr-lead` class (`bin/lib/wake-class-pr-lead.sh`, owning box: rings `lead-review`) |
 | `pull_request_review` | `submitted` `dismissed` `edited` | `pr` (number) | `bin/merge-conductor.sh` (hub) |
 | `issue_comment` | `created` `edited`, on a PR | `pr` (number) | `bin/merge-conductor.sh` (hub) |
 | `issue_comment` | `created` `edited`, on an issue | `issue` (number) | triage un-brake + `bin/run-triage.sh` on the owning box |
@@ -909,7 +909,9 @@ what it was.
 no `flags/wake-lanes-*` flag and `logs/wake-loop.log` had never printed
 `wake classes armed:`, so every lane #1034 moved to events still runs on its
 cron. Arming is a data change an operator makes on the hub. A build cannot make
-it, and nothing in the code arms a class by default.
+it, and nothing in the code arms a class by default, with one exception since
+BH-9582: `pr-lead` (section 9.3) defines `wc_pr_lead_default_on` and is on with
+no flag.
 
 ### 9.1 Operator runbook: arm one class at a time
 
@@ -959,3 +961,8 @@ makes the decision.
 - `issue-state-ledger`: its sweep against a watermark is how it stays correct. A missed webhook must not leave the ledger wrong.
 - `untriaged-wake`: it produces wakes itself, for tickets GitHub never rings about. A wake can't trigger the lane that exists because there was none.
 - `daily-digest`: it runs once a UTC day, so it is time-based on purpose.
+
+### 9.3 `pr-lead` (BH-9582)
+
+`pr` (opened, reopened, ready_for_review, synchronize) → `bin/lib/wake-class-pr-lead.sh` on the owning box → `lcw_ring lead-review` → the next drain → `bin/lead-review.sh tick`. On by default (`wc_pr_lead_default_on`). Kill: `lead_review.event_wake.enabled=0`, `flags/lead-chain-wake-off`, `flags/wake-lanes-off`. The `*/15` cron stays the backstop. Detail: [`notes/2026-11-14-BH-9582-pr-lead-wake-class.md`](notes/2026-11-14-BH-9582-pr-lead-wake-class.md).
+

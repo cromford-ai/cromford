@@ -285,16 +285,21 @@ fi
 # the network) is called at most once per class per invocation, never per cycle
 # and never per row. flags/wake-lanes-off zeroes every entry here, so the kill
 # switch costs nothing at the call sites.
+# A class is armed by its `wake-lanes-<class>` flag, or, when the flag does not
+# arm it, by its own wc_<class>_default_on answering 0 (BH-9582: only pr-lead
+# defines one). flags/wake-lanes-off beats both.
 declare -A CLASS_ON
 __wl_armed=""
 for __wl_class in "${WAKE_CLASSES[@]}"; do
   CLASS_ON[$__wl_class]=0
   [ -f "$H/flags/wake-lanes-off" ] && continue
-  command -v flag_active >/dev/null 2>&1 || continue
-  if flag_active "wake-lanes-${__wl_class}" >/dev/null 2>&1; then
+  __wl_fn="wc_${__wl_class//-/_}_default_on"
+  if command -v flag_active >/dev/null 2>&1 && flag_active "wake-lanes-${__wl_class}" >/dev/null 2>&1; then
     CLASS_ON[$__wl_class]=1
-    __wl_armed="$__wl_armed $__wl_class"
+  elif declare -F "$__wl_fn" >/dev/null 2>&1 && "$__wl_fn" >/dev/null 2>&1; then
+    CLASS_ON[$__wl_class]=1
   fi
+  [ "${CLASS_ON[$__wl_class]}" = 1 ] && __wl_armed="$__wl_armed $__wl_class"
 done
 # The one line that tells an operator reading logs/wake-loop.log which classes
 # this invocation is actually driving. Silence means none of them are.
