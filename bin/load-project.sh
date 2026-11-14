@@ -44,6 +44,23 @@
 # db mode alike. The credentials stay in env/<project>.env on the box (see
 # docs/connecting-a-board.md); bin/connection-probe.sh <project> checks them.
 #
+# --claude-auth oauth|api-key, --runner-lock claude, --fly-app <app> (BH-9677,
+# BH-9334.3) set how the project pays for Claude and lock its runs to Claude:
+# the settings rows claude_auth.<p> and runner_lock.<p> that bin/lib/claude-auth.sh
+# reads. The allowed values are that lib's CLAUDE_AUTH_MODES / RUNNER_LOCKS.
+# api-key needs --fly-app <app>, the project's Fly app that carries the secret
+# ANTHROPIC_API_KEY_<PROJECT>. A bad value, api-key without --fly-app, or
+# --fly-app without api-key is rc 2 and nothing is written. For api-key the
+# command first runs ONE probe on that app (bin/lib/vendor/fly-anthropic-probe.sh:
+# fly ssh console, then GET /v1/models with the key; the key never leaves the
+# machine). Any answer but 200 (401, 403, no secret, no machine) is rc 3 and
+# nothing is written. Then, before step 1, it writes runner_lock.<p> first and
+# claude_auth.<p> last through bin/protected-setting.sh: both prefixes are
+# protected, so this needs JOBS_URL, HARNESS_SECRET and the human verdict token
+# (the operator's Mac). A failed write is FATAL before any registry write. The probe
+# timeouts are the lib knobs load-project-key-probe. docs/ACCOUNT-ROUTING.md,
+# "API key projects".
+#
 # --require-readiness <n> grades a LOCAL checkout of the repo (--repo-dir) with
 # bin/readiness-report.sh and refuses to enrol it below level n, before step 1.
 # Default 0: the gate is skipped entirely and nothing changes for any project
@@ -85,12 +102,19 @@ OBS_LIB="$(dirname "$0")/lib/onboard-stations.sh"
 # shellcheck source=bin/lib/onboard-stations.sh
 . "$OBS_LIB" || exit 1
 PROJECT="" PROD="-" BOX="${HARNESS_BOX_PREFIX}small" PREFIX="" BASE="" CONTEXT_FILE="" BOOTSTRAP=1 VMAP_TICKET=0 ARCH_TICKET=0 FLY=0
+CLAUDE_AUTH="" RUNNER_LOCK="" FLY_APP=""
 QUEUE="fly/onboard-queue.conf"
 REQUIRE_READINESS=0 REPO_DIR="" TRACKER=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --require-readiness) REQUIRE_READINESS="$2"; shift 2 ;;
     --repo-dir)          REPO_DIR="$2"; shift 2 ;;
+    --claude-auth)  { [ $# -ge 2 ] && [ -n "$2" ]; } || { echo "load-project: --claude-auth takes oauth or api-key; nothing was written"; exit 2; }
+                    CLAUDE_AUTH="$2"; shift 2 ;;
+    --runner-lock)  { [ $# -ge 2 ] && [ -n "$2" ]; } || { echo "load-project: --runner-lock takes claude; nothing was written"; exit 2; }
+                    RUNNER_LOCK="$2"; shift 2 ;;
+    --fly-app)      { [ $# -ge 2 ] && [ -n "$2" ]; } || { echo "load-project: --fly-app takes the project's Fly app name; nothing was written"; exit 2; }
+                    FLY_APP="$2"; shift 2 ;;
     --project) PROJECT="$2"; shift 2 ;;
     --prod)    PROD="$2"; shift 2 ;;
     --box)     BOX="$2"; shift 2 ;;
@@ -135,6 +159,78 @@ if [ "${#PROJECT_NAME}" -gt "$MAX_PROJECT_LEN" ]; then
   exit 2
 fi
 # <<< project name length
+
+# >>> claude auth flags (BH-9334.3) -- checked before any write
+CA_NONE="nothing was written: no settings row, no fleet.conf row, no prompt, no commit, no box."
+if [ -n "$CLAUDE_AUTH$RUNNER_LOCK$FLY_APP" ]; then
+  # The writer and the reader share ONE list: bin/lib/claude-auth.sh's enums.
+  CA_LISTS=$(set +eu; . "$ROOT/bin/lib/claude-auth.sh" >/dev/null 2>&1 || exit 1
+             printf '%s|%s' "$CLAUDE_AUTH_MODES" "$RUNNER_LOCKS") \
+    || { echo "load-project: cannot read bin/lib/claude-auth.sh; nothing was written"; exit 2; }
+  CA_MODES="${CA_LISTS%%|*}" CA_LOCKS="${CA_LISTS##*|}"
+  if [ -n "$CLAUDE_AUTH" ]; then
+    case " $CA_MODES " in *" $CLAUDE_AUTH "*) ;;
+      *) echo "load-project: --claude-auth takes one of: $CA_MODES (got '$CLAUDE_AUTH'); nothing was written"; exit 2 ;;
+    esac
+  fi
+  if [ -n "$RUNNER_LOCK" ]; then
+    case " $CA_LOCKS " in *" $RUNNER_LOCK "*) ;;
+      *) echo "load-project: --runner-lock takes one of: $CA_LOCKS (got '$RUNNER_LOCK'); nothing was written"; exit 2 ;;
+    esac
+  fi
+  if [ "$CLAUDE_AUTH" = api-key ]; then
+    [ -n "$FLY_APP" ] || { echo "load-project: --claude-auth api-key needs --fly-app <app> (the Fly app with the project's key); nothing was written"; exit 2; }
+    [[ "$FLY_APP" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] \
+      || { echo "load-project: --fly-app '$FLY_APP' is not a Fly app name (^[a-z0-9][a-z0-9-]{0,62}\$); nothing was written"; exit 2; }
+    # The same rule as bin/selfhost-install.sh: ANTHROPIC_API_KEY_<PROJECT>.
+    CA_SECRET="ANTHROPIC_API_KEY_$(printf '%s' "$PROJECT_NAME" | tr 'a-z-' 'A-Z_')"
+    [[ "$CA_SECRET" =~ ^ANTHROPIC_API_KEY_[A-Z0-9_]+$ ]] \
+      || { echo "load-project: project '$PROJECT_NAME' cannot form a Fly secret name ($CA_SECRET); nothing was written"; exit 2; }
+  elif [ -n "$FLY_APP" ]; then
+    echo "load-project: --fly-app is read only with --claude-auth api-key; nothing was written"; exit 2
+  fi
+fi
+# <<< claude auth flags
+
+# >>> claude key probe (BH-9334.3) -- before any write: the rows only follow a 200
+if [ "$CLAUDE_AUTH" = api-key ]; then
+  echo "== key probe =="
+  # The timeouts are the lib knobs load-project-key-probe: rows
+  # lib.load-project-key-probe.load_project_key_probe_timeout_s and
+  # lib.load-project-key-probe.load_project_key_probe_ssh_timeout_s, then env,
+  # then the fallbacks 30 / 120, which equal the registry defaults in
+  # catalog/lanes.d/_lib.load-project-key-probe.json.
+  KP_KNOBS=$(set +eu; export HARNESS="${HARNESS:-$ROOT}"
+             . "$ROOT/bin/lib/lane-gate.sh" >/dev/null 2>&1 && { lib_env_apply load-project-key-probe; } >/dev/null 2>&1
+             printf '%s %s' "${LOAD_PROJECT_KEY_PROBE_TIMEOUT_S:-30}" "${LOAD_PROJECT_KEY_PROBE_SSH_TIMEOUT_S:-120}") || KP_KNOBS=""
+  read -r KP_CTO KP_STO <<<"$KP_KNOBS" || :
+  KP_CTO="${KP_CTO:-30}" KP_STO="${KP_STO:-120}"
+  # The bounds are the registry's min/max for the two knobs. Refused, never clamped.
+  { [[ "$KP_CTO" =~ ^[0-9]+$ ]] && [ "$KP_CTO" -ge 5 ] && [ "$KP_CTO" -le 300 ]; } \
+    || { echo "load-project: LOAD_PROJECT_KEY_PROBE_TIMEOUT_S '$KP_CTO' is not 5..300 seconds; $CA_NONE"; exit 2; }
+  { [[ "$KP_STO" =~ ^[0-9]+$ ]] && [ "$KP_STO" -ge 10 ] && [ "$KP_STO" -le 600 ]; } \
+    || { echo "load-project: LOAD_PROJECT_KEY_PROBE_SSH_TIMEOUT_S '$KP_STO' is not 10..600 seconds; $CA_NONE"; exit 2; }
+  KP_BASE=$(set +eu; export HARNESS="${HARNESS:-$ROOT}"
+            . "$ROOT/bin/lib/endpoints.sh" >/dev/null 2>&1 && endpoint_url anthropic 2>/dev/null) || KP_BASE=""
+  [ -n "$KP_BASE" ] \
+    || { echo "REFUSED: no Anthropic endpoint (endpoint_url anthropic: set ENDPOINT_ANTHROPIC or render catalog/lanes.json)"; echo "$CA_NONE"; exit 3; }
+  KP_RC=0
+  KP_OUT=$(set +eu; . "$ROOT/bin/lib/vendor/fly-anthropic-probe.sh" || exit 2
+           fly_anthropic_key_probe "$FLY_APP" "$CA_SECRET" "$KP_BASE" "$KP_CTO" "$KP_STO") || KP_RC=$?
+  if [ "$KP_RC" -ne 0 ]; then
+    if [ "$KP_RC" = 1 ]; then KP_WHY="no machine, no flyctl or no ssh access"; else KP_WHY="the probe answered rc $KP_RC"; fi
+    echo "REFUSED: could not run the key probe on Fly app $FLY_APP ($KP_WHY)"; echo "$CA_NONE"; exit 3
+  fi
+  case "$KP_OUT" in
+    200) echo "key probe: $CA_SECRET on $FLY_APP answered 200" ;;
+    nosecret) echo "REFUSED: no secret $CA_SECRET on Fly app $FLY_APP (fly secrets set -a $FLY_APP $CA_SECRET=...)"; echo "$CA_NONE"; exit 3 ;;
+    401) echo "REFUSED: the key probe answered 401: Anthropic refused $CA_SECRET (invalid key)"; echo "$CA_NONE"; exit 3 ;;
+    403) echo "REFUSED: the key probe answered 403: the key has no access (disabled key or org)"; echo "$CA_NONE"; exit 3 ;;
+    [0-9][0-9][0-9]) echo "REFUSED: the key probe answered $KP_OUT; the key is not proven, re-run"; echo "$CA_NONE"; exit 3 ;;
+    *) echo "REFUSED: could not run the key probe on Fly app $FLY_APP (no KEYPROBE answer)"; echo "$CA_NONE"; exit 3 ;;
+  esac
+fi
+# <<< claude key probe
 
 # >>> readiness gate
 # BEFORE the first anything. Below this point the command appends a fleet.conf
@@ -247,9 +343,29 @@ fi
 # A failure after the tracker rows names them: they stay until a re-run.
 _trk_left() { [ -n "$TRACKER" ] && echo "FATAL: the tracker rows above stay written (tracker_adapter.$PROJECT and its $TRACKER rows); re-run this command to finish, or delete them"; return 0; }
 
-obs_register || { _trk_left; exit 1; }
+# >>> claude auth rows (BH-9334.3) -- after the probe, before the registry row.
+# runner_lock first, claude_auth last: a failed write never leaves a project
+# billed by key without its lock. Both prefixes are protected (BH-9334 C0), so
+# the write goes through bin/protected-setting.sh with the human verdict token.
+CAUTH_WRITTEN=""
+_cauth_left() { [ -n "$CAUTH_WRITTEN" ] && echo "FATAL: the claude rows above stay written ($CAUTH_WRITTEN); re-run this command to finish, or change them with bin/protected-setting.sh"; return 0; }
+_cauth_set() { # <key> <value> <flag>
+  bin/protected-setting.sh "$1" "$2" "load-project $3 $2" \
+    || { echo "FATAL: could not write the settings row $1 (bin/protected-setting.sh: JOBS_URL, HARNESS_SECRET and the human verdict token are needed) — no registry row, no prompt, no commit"
+         _trk_left; _cauth_left; exit 1; }
+  echo "settings: $1=$2"
+  CAUTH_WRITTEN="${CAUTH_WRITTEN:+$CAUTH_WRITTEN }$1"
+}
+if [ -n "$CLAUDE_AUTH$RUNNER_LOCK" ]; then
+  echo "== claude auth rows =="
+  [ -z "$RUNNER_LOCK" ] || _cauth_set "runner_lock.$PROJECT" "$RUNNER_LOCK" --runner-lock
+  [ -z "$CLAUDE_AUTH" ] || _cauth_set "claude_auth.$PROJECT" "$CLAUDE_AUTH" --claude-auth
+fi
+# <<< claude auth rows
 
-_obs_prompt_render || { _trk_left; exit 1; }
+obs_register || { _trk_left; _cauth_left; exit 1; }
+
+_obs_prompt_render || { _trk_left; _cauth_left; exit 1; }
 
 if [ "$FLY" = 1 ]; then
   echo "== fly onboarding queue =="

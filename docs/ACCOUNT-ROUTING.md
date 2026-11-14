@@ -421,6 +421,74 @@ fleet `ACCOUNT_ROUTING`; `ORC_ACCOUNT_ROUTING=0` or
 account is logged once per turn in `logs/failovers.log` (`turn account: <name>
 (<reason>)`) and by the picker in `logs/account-routing.log`.
 
+## API key projects
+
+A project can pay for Claude with its own Anthropic API key instead of the
+fleet's OAuth accounts (BH-9334). Two settings rows say so. `bin/lib/claude-auth.sh`
+reads them: `claude_auth_mode <project>` and `runner_lock_for <project>`.
+
+| row | values | no row |
+|---|---|---|
+| `claude_auth.<project>` | `oauth` or `api-key` (`CLAUDE_AUTH_MODES`) | `oauth` |
+| `runner_lock.<project>` | `claude` (`RUNNER_LOCKS`) | no lock |
+
+Both prefixes are protected. The jobs worker accepts a write only with the human
+verdict token, and it signs each value into `setting_sigs`. So a write goes
+through `bin/protected-setting.sh` on the operator's Mac, the only place that token lives.
+
+The key is the Fly secret `ANTHROPIC_API_KEY_<PROJECT>` (the project name in
+upper case, `-` becomes `_`) on the project's Fly app. One key per project. It is
+never in the hub env dir, a log or the console D1.
+
+### Onboarding
+
+```
+fly secrets set -a <app> ANTHROPIC_API_KEY_<PROJECT>=...
+bin/load-project.sh <owner/repo> --project <p> --claude-auth api-key --runner-lock claude --fly-app <app>
+```
+
+- `--claude-auth oauth|api-key` writes `claude_auth.<p>`. `oauth` runs no probe.
+- `--runner-lock claude` writes `runner_lock.<p>`.
+- `--fly-app <app>` is required with `api-key` and refused without it.
+- rc 2: a bad flag value, `api-key` with no `--fly-app`, or a project name that
+  cannot form the secret name. Nothing is written.
+- rc 3: the key probe did not answer 200. Nothing is written.
+- rc 1: a row write failed. The output names any claude row already written.
+
+The key probe runs before any write. It is ONE `fly ssh console -a <app>` call
+(`bin/lib/vendor/fly-anthropic-probe.sh`). On the machine, a short script reads
+the secret from the machine env and sends ONE `GET <anthropic>/v1/models` with the
+`x-api-key` header. The key goes to curl on stdin, so it is on no argv, and it
+never leaves the machine. The script prints one line, `KEYPROBE <http-code>` or
+`KEYPROBE nosecret`. load-project continues only on `200`:
+
+| answer | load-project prints |
+|---|---|
+| `200` | `key probe: ANTHROPIC_API_KEY_<P> on <app> answered 200` |
+| `nosecret` | `REFUSED: no secret ANTHROPIC_API_KEY_<P> on Fly app <app> (fly secrets set ...)` |
+| `401` | `REFUSED: the key probe answered 401: Anthropic refused ANTHROPIC_API_KEY_<P> (invalid key)` |
+| `403` | `REFUSED: the key probe answered 403: the key has no access (disabled key or org)` |
+| other code | `REFUSED: the key probe answered <code>; the key is not proven, re-run` |
+| no marker, ssh error, timeout | `REFUSED: could not run the key probe on Fly app <app> (...)` |
+
+The timeouts are the lib knobs `load-project-key-probe`:
+`LOAD_PROJECT_KEY_PROBE_TIMEOUT_S` (curl, default 30) and
+`LOAD_PROJECT_KEY_PROBE_SSH_TIMEOUT_S` (the whole ssh call, default 120). A value
+outside the registry min/max is refused, never clamped.
+
+The rows are written `runner_lock.<p>` first and `claude_auth.<p>` last, so a
+failed write never leaves a project billed by key without its lock. To change a
+row later, run `bin/protected-setting.sh claude_auth.<p> oauth "<why>"`.
+
+Claude Code precedence (parent #9334): `ANTHROPIC_API_KEY` outranks
+`CLAUDE_CODE_OAUTH_TOKEN`, and a managed `forceLoginMethod` or
+`forceLoginOrgUUID` setting blocks the key.
+
+Status: the rows, the worker guard, the reader and these onboarding flags exist.
+The runtime path (the env bundle, the pool-lease skip, the own-account pin, the
+billing mode and the runner lock at build time) lands with #9676 and #9675. Until
+then a row changes no build.
+
 ## Pool machines (Fly)
 
 ### The problem

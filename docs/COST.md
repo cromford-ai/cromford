@@ -555,6 +555,28 @@ awk -F, '$7=="0" && $9!="" && $13==""' /root/harness/logs/cost.csv | wc -l   # s
 grep 'blank-cost 1h' /root/harness/logs/cost-reconcile.log | tail -3         # one line an hour at :50
 ```
 
+## API key projects
+
+A project with the row `claude_auth.<project>=api-key` pays for Claude with its
+own Anthropic API key (BH-9334; docs/ACCOUNT-ROUTING.md, "API key projects", has
+the rows and the onboarding command).
+
+- Billing is metered per token, and it goes to the project's own Anthropic
+  Console org, not to a fleet subscription.
+- Usage under an API key falls under Anthropic's Commercial Terms and the DPA,
+  not the consumer terms of a subscription account.
+- One key per project (the Fly secret `ANTHROPIC_API_KEY_<PROJECT>`) keeps the
+  spend attributable: the Console usage page of that key is that project's spend.
+- The brake is a cost ceiling per project, the row `cost_ceiling.<project>`. It
+  lands with #9676.
+- Check: compare one day of the project's cost rows with the Console usage page
+  of its key for the same day.
+
+Status: the rows and the onboarding flags (`bin/load-project.sh --claude-auth
+api-key`) exist. The runtime path, the cost rows `auth_account=apikey:<project>`
+and the cost ceiling land with #9676 and #9675. Until then a row changes no build
+and no cost row.
+
 ## Tests
 
 | what | where |

@@ -1,0 +1,35 @@
+{
+  "libs": [
+    {
+      "id": "load-project-key-probe",
+      "file": "bin/load-project.sh",
+      "note": "BH-9677 (BH-9334.3). The two timeouts of the key probe bin/load-project.sh --claude-auth api-key runs before it writes the claude_auth / runner_lock rows: one fly ssh console call on the project's Fly app (bin/lib/vendor/fly-anthropic-probe.sh) that sends one GET /v1/models. Resolved through lib_env_apply load-project-key-probe in a subshell. A value outside min..max is refused (rc 2), never clamped. tests/load-project-claude-auth.bh-9677-test.sh drives it.",
+      "knobs": [
+        {
+          "env": "LOAD_PROJECT_KEY_PROBE_TIMEOUT_S",
+          "type": "int",
+          "default": 30,
+          "min": 5,
+          "max": 300,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "curl -m on the Fly machine for the GET /v1/models call. The same as SECRETS_APPLY_PROBE_TIMEOUT_S; the call answers in under 2 s. Read by bin/load-project.sh as ${LOAD_PROJECT_KEY_PROBE_TIMEOUT_S:-30}."
+        },
+        {
+          "env": "LOAD_PROJECT_KEY_PROBE_SSH_TIMEOUT_S",
+          "type": "int",
+          "default": 120,
+          "min": 10,
+          "max": 600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "settable": true,
+          "note": "The whole fly ssh console call, machine start included (a stopped Fly machine can need about 60 s). Read by bin/load-project.sh as ${LOAD_PROJECT_KEY_PROBE_SSH_TIMEOUT_S:-120}."
+        }
+      ]
+    }
+  ]
+}
