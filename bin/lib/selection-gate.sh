@@ -35,7 +35,12 @@
 # SELECTION_GATE_RUN_TAIL_LINES and, BH-8901, SELECTION_GATE_BASELINE_RUN,
 # SELECTION_GATE_BASELINE_TIMEOUT_S and SELECTION_GATE_BASELINE_KEEP_DAYS and,
 # BH-9061, SELECTION_GATE_BASELINE_RESERVE_PAD_S and SELECTION_GATE_MAIN_TIMEOUT_MIN_S and, BH-9177,
-# SELECTION_GATE_SUITE_REUSE, SELECTION_GATE_RERUN_RED and SELECTION_GATE_IMAGE_PROBE_S (_sg_run).
+# SELECTION_GATE_SUITE_REUSE, SELECTION_GATE_RERUN_RED and SELECTION_GATE_IMAGE_PROBE_S and, BH-9697,
+# SELECTION_GATE_FRESH_MAIN, SELECTION_GATE_FRESH_FETCH_S, SELECTION_GATE_SUITE_QUARANTINE and
+# SELECTION_GATE_QUARANTINE_MAX_NEW (_sg_run).
+# A suite quarantined by the gate (red on the head and on main, BH-9697) is
+# gate.txt's quarantined:, not red: or baseline-red:; the log line gets
+# quarantined=<n>.
 # A suite red on the merge base too is gate.txt's baseline-red:, not red: the
 # log line gets baseline-red=<n> and SG_MARKER one sentence after the marker.
 #
@@ -184,7 +189,9 @@ _sg_run() {
   # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901),
   # lane.fly-pool.selection_gate_baseline_reserve_pad_s, lane.fly-pool.selection_gate_main_timeout_min_s (BH-9061),
   # lane.fly-pool.selection_gate_suite_reuse, lane.fly-pool.selection_gate_rerun_red,
-  # lane.fly-pool.selection_gate_image_probe_s (BH-9177; the suite ledger, bin/lib/selection-gate-reuse.sh)
+  # lane.fly-pool.selection_gate_image_probe_s (BH-9177; the suite ledger, bin/lib/selection-gate-reuse.sh),
+  # lane.fly-pool.selection_gate_fresh_main, lane.fly-pool.selection_gate_fresh_fetch_s,
+  # lane.fly-pool.selection_gate_suite_quarantine, lane.fly-pool.selection_gate_quarantine_max_new (BH-9697)
   SELECTION_GATE_WHY_MAX=$(_sg_knob SELECTION_GATE_WHY_MAX 160) \
     SELECTION_GATE_BASELINE_RUN=$(_sg_knob SELECTION_GATE_BASELINE_RUN 1) \
     SELECTION_GATE_BASELINE_TIMEOUT_S=$(_sg_knob SELECTION_GATE_BASELINE_TIMEOUT_S 900) \
@@ -194,6 +201,10 @@ _sg_run() {
     SELECTION_GATE_SUITE_REUSE=$(_sg_knob SELECTION_GATE_SUITE_REUSE 1) \
     SELECTION_GATE_RERUN_RED=$(_sg_knob SELECTION_GATE_RERUN_RED 1) \
     SELECTION_GATE_IMAGE_PROBE_S=$(_sg_knob SELECTION_GATE_IMAGE_PROBE_S 60) \
+    SELECTION_GATE_FRESH_MAIN=$(_sg_knob SELECTION_GATE_FRESH_MAIN 1) \
+    SELECTION_GATE_FRESH_FETCH_S=$(_sg_knob SELECTION_GATE_FRESH_FETCH_S 60) \
+    SELECTION_GATE_SUITE_QUARANTINE=$(_sg_knob SELECTION_GATE_SUITE_QUARANTINE 1) \
+    SELECTION_GATE_QUARANTINE_MAX_NEW=$(_sg_knob SELECTION_GATE_QUARANTINE_MAX_NEW 3) \
     SUITE_REUSE_RUN_KEY="$(basename "$BUILD")-selection-$(date +%s)" \
     bin/selection-gate.sh --tree . --base "$BASE" --out "$BUILD/selection-gate" --timeout "$1" -P "$2" \
     > "$BUILD/selection-gate.txt" 2>&1 || rc=$?   # lane.fly-pool.selection_gate_why_max
@@ -269,7 +280,7 @@ sg_unattributed() {
 
 # sg_block — see the header. rc 0 go on, 6 red (RESULT written).
 sg_block() {
-  local to par fr rc red n why hn br bn bs line note=""
+  local to par fr rc red n why hn br bn bs line qn note=""
   SG_MARKER=""
   if [ ! -x bin/selection-gate.sh ]; then
     _sg_log "SELECTION-GATE skipped (repo carries no bin/selection-gate.sh)"; return 0
@@ -299,7 +310,9 @@ sg_block() {
   hn=$(_sg_field "$BUILD/gate.txt" host-noted); case "$hn" in ''|-) hn="" ;; *) hn=" host-noted=$(tr ',' '\n' <<<"$hn" | grep -c .)" ;; esac
   br=$(_sg_field "$BUILD/gate.txt" baseline-red); bn=0
   case "$br" in ''|-) br="" ;; *) bn=$(tr ',' '\n' <<<"$br" | grep -c .) ;; esac
-  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn${br:+ baseline-red=$bn}"
+  qn=$(_sg_field "$BUILD/gate.txt" quarantined); qn=${qn%% *}
+  case "$qn" in ''|-) qn="" ;; *) qn=" quarantined=$(tr ',' '\n' <<<"$qn" | grep -c .)" ;; esac
+  _sg_log "SELECTION-GATE rc=$(_sg_field "$BUILD/gate.txt" rc) suites=${n:-?} red=${red:--} exit=$rc$why$hn${br:+ baseline-red=$bn}$qn"
   if [ "$rc" = 1 ] && [ -n "$red" ] && [ "$red" != - ]; then
     # BH-9061: a red the base run could not check is unattributed, not GATE_RED.
     bs=$(_sg_field "$BUILD/gate.txt" baseline)

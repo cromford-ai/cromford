@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_FRESH_MAIN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9697. 1: bin/selection-gate.sh step 1b merges a fresh fetch of origin's main onto HEAD (git merge-tree, a dangling commit-tree object, a detached worktree) and runs the batch selection and the suites on that merged tree with main's tip as the base, so the pre-queue gate tests what the merge-queue batch tests. A fetch failure, a conflict or a head that already contains main is one `fresh-main: off (<why>)` line and the run on HEAD. 0 = the run on HEAD and no fresh-main: line. bin/lib/selection-gate.sh reads the row and passes it in the env; the script alone falls back to 0.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

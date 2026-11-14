@@ -1,0 +1,7 @@
+# SUITE QUARANTINE (BH-9697): one active row per (repo, suite) that is red on
+# main and not changed by the diff. bin/selection-gate.sh writes it;
+# bin/flaky-tier.sh sets the repair issue, lists and releases.
+POST /api/suite-quarantine
+POST /api/suite-quarantine/issue
+POST /api/suite-quarantine/release
+GET /api/suite-quarantine

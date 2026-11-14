@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_FRESH_FETCH_S",
+  "type": "int",
+  "default": 60,
+  "min": 1,
+  "max": 600,
+  "unit": "s",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9697. The timeout bound of step 1b's fetch of origin's main (bin/selection-gate.sh). Past it: `fresh-main: off (fetch of origin main failed (rc 124))` and the run on HEAD. bin/lib/selection-gate.sh reads the row and passes it in the env; fallback 60.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

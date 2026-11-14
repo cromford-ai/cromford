@@ -1,0 +1,7 @@
+{
+  "env": "SUITE_QUARANTINE_MAX_NEW",
+  "type": "int",
+  "default": 3,
+  "zero_means": null,
+  "note": "BH-9697. Read by bin/flaky-tier.sh step 4b (bin/lib/suite-quarantine-hub.sh): the most repair tickets it files for suite_quarantine rows in one tick. The rest stay with repair_issue NULL and are filed on a later tick. Not a positive integer = the default, logged."
+}

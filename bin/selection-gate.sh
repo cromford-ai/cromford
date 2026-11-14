@@ -14,6 +14,19 @@
 # STEPS.
 #   1  mb = git merge-base HEAD <base> in <tree>. None: could-not-run
 #      why=no-merge-base.
+#   1b BH-9697, with SELECTION_GATE_FRESH_MAIN=1: fresh main. The tip of
+#      origin's main (fetched into a private ref under `timeout
+#      SELECTION_GATE_FRESH_FETCH_S`, the ref deleted right after the read;
+#      SELECTION_GATE_FRESH_REF=<ref> names a local ref instead) is merged onto
+#      HEAD with `git merge-tree --write-tree`. The tree is wrapped in a dangling
+#      `git commit-tree` object (parents HEAD and main; no ref, never pushed)
+#      and checked out as a detached worktree. Steps 2 to 6 then run on that
+#      worktree with main's tip as <mb>: the gate tests what the merge-queue
+#      batch tests. gate.txt `head:` stays the PR head. Any other outcome is
+#      one `fresh-main: off (<why>)` line and the run on HEAD as before:
+#      cannot resolve <ref>, no origin remote, fetch of origin main failed
+#      (rc N), head already contains main <sha12>, head conflicts with main
+#      <sha12>, merge-tree failed (rc N), commit-tree failed, no worktree.
 #   2  bin/ci-plan.sh in its batch mode over <mb>..HEAD: CI_EVENT=pull_request,
 #      TI_PR_HEAD_REF=mergify/merge-queue/selection-gate, TI_BASE=<mb>,
 #      CI_PLAN_ESCALATION=- and CI_PLAN_OWN_BASE=- (no PR exists yet, so no
@@ -45,6 +58,12 @@
 #      section matches the row's ERE; gate.txt's host-noted: names it and its
 #      class. A 125 with a `remote-gate: compose-<name> failed` line is
 #      could-not-run why=`compose-<name>: <that line>`.
+#      BH-9697, with SELECTION_GATE_SUITE_QUARANTINE=1: a red suite with an
+#      ACTIVE suite_quarantine row, and not a file this diff changes, moves
+#      to quarantined: (not noted:). The list is SELECTION_GATE_SQ_LIST when
+#      set (`-` = none), else `bin/jobs-client.sh suite-quarantine-list
+#      $REPO_SLUG`. No REPO_SLUG, or a failed read: no suite moves on a row
+#      and step 6 writes no row.
 #   6  BH-8901, with SELECTION_GATE_BASELINE_RUN=1: each suite still red, and not
 #      a file this diff changes, runs once on <mb> (the same runner, a detached
 #      worktree of <mb>, under `timeout SELECTION_GATE_BASELINE_TIMEOUT_S`;
@@ -59,6 +78,16 @@
 #      $H/state/selection-gate/prime.tsv (bin/selection-gate-prime.sh writes it
 #      on the hub, bin/fly-pool.sh relays it to the pool machines) is a cached
 #      answer too. The per-file cache wins when both have a value.
+#      BH-9697, with SELECTION_GATE_SUITE_QUARANTINE=1 too: each baseline-red
+#      suite (red on the head and on main, not changed by the diff) gets an
+#      active suite_quarantine row (`bin/jobs-client.sh suite-quarantine-put`)
+#      and moves to quarantined:. Only a write that returned rc 0 moves it; a
+#      failed write keeps it on baseline-red: (` write-failed <suite>`). More
+#      than SELECTION_GATE_QUARANTINE_MAX_NEW candidates in one run writes
+#      none (` quarantine-cap: <n> > <max>`): many at once looks like a host
+#      problem. bin/flaky-tier.sh files the repair ticket, projects the row
+#      into CI_QUARANTINE (the batch drops it) and releases it after a green
+#      nightly on a newer main sha (docs/gates/prequeue-fresh-main.md).
 #
 # OUTPUT. <out>/gate.txt, written once (tmp + mv):
 #   head: <40-hex>  base: <mb|->  suites: <n>  rc: <0|1|could-not-run|no-selection>
@@ -69,6 +98,10 @@
 #   baseline-red: <comma list|->
 #   baseline: <-|skipped: head-is-base|ran <n> on <mb12> (<c> cached)|could-not-run: <why>>
 #   (<c> counts per-file cache hits and prime.tsv hits, BH-9094)
+#   and, after the reuse: line, only with SELECTION_GATE_SUITE_QUARANTINE=1:
+#   quarantined: <comma list|->[ quarantine-cap: <n> > <max>][ write-failed <suite>]…
+#   and LAST, only with SELECTION_GATE_FRESH_MAIN=1:
+#   fresh-main: <on <main12>|off (<why>)|-> (`-`: the run stopped before step 1b)
 # plus <out>/selection.txt (the list) and <out>/run.txt (the runner's output).
 #
 # EXIT. 0 green, 1 red, 3 could-not-run, 4 no-selection, 2 bad arguments.
@@ -78,10 +111,12 @@
 # and SELECTION_GATE_WHY_MAX (the reason's length cap), the three
 # SELECTION_GATE_BASELINE* rows (step 6) and, BH-9061, the two rows of the
 # main-run reserve (step 3: SELECTION_GATE_BASELINE_RESERVE_PAD_S,
-# SELECTION_GATE_MAIN_TIMEOUT_MIN_S) in the env.
+# SELECTION_GATE_MAIN_TIMEOUT_MIN_S) in the env, and, BH-9697, four more:
+# SELECTION_GATE_FRESH_MAIN, SELECTION_GATE_FRESH_FETCH_S (step 1b),
+# SELECTION_GATE_SUITE_QUARANTINE, SELECTION_GATE_QUARANTINE_MAX_NEW (5, 6).
 # The fallbacks below name their rows. Test seams: SELECTION_GATE_PLAN (the
 # planner, default <tree>/bin/ci-plan.sh) and SELECTION_GATE_RUNNER (default
-# <tree>/bin/remote-gate.sh).
+# <tree>/bin/remote-gate.sh), SELECTION_GATE_FRESH_REF and SELECTION_GATE_SQ_LIST.
 set -uo pipefail
 
 TREE=""; BASE=""; OUT=""
@@ -118,7 +153,7 @@ while [ $# -gt 0 ]; do
     --out)     [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
     --timeout) [ $# -ge 2 ] || usage; TO="$2"; shift ;;
     -P)        [ $# -ge 2 ] || usage; PAR="$2"; shift ;;
-    -h|--help) sed -n '2,84p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,119p' "$0"; exit 0 ;;
     *) echo "selection-gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -168,6 +203,22 @@ if [ "$SGR" = 1 ]; then
   . "$(dirname "$0")/lib/selection-gate-reuse.sh" 2>/dev/null || { SGR=2; SGR_LINE="off (no reuse lib)"; }
 fi
 
+# FRESH MAIN (BH-9697, step 1b). lane.fly-pool.selection_gate_fresh_main
+# (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_FRESH_MAIN.json). Unset or
+# anything but 1 is 0: no step 1b and no `fresh-main:` line (the BH-8062 file);
+# bin/lib/selection-gate.sh passes the row.
+FMG=0; [ "${SELECTION_GATE_FRESH_MAIN:-0}" = 1 ] && FMG=1
+# lane.fly-pool.selection_gate_fresh_fetch_s (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_FRESH_FETCH_S.json)
+FMFS="${SELECTION_GATE_FRESH_FETCH_S:-60}"; [[ "$FMFS" =~ ^[1-9][0-9]*$ ]] || FMFS=60
+FMLINE="-"; FM_TMP=""; FM_SHA=""; FM_REPO=""
+# SUITE QUARANTINE (BH-9697, steps 5 and 6). lane.fly-pool.selection_gate_suite_quarantine
+# (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_SUITE_QUARANTINE.json). Unset
+# or anything but 1 is 0: no row is read or written, no `quarantined:` line.
+SQ=0; [ "${SELECTION_GATE_SUITE_QUARANTINE:-0}" = 1 ] && SQ=1
+# lane.fly-pool.selection_gate_quarantine_max_new (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_QUARANTINE_MAX_NEW.json)
+SQ_MAX="${SELECTION_GATE_QUARANTINE_MAX_NEW:-3}"; [[ "$SQ_MAX" =~ ^[1-9][0-9]*$ ]] || SQ_MAX=3
+SQ_SRC="-"; SQ_LIST=""; SQ_SUFFIX=""; QUARL=()
+
 HEAD_SHA=$(git -C "$TREE" rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
 MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"; BRED="-"; BSTAT="-"
 
@@ -178,12 +229,18 @@ write_gate() {
     "${HEAD_SHA:--}" "$MB" "$N" "$RC" "$RED" "$NOTED" "$MODE" "$WHY" "$QSRC" "$HNOTED" > "$t" \
     && { [ "$BL" = 0 ] || printf 'baseline-red: %s\nbaseline: %s\n' "$BRED" "$BSTAT" >> "$t"; } \
     && { [ "$SGR" = 0 ] || printf 'reuse: %s\n' "$SGR_LINE" >> "$t"; } \
+    && { [ "$SQ" = 0 ] || printf 'quarantined: %s%s\n' "$(_sg_join ${QUARL[@]+"${QUARL[@]}"})" "$SQ_SUFFIX" >> "$t"; } \
+    && { [ "$FMG" = 0 ] || printf 'fresh-main: %s\n' "$FMLINE" >> "$t"; } \
     && mv -f "$t" "$OUT/gate.txt" || { rm -f "$t"; echo "selection-gate: cannot write $OUT/gate.txt" >&2; exit 3; }
   local b=""; [ "$BL" = 0 ] || b=" baseline-red=$BRED"
+  [ "$SQ" = 0 ] || b+=" quarantined=$(_sg_join ${QUARL[@]+"${QUARL[@]}"})"
+  [ "$FMG" = 0 ] || b+=" fresh-main=${FMLINE// /_}"
   echo "selection-gate: rc=$RC suites=$N red=$RED noted=$NOTED mode=$MODE why=$WHY$b"
   case "$RC" in 0) exit 0 ;; 1) exit 1 ;; no-selection) exit 4 ;; *) exit 3 ;; esac
 }
 cnr() { RC=could-not-run; WHY="$1"; write_gate; }
+# _sg_join <item…> — the items comma-joined, `-` when none.
+_sg_join() { if [ "$#" -gt 0 ]; then (IFS=,; printf '%s' "$*"); else printf -- -; fi; }
 
 # lane.fly-pool.selection_gate_why_max (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_WHY_MAX.json)
 WHY_MAX="${SELECTION_GATE_WHY_MAX:-160}"
@@ -320,7 +377,7 @@ baseline_pass() {
   done
   if [ "${#send[@]}" -gt 0 ]; then
     BL_TMP=$(mktemp -d "${TMPDIR:-/tmp}/selection-gate-baseline.XXXXXX") || { BL_TMP=""; BSTAT="could-not-run: no-tmp"; return 0; }
-    trap bl_cleanup EXIT
+    trap _sg_cleanup EXIT
     if ! git -C "$TREE" worktree add -q --detach "$BL_TMP/base" "$MB" >/dev/null 2>&1; then
       bl_cleanup; BSTAT="could-not-run: no-worktree"; return 0
     fi
@@ -353,9 +410,109 @@ baseline_pass() {
   keep=("${still[@]}")
 }
 
+# ── fresh main (BH-9697, step 1b) ────────────────────────────────────────────
+# fm_cleanup — the merged worktree and its temp dir go, on every exit. It runs
+# from the PR's own checkout (FM_REPO), since TREE may be the merged worktree.
+fm_cleanup() {
+  [ -n "$FM_TMP" ] || return 0
+  git -C "$FM_REPO" worktree remove --force "$FM_TMP/merged" >/dev/null 2>&1
+  git -C "$FM_REPO" worktree prune >/dev/null 2>&1
+  rm -rf "$FM_TMP"; FM_TMP=""
+}
+# _sg_cleanup — the one EXIT trap: the base worktree (it lives in TREE, so it
+# goes first), then the merged worktree. One trap, so baseline_pass setting it
+# cannot drop the other.
+_sg_cleanup() { bl_cleanup; fm_cleanup; }
+fm_off() { FMLINE="off ($1)"; }
+# fm_prep — step 1b. Sets FM_SHA (main's tip); on success TREE, MB, PLAN and
+# RUNNER point at the merged worktree and FMLINE is `on <main12>`; anything
+# else is one off reason and the run on HEAD.
+fm_prep() {
+  local r tree mc ref
+  if [ -n "${SELECTION_GATE_FRESH_REF:-}" ]; then
+    FM_SHA=$(git -C "$TREE" rev-parse --verify -q "${SELECTION_GATE_FRESH_REF}^{commit}" 2>/dev/null) \
+      || { FM_SHA=""; fm_off "cannot resolve $SELECTION_GATE_FRESH_REF"; return 0; }
+  else
+    git -C "$TREE" remote get-url origin >/dev/null 2>&1 || { fm_off "no origin remote"; return 0; }
+    # A private ref, never refs/remotes/origin/*: the build's own base must not
+    # move under it. Deleted right after the read.
+    ref="refs/harness/sg-fresh-main-$$"
+    GIT_TERMINAL_PROMPT=0 timeout "$FMFS" git -C "$TREE" fetch -q --no-tags --refmap= origin "+refs/heads/main:$ref" >/dev/null 2>&1; r=$?
+    [ "$r" = 0 ] && FM_SHA=$(git -C "$TREE" rev-parse --verify -q "$ref^{commit}" 2>/dev/null)
+    git -C "$TREE" update-ref -d "$ref" >/dev/null 2>&1
+    [ "$r" = 0 ] && [ -n "$FM_SHA" ] || { FM_SHA=""; fm_off "fetch of origin main failed (rc $r)"; return 0; }
+  fi
+  if git -C "$TREE" merge-base --is-ancestor "$FM_SHA" HEAD 2>/dev/null; then
+    fm_off "head already contains main ${FM_SHA:0:12}"; return 0
+  fi
+  tree=$(git -C "$TREE" merge-tree --write-tree --no-messages HEAD "$FM_SHA" 2>/dev/null); r=$?
+  tree="${tree%%$'\n'*}"
+  [ "$r" = 1 ] && { fm_off "head conflicts with main ${FM_SHA:0:12}"; return 0; }
+  if [ "$r" != 0 ] || ! [[ "$tree" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then fm_off "merge-tree failed (rc $r)"; return 0; fi
+  # A dangling commit: no ref points at it and nothing pushes it. The runner
+  # and the planner need a checkout with a HEAD commit, not a bare tree.
+  mc=$(git -C "$TREE" -c user.email=gate@harness -c user.name=selection-gate commit-tree "$tree" -p HEAD -p "$FM_SHA" \
+         -m 'selection-gate fresh main' 2>/dev/null) && [[ "$mc" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] \
+    || { fm_off "commit-tree failed"; return 0; }
+  FM_REPO="$TREE"
+  FM_TMP=$(mktemp -d "${TMPDIR:-/tmp}/selection-gate-fresh.XXXXXX") || { FM_TMP=""; fm_off "no worktree"; return 0; }
+  trap _sg_cleanup EXIT
+  if ! git -C "$TREE" worktree add -q --detach "$FM_TMP/merged" "$mc" >/dev/null 2>&1; then
+    fm_cleanup; fm_off "no worktree"; return 0
+  fi
+  TREE="$FM_TMP/merged"; MB="$FM_SHA"; FMLINE="on ${FM_SHA:0:12}"
+  [ -n "${SELECTION_GATE_PLAN:-}" ] || PLAN="$TREE/bin/ci-plan.sh"
+  [ -n "${SELECTION_GATE_RUNNER:-}" ] || RUNNER="$TREE/bin/remote-gate.sh"
+}
+
+# ── suite quarantine (BH-9697, steps 5 and 6) ────────────────────────────────
+# sq_read — SQ_LIST, the suites with an active suite_quarantine row, one a
+# line. SELECTION_GATE_SQ_LIST when set (`-` = none; SQ_SRC=env), else
+# `bin/jobs-client.sh suite-quarantine-list $REPO_SLUG` (SQ_SRC=read). No
+# REPO_SLUG, no client or a failed read: SQ_SRC=unreadable and an empty list,
+# which moves nothing and writes nothing (never read as "no rows").
+sq_read() {
+  local out
+  if [ -n "${SELECTION_GATE_SQ_LIST+set}" ]; then
+    SQ_SRC=env; SQ_LIST=$(tr ' ,' '\n\n' <<<"$SELECTION_GATE_SQ_LIST" | grep -vx -e '' -e '-'); return 0
+  fi
+  if [ -n "${REPO_SLUG:-}" ] && [ -r "$H/bin/jobs-client.sh" ] \
+     && out=$(bash "$H/bin/jobs-client.sh" suite-quarantine-list "$REPO_SLUG" 2>/dev/null); then
+    SQ_SRC=read; SQ_LIST=$(cut -f1 <<<"$out" | grep -v '^$'); return 0
+  fi
+  SQ_SRC=unreadable; SQ_LIST=""
+}
+# sq_quarantine — step 6's writes. Each baseline-red suite (red on this tree
+# and on MB, never a file the diff changes: baseline_pass sends none) gets one
+# active row. Only an rc 0 write moves it from BRED to QUARL; a failed write
+# keeps it baseline-red and adds ` write-failed <suite>`. More than SQ_MAX
+# candidates: none written, ` quarantine-cap: <n> > <max>`.
+sq_quarantine() {
+  local s body
+  local -a cand=() left=()
+  [ "$BRED" != - ] || return 0
+  for s in $(tr ',' ' ' <<<"$BRED"); do
+    if grep -qxF -- "$s" <<<"$CHANGED"; then left+=("$s"); else cand+=("$s"); fi
+  done
+  if [ "${#cand[@]}" -gt "$SQ_MAX" ]; then SQ_SUFFIX+=" quarantine-cap: ${#cand[@]} > $SQ_MAX"; return 0; fi
+  for s in ${cand[@]+"${cand[@]}"}; do
+    body=$(jq -cn --arg r "${REPO_SLUG:-}" --arg s "$s" --arg m "$MB" \
+      --arg why "red on main ${MB:0:12} and on ${HEAD_SHA:0:12}; gate $OUT" \
+      '{repo: $r, suite: $s, reason: $why, main_sha_red: $m}' 2>/dev/null)
+    if [ -n "${REPO_SLUG:-}" ] && [ -n "$body" ] && bash "$H/bin/jobs-client.sh" suite-quarantine-put "$body" >/dev/null 2>&1; then
+      QUARL+=("$s")
+    else
+      left+=("$s"); SQ_SUFFIX+=" write-failed $s"
+    fi
+  done
+  BRED=$(_sg_join ${left[@]+"${left[@]}"})
+}
+
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { HEAD_SHA=""; cnr no-head; }
 MB=$(git -C "$TREE" merge-base HEAD "$BASE" 2>/dev/null) || MB=""
 [[ "$MB" =~ ^[0-9a-f]{40}$ ]] || { MB="-"; cnr no-merge-base; }
+# ── 1b. fresh main (BH-9697) ─────────────────────────────────────────────────
+[ "$FMG" = 1 ] && fm_prep
 
 # ── 2. the batch's selection ─────────────────────────────────────────────────
 : > "$OUT/selection.txt"; : > "$OUT/plan.out"; : > "$OUT/plan.github-output"
@@ -427,8 +584,19 @@ if [ "$RC" = 1 ]; then
     else QSRC=unreadable; Q=""; fi
   fi
   host_notes_load
+  # BH-9697: the diff's own files (MB..HEAD of the tree that ran), once. A
+  # suite in it is never quarantined, whatever its row says.
+  CHANGED=""
+  if [ "$SQ" = 1 ]; then
+    CHANGED=$(git -C "$TREE" diff --name-only "$MB" HEAD 2>/dev/null) || { CHANGED=""; SQ_SRC=unreadable; }
+    [ "$SQ_SRC" = unreadable ] || sq_read
+    [ "$SQ_SRC" != unreadable ] || SQ_SUFFIX+=" unreadable"
+  fi
   keep=(); note=(); hn=()
   for s in "${REDS[@]}"; do
+    if [ "$SQ" = 1 ] && [ "$SQ_SRC" != unreadable ] && grep -qxF -- "$s" <<<"$SQ_LIST" && ! grep -qxF -- "$s" <<<"$CHANGED"; then
+      QUARL+=("$s"); continue
+    fi
     q=0; [ "$QSRC" != unreadable ] && grep -qxF -- "$s" <<<"$(tr ' ,' '\n\n' <<<"$Q")" && q=1
     if cls=$(host_note "$s"); then hn+=("$s=$cls"); q=1; fi
     if [ "$q" = 1 ]; then note+=("$s"); else keep+=("$s"); fi
@@ -437,6 +605,8 @@ if [ "$RC" = 1 ]; then
   [ "${#hn[@]}" -gt 0 ] && HNOTED=$(IFS=,; echo "${hn[*]}")
   # ── 6. the base run (BH-8901) ────────────────────────────────────────────
   [ "$BL" = 1 ] && [ "${#keep[@]}" -gt 0 ] && baseline_pass
+  # BH-9697: a suite red here and on main, not in the diff, is quarantined.
+  [ "$SQ" = 1 ] && [ "$SQ_SRC" != unreadable ] && sq_quarantine
   if [ "${#keep[@]}" -gt 0 ]; then RED=$(IFS=,; echo "${keep[*]}"); else RC=0; fi
 fi
 [ "$SGR" = 1 ] && sgr_record

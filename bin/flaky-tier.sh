@@ -21,8 +21,19 @@
 #   4 quarantine  the open ticket carrying the suite's marker, or a new one,
 #               THEN the row. No quarantine without its ticket. An issue search
 #               that is not a clean read (rc 44/75, or the 1000-row cap) skips.
+#   4b suite quarantine (BH-9697, bin/lib/suite-quarantine-hub.sh): the active
+#               suite_quarantine rows bin/selection-gate.sh wrote (a suite red
+#               on a PR merged with main AND on main). ONE `ai-build` repair
+#               ticket per row with none (an open issue with the row's marker
+#               is reused), at most SUITE_QUARANTINE_MAX_NEW new per tick, then
+#               the row link. Unreadable rows: no ticket, no release, and step 6
+#               projects the flaky rows only.
 #   5 release   ft_release (bin/lib/flaky-tier-release.sh) decides.
-#   6 projection  active rows, minus missing and protected suites, sorted and
+#   5b          a suite_quarantine row whose suite passed in the newest cached
+#               nightly run newer than the row, on another sha than the red
+#               main sha, is released. SUITE_QUARANTINE_ACT=0 skips 4b and 5b.
+#   6 projection  active rows, minus missing and protected suites, plus the
+#               active suite_quarantine rows (same filters), sorted and
 #               space-joined (`-` when empty) into CI_QUARANTINE, with the admin
 #               token on those calls only. 404 = POST, differs = PATCH.
 #   7 one tick line in logs/flaky-tier.log.
@@ -35,7 +46,7 @@ set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
 
-case "${1:-}" in -h|--help) sed -n '2,34p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,44p' "$0"; exit 0 ;; esac
 # >>> lane gate (BH-1165): flags/lane-off-flaky-tier or all-off exits 0; the
 # settings rows land in the env the knob reads below use. Both fail OPEN.
 # shellcheck disable=SC1091
@@ -60,6 +71,10 @@ for _l in gh-rest-list.sh test-protected.sh gh-ci-read.sh flaky-tier-release.sh;
   # shellcheck source=/dev/null
   . "$H/bin/lib/$_l" || { echo "flaky-tier: cannot load bin/lib/$_l" >&2; exit 1; }
 done
+# BH-9697: optional. Without it the suite quarantine is skipped with one line
+# and CI_QUARANTINE carries the flaky rows only (more suites run, never fewer).
+# shellcheck source=bin/lib/suite-quarantine-hub.sh
+. "$H/bin/lib/suite-quarantine-hub.sh" 2>/dev/null || true
 command -v tp_protected >/dev/null 2>&1 && command -v gh_rest_var >/dev/null 2>&1 && command -v gh_ci_api >/dev/null 2>&1 \
   || { echo "flaky-tier: tp_protected, gh_rest_var or gh_ci_api missing" >&2; exit 1; }
 
@@ -94,6 +109,7 @@ _ft_int() {
 }
 _ft_int FLAKY_TIER_MIN 3; _ft_int FLAKY_TIER_WINDOW_DAYS 7; _ft_int FLAKY_TIER_MAX_NEW 3
 _ft_int FLAKY_TIER_RELEASE_CLEAN 5; _ft_int FLAKY_TIER_NIGHTLY_RUNS 10
+_ft_int SUITE_QUARANTINE_MAX_NEW 3   # catalog/lanes.d/flaky-tier.knobs.d/SUITE_QUARANTINE_MAX_NEW.json
 export FLAKY_TIER_RELEASE_ACTORS="${FLAKY_TIER_RELEASE_ACTORS:-flaky-tier main-red-bisect}"   # for ft_release
 MIN=$FLAKY_TIER_MIN; W=$FLAKY_TIER_WINDOW_DAYS
 [ "${FLAKY_TIER_ACT:-1}" = 0 ] && DRY=1
@@ -237,12 +253,26 @@ if [ "${#TODO[@]}" -gt 0 ]; then
   done
 fi
 
+# ── 4b. suite quarantine: one repair ticket per row (BH-9697) ────────────────
+SQROWS="$TMPD/sq-rows"; SQREL="$TMPD/sq-released"; : > "$SQREL"; SQR=unread
+SQACT=1; [ "${SUITE_QUARANTINE_ACT:-1}" = 0 ] && SQACT=0   # catalog/lanes.d/flaky-tier.knobs.d/SUITE_QUARANTINE_ACT.json
+if ! command -v sqh_read >/dev/null 2>&1; then
+  say "suite-quarantine: bin/lib/suite-quarantine-hub.sh missing; skipped, CI_QUARANTINE carries the flaky rows only"
+elif sqh_read "$SLUG" "$SQROWS"; then
+  SQR=ok
+  [ "$SQACT" = 1 ] && sqh_file "$SLUG" "$SQROWS" "$SUITE_QUARANTINE_MAX_NEW"
+else
+  say "suite-quarantine: rows unreadable for $SLUG; no repair ticket or release this tick, and CI_QUARANTINE carries the flaky rows only"
+fi
+
 # ── 5. release (delegated) ───────────────────────────────────────────────────
 # ft_release says why it released nothing on stderr only, and cron drops the
 # lane's stderr, so each of its lines goes into the lane log (BH-4321).
 ft_release "$SLUG" "$ROWS" > "$TMPD/released" 2> "$TMPD/release.err" || say "ft_release failed"
 while IFS= read -r l; do [ -n "$l" ] && say "$l"; done < "$TMPD/release.err"
 while read -r s; do [ -n "$s" ] && { REL=$((REL+1)); say "released $s"; }; done < "$TMPD/released"
+# ── 5b. suite quarantine release on a green nightly (BH-9697) ────────────────
+[ "$SQR" = ok ] && [ "$SQACT" = 1 ] && sqh_release "$SLUG" "$SQROWS" "$SQREL"
 
 # ── 6. projection into CI_QUARANTINE ─────────────────────────────────────────
 PROJ=failed; why=""
@@ -255,6 +285,9 @@ else
     tp_protected "$s" "$H" >/dev/null && continue
     printf '%s\n' "$s" >> "$TMPD/want"
   done < "$TMPD/rows2"
+  # BH-9697: the union with the active suite_quarantine rows, so the batch
+  # (bin/ci-plan.sh --quarantine) drops them too.
+  [ "$SQR" = ok ] && sqh_project "$SQROWS" "$SQREL" "$TMPD/want"
   WANT=$(LC_ALL=C sort -u "$TMPD/want" | paste -sd' ' -); [ -n "$WANT" ] || WANT=-
   ADM="${GH_ADMIN_TOKEN:-}"
   [ -n "$ADM" ] || ADM=$(sed -n 's/^\(export \)\{0,1\}GH_ADMIN_TOKEN=//p' "$HENV/github-admin.env" 2>/dev/null | tr -d "\"'" | head -n 1)

@@ -1,0 +1,7 @@
+{
+  "env": "SUITE_QUARANTINE_ACT",
+  "type": "int",
+  "default": 1,
+  "zero_means": "off",
+  "note": "BH-9697. Read by bin/flaky-tier.sh: 0 skips steps 4b (repair tickets for suite_quarantine rows) and 5b (their release on a green nightly). Step 6 still projects the active rows into CI_QUARANTINE. FLAKY_TIER_ACT=0 and --dry-run also stop every write of 4b and 5b."
+}

@@ -1,0 +1,13 @@
+{
+  "env": "SELECTION_GATE_QUARANTINE_MAX_NEW",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 50,
+  "unit": "suites",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9697. The most suite_quarantine rows one selection-gate run writes. More candidates than this writes none (gate.txt `quarantined: - quarantine-cap: <n> > <max>`; they stay baseline-red:, which does not fail the gate): many suites red on main at once looks like a host problem, not a set of broken suites. bin/lib/selection-gate.sh reads the row and passes it in the env; fallback 3.",
+  "read_in": "bin/lib/selection-gate.sh",
+  "project_scoped": false
+}
