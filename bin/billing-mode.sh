@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/billing-mode.sh <runner> — does a call on this runner cost CASH on this box?
+# bin/billing-mode.sh <runner> [project] — does a call on this runner cost CASH on this box?
 #
 # Prints one of: metered | subscription | unknown
 #
@@ -24,8 +24,21 @@
 # `metered` would invent spend that was never billed. The roll-up counts unknown
 # toward notional and flags the count, so it shows up as a question rather than
 # as a number somebody trusts.
+#
+# THE PROJECT (BH-9676). With runner `claude` and a second argument, a project
+# whose settings row claude_auth.<project> is `api-key` bills its own Anthropic
+# key per token, whatever else this box's env holds: agent-call unsets the
+# OAuth token for that call. Any other answer (no row, `oauth`, a bad row)
+# falls through to the env rule below. No second argument: nothing new is
+# sourced and every answer is the env rule, as before.
 set -uo pipefail
 RUNNER="${1:-}"
+PROJECT="${2:-}"
+
+if [ "$RUNNER" = claude ] && [ -n "$PROJECT" ]; then
+  _bm_mode=$( . "$(dirname "$0")/lib/claude-auth.sh" >/dev/null 2>&1 || exit 1; claude_auth_mode "$PROJECT" 2>/dev/null ) || _bm_mode=""
+  [ "$_bm_mode" = api-key ] && { echo metered; exit 0; }
+fi
 
 case "$RUNNER" in
   claude)

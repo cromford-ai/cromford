@@ -100,7 +100,7 @@ chmod +x "$T/bin/usage-fetch"
 
 # Every credential and endpoint the lib reads is set here explicitly, so the
 # box's own environment never leaks in.
-CLEAN=(env -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CONFIG_DIR -u CODEX_API_KEY -u OPENAI_API_KEY
+CLEAN=(env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u CLAUDE_CONFIG_DIR -u CODEX_API_KEY -u OPENAI_API_KEY
        -u OPENROUTER_API_KEY -u FIREWORKS_API_KEY -u XAI_API_KEY -u GROK_CODE_XAI_API_KEY
        -u GROK_BILLING -u OAUTH_USAGE_FETCH -u CRED_PROBE_LIB -u STUB_CODE -u STUB_BODY -u STUB_RC
        -u STUB_WORKER -u JOBS_URL -u HARNESS_SECRET -u BOX_NAME -u JOBS_BOX

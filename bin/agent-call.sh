@@ -528,6 +528,15 @@ command -v project_account_live_matches >/dev/null 2>&1 || project_account_live_
 command -v project_account_alert_unavailable >/dev/null 2>&1 || project_account_alert_unavailable() { :; }
 command -v project_account_alert_resolve     >/dev/null 2>&1 || project_account_alert_resolve()     { :; }
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply project-account; } || true
+# HOW A PROJECT PAYS FOR CLAUDE (BH-9334, BH-9676): the settings row
+# claude_auth.<project> is `oauth` (the default) or `api-key`. Same settings
+# cache as the pin above. A box whose sync has not landed the lib answers
+# `oauth`, which is exactly the behaviour before it shipped.
+# shellcheck source=bin/lib/claude-auth.sh
+if   [ -r "$(dirname "$0")/lib/claude-auth.sh" ]; then . "$(dirname "$0")/lib/claude-auth.sh"
+elif [ -r "$HARNESS/bin/lib/claude-auth.sh" ];    then . "$HARNESS/bin/lib/claude-auth.sh"; fi
+command -v claude_auth_mode          >/dev/null 2>&1 || claude_auth_mode()          { echo oauth; }
+command -v claude_auth_managed_guard >/dev/null 2>&1 || claude_auth_managed_guard() { return 0; }
 # THE ADVISOR (BH-3491): `--advisor <m>` on the claude rung of the stages in
 # AGENT_ADVISOR_STAGES (lib.advisor.* row, registry default "execute fix"), when
 # the settings row advisor.<project> / advisor.default names one. Same settings
@@ -2200,7 +2209,7 @@ _ac_unbilled() {
 # has a row (2026-09-23: the floor's refusals had none).
 ac_cost_row_write() {
   local runner="$1"
-  BMODE=$(eval "$ACCT_EXPORTS"; "$HARNESS/bin/billing-mode.sh" "$runner" 2>/dev/null || echo unknown)
+  BMODE=$(eval "$ACCT_EXPORTS"; "$HARNESS/bin/billing-mode.sh" "$runner" "$PROJECT" 2>/dev/null || echo unknown)
   # WHICH account paid, resolved here for the same reason billing mode is:
   # only the box that made the call, at the moment it made it, can say — the
   # env this reads is the env the attempt just ran with, and accounts get
@@ -2217,6 +2226,9 @@ ac_cost_row_write() {
   # cost_row_auth_account is the one rule; claude-cost.sh calls it too.
   cost_row_auth_account "$AUTH_ACCT" "${ACCT_NAME:-}" "${ACCT_PICK_LABEL:-}" "${ACCT_PINNED:-0}"
   AUTH_ACCT="$COST_ROW_AUTH_ACCOUNT"
+  # An api-key project's row names the project's key (BH-9676), never a
+  # fingerprint label: auth_fp above is already the hash of that key.
+  if [ "${ACCT_APIKEY:-0}" = 1 ]; then AUTH_ACCT="apikey:$PROJECT"; COST_ROW_ACCT_FROM=pinned; fi
   # BH-5352: a participant machine's row names the machine, and the account is
   # the enrollment's billing_account. The note says when either could not be read.
   local _PRN=""
@@ -2655,7 +2667,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
   # two command substitutions that resolve billing mode and the auth
   # fingerprint, because those read the LIVE env and would otherwise attribute
   # a routed call to the default account.
-  ACCT_NAME=""; ACCT_EXPORTS=""; ACCT_PINNED=0; ACCT_PICK_LABEL=""
+  ACCT_NAME=""; ACCT_EXPORTS=""; ACCT_PINNED=0; ACCT_PICK_LABEL=""; ACCT_APIKEY=0
   # >>> own-account pin (BH-1657)
   # A PROJECT PINNED TO ITS OWN CLAUDE ACCOUNT RUNS ITS CLAUDE RUNG ON THAT
   # ACCOUNT AND NO OTHER, whatever ACCOUNT_ROUTING says and whatever box this is:
@@ -2670,9 +2682,45 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
   #   (c) anything else fails CLOSED: nothing is called, rc 76, the rung
   #       descends to the non-claude ladder. Never the box's default credential.
   # Only the claude runner is pinned; codex keeps its routing below.
+  # >>> api-key project (BH-9676)
+  # A PROJECT WHOSE claude_auth.<project> ROW IS `api-key` PAYS FOR CLAUDE WITH
+  # ITS OWN KEY: the claude rung runs on this box's ANTHROPIC_API_KEY with the
+  # OAuth token unset, and never on a pin, a picked account or the box token.
+  # Every refusal is rc 76 with nothing called (no spend, no cooldown, no
+  # rotation: ACCT_PINNED=1 makes the ladder descend, as for a pin).
+  local _cmode=oauth _cerr=""
+  if [ "$runner" = claude ]; then
+    if ! _cmode=$(claude_auth_mode "$PROJECT" 2>/dev/null); then
+      echo "$(STAMP) [$PROJECT] $STAGE claude: settings row claude_auth.$PROJECT is not oauth or api-key, refusing the claude rung" >> "$HARNESS/logs/failovers.log"
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ'),$PROJECT,$STAGE,$MODEL,-,claude_auth_invalid" >> "$HARNESS/logs/account-routing.log"
+      [ -z "${ANY_RAN:-}" ] && printf 'AGENT_CALL_NO_HEADROOM claude_auth row invalid\n' > "$OUT" 2>/dev/null
+      RC=76
+      return 76
+    fi
+    [ "$_cmode" = api-key ] || _cmode=oauth
+  fi
   local _pin=""
-  [ "$runner" = claude ] && _pin=$(account_label_for_project "$PROJECT" 2>/dev/null)
-  if [ -n "$_pin" ]; then
+  [ "$runner" = claude ] && [ "$_cmode" = oauth ] && _pin=$(account_label_for_project "$PROJECT" 2>/dev/null)
+  if [ "$_cmode" = api-key ]; then
+    ACCT_PINNED=1; ACCT_NAME="apikey:$PROJECT"; ACCT_APIKEY=1
+    if ! _cerr=$(claude_auth_managed_guard 2>&1 >/dev/null); then
+      echo "$(STAMP) [$PROJECT] $STAGE claude: claude_auth.$PROJECT=api-key refused: ${_cerr%%$'\n'*}" >> "$HARNESS/logs/failovers.log"
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ'),$PROJECT,$STAGE,$MODEL,apikey:$PROJECT,managed_settings_block" >> "$HARNESS/logs/account-routing.log"
+      [ -z "${ANY_RAN:-}" ] && printf 'AGENT_CALL_NO_HEADROOM managed settings block ANTHROPIC_API_KEY\n' > "$OUT" 2>/dev/null
+      RC=76
+      return 76
+    fi
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+      echo "$(STAMP) [$PROJECT] $STAGE claude: claude_auth.$PROJECT=api-key and this box has no ANTHROPIC_API_KEY, not falling back to OAuth, descending" >> "$HARNESS/logs/failovers.log"
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ'),$PROJECT,$STAGE,$MODEL,apikey:$PROJECT,api_key_unavailable" >> "$HARNESS/logs/account-routing.log"
+      [ -z "${ANY_RAN:-}" ] && printf 'AGENT_CALL_NO_HEADROOM api-key project %s has no ANTHROPIC_API_KEY on this box\n' "$PROJECT" > "$OUT" 2>/dev/null
+      RC=76
+      return 76
+    fi
+    ACCT_EXPORTS="unset CLAUDE_CODE_OAUTH_TOKEN"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ'),$PROJECT,$STAGE,$MODEL,apikey:$PROJECT,api_key" >> "$HARNESS/logs/account-routing.log"
+  # <<< api-key project
+  elif [ -n "$_pin" ]; then
     local _pex="" _prc2=0
     ACCT_PINNED=1; ACCT_NAME="$_pin"
     _pex=$(project_account_exports "$PROJECT" 2>/dev/null) || _prc2=$?
@@ -4548,7 +4596,7 @@ unset AGENT_CALL_FP AGENT_CALL_GUARD_STAGE AGENT_CALL_TICKET AGENT_CALL_GUARD_FO
 PHASE_USD=0; PHASE_RUNNER=""; PHASE_MODEL=""
 # Account routing state for the run below (see the hook in run_attempt). Empty
 # = not routed, and `eval ""` is a no-op everywhere it is consumed.
-ACCT_NAME=""; ACCT_EXPORTS=""; ACCT_PINNED=0; ACCT_PICK_LABEL=""
+ACCT_NAME=""; ACCT_EXPORTS=""; ACCT_PINNED=0; ACCT_PICK_LABEL=""; ACCT_APIKEY=0
 # The cliff-route decision for this RUN, not this attempt: it is set by the grok
 # attempt that was skipped and read by the row the rung BELOW it writes, so it
 # deliberately survives across attempts (run_attempt resets ACCT_NAME; this must

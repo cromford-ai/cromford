@@ -5,6 +5,7 @@
 #   . bin/lib/claude-auth.sh
 #   claude_auth_mode <project>  -> `oauth` or `api-key` on stdout, rc 0
 #   runner_lock_for <project>   -> `claude` or an empty line on stdout, rc 0
+#   claude_auth_managed_guard   -> rc 0, or rc 1 + one stderr line (BH-9676)
 #
 # The answer is DATA: the settings rows `claude_auth.<project>` and
 # `runner_lock.<project>`, read through lane-gate's settings fetch and its 60s
@@ -70,4 +71,33 @@ claude_auth_mode() {
 runner_lock_for() {
   # shellcheck disable=SC2086 # the enum list splits on purpose
   _cauth_read runner_lock. "${1:-}" "" $RUNNER_LOCKS
+}
+
+# claude_auth_managed_guard (BH-9676) — rc 0 when no Claude Code managed-settings
+# file sets `forceLoginMethod` or `forceLoginOrgUUID` at its top level; rc 1 and
+# one stderr line naming the file and the key (never the value) otherwise. The
+# CLI refuses ANTHROPIC_API_KEY when either key is set, so an api-key project
+# stops here, before any model call. Files read: the managed-settings file and
+# every *.json drop-in beside it (paths, not limits; the env overrides are for
+# the tests). A file that is not valid JSON is decided by a plain grep, so a
+# broken file that still names the key refuses too. No network.
+claude_auth_managed_guard() {
+  local f k hit
+  for f in "${CLAUDE_MANAGED_SETTINGS_FILE:-/etc/claude-code/managed-settings.json}" \
+           "${CLAUDE_MANAGED_SETTINGS_DIR:-/etc/claude-code/managed-settings.d}"/*.json; do
+    [ -f "$f" ] && [ -r "$f" ] || continue
+    hit=""
+    if jq -e . "$f" >/dev/null 2>&1; then
+      hit=$(jq -r '[("forceLoginMethod","forceLoginOrgUUID") as $k | select(type == "object" and has($k)) | $k] | first // empty' "$f" 2>/dev/null)
+    else
+      for k in forceLoginMethod forceLoginOrgUUID; do
+        grep -q "\"$k\"" "$f" 2>/dev/null && { hit="$k"; break; }
+      done
+    fi
+    if [ -n "$hit" ]; then
+      printf 'claude-auth: %s sets %s; the claude CLI blocks ANTHROPIC_API_KEY with it. Remove the key for an api-key project.\n' "$f" "$hit" >&2
+      return 1
+    fi
+  done
+  return 0
 }

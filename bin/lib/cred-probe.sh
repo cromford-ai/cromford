@@ -25,6 +25,8 @@
 #       unknown runner are NO_ENDPOINT.
 #     Probes:  claude setup-token  GET <anthropic>/v1/models (OAuth beta header)
 #                                  DEAD on 401/403
+#              claude api key      GET <anthropic>/v1/models (x-api-key header),
+#                                  only with no OAuth token (BH-9676); DEAD on 401/403
 #              claude full login   <anthropic>/api/oauth/usage through
 #                                  ${OAUTH_USAGE_FETCH:-oauth-usage-fetch.py}
 #              codex    GET <openai>/v1/models            DEAD on 401
@@ -40,7 +42,8 @@
 #     Prints the first 16 hex of sha256 over the runner's credential string,
 #     rc 0; empty stdout and rc 1 when there is none (or the runner is
 #     unknown). Never prints the secret. Reads the environment only:
-#       claude     CLAUDE_CODE_OAUTH_TOKEN, else .claudeAiOauth.accessToken in
+#       claude     CLAUDE_CODE_OAUTH_TOKEN, else ANTHROPIC_API_KEY (BH-9676,
+#                  the auth_fp_for_runner order), else .claudeAiOauth.accessToken in
 #                  ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json
 #                  (a full login's token rotates ~8 h, so its fp does too)
 #       codex      CODEX_API_KEY, else OPENAI_API_KEY
@@ -137,6 +140,13 @@ cred_probe() {
           "anthropic-beta: oauth-2025-04-20" "anthropic-version: 2023-06-01" \
           || { echo "INCONCLUSIVE mktemp failed"; return 2; }
         _cp_classify 401 403 && return 0 || return $?
+      elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        # An api-key project (BH-9676): the CLI uses the key when no OAuth
+        # token is set, so that is the credential to probe.
+        _cp_base anthropic || return 2
+        _cp_http "$_CP_BASE/v1/models" "x-api-key: $ANTHROPIC_API_KEY" "anthropic-version: 2023-06-01" \
+          || { echo "INCONCLUSIVE mktemp failed"; return 2; }
+        _cp_classify 401 403 && return 0 || return $?
       fi
       tok=$(jq -r '.claudeAiOauth.accessToken // empty' \
         "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/.credentials.json" 2>/dev/null) || tok=""
@@ -189,7 +199,7 @@ cred_account_fp() {
   local cred=""
   case "${1:-}" in
     claude)
-      cred="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+      cred="${CLAUDE_CODE_OAUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"
       [ -n "$cred" ] || cred=$(jq -r '.claudeAiOauth.accessToken // empty' \
         "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/.credentials.json" 2>/dev/null) || cred="" ;;
     codex)      cred="${CODEX_API_KEY:-${OPENAI_API_KEY:-}}" ;;

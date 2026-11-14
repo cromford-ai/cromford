@@ -26,7 +26,7 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 sha16() { printf '%s' "$1" | sha256sum | cut -c1-16; }
 # Every credential the lib reads, so the box's own env never leaks in.
-CLEAN=(env -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CONFIG_DIR -u CODEX_API_KEY -u OPENAI_API_KEY
+CLEAN=(env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u CLAUDE_CONFIG_DIR -u CODEX_API_KEY -u OPENAI_API_KEY
        -u OPENROUTER_API_KEY -u FIREWORKS_API_KEY -u XAI_API_KEY -u GROK_CODE_XAI_API_KEY)
 fp() {  # fp <home> <runner> [VAR=val ...] -> stdout of cred_account_fp; rc in $FP_RC
   local home="$1" runner="$2"; shift 2
