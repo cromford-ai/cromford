@@ -199,7 +199,8 @@ case "$*" in
   # ---- writes -------------------------------------------------------------
   *"api -i -X POST repos/"*"/issues/"*"/comments"*)
     BF=""; for a in "$@"; do case "$a" in body=@*) BF=${a#body=@} ;; esac; done
-    { printf '<<PR %s>>\n' "$(pr_of "$*")"; cat "$BF"; printf '\n<<END>>\n'; } >> "$T/attr-comments.txt"
+    # One writer at a time: two PRs commented in parallel interleaved their blocks (#9607 queue run 43375112445).
+    { flock 9; { printf '<<PR %s>>\n' "$(pr_of "$*")"; cat "$BF"; printf '\n<<END>>\n'; } >> "$T/attr-comments.txt"; } 9> "$T/attr-comments.lock"
     restpr --raw 201 '{"id":1}' ;;
   *"api -X DELETE repos/"*"/labels/dequeued"*)
     N=$(pr_of "$*"); printf '%s\n' "$*" >> "$T/label-removes.txt"
