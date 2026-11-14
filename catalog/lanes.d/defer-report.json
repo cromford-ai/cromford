@@ -1,0 +1,52 @@
+{
+  "id": "defer-report",
+  "name": "Build deferral report",
+  "scope": "hub",
+  "script": "bin/defer-report.sh",
+  "cadence": "17 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-defer-report",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "DEFER_REPORT_WINDOW_DAYS",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 60,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9426: the trailing window of build dirs the daily lane run reads. Read by bin/defer-report.sh as ${DEFER_REPORT_WINDOW_DAYS:-7}; --last <N>d on the command line wins (and makes the run ad hoc: no log line)."
+    },
+    {
+      "env": "DEFER_REPORT_TOP",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 100,
+      "zero_means": null,
+      "note": "BH-9426: the TOP FILES rows the report prints and writes to state/defer-report/<project>-top.txt, which bin/lib/defer-top.sh puts in the planner prompt. Read as ${DEFER_REPORT_TOP:-20}; --top wins."
+    },
+    {
+      "env": "DEFER_REPORT_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-9426: 0 stops the daily lane run before it reads anything (flags/lane-off-defer-report is the other switch). An ad-hoc --last run ignores it. Read as ${DEFER_REPORT_ENABLED:-1}."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/defer-report.log"
+  }
+}

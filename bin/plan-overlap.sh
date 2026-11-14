@@ -260,7 +260,9 @@ report() { # report <other-key> <pairs>
 #   (a) both sides name the same path and a Generated-files row matches it
 #       (gen_path_matches: the whole path or a whole-path glob, never a prefix);
 #   (b) one side is a bare fragment directory and the other a path under it;
-#   (c) both sides name the bare fragment directory itself.
+#   (c) both sides name the bare fragment directory itself;
+#   (d) both sides name the same path and the target repo's .gitattributes
+#       gives it `merge=union` (bin/lib/automerge-paths.sh, BH-9426).
 # The same FILE inside a fragment dir on both sides is NOT safe: two plans
 # editing one lane's json really do collide. The directory list is the knob
 # PLAN_OVERLAP_FRAGMENT_DIRS (lib.plan-hotspot, catalog/lanes.d/_lib.plan-hotspot.json):
@@ -290,6 +292,10 @@ frag_init() {
   if command -v gen_table_paths >/dev/null 2>&1 && [ -d "$REPO_DIR" ]; then
     GEN_PATHS=$(gen_table_paths "$REPO_DIR" HEAD 2>/dev/null) || GEN_PATHS=""
   fi
+  # BH-9426: a `merge=union` path (and a Generated-files row) of the target repo
+  # merges by itself, so a same-path pair on it is safe too.
+  # shellcheck source=bin/lib/automerge-paths.sh
+  [ -r "$HARNESS/bin/lib/automerge-paths.sh" ] && . "$HARNESS/bin/lib/automerge-paths.sh" 2>/dev/null
   return 0
 }
 is_frag_dir() { local d; for d in $FRAG_DIRS; do [ "$1" = "$d" ] && return 0; done; return 1; }
@@ -298,6 +304,7 @@ fragment_safe() { # fragment_safe "<p> ~ <q>" — rc 0 when the collision is on 
   frag_init
   if [ "$p" = "$q" ]; then
     is_frag_dir "$p" && return 0
+    command -v amp_is_automerge >/dev/null 2>&1 && amp_is_automerge "$REPO_DIR" "$p" && return 0
     command -v gen_path_matches >/dev/null 2>&1 || return 1
     while IFS= read -r g; do
       [ -n "$g" ] && gen_path_matches "$p" "$g" && return 0

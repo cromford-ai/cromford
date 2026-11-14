@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "defer-top",
+      "file": "bin/lib/defer-top.sh",
+      "note": "BH-9426. defer_top_line puts the current top deferral files (state/defer-report/<project>-top.txt, written by the daily defer-report lane) in the plan, execute and review prompts as files to stay out of unless the ticket is about them. Absent, empty or stale list = no line.",
+      "knobs": [
+        {
+          "env": "DEFER_TOP_MAX_AGE_H",
+          "type": "int",
+          "default": 48,
+          "min": 1,
+          "max": 720,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "A top-files list older than this many hours is dropped, not shown: two daily runs of the defer-report lane. Read by defer_top_line through lib_env_apply defer-top, then ${DEFER_TOP_MAX_AGE_H:-48}."
+        }
+      ]
+    }
+  ]
+}

@@ -403,6 +403,10 @@ frag_init() {
   if command -v gen_table_paths >/dev/null 2>&1 && [ -d "$REPO_DIR" ]; then
     GEN_PATHS=$(gen_table_paths "$REPO_DIR" HEAD 2>/dev/null) || GEN_PATHS=""
   fi
+  # BH-9426: a `merge=union` path (and a Generated-files row) of the target repo
+  # merges by itself, so a same-path pair on it is safe too.
+  # shellcheck source=bin/lib/automerge-paths.sh
+  [ -r "$HERE/lib/automerge-paths.sh" ] && . "$HERE/lib/automerge-paths.sh" 2>/dev/null
   return 0
 }
 is_frag_dir() { local d; for d in $FRAG_DIRS; do [ "$1" = "$d" ] && return 0; done; return 1; }
@@ -411,6 +415,7 @@ fragment_safe() {
   frag_init
   if [ "$p" = "$q" ]; then
     is_frag_dir "$p" && return 0
+    command -v amp_is_automerge >/dev/null 2>&1 && amp_is_automerge "$REPO_DIR" "$p" && return 0
     command -v gen_path_matches >/dev/null 2>&1 || return 1
     while IFS= read -r g; do
       [ -n "$g" ] && gen_path_matches "$p" "$g" && return 0

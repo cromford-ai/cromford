@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── DEFER REPORT (BH-9426) ─────────────────────────────────────────────────────
+# Daily at 06:17Z: for each project, which files made builds end BUILD_DEFERRED
+# over the last DEFER_REPORT_WINDOW_DAYS (default 7), the ticket that held them,
+# the wait each deferral added and deferrals per ticket. Read-only: one line per
+# project in logs/defer-report.log and state/defer-report/<project>-top.txt, the
+# list the planner prompt reads (bin/lib/defer-top.sh).
+# Kill: flags/lane-off-defer-report, DEFER_REPORT_ENABLED=0, or bin/harness-ctl.sh off defer-report.
+17 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/defer-report.sh >/dev/null 2>&1

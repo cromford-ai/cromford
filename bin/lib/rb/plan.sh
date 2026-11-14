@@ -36,7 +36,7 @@
 #   TH_RN VMAP_ORIENT
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
 #   WT_LINE WT_RC LP_PLACE LP_WHY
-#   MN_NOTE
+#   MN_NOTE DEFER_TOP
 #   SI_HOUT SI_HRC SI_MSG SI_OUT SI_RC
 # shellcheck shell=bash
 
@@ -261,6 +261,11 @@ VMAP_ORIENT=$("$HARNESS/bin/verification-map.sh" orient "$PROJECT" --repo "$WT" 
   || VMAP_ORIENT="VERIFICATION MAP NOT AVAILABLE (verification-map.sh failed)"
 [ -n "$VMAP_ORIENT" ] || VMAP_ORIENT="VERIFICATION MAP NOT AVAILABLE (verification-map.sh returned nothing)"
 echo "$(STAMP) [$PROJECT/$KEY] $(head -1 <<<"$VMAP_ORIENT")" >> "$BUILD/pipeline.log"
+# >>> defer top
+# BH-9426: the top deferral files (bin/lib/defer-top.sh, from the defer-report lane) ride under the map line.
+[ -r "$HARNESS/bin/lib/defer-top.sh" ] && . "$HARNESS/bin/lib/defer-top.sh" 2>/dev/null && DEFER_TOP=$(defer_top_line "$PROJECT" "$HARNESS" 2>/dev/null) && [ -n "$DEFER_TOP" ] && VMAP_ORIENT="$VMAP_ORIENT
+$DEFER_TOP"
+# <<< defer top
 # --- VERIFICATION MAP (end) ---
 
 CC() { # CC <stage> <model> <timeout-sec> <outfile> <prompt>  (runner + cost via agent-call.sh)

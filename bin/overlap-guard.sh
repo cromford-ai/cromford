@@ -146,8 +146,16 @@ command -v read_mostly_list >/dev/null 2>&1 && read_mostly_list "$PROJECT" "$HAR
 # docs/NOTES.md while running from a repo root that had its own *.md files.
 IGNORE_PATS=()
 IFS=' ' read -r -a IGNORE_PATS <<<"$IGNORE"
+# AUTO-MERGE PATHS (BH-9426): a `## Generated files` row of the target repo or a
+# `merge=union` path is resolved by the merge itself, so prune() drops it too.
+# The repo is $PLAN_OVERLAP_REPO, else $REPOS_ROOT/<project>; absent lib or
+# repo dir = every path kept, as before.
+# shellcheck source=bin/lib/automerge-paths.sh
+. "$(dirname "$0")/lib/automerge-paths.sh" 2>/dev/null || amp_filter() { cat; }
+AMP_REPO="${PLAN_OVERLAP_REPO:-${REPOS_ROOT:-/root/repos}/$PROJECT}"
 
-# prune <src> <dst> — drop the auto-resolvable classes, blank lines and dupes.
+# prune <src> <dst> — drop the auto-resolvable classes, the auto-merge paths,
+# blank lines and dupes.
 #
 # ...AND THE `SOURCE:` HEADER (BH-499). bin/planned-files-cheap.sh writes which
 # tier produced a list as its first line, into the same
@@ -169,7 +177,7 @@ prune() {
       case "$f" in $g|*/$g) keep=0; break ;; esac
     done
     [ "$keep" = 1 ] && printf '%s\n' "$f"
-  done < "$1" | sort -u > "$2"
+  done < "$1" | sort -u | amp_filter "$AMP_REPO" > "$2"
 }
 
 # files_of <key> <dst> -> rc 0 when a files-to-touch list was found for that key

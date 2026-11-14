@@ -8,6 +8,10 @@
 # A docs path (*.md at any depth) is never a conflict (BH-9096,
 # bin/lib/docs-overlap.sh; the *.md token of OVERLAP_IGNORE). A box without the lib
 # judges every path as before.
+# A path the merge resolves by itself is never a conflict either (BH-9426,
+# bin/lib/automerge-paths.sh): a `## Generated files` row of the target repo or
+# a `merge=union` path. The repo is $PLAN_OVERLAP_REPO, else
+# $REPOS_ROOT/<project>; no repo dir = every path judged as before.
 # usage: conflict-check.sh <project> <candidate-build-dir>
 #   exit 0 = disjoint (safe to run)   exit 1 = overlap (defer; reason on stdout)
 set -uo pipefail
@@ -24,6 +28,16 @@ SKIPMD=0
 command -v docs_overlap_on >/dev/null 2>&1 && docs_overlap_on && SKIPMD=1
 CFILES=$(tf "$CAND")
 [ -s "$CFILES" ] || exit 0   # no plan data -> cannot judge -> allow (old behavior)
+# shellcheck source=bin/lib/automerge-paths.sh
+. "$(dirname "$0")/lib/automerge-paths.sh" 2>/dev/null || amp_filter() { cat; }
+AMP_REPO="${PLAN_OVERLAP_REPO:-${REPOS_ROOT:-/root/repos}/$PROJECT}"
+AMP_TMP=$(mktemp -d "${TMPDIR:-/tmp}/conflict-check-XXXXXX") || AMP_TMP=""
+[ -n "$AMP_TMP" ] && trap 'rm -rf "$AMP_TMP"' EXIT
+if [ -n "$AMP_TMP" ]; then
+  amp_filter "$AMP_REPO" < "$CFILES" > "$AMP_TMP/cand"
+  CFILES="$AMP_TMP/cand"
+  [ -s "$CFILES" ] || exit 0  # every planned path merges by itself
+fi
 
 for D in "$HARNESS"/builds/"$PROJECT"-*; do
   [ -d "$D" ] || continue
@@ -33,6 +47,10 @@ for D in "$HARNESS"/builds/"$PROJECT"-*; do
   [ -s "$OFILES" ] || continue                        # pre-wave-1 build
   # running = dir touched in the last 4h without a RESULT
   [ -n "$(find "$D" -maxdepth 1 -mmin -240 -print -quit 2>/dev/null)" ] || continue
+  if [ -n "$AMP_TMP" ]; then
+    amp_filter "$AMP_REPO" < "$OFILES" > "$AMP_TMP/other"
+    OFILES="$AMP_TMP/other"
+  fi
   OVERLAP=$(awk -v skipmd="$SKIPMD" 'NR==FNR{a[$0];next}
     skipmd && /.\.md\/?$/ { next }
     {
