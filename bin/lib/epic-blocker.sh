@@ -46,6 +46,10 @@
 # The root is ${HARNESS:-${H:-}} and nothing else. No `set -e`, no `exit`.
 if [ -n "${EPIC_BLOCKER_LIB:-}" ]; then return 0 2>/dev/null; fi
 EPIC_BLOCKER_LIB=1
+# The GitHub reads go through the tracker adapter (BH-9513): the issue GET,
+# the child search and the sub-issue read. It sources gh-rest.sh if needed.
+# shellcheck source=bin/lib/tracker/github-issues.sh
+declare -F trk_gh_sub_issues >/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/tracker/github-issues.sh" 2>/dev/null || true
 EB_MARKER='<!-- harness: epic-close-question -->'
 
 # The knobs, resolved once and only when a function needs them (this lib is
@@ -119,17 +123,17 @@ _eb_log() { # _eb_log <harness> <project> <line>
 _eb_fetch() {
   local repo="$1" n="$2" d="$3" rc kind q
   mkdir -p "$d" || return 1
-  rc=0; gh_rest GET "repos/$repo/issues/$n" > "$d/issue.json" || rc=$?
+  rc=0; TRK_SLUG="$repo" trk_gh_issue_raw "$n" > "$d/issue.json" || rc=$?
   [ "$rc" = 0 ] || return 1
   rc=0; gh_rest_issue_comments "$repo" "$n" "$(eb_knob EPIC_BLOCKER_COMMENTS_MAX)" > "$d/comments.json" || rc=$?
   [ "$rc" = 0 ] || return 1
   for kind in part epic; do
     if [ "$kind" = part ]; then q="repo:$repo is:issue \"Part of #$n\""; else q="repo:$repo is:issue \"epic #$n\""; fi
-    rc=0; gh_rest GET search/issues -f "q=$q" -F per_page=100 > "$d/$kind.json" || rc=$?
+    rc=0; trk_gh_search_issues "$q" > "$d/$kind.json" || rc=$?
     [ "$rc" = 0 ] || return 1
   done
   # 404 = the repo has no sub-issues for it, which is an answer: no children.
-  rc=0; gh_rest GET "repos/$repo/issues/$n/sub_issues" -F per_page=100 > "$d/sub.json" || rc=$?
+  rc=0; TRK_SLUG="$repo" trk_gh_sub_issues "$n" > "$d/sub.json" || rc=$?
   case "$rc" in 0) ;; 44) echo '[]' > "$d/sub.json" ;; *) return 1 ;; esac
   return 0
 }
@@ -142,7 +146,8 @@ eb_pass() { # eb_pass <repo> <issues.json> <tmpdir> <project> <dry>
   alert="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/alert-line.sh"
   [ -n "$h" ] && [ -n "$repo" ] && [ -r "$il" ] && [ -d "$tmp" ] && [ -n "$project" ] || return 1
   [ "$(eb_knob EPIC_BLOCKER)" = 1 ] || return 0
-  command -v gh_rest >/dev/null 2>&1 && command -v gh_rest_issue_comments >/dev/null 2>&1 || return 1
+  command -v gh_rest >/dev/null 2>&1 && command -v gh_rest_issue_comments >/dev/null 2>&1 \
+    && declare -F trk_gh_sub_issues >/dev/null || return 1
   sd="$h/state/epic-blocker/$project"
   now=$(_eb_now); win=$(eb_knob EPIC_BLOCKER_DEFAULT_H); max=$(eb_knob EPIC_BLOCKER_MAX)
   cur=$(tr -dc '0-9' < "$sd/cursor" 2>/dev/null)

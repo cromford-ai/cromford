@@ -126,6 +126,24 @@ trk_gh_comments_page() {
   gh_rest GET "repos/$TRK_SLUG/issues/$1/comments?per_page=100&page=$2"
 }
 
+# trk_gh_search_issues <q> — one raw page (per_page=100) of GET search/issues
+# for the query <q>, exactly as gh_rest answers it, and gh_rest's own rc
+# (bin/lib/epic-blocker.sh's "Part of #N" / "epic #N" child search, BH-9513).
+# The argument order is the one the lib sent before, so its ETag cache entry
+# stays the same. rc 1 and no call on an empty <q> or no gh_rest.
+trk_gh_search_issues() {
+  command -v gh_rest >/dev/null 2>&1 && [ -n "${1:-}" ] || return 1
+  gh_rest GET search/issues -f "q=$1" -F per_page=100
+}
+
+# trk_gh_sub_issues <n> — one raw page (per_page=100) of issue <n>'s sub-issues
+# and gh_rest's own rc: 44 when the repo has no sub-issues for it
+# (bin/lib/epic-blocker.sh, BH-9513). rc 1 on a bad slug or number.
+trk_gh_sub_issues() {
+  _trk_gh_ok "${1:-}" || return 1
+  gh_rest GET "repos/$TRK_SLUG/issues/$1/sub_issues" -F per_page=100
+}
+
 # trk_gh_comment_raw <n> <bodyfile> — trk_gh_comment, but the POST's raw answer
 # (the new comment's id and html_url) on stdout and gh_rest's own rc, for a
 # caller that links the comment it posted (bin/web-task.sh, BH-7919). A dry run

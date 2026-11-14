@@ -24,6 +24,8 @@ bin/dep-verify.sh
 bin/flaky-tier.sh
 bin/fleet-conf.sh
 bin/fly-pool.sh
+# pre-existing on main (gh_rest search/issues for a merged-PR count, not a tracker read); landed by BH-9455 (#9569) with main red on this ratchet since (#9513)
+bin/gh-ledger-report.sh
 bin/hotfix-after-deploy.sh
 bin/hotfix-migrate.sh
 bin/hotfix-seen.sh
@@ -49,8 +51,6 @@ bin/lib/console-qa-gate.sh
 bin/lib/data-lane-pending.sh
 bin/lib/dep-verify-lib.sh
 bin/lib/dequeue-watch/gather.sh
-# landed by BH-9289 (#9302) with main red on this ratchet since: issue GET, search/issues and sub_issues reads of a GitHub epic; the seam has no search or sub-issue read yet (#9513)
-bin/lib/epic-blocker.sh
 bin/lib/fc-board.sh
 bin/lib/fc-issues.sh
 bin/lib/file-children.sh
