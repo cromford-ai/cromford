@@ -12,8 +12,10 @@
 # The real bin/test-impact.sh select drives every case, on a map built once
 # from this tree.
 #
-#   P1  catalog/lanes.d/repair-on-push.json: selected, holds bh-3687, < 300
-#   P2  the #6988 paths: selected, holds bh-6750 and bh-4607, < 300
+#   P1  catalog/lanes.d/repair-on-push.json: selected, holds bh-3687, under
+#       NARROW_MAX_PCT of the corpus
+#   P2  the #6988 paths: selected, holds bh-6750 and bh-4607, under
+#       NARROW_MAX_PCT of the corpus
 #   P3  catalog/components.tsv + a route-table.d txt, map + one row: selected
 #   P4  P1's set does not hold a suite with no row for the path
 #   P5  P1 and P2 give the same set as the batch select
@@ -23,11 +25,17 @@
 #       catalog/components.tsv, named by its BH-6971 reader: selected
 #   N4  an unreadable rules file or a missing rules lib: full
 #   N5  a catalog/ *.md, named by a row or not: not full
+#   P6  narrow() rejects a corpus-sized set that says selected:, and an impact
+#       line with no corpus total (BH-9689)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 IMPACT="$DIR/bin/test-impact.sh"
 PASS=0; FAIL=0
+# A narrowed select must hold under this share of the corpus (BH-9689). The old
+# literal 300 went red when the corpus grew to 3333 suites. At 3333, P2 is 9%
+# and a full select is 100%.
+NARROW_MAX_PCT=20
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
@@ -48,7 +56,8 @@ sel() {
 reason() { cat "$T/$1.reason"; }
 count()  { grep -c . < "$T/$1.set"; }
 holds()  { grep -qxF "$2" "$T/$1.set"; }
-narrow() { # <case> <name>: rc 0, a selected: reason, a non-empty set under 300
+narrow() { # <case> <name>: rc 0, a selected: reason, a non-empty set under
+  # NARROW_MAX_PCT of the corpus total M in the select's own impact line.
   local r; r=$(reason "$2")
   [ "$(cat "$T/$2.rc")" = 0 ] || { bad "$1: select exited $(cat "$T/$2.rc")"; return; }
   case "$r" in
@@ -56,8 +65,11 @@ narrow() { # <case> <name>: rc 0, a selected: reason, a non-empty set under 300
     *"(selected:"*) ok ;;
     *) bad "$1: the reason is not selected: '$r'" ;;
   esac
+  local m; m=$(printf '%s\n' "$r" | sed -nE 's/^impact: [0-9]+ of ([0-9]+) suites.*/\1/p')
+  case "$m" in ''|*[!0-9]*|0) bad "$1: no corpus total in the impact line: '$r'"; return ;; esac
   local n; n=$(count "$2")
-  { [ "$n" -gt 0 ] && [ "$n" -lt 300 ]; } && ok || bad "$1: the set has $n suites, want 1..299"
+  { [ "$n" -gt 0 ] && [ $((n*100)) -lt $((m*NARROW_MAX_PCT)) ]; } && ok \
+    || bad "$1: the set has $n of $m suites, want 1..$(( (m*NARROW_MAX_PCT-1)/100 )) ($NARROW_MAX_PCT% of the corpus)"
 }
 full_infra() { # <case> <name> <path>
   local r; r=$(reason "$2")
@@ -159,6 +171,22 @@ case "$(reason n5)" in *"(full:"*|"") bad "N5: a catalog/ *.md must not go full:
 grep -qP '\tcatalog/zz-doc-bh7027\.md$' "$T/map" && bad "N5: premise: the map names catalog/zz-doc-bh7027.md" || ok
 sel n5_2 "$T/map" "$DIR" catalog/zz-doc-bh7027.md
 narrow N5 n5_2
+
+# ── P6. the ceiling still rejects a full-size set (BH-9689, the BH-7027 guard).
+# n1_1 is a full select (N = M). Its reason says full:, which narrow() rejects
+# before the ceiling, so P6 relabels it selected: to reach the ceiling itself.
+# Each probe runs in a subshell with its own counters.
+probe_fails() { # <name>: rc 0 when narrow() counts a fail on <name>
+  ( PASS=0; FAIL=0; narrow P6probe "$1" > /dev/null; [ "$FAIL" -gt 0 ] )
+}
+M6=$(count n1_1)
+[ "$M6" -gt 0 ] || bad "P6: premise: the full select n1_1 is empty"
+cp "$T/n1_1.set" "$T/p6a.set"; echo 0 > "$T/p6a.rc"
+echo "impact: $M6 of $M6 suites (selected: 1 changed path(s))" > "$T/p6a.reason"
+probe_fails p6a && ok || bad "P6: narrow() passed a set of $M6 of $M6 suites"
+cp "$T/p2.set" "$T/p6b.set"; echo 0 > "$T/p6b.rc"
+echo "impact: $(count p2) suites (selected: 3 changed path(s))" > "$T/p6b.reason"
+probe_fails p6b && ok || bad "P6: narrow() passed an impact line with no corpus total"
 
 echo "test-impact-pr-catalog: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
