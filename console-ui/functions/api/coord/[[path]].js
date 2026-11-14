@@ -23,6 +23,7 @@
 
 import { resolveIdentity, FALLBACK_ACTOR } from '../../_lib/access-identity.js';
 import { readOnlyRefusal } from '../../_lib/qa-session.js';
+import { qaRead } from '../../_lib/qa-read-proxy.js'; // BH-9263: a QA session's GET
 import { importTheme, CUSTOM_KEY_RE, CUSTOM_PREFIX } from '../../../src/theme/custom.js';
 import { isStr, isScalar, jsonError } from '../../_lib/coord-writes.js';
 import { checkWrites } from '../../_lib/coord-writes-compose.js';
@@ -381,11 +382,10 @@ export async function onRequest(context) {
     });
   }
 
-  // /api/coord/<rest> -> <jobs worker>/api/<rest>. A GET passes as-is, query
-  // and all; a write passes only if it is a row of ROUTES, and a job cannot be
-  // PATCHed from a browser (stage/status transitions belong to the box doing
-  // the work).
+  // /api/coord/<rest> -> <jobs worker>/api/<rest>. A GET passes as-is, query and all (a QA session's: qaRead,
+  // allowlisted and projected); a write must be a ROUTES row, and no job PATCH (stages belong to the box).
   const rest = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');
+  const qa = await qaRead(request, rest, cookie, url, env, JOBS); if (qa) return qa;
   // BH-2515: who this session writes as, answered here (the jobs worker has no
   // such route). Plain GETs skip the resolution so the polls pay no crypto.
   if (request.method === 'GET' && rest === 'whoami') {

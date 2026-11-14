@@ -1,0 +1,4 @@
+# BH-9263: the QA read policy has a console-ui copy and a worker copy, pinned equal by tests in both jobs.
+console-ui/functions/_lib/qa-read-policy.js	worker	worker/jobs/test/qa-read-token.bh-9263.test.js J9 pins the worker's policy copy byte-equal to this file (BH-9263)
+worker/jobs/src/lib/qa-read.js	spa	console-ui/tests/qa-read.bh-9263.test.js P4 runs the jobs-side projection against the Pages-side one (BH-9263)
+worker/jobs/src/lib/qa-read-policy.js	spa	console-ui/tests/qa-read.bh-9263.test.js P4 imports qa-read.js, which reads the worker's policy copy (BH-9263)

@@ -13,9 +13,12 @@
 # where it appears or what line it lands on.
 checks/secret-literals/fixtures/violation.diff:aws-access-token:7
 checks/secret-literals/fixtures/violation.diff:github-app-token:10
+console-ui/tests/middleware.bh-9263.test.js:generic-api-key:135
+console-ui/tests/middleware.bh-9263.test.js:generic-api-key:145
 console-ui/tests/needs-sweep-count.bh-9420.test.js:generic-api-key:15
 console-ui/tests/needs-sweep.bh-9117.test.js:generic-api-key:11
 console-ui/tests/prompt-history.bh-7972.test.js:generic-api-key:377
+console-ui/tests/qa-read.bh-9263.test.js:generic-api-key:16
 console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:39
 fly/warm-env/project-1.env:generic-api-key:13
 fly/warm-env/project-2.env:generic-api-key:12
@@ -29,8 +32,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -248,6 +251,7 @@ worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:98
 worker/jobs/test/prompt-history.bh-7972.test.js:generic-api-key:18
 worker/jobs/test/prompts.bh-7940.test.js:generic-api-key:15
+worker/jobs/test/qa-read-token.bh-9263.test.js:generic-api-key:20
 worker/jobs/test/retention-agent-call-ledger.bh-9064.test.js:generic-api-key:13
 worker/jobs/test/review-counts.bh-9154.test.js:generic-api-key:30
 worker/jobs/test/review-tiers.bh-6969.test.js:generic-api-key:25

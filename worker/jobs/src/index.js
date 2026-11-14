@@ -78,12 +78,12 @@
 // /api/hosted-board/<project>/: its callers are lanes that hold a board token
 // for one project, never HARNESS_SECRET, so each route checks a
 // hosted_board_tokens row itself (health takes none, and the last row 404s any
-// other path under the prefix). Everything
-// in ROUTES is reached only after `bearerOk`, so a route in the wrong table is
-// a route with the wrong credential.
+// other path under the prefix). A route in ROUTES needs `bearerOk` or, GET-only,
+// the BH-9263 QA read token: a route in the wrong table has the wrong credential.
 import { bearerOk, json, nowIso, readBody } from "./lib/http.js";
 import { CREATED_TABLES, MACHINE_STATES, MACHINE_TERMINAL } from "./lib/core.js";
 import { matchRoute } from "./lib/router.js";
+import { qaReadOk, qaReadDispatch } from "./lib/qa-read.js"; // BH-9263: the QA read token
 import { ROUTES } from "#routes";
 import { withHarnessSentry } from "./lib/sentry.js";
 import { retryingDb, withOverloadAnswer } from "./lib/d1-overload-answer.js"; // BH-9249: D1 give-up -> 503
@@ -155,7 +155,7 @@ export default withHarnessSentry(withStmtStats({
     const open = matchRoute(OPEN_ROUTES, req.method, path);
     if (open) return open.handler({ req, env, url, path, t, m: open.m });
 
-    if (!bearerOk(req, env)) return json(401, { error: "unauthorized" });
+    if (!bearerOk(req, env)) return qaReadOk(req, env) ? qaReadDispatch({ req, env, url, path, t }, ROUTES) : json(401, { error: "unauthorized" });
 
     const body = await readBody(req);
 
