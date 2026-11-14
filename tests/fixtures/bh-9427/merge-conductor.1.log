@@ -1,0 +1,13 @@
+2026-11-04 09:00:00Z conductor tick: 42 open PRs, 3 candidates
+2026-11-04 10:00:00Z example-org/cromford#9001 READY -> BLOCKED_HUMAN head=a0000001 reviewed=a0000001 merge=CLEAN reason=iron-law (3 hit(s))
+2026-11-05 06:39:00Z example-org/cromford#9002 READY -> BLOCKED_HUMAN head=a0000002 reviewed=a0000001 merge=CLEAN reason=head-not-reapproved
+2026-11-05 06:41:00Z example-org/cromford#9100 READY -> BLOCKED_HUMAN head=b0009100 reviewed=b0009100 merge=CLEAN reason=iron-law (2 hit(s))
+2026-11-05 07:00:00Z example-org/cromford#9001 BLOCKED_HUMAN -> WAIT_CI head=a0000001 reviewed=a0000001 merge=CLEAN reason=fix round pushed
+2026-11-05 07:30:00Z example-org/cromford#9002 BLOCKED_HUMAN -> WAIT_CI head=a0000002 reviewed=a0000002 merge=CLEAN reason=re-reviewed
+2026-11-05 08:00:00Z example-org/cromford#9002 WAIT_CI -> MERGED head=a0000002 reviewed=a0000002 merge=CLEAN reason=-
+2026-11-05 08:41:00Z example-org/cromford#9100 BLOCKED_HUMAN -> WAIT_CI head=b0009100 reviewed=b0009100 merge=CLEAN reason=cleared
+2026-11-06 10:00:00Z example-org/cromford#9101 - -> BLOCKED_HUMAN head=b0009101 reviewed=b0009101 merge=CLEAN reason=iron-law (1 hit(s))
+2026-11-06 10:31:00Z example-org/cromford#9101 BLOCKED_HUMAN -> CLOSED head=b0009101 reviewed=b0009101 merge=- reason=closed unmerged
+2026-11-06 11:00:00Z MERGED example-org/cromford#9101 by conductor (record none)
+2026-11-07 00:00:00Z example-org/cromford#9102 READY -> BLOCKED_HUMAN head=b0009102 reviewed=b0009102 merge=CLEAN reason=iron-law-x
+2026-11-07 01:00:00Z example-org/cromford#9102 BLOCKED_HUMAN -> ABANDONED head=b0009102 reviewed=b0009102 merge=- reason=ladder exhausted

@@ -1,0 +1,32 @@
+2026-11-07 12:00:00Z example-org/cromford#9100 WAIT_CI -> MERGED head=b0009100 reviewed=b0009100 merge=CLEAN reason=-
+2026-11-08 00:00:00Z example-org/cromford#9103 READY -> BLOCKED_HUMAN head=b0009103 reviewed=b0009103 merge=CLEAN reason=prequeue-red: tests/lanes-registry-test.sh on main 0123456789ab — red alone
+2026-11-08 00:10:00Z example-org/cromford#9103 BLOCKED_HUMAN -> READY head=b0009103 reviewed=b0009103 merge=CLEAN reason=main green
+2026-11-08 01:00:00Z example-org/cromford#9103 READY -> BLOCKED_HUMAN head=b0009103 reviewed=b0009103 merge=CLEAN reason=prequeue-red: tests/lanes-registry-test.sh on main 0123456789ab — red alone
+2026-11-08 01:40:00Z example-org/cromford#9103 BLOCKED_HUMAN -> WAIT_CI head=b0009103 reviewed=b0009103 merge=CLEAN reason=main green
+2026-11-08 02:00:00Z example-org/cromford#9103 WAIT_CI -> MERGED head=b0009103 reviewed=b0009103 merge=CLEAN reason=-
+2026-11-09 00:00:00Z example-org/cromford#9104 READY -> BLOCKED_HUMAN head=b0009104 reviewed=b0009104 merge=CLEAN reason=prequeue-red: tests/x-test.sh on main 0123456789ab — red
+2026-11-09 00:50:00Z example-org/cromford#9104 BLOCKED_HUMAN -> READY head=b0009104 reviewed=b0009104 merge=CLEAN reason=main green
+2026-11-09 05:00:00Z example-org/cromford#9104 BLOCKED_AGENT queue-ejected-twice — handed to the resolver
+2026-11-09 06:00:00Z example-org/cromford#9104 STACK_PARENT_MERGED abcd1234 from main
+2026-11-10 00:00:00Z example-org/cromford#9105 WAIT_QUEUE -> BLOCKED_HUMAN head=b0009105 reviewed=b0009105 merge=CLEAN reason=queue-ejected-twice
+2026-11-10 00:05:00Z example-org/cromford#9106 WAIT_CI -> MERGED head=b0009106 reviewed=b0009106 merge=CLEAN reason=-
+2026-11-10 01:00:00Z example-org/cromford#9105 BLOCKED_HUMAN re-reasoned provenance -> head-not-reapproved head=b0009105
+2026-11-10 12:00:00Z example-org/project-3#12 - -> BLOCKED_HUMAN head=c0000012 reviewed=c0000012 merge=CLEAN reason=queue-ejected-twice: unknown, no Mergify dequeue reason
+2026-11-10 12:20:00Z example-org/project-3#12 BLOCKED_HUMAN -> WAIT_CI head=c0000012 reviewed=c0000012 merge=CLEAN reason=requeued
+2026-11-10 13:00:00Z example-org/project-3#12 WAIT_CI -> MERGED head=c0000012 reviewed=c0000012 merge=CLEAN reason=-
+2026-11-11 00:00:00Z example-org/project-3#13 WAIT_QUEUE -> BLOCKED_HUMAN head=c0000013 reviewed=c0000013 merge=CLEAN reason=queue-ejected-twice: unknown, no Mergify dequeue reason
+2026-11-11 00:15:00Z example-org/project-3#13 BLOCKED_HUMAN -> CLOSED head=c0000013 reviewed=c0000013 merge=- reason=superseded
+2026-11-11 05:00:00Z example-org/cromford#9107 READY -> BLOCKED_HUMAN head=b0009107 reviewed=b0009107 merge=CLEAN reason=
+2026-11-11 05:05:00Z example-org/cromford#9107 BLOCKED_HUMAN -> READY head=b0009107 reviewed=b0009107 merge=CLEAN reason=cleared
+2026-11-11 06:00:00Z example-org/cromford#9108 READY -> BLOCKED_HUMAN head=b0009108 reviewed=b0009108 merge=DIRTY reason=conflict-unresolvable: catalog/state-paths.json
+2026-11-11 07:00:00Z example-org/cromford#9108 BLOCKED_HUMAN -> MERGED head=b0009108 reviewed=b0009108 merge=CLEAN reason=-
+2026-11-11 08:00:00Z example-org/cromford#9109 READY -> BLOCKED_HUMAN head=b0009109 reviewed=b0009109 merge=CLEAN reason=prequeue-red: a -> b
+2026-11-11 09:00:00Z example-org/cromford#9109 BLOCKED_HUMAN -> CLOSED head=b0009109 reviewed=b0009109 merge=- reason=closed unmerged
+2026-11-11 10:00:00Z example-org/cromford#9111 READY -> BLOCKED_HUMAN head=b0009111 reviewed=b0009111 merge=CLEAN reason=stale-replan
+2026-11-11 12:00:00Z example-org/project-3#14 READY -> BLOCKED_HUMAN head=c0000014 reviewed=c0000014 merge=CLEAN reason=hotfix-migration-hold: the stage held x
+2026-11-11 12:30:00Z example-org/project-3#14 BLOCKED_HUMAN -> WAIT_CI head=c0000014 reviewed=c0000014 merge=CLEAN reason=stage released
+garbage line -> BLOCKED_HUMAN reason=iron-law
+2026-11-10 02:00:00Z example-org/cromford#9113 READY => BLOCKED_HUMAN head=b0009113 reviewed=b0009113 merge=CLEAN reason=iron-law -> x
+example-org/cromford#9999 READY -> BLOCKED_HUMAN head=a reviewed=a merge=CLEAN reason=iron-law
+2026-11-12 07:00:00Z example-org/cromford#9110 READY -> BLOCKED_HUMAN head=b0009110 reviewed=b0009110 merge=CLEAN reason=stale-replan
+2026-11-12 06:00:00Z example-org/cromford#9112 READY -> BLOCKED_HUMAN

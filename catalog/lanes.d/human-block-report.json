@@ -1,0 +1,43 @@
+{
+  "id": "human-block-report",
+  "name": "Human-block report",
+  "scope": "hub",
+  "script": "bin/human-block-report.sh",
+  "cadence": "40 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-human-block-report",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HUMAN_BLOCK_REPORT_WINDOW_D",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 90,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9427: the trailing window of BLOCKED_HUMAN episodes (by start time) that bin/human-block-report.sh counts when no --last is given, and that the daily logs/human-block.log line covers. A bad value falls back to 7 and the run says window_src=fallback."
+    },
+    {
+      "env": "HUMAN_BLOCK_REPORT_DETAILS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 20,
+      "zero_means": null,
+      "note": "BH-9427: the number of detail rows (the suite list of prequeue-red, the eject summary of queue-ejected-twice, the file of conflict-unresolvable) bin/human-block-report.sh prints per class, most frequent first. A bad value falls back to 3."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/human-block.log"
+  }
+}

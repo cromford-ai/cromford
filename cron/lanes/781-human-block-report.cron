@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── HUMAN-BLOCK REPORT (BH-9427, C0) ──────────────────────────────────────────
+# Daily at 06:40Z: why PRs park in BLOCKED_HUMAN over the last 7 days, read from
+# logs/merge-conductor.log(.1). Per reason: blocks, PRs, median and total wait,
+# and how each block ended (merged, closed, still blocked, open). Also the share
+# of merged PRs that were human-blocked, per repo. One line a day in
+# logs/human-block.log. No GitHub, model or worker call.
+# docs/notes/2026-11-12-BH-9427-human-block-report.md.
+# Kill: flags/lane-off-human-block-report, or bin/harness-ctl.sh off human-block-report.
+40 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/human-block-report.sh --daily >/dev/null 2>&1
