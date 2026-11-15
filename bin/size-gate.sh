@@ -81,11 +81,13 @@
 # exit 3  no readable plan at all  (never a pass)
 set -uo pipefail
 PLAN="${1:-}"
-MAXL="${2:-700}"; MAXF="${3:-20}"
+# Fallback only: the caller passes bin/size-threshold.sh's answer, read from the
+# rows size_gate.lines / size_gate.files. 1200/30 matches that script's DEF_*.
+MAXL="${2:-1200}"; MAXF="${3:-30}"
 LIST="${4:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-case "$MAXL" in ''|*[!0-9]*) MAXL=700 ;; esac
-case "$MAXF" in ''|*[!0-9]*) MAXF=20 ;; esac
+case "$MAXL" in ''|*[!0-9]*) MAXL=1200 ;; esac
+case "$MAXF" in ''|*[!0-9]*) MAXF=30 ;; esac
 # WHERE THE LIMITS CAME FROM (BH-4985): the caller passes bin/size-threshold.sh's
 # `src` in SIZE_LIMITS_SRC and it rides the SIZE_LIMITS line as ` src=<src>`.
 # Only the shapes that script prints are accepted; anything else, or nothing,
@@ -98,11 +100,11 @@ case "$LSRC" in *[!a-z:,]*) LSRC="" ;; esac
 # latency of a hub-blocking fix for ten lines of slack. The threshold is an
 # ESTIMATE judged against an ESTIMATE; splitting on a 3% overshoot treats both
 # as exact. So the gate tolerates an overshoot of SIZE_GATE_TOLERANCE_PCT
-# (default 15) on each axis: 700 lines trips at 805, 20 files at 23. A plan in
+# (default 15) on each axis: 1200 lines trips at 1380, 30 files at 34. A plan in
 # the band is reported as `within` with a SIZE_TOLERATED line naming the
 # overshoot, so the ledger still says it was over the nominal number. The
 # NOMINAL limits stay what the children are budgeted against, so tolerance
-# never compounds: a split child gets 700, not 805. 0 turns the band off.
+# never compounds: a split child gets 1200, not 1380. 0 turns the band off.
 TOL="${SIZE_GATE_TOLERANCE_PCT:-15}"
 case "$TOL" in ''|*[!0-9]*) TOL=15 ;; esac
 [ "$TOL" -le 100 ] || TOL=100

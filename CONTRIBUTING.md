@@ -24,7 +24,7 @@ change arrives in a release commit.
 ## How the factory expects changes to look
 
 - One ticket, one branch, one PR.
-- Small diffs. The size gate starts at 700 lines and 20 files.
+- Small diffs. The size gate starts at 1200 lines and 30 files.
 - A new file over an edit to a shared list, so parallel changes don't collide.
 - Tests in a new file for the change, not appended to someone else's suite.
 - A harmless metric (time, size, line count) is reported, never a hard limit.

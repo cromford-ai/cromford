@@ -196,7 +196,7 @@ Rows 20c and 21 are one gate. `bin/size-gate.sh` reads the plan's `## Size`
 section (`FILES:` and product `LINES:`), judges it against the per-project
 threshold from `bin/size-threshold.sh` (settings rows `size_gate.<axis>.<project>`
 → `size_gate.<axis>`, editable on /config → box flag → `catalog/size-thresholds.conf`
-→ 700 lines / 20 files; BH-4985). A ticket labelled `hotfix` (the `HOTFIX` that
+→ 1200 lines / 30 files; BH-4985, BH-6025). A ticket labelled `hotfix` (the `HOTFIX` that
 `# >>> hotfix detect` settled) is sized against its own tier first:
 `size_gate.<axis>.hotfix.<project>` → `size_gate.<axis>.hotfix` (seeded 1500 / 30),
 then the chain above, so an emergency builds as one PR; its src reads `row:hotfix`

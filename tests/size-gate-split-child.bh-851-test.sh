@@ -79,7 +79,7 @@ meta() { # meta <title> [body]
 }
 decomposed() { [ -s "$T/decompose.log" ]; }
 childlines() { grep -c 'SIZE: child check:' "$T/b/pipeline.log" 2>/dev/null; }
-PLAN=$(printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 6\nLINES: 900\n\nKIND: feature\nSIZE: M\n')
+PLAN=$(printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 6\nLINES: 1500\n\nKIND: feature\nSIZE: M\n')
 PLAN_XL=$(printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 2\nLINES: 40\n\nKIND: feature\nSIZE: XL\n')
 FOOTER=$(fc_child_footer decompose 850 2 3 '#851')
 grep -q '^Split child (depth 1):' <<<"$FOOTER" \

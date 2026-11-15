@@ -734,7 +734,8 @@ type LIVE >/dev/null 2>&1 && LIVE tier "$TIER" \
 SIZE_NOTE=""
 SP_LIMITS=$("$HARNESS/bin/size-threshold.sh" "$PROJECT" 2>/dev/null)
 SP_MAXL=$(printf '%s' "$SP_LIMITS" | awk '{print $1}')
-case "${SP_MAXL:-}" in ''|*[!0-9]*) SP_MAXL=700 ;; esac
+# Fallback of the row size_gate.lines when size-threshold.sh gives no number.
+case "${SP_MAXL:-}" in ''|*[!0-9]*) SP_MAXL=1200 ;; esac
 SP_BOUND=$(( SP_MAXL * 2 ))
 SP_OUT=$("$HARNESS/bin/size-scope.sh" --diff "$BASE" . 2>/dev/null)
 SP_LINES=$(sed -n 's/^SIZE_PRODUCT_LINES:[[:space:]]*//p' <<<"$SP_OUT" | tail -1)

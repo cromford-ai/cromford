@@ -15,7 +15,7 @@
 #   1. settings row `size_gate.<axis>.<project>` (axis = lines|files, project
 #      lowercased) — one project's own limit.
 #   2. settings row `size_gate.<axis>` — the fleet limit. worker/jobs/schema.sql
-#      seeds both fleet rows at 700/20 (insert only when missing), and /config
+#      seeds both fleet rows at 1200/30 (insert only when missing), and /config
 #      edits them with the change audited in config_changes. Rows are read from
 #      state/settings-cache.json through bin/lib/lane-gate.sh, the TTL cache
 #      every lane shares (one GET per 60 s per box, not one per build).
@@ -23,11 +23,20 @@
 #      "<lines> [files]". The emergency lever for a box with no worker.
 #   4. catalog/size-thresholds.conf, a repo-tracked line "<project> <lines>
 #      <files>", reaching every box on its own harness-sync.
-#   5. 700 lines / 20 files — the documented fallback, and the only hardcode.
+#   5. 1200 lines / 30 files — the documented fallback of the size_gate.lines /
+#      size_gate.files rows, and the only hardcode.
 # The worker down, no cache, an unreadable cache or LANE_GATE_DISABLE=1 all mean
 # no rows: 3-5 answer exactly as before rows existed. Never 0, never "no gate".
 # `src` prints where the answer came from: row:hotfix|row|flag|catalog|default when both
 # axes agree, else `lines:<a>,files:<b>`. `all` prints "<lines> <files> <src>".
+#
+# WHY 1200 AND 30 (the operator, 2026-10-14; BH-5520, BH-6025). bin/split-chain-report.sh
+# --days 14 on 2026-10-11 (2026-09-27 to 2026-10-11): split tickets n=82, median
+# lead 30.9h; unsplit n=243, median lead 4h. Merged split children (n=350) ran
+# p90 578 product lines and p90 10 files, so the split bought small PRs at 7.7x
+# the median lead time. The report proposed 1200/30. the operator set both fleet rows by
+# hand on 2026-10-14; this fallback and the seed follow those rows.
+# Before 2026-10-14: 700/20, for the reasons below.
 #
 # WHY 700 AND 20 (the operator, 2026-10-06). Measured on our own split-vs-whole builds:
 # in the 300-600 line band a split cost $44.8 / 10.4h against $27.6 / 5.9h built
@@ -58,8 +67,10 @@ case "$TIER" in hotfix) ;; *) TIER="" ;; esac
 HARNESS="${HARNESS:-/root/harness}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-DEF_LINES=700
-DEF_FILES=20
+# Step 5: the documented code fallback of the rows size_gate.lines and
+# size_gate.files (seeded 1200/30, worker/jobs/schema.d/0001-bh-4985-size-gate.sql).
+DEF_LINES=1200
+DEF_FILES=30
 
 num() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; 0) return 1 ;; *) printf '%s' "$1" ;; esac; }
 

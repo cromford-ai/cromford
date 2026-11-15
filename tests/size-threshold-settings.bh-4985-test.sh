@@ -1,10 +1,11 @@
 #!/bin/bash
 # tests/size-threshold-settings.bh-4985-test.sh — the size gate's limits are
 # settings rows (BH-4985, the operator 2026-10-06: "that should be a database setting,
-# not hard coded"), with 700 lines / 20 files as the code fallback.
+# not hard coded"), with 1200 lines / 30 files as the code fallback (BH-6025;
+# 700/20 until 2026-10-14).
 #
 # Per axis, first hit wins: size_gate.<axis>.<project> → size_gate.<axis> →
-# flags/size-gate-<project> → catalog/size-thresholds.conf → 700/20. Rows come
+# flags/size-gate-<project> → catalog/size-thresholds.conf → 1200/30. Rows come
 # from state/settings-cache.json through bin/lib/lane-gate.sh, so every case
 # here writes a cache fixture into a scratch harness and runs with JOBS_URL=
 # and no bin/jobs-client.sh in that tree: nothing reaches the network.
@@ -32,7 +33,7 @@ reset() { rm -f "$h/state/settings-cache.json" "$h/flags/size-gate-widget-os" "$
 # 1. a fleet line row, no file row
 reset; cache '{"size_gate.lines":"650"}'
 [ "$(th widget-os lines)" = 650 ] && ok || bad "1: fleet row size_gate.lines=650 must answer 650, got $(th widget-os lines)"
-[ "$(th widget-os files)" = 20 ] && ok || bad "1: no file row must fall to the 20 default, got $(th widget-os files)"
+[ "$(th widget-os files)" = 30 ] && ok || bad "1: no file row must fall to the 30 default, got $(th widget-os files)"
 [ "$(th widget-os src)" = "lines:row,files:default" ] && ok || bad "1: src must name each axis, got $(th widget-os src)"
 
 # 2. the project row beats the fleet row, and only for its own project
@@ -42,7 +43,7 @@ reset; cache '{"size_gate.lines":"700","size_gate.lines.widget-os":"1200"}'
 # The slug is lowercased into the key, the worker's SETTING_KEY_RE.
 [ "$(th Widget-OS lines)" = 1200 ] && ok || bad "2: an uppercase slug must read the lowercased row, got $(th Widget-OS lines)"
 reset; cache '{"size_gate.lines.other-os":"999"}'
-[ "$(th widget-os lines)" = 700 ] && ok || bad "2: other-os's row must not apply to widget-os"
+[ "$(th widget-os lines)" = 1200 ] && ok || bad "2: other-os's row must not apply to widget-os"
 # A slug outside the key charset has no row: no lookup, the fleet/default answers.
 reset; cache '{"size_gate.lines":"640","size_gate.lines.a/b":"5"}'
 [ "$(th 'a/b' lines)" = 640 ] && ok || bad "2: a slug with / must not be read as a key, got $(th 'a/b' lines)"
@@ -60,7 +61,7 @@ for J in banana 0 -5 7e2 '700 20' '$(id)' ''; do
   reset; cache "$(jq -n --arg j "$J" '{"size_gate.lines":"640","size_gate.lines.widget-os":$j}')"
   [ "$(th widget-os lines)" = 640 ] && ok || bad "4: project row '$J' must fall through to the fleet row, got $(th widget-os lines)"
   reset; cache "$(jq -n --arg j "$J" '{"size_gate.lines":$j}')"
-  [ "$(th widget-os lines)" = 700 ] && ok || bad "4: fleet row '$J' must fall through to the default, got $(th widget-os lines)"
+  [ "$(th widget-os lines)" = 1200 ] && ok || bad "4: fleet row '$J' must fall through to the default, got $(th widget-os lines)"
   echo '150 4' > "$h/flags/size-gate-widget-os"
   [ "$(th widget-os lines)" = 150 ] && ok || bad "4: fleet row '$J' must fall through to the flag, got $(th widget-os lines)"
   rm -f "$h/flags/size-gate-widget-os"
@@ -70,18 +71,18 @@ done
 
 # 5. fail-safe: no cache, an unreadable cache, the escape hatch
 reset
-[ "$(th widget-os)" = "700 20" ] && ok || bad "5: no cache must answer 700 20, got $(th widget-os)"
+[ "$(th widget-os)" = "1200 30" ] && ok || bad "5: no cache must answer 1200 30, got $(th widget-os)"
 [ "$(th widget-os src)" = default ] && ok || bad "5: no cache src must be default, got $(th widget-os src)"
 reset; printf 'not json{' > "$h/state/settings-cache.json"
-[ "$(th widget-os)" = "700 20" ] && ok || bad "5: a corrupt cache must answer 700 20, got $(th widget-os)"
+[ "$(th widget-os)" = "1200 30" ] && ok || bad "5: a corrupt cache must answer 1200 30, got $(th widget-os)"
 reset; cache '{"size_gate.lines":"650"}'; chmod 000 "$h/state/settings-cache.json"
 if [ -r "$h/state/settings-cache.json" ]; then
   echo "note: running as root, chmod 000 is still readable — unreadable-cache case skipped"
 else
-  [ "$(th widget-os)" = "700 20" ] && ok || bad "5: an unreadable cache must answer 700 20, got $(th widget-os)"
+  [ "$(th widget-os)" = "1200 30" ] && ok || bad "5: an unreadable cache must answer 1200 30, got $(th widget-os)"
 fi
 chmod 644 "$h/state/settings-cache.json"
-[ "$(LANE_GATE_DISABLE=1 th widget-os lines)" = 700 ] && ok || bad "5: LANE_GATE_DISABLE=1 must ignore the rows"
+[ "$(LANE_GATE_DISABLE=1 th widget-os lines)" = 1200 ] && ok || bad "5: LANE_GATE_DISABLE=1 must ignore the rows"
 
 # 6. a fresh cache costs no request: no miss stamp is written
 reset; cache '{"size_gate.lines":"650"}'
@@ -94,16 +95,16 @@ reset; cache '{"size_gate.lines":"650","size_gate.files":"15"}'
 [ "$(th widget-os)" = "650 15" ] && ok || bad "7: no field must stay 'L F', got $(th widget-os)"
 [ "$(th widget-os lines)" = 650 ] && [ "$(th widget-os files)" = 15 ] && ok || bad "7: lines/files must be one number each"
 
-# 8. the default end to end: 650/15 builds whole, 900 is over 700
+# 8. the default end to end: 650/15 builds whole, 1500 is over 1200
 reset
 splan() { printf '# Plan\n\n### Task 1\n- VALIDATE: x\n\n## Size\nFILES: %s\nLINES: %s\n' "$2" "$1" > "$T/plan.md"; }
 splan 650 15
 G=$("$GATE" "$T/plan.md" "$(th x lines)" "$(th x files)" 2>&1)
 grep -q '^SIZE_VERDICT: within$' <<<"$G" && ok || bad "8: 650/15 must be within the default: $G"
-splan 900 15
+splan 1500 15
 G=$("$GATE" "$T/plan.md" "$(th x lines)" "$(th x files)" 2>&1)
-grep -q '^SIZE_VERDICT: over$' <<<"$G" && ok || bad "8: 900 must be over the default: $G"
-grep -q 'lines=900>700' <<<"$G" && ok || bad "8: the over line must name 900>700: $G"
+grep -q '^SIZE_VERDICT: over$' <<<"$G" && ok || bad "8: 1500 must be over the default: $G"
+grep -q 'lines=1500>1200' <<<"$G" && ok || bad "8: the over line must name 1500>1200: $G"
 
 # 9. src on the SIZE_LIMITS line, only in the shapes size-threshold prints
 splan 100 2
@@ -119,7 +120,7 @@ grep -q '^SIZE_LIMITS: lines=700 files=20$' <<<"$G" && ok || bad "9: a junk src 
 [ "$(printf 'SIZE_LIMITS: lines=700 files=20 src=row\n' | sed 's/^.*files=\([0-9]*\).*$/\1/')" = 20 ] \
   && ok || bad "9: evidence-summary's files= parse must survive src="
 G=$("$GATE" "$T/plan.md" 2>&1)
-grep -q '^SIZE_LIMITS: lines=700 files=20$' <<<"$G" && ok || bad "9: size-gate.sh's own arg fallback must be 700/20: $G"
+grep -q '^SIZE_LIMITS: lines=1200 files=30$' <<<"$G" && ok || bad "9: size-gate.sh's own arg fallback must be 1200/30: $G"
 
 # 10. the real plan-time block: the source lands in pipeline.log and the ledger
 RB_ALL=$(rb_all "$DIR" "$T/run-build.all.sh")
@@ -147,33 +148,33 @@ BODY=$(printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n##
 reset; cache '{"size_gate.lines":"650"}'
 OUT=$(drive "$BODY")
 grep -q CONTINUED <<<"$OUT" && ok || bad "10: a 120-line plan must reach EXECUTE: $OUT"
-grep -q 'limits lines=650 files=20 src=lines:row,files:default' "$T/b/pipeline.log" \
+grep -q 'limits lines=650 files=30 src=lines:row,files:default' "$T/b/pipeline.log" \
   && ok || bad "10: pipeline.log must name the limits and their source: $(cat "$T/b/pipeline.log" 2>/dev/null)"
-grep -q '^SIZE_LIMITS: lines=650 files=20 src=lines:row,files:default$' "$T/b/size-gate.txt" \
+grep -q '^SIZE_LIMITS: lines=650 files=30 src=lines:row,files:default$' "$T/b/size-gate.txt" \
   && ok || bad "10: size-gate.txt must carry src: $(cat "$T/b/size-gate.txt" 2>/dev/null)"
 [ "$(cut -f2 "$T/art.tsv" | head -1 | jq -r '.limits.src')" = "lines:row,files:default" ] \
   && ok || bad "10: the size_gate artifact must carry limits.src: $(cat "$T/art.tsv")"
 [ "$(cut -f2 "$T/art.tsv" | head -1 | jq -r '.limits.lines')" = 650 ] \
   && ok || bad "10: the size_gate artifact must carry the row's line limit: $(cat "$T/art.tsv")"
-# A threshold script that fails is the 700/20 fallback, recorded as default.
+# A threshold script that fails is the 1200/30 fallback, recorded as default.
 mv "$h/bin/size-threshold.sh" "$T/size-threshold.real"
 printf '#!/bin/bash\nexit 1\n' > "$h/bin/size-threshold.sh"; chmod +x "$h/bin/size-threshold.sh"
 OUT=$(drive "$BODY")
-grep -q 'limits lines=700 files=20 src=default' "$T/b/pipeline.log" \
-  && ok || bad "10: a failed threshold read must fall back to 700/20 src=default: $(cat "$T/b/pipeline.log" 2>/dev/null)"
+grep -q 'limits lines=1200 files=30 src=default' "$T/b/pipeline.log" \
+  && ok || bad "10: a failed threshold read must fall back to 1200/30 src=default: $(cat "$T/b/pipeline.log" 2>/dev/null)"
 mv -f "$T/size-threshold.real" "$h/bin/size-threshold.sh"
 
 # 11. the seed: one idempotent statement, actor seed, an operator edit survives
 SCHEMA="$DIR/worker/jobs/schema.sql"
-[ "$(grep -c "'size_gate.lines','700'" "$SCHEMA")" = 1 ] && ok || bad "11: exactly one size_gate.lines seed of 700"
-[ "$(grep -c "'size_gate.files','20'" "$SCHEMA")" = 1 ] && ok || bad "11: exactly one size_gate.files seed of 20"
+[ "$(grep -c "'size_gate.lines','1200'" "$SCHEMA")" = 1 ] && ok || bad "11: exactly one size_gate.lines seed of 1200"
+[ "$(grep -c "'size_gate.files','30'" "$SCHEMA")" = 1 ] && ok || bad "11: exactly one size_gate.files seed of 30"
 # Keyed on the exact 'size_gate.lines', key: the hotfix tier's own seed
 # (size_gate.lines.hotfix, 2026-10-07) is a separate statement and is pinned in
 # tests/size-threshold-hotfix-tier.size-hotfix-test.sh.
 SEED=$(awk '/^INSERT OR IGNORE INTO settings/{buf=$0; inseed=1; next}
             inseed{buf=buf"\n"$0; if ($0 ~ /;[[:space:]]*$/) { if (buf ~ /\x27size_gate\.lines\x27,/) print buf; inseed=0 } }' "$SCHEMA")
 [ -n "$SEED" ] && ok || bad "11: the seed must be an INSERT OR IGNORE INTO settings statement"
-grep -q "'size_gate.files','20'" <<<"$SEED" && ok || bad "11: both rows in the one statement"
+grep -q "'size_gate.files','30'" <<<"$SEED" && ok || bad "11: both rows in the one statement"
 grep -q "registry-seed" <<<"$SEED" && bad "11: actor registry-seed is invisible to lookups" || ok
 [ "$(grep -c "'seed','" <<<"$SEED")" = 2 ] && ok || bad "11: both rows must carry actor 'seed'"
 # sqlite3 the CLI, or python3's own sqlite module standing in for it:
@@ -196,8 +197,8 @@ if command -v sql >/dev/null 2>&1; then
     && ok || bad "11: the seed must apply twice cleanly"
   [ "$(sql "$DB" "SELECT value FROM settings WHERE key='size_gate.lines'")" = 900 ] \
     && ok || bad "11: a re-apply must not reset an operator's edit"
-  [ "$(sql "$DB" "SELECT value||'/'||actor FROM settings WHERE key='size_gate.files'")" = 20/seed ] \
-    && ok || bad "11: the missing row must be seeded 20 by seed"
+  [ "$(sql "$DB" "SELECT value||'/'||actor FROM settings WHERE key='size_gate.files'")" = 30/seed ] \
+    && ok || bad "11: the missing row must be seeded 30 by seed"
   [ "$(sql "$DB" "SELECT count(*) FROM settings WHERE key LIKE 'size_gate.%'")" = 2 ] \
     && ok || bad "11: one row per key"
 else
@@ -206,6 +207,7 @@ fi
 
 # 12. the measured reasoning is in the header
 grep -q 'WHY 700 AND 20 (the operator, 2026-10-06)' "$THRESH" && ok || bad "12: the header must carry WHY 700 AND 20"
+grep -q 'WHY 1200 AND 30 (the operator, 2026-10-14' "$THRESH" && ok || bad "12: the header must carry WHY 1200 AND 30"
 
 echo "size-threshold-settings.bh-4985: $PASS pass, $FAIL fail"
 [ "$FAIL" = 0 ]

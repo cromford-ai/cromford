@@ -180,7 +180,7 @@ Notes for the flip:
   everything in flight.
 - **What the factory does.** A plan over the size gate is split before it is
   built.
-- **Knob.** `size_gate.lines` and `size_gate.files` (default 700 and 20), with
+- **Knob.** `size_gate.lines` and `size_gate.files` (default 1200 and 30), with
   `size_gate.<axis>.<project>` per project.
 
 ## Conflicts
@@ -326,7 +326,7 @@ Notes for the flip:
 |---|---|---|---|
 | Lead and builder review concurrency | 10 | `LEAD_REVIEW_CONCURRENCY` and `REVIEW_CONCURRENCY` lane knobs; fallback 10 in `bin/lead-review.sh` and `bin/review-prs.sh` | Faster verdicts for more vCPU, memory, `/tmp` and agent rate limit. Each box caps it by vCPU, memory and `/tmp` (`*_WORKER_CPUS`, `*_WORKER_MEM_MB`, `*_TMP_MIN_MB`). 0 removes the lane cap, not the box cap. |
 | Fast-lint time budget | report-only | `FAST_LINTS_BUDGET_S` on the `fly-pool` lane (report-only in progress) | A slow lint never blocks a PR, so a slow suite is only noticed if someone reads the report. |
-| Size gate | 700 lines / 20 files | `size_gate.lines` and `size_gate.files` rows; fallback `DEF_LINES=700` and `DEF_FILES=20` in `bin/size-threshold.sh` | Smaller PRs review better and conflict less, but a ticket over the line is split, which adds a plan and a build. |
+| Size gate | 1200 lines / 30 files | `size_gate.lines` and `size_gate.files` rows; fallback `DEF_LINES=1200` and `DEF_FILES=30` in `bin/size-threshold.sh` | Smaller PRs review better and conflict less, but a ticket over the line is split, which adds a plan and a build. |
 | Risk tier | off | `risk_tier.mode` row (off) and `risk_tier.mode.<owner>.<name>` per repo; no row also reads off in `bin/lib/risk-tier.sh`. The rows are honoured only for repos in `RT_MODE_REPOS` (a code constant in `bin/lib/risk-tier.sh`, today the harness's own repo); any other repo stays off until it is added there, then opts in to `shadow`, then `enforce` | Off means every PR gets a lead review. Watch a repo in shadow before enforce, because enforce merges low-risk PRs without one. |
 | Merge queue | serial (separate lanes recommended, off until a repo opts in) | `queue_partition.mode` row (seeded `enforce` by BH-8052: it uploads each PR's scopes, and on a serial conf a failed upload is one log line and the enqueue goes ahead; code fallback `shadow`, which logs lanes and uploads nothing) plus `queue_mode=` per repo in `config/mergify/repos/<repo>.conf` | Independent PRs land side by side. Needs a CI key and a per-repo flip; a repo that has not flipped stays serial. |
 | Impact CI | on | always on in `.github/workflows/harness-ci.yml` (`bin/ci-plan.sh`) | Batches run in minutes, not an hour. A suite the impact map misses runs only in the scheduled full run on main. |

@@ -71,7 +71,7 @@ BKEY="build:widget-os:WD-9:$BN"
 drive() { # drive <block-file> [env...] — prints nothing; rc in $RC, seq/beats in $T
   local block="$1"; shift
   rm -rf "$T/b"; mkdir -p "$T/b/$BN"
-  printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 6\nLINES: 900\n\nKIND: feature\nSIZE: M\n' \
+  printf '# Plan\n\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 6\nLINES: 1500\n\nKIND: feature\nSIZE: M\n' \
     > "$T/b/$BN/plan.md"
   : > "$T/seq.txt"
   # The row's last beat before the gate was `planning`, as on a real parent.

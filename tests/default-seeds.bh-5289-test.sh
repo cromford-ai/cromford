@@ -3,7 +3,7 @@
 # starts with. Each one is a settings row or a lane-catalog knob, and the code
 # fallback behind it says the same value, so a hub with no row and a hub with
 # the seeded row behave alike. docs/OPERATING.md's Defaults table states each.
-#   S1 a fresh worker/jobs/schema.sql: size_gate 700/20, risk_tier.mode off,
+#   S1 a fresh worker/jobs/schema.sql: size_gate 1200/30, risk_tier.mode off,
 #      and queue_partition.mode enforce (BH-8052; the conf stays serial, so a
 #      fresh install is still one serial queue)
 #   S2 bin/size-threshold.sh's fallbacks equal the size_gate rows
@@ -41,8 +41,8 @@ sys.exit(2) if r is None else print(r[0])
 PY
 }
 SG_LINES=$(row size_gate.lines); SG_FILES=$(row size_gate.files); RT_GLOBAL=$(row risk_tier.mode)
-[ "$SG_LINES" = 700 ] && ok || bad "S1 size_gate.lines seeds '$SG_LINES', want 700"
-[ "$SG_FILES" = 20 ] && ok || bad "S1 size_gate.files seeds '$SG_FILES', want 20"
+[ "$SG_LINES" = 1200 ] && ok || bad "S1 size_gate.lines seeds '$SG_LINES', want 1200"
+[ "$SG_FILES" = 30 ] && ok || bad "S1 size_gate.files seeds '$SG_FILES', want 30"
 [ "$RT_GLOBAL" = off ] && ok || bad "S1 risk_tier.mode seeds '$RT_GLOBAL', want off"
 [ "$(row risk_tier.mode.example-org.cromford)" = enforce ] && ok || bad "S1 the per-repo risk_tier.mode seed changed"
 QP_MODE=$(row queue_partition.mode)

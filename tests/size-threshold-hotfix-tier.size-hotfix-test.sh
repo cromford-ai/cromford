@@ -66,8 +66,8 @@ reset; cache "{$FLEET,$HF,\"size_gate.lines.hotfix.widget-os\":\"2400\"}"
 reset; cache "{$FLEET}"
 [ "$(thf widget-os all)" = "700 20 row" ] && ok || bad "T4: no hotfix rows must fall to the normal chain, got '$(thf widget-os all)'"
 reset
-[ "$(thf widget-os all)" = "700 20 default" ] && ok || bad "T4: no cache at all must be 700 20 default, got '$(thf widget-os all)'"
-[ "$(LANE_GATE_DISABLE=1 thf widget-os all)" = "700 20 default" ] && ok || bad "T4: LANE_GATE_DISABLE=1 ignores hotfix rows too"
+[ "$(thf widget-os all)" = "1200 30 default" ] && ok || bad "T4: no cache at all must be 1200 30 default, got '$(thf widget-os all)'"
+[ "$(LANE_GATE_DISABLE=1 thf widget-os all)" = "1200 30 default" ] && ok || bad "T4: LANE_GATE_DISABLE=1 ignores hotfix rows too"
 # Only one axis has a hotfix row: src names each axis.
 reset; cache "{$FLEET,\"size_gate.lines.hotfix\":\"1500\"}"
 [ "$(thf widget-os all)" = "1500 20 lines:row:hotfix,files:row" ] && ok || bad "T4: a half-set tier must name each axis, got '$(thf widget-os all)'"
@@ -135,14 +135,14 @@ grep -qF 'against a budget of 700 lines of product code across 20 files' <<<"$C"
   || bad "T7: a plain split must read exactly as before: $C"
 grep -q 'hotfix' <<<"$C" && bad "T7: a plain split must not say hotfix: $C" || ok
 
-# T8. the seed rows: insert-only-when-missing, 1500 / 30, the normal 700/20 untouched
+# T8. the seed rows: insert-only-when-missing, 1500 / 30, the normal 1200/30 untouched
 SCH="$DIR/worker/jobs/schema.sql"
 SEED=$(grep -A1 "('size_gate.lines.hotfix'" "$SCH")
 grep -q "('size_gate.lines.hotfix','1500'" <<<"$SEED" && ok || bad "T8: schema.sql must seed size_gate.lines.hotfix=1500"
 grep -q "('size_gate.files.hotfix','30'" <<<"$SEED" && ok || bad "T8: schema.sql must seed size_gate.files.hotfix=30"
 B=$(grep -B4 "('size_gate.lines.hotfix'" "$SCH" | grep -c 'INSERT OR IGNORE INTO settings')
 [ "$B" -ge 1 ] && ok || bad "T8: the hotfix seed must be INSERT OR IGNORE"
-grep -q "('size_gate.lines','700'" "$SCH" && grep -q "('size_gate.files','20'" "$SCH" && ok || bad "T8: the 700/20 seeds must stay"
+grep -q "('size_gate.lines','1200'" "$SCH" && grep -q "('size_gate.files','30'" "$SCH" && ok || bad "T8: the 1200/30 seeds must stay"
 # The statement applies twice cleanly and never resets an operator's edit.
 HSEED=$(awk '/^INSERT OR IGNORE INTO settings/{buf=$0; inseed=1; next}
              inseed{buf=buf"\n"$0; if ($0 ~ /;[[:space:]]*$/) { if (buf ~ /\x27size_gate\.lines\.hotfix\x27,/) print buf; inseed=0 } }' "$SCH")

@@ -1893,10 +1893,10 @@ SG_SWITCH_RESOLVE() {
 #
 # THE THRESHOLD IS NOT A CONSTANT. bin/size-threshold.sh resolves it per
 # project and per axis (BH-4985): the settings rows size_gate.<axis>.<project>
-# then size_gate.<axis> (seeded 700/20, edited on /config) — or, for a hotfix
+# then size_gate.<axis> (seeded 1200/30, edited on /config) — or, for a hotfix
 # ticket, size_gate.<axis>.hotfix[.<project>] (1500/30) ahead of both — then
 # flags/size-gate-<project> on the box, then the repo-tracked
-# catalog/size-thresholds.conf, then 700 lines / 20 files. The source it used
+# catalog/size-thresholds.conf, then 1200 lines / 30 files. The source it used
 # rides the SIZE line below and the size_gate ledger artifact as src=.
 #
 # WARN-FIRST FOR TWO DAYS, THEN ARMED (the operator, 2026-09-14). The gate shipped
@@ -1931,8 +1931,8 @@ SG_MAXL=$(printf '%s' "$SG_LIMITS" | awk '{print $1}')
 SG_MAXF=$(printf '%s' "$SG_LIMITS" | awk '{print $2}')
 SG_SRC=$(printf '%s' "$SG_LIMITS" | awk '{print $3}')
 case "${SG_SRC:-}" in ''|*[!a-z:,]*) SG_SRC=default ;; esac
-case "${SG_MAXL:-}" in ''|*[!0-9]*) SG_MAXL=700; SG_SRC=default ;; esac
-case "${SG_MAXF:-}" in ''|*[!0-9]*) SG_MAXF=20; SG_SRC=default ;; esac
+case "${SG_MAXL:-}" in ''|*[!0-9]*) SG_MAXL=1200; SG_SRC=default ;; esac
+case "${SG_MAXF:-}" in ''|*[!0-9]*) SG_MAXF=30; SG_SRC=default ;; esac
 # <<< size threshold call
 # The plan's MENTION list, handed to the gate for the record only: it prints the
 # count and names it `SIZE_FILES_MENTIONED: n (not gating)` above the tolerated

@@ -85,9 +85,11 @@
 # configured does not change on the day the stage gets its own name.
 set -uo pipefail
 PROJECT="${1:?project}"; TICKET="${2:?ticket id}"; KEY="${3:?key}"; BUILD="${4:?build dir}"
-MAXL="${5:-700}"; MAXF="${6:-20}"
-case "$MAXL" in ''|*[!0-9]*) MAXL=700 ;; esac
-case "$MAXF" in ''|*[!0-9]*) MAXF=20 ;; esac
+# Fallback only: plan.sh passes the rows size_gate.lines / size_gate.files
+# (via bin/size-threshold.sh). 1200/30 matches that script's DEF_*.
+MAXL="${5:-1200}"; MAXF="${6:-30}"
+case "$MAXL" in ''|*[!0-9]*) MAXL=1200 ;; esac
+case "$MAXF" in ''|*[!0-9]*) MAXF=30 ;; esac
 # THE CONTRACT CHILD'S OWN BUDGET (BH-481, 2026-09-16). It is not the per-child
 # budget above and must not be: every sibling is blocked on this one chunk, so
 # what it costs is paid by the whole wave, and a chunk this size almost never

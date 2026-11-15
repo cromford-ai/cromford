@@ -5,7 +5,7 @@ Notes for coding agents (and people) changing Cromford.
 ## How the factory expects changes to look
 
 - One ticket, one branch, one PR.
-- Small diffs. The size gate starts at 700 lines and 20 files, and a plan over
+- Small diffs. The size gate starts at 1200 lines and 30 files, and a plan over
   it is split before it is built.
 - A new file over an edit to a shared list or index. Parallel changes that all
   append to one file conflict on a hunk none of them is about.

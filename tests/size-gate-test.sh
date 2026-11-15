@@ -123,19 +123,19 @@ grep -q 'SIZE_PRODUCT_LINES: *0' <<<"$(cd "$R" && "$SCOPE" --diff no-such-base 2
 # ============================================================================
 # Per axis, first hit wins (BH-4985): settings rows size_gate.<axis>.<project>
 # then size_gate.<axis>, then a box-local flag, then the repo-tracked conf, then
-# the documented 700/20 fallback. The rows have their own suite
+# the documented 1200/30 fallback. The rows have their own suite
 # (tests/size-threshold-settings.bh-4985-test.sh); every call here points
 # HARNESS at the scratch tree, so a row on the live box can never move a pin.
-[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything lines)" = 700 ] && ok || bad "the default line threshold must be 700"
-[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything files)" = 20 ]  && ok || bad "the default file threshold must be 20"
-[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything)" = "700 20" ]  && ok || bad "no field asked = '<lines> <files>'"
+[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything lines)" = 1200 ] && ok || bad "the default line threshold must be 1200"
+[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything files)" = 30 ]  && ok || bad "the default file threshold must be 30"
+[ "$(HARNESS="$T/h" JOBS_URL= "$THRESH" anything)" = "1200 30" ]  && ok || bad "no field asked = '<lines> <files>'"
 
 printf '# comment\nwidget-os 900 30\nother-os 120 5\n' > "$T/h/catalog/size-thresholds.conf"
 [ "$(HARNESS="$T/h" "$THRESH" widget-os lines)" = 900 ] \
   && ok || bad "a catalog row must override the default"
 [ "$(HARNESS="$T/h" "$THRESH" widget-os files)" = 30 ] \
   && ok || bad "a catalog row must carry the file limit too"
-[ "$(HARNESS="$T/h" "$THRESH" unlisted-os lines)" = 700 ] \
+[ "$(HARNESS="$T/h" "$THRESH" unlisted-os lines)" = 1200 ] \
   && ok || bad "a project with no row must get the default"
 echo '150 4' > "$T/h/flags/size-gate-widget-os"
 [ "$(HARNESS="$T/h" "$THRESH" widget-os lines)" = 150 ] \
@@ -150,7 +150,7 @@ echo '150' > "$T/h/flags/size-gate-widget-os"
 # Junk never becomes a threshold. A 0 or a word would disable the gate silently.
 printf 'widget-os banana zero\n' > "$T/h/catalog/size-thresholds.conf"
 rm -f "$T/h/flags/size-gate-widget-os"
-[ "$(HARNESS="$T/h" "$THRESH" widget-os lines)" = 700 ] \
+[ "$(HARNESS="$T/h" "$THRESH" widget-os lines)" = 1200 ] \
   && ok || bad "a non-numeric conf value must fall back to the default"
 
 # ============================================================================
@@ -422,7 +422,7 @@ MENTIONY=$( printf '# Plan\n\n## Callers I read\n'
             for i in $(seq 1 8); do printf -- '- src/legacy/old%s.ts keeps its copy\n' "$i"; done
             printf '\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\n## Size\nFILES: 2\nLINES: 45\n\nKIND: bug\nSIZE: S\n' )
 # Pinned at the 12-file limit those incidents ran under: the mention line only
-# prints above the tolerated file limit, and 18 is under the 700/20 default's 23.
+# prints above the tolerated file limit, and 18 is under the 1200/30 default's 34.
 printf 'widget-os 300 12\n' > "$T/h/catalog/size-thresholds.conf"
 OUT=$(drive "$MENTIONY" SINK="$T/artifacts.tsv" SIZE_GATE_ENFORCE=1)
 rm -f "$T/h/catalog/size-thresholds.conf"
@@ -445,7 +445,7 @@ grep -q '^SIZE_VERDICT: within$' "$T/b/size-gate.txt" \
 #     default above a size, not an XL-only escape hatch.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE=1)
+LINES: 1500')" SIZE_GATE_ENFORCE=1)
 grep -q CONTINUED <<<"$OUT" && bad "an over-threshold plan must NOT reach EXECUTE (got: $OUT)" || ok
 decomposed && ok || bad "an over-threshold plan must be handed to the decomposer"
 grep -q 'widget-os tkt-1 WD-9' "$T/decompose.log" \
@@ -454,14 +454,14 @@ grep -q 'RESULT=DECOMPOSED WD-9.1,WD-9.2' <<<"$OUT" \
   && ok || bad "the terminal must be the EXISTING DECOMPOSED verb with the children (got: $OUT)"
 # The decomposer must be TOLD the budget, or the children come back the same
 # size as the parent and the split bought nothing.
-grep -qE '(^| )700( |$)' "$T/decompose.log" \
+grep -qE '(^| )1200( |$)' "$T/decompose.log" \
   && ok || bad "the decomposer must be handed the per-child line budget: $(cat "$T/decompose.log")"
 
 # 4c. a decomposer that cannot file children says so, and does not fall through
 #     into building the oversized thing anyway.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE=1 DECOMPOSE_FAILS=1)
+LINES: 1500')" SIZE_GATE_ENFORCE=1 DECOMPOSE_FAILS=1)
 grep -q 'RESULT=DECOMPOSE_FAILED' <<<"$OUT" && ok || bad "a failed split must be its own terminal (got: $OUT)"
 grep -q CONTINUED <<<"$OUT" && bad "a failed split must not build the oversized plan (got: $OUT)" || ok
 
@@ -472,7 +472,7 @@ grep -q CONTINUED <<<"$OUT" && bad "a failed split must not build the oversized 
 rm -f "$T/h/flags/size-gate-enforce-off"
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')")
+LINES: 1500')")
 grep -q CONTINUED <<<"$OUT" && bad "the shipped default must NOT build an oversized plan whole (got: $OUT)" || ok
 decomposed && ok || bad "with nothing set, an over-threshold plan must be split"
 grep -q 'RESULT=DECOMPOSED' <<<"$OUT" && ok || bad "the default path must reach the DECOMPOSED terminal (got: $OUT)"
@@ -485,20 +485,20 @@ grep -q 'enforcement ON, from the shipped default' "$T/b/pipeline.log" \
 : > "$T/h/flags/size-gate-enforce-off"
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')")
+LINES: 1500')")
 grep -q CONTINUED <<<"$OUT" && ok || bad "the kill flag must let an oversized plan build (got: $OUT)"
 decomposed && bad "the kill flag must not split anything" || ok
 grep -q 'decomposable, but size enforcement is OFF' "$T/b/pipeline.log" \
   && ok || bad "a warn-only run must say so in the pipeline log: $(cat "$T/b/pipeline.log" 2>/dev/null)"
 grep -q 'flags/size-gate-enforce-off' "$T/b/pipeline.log" \
   && ok || bad "the log must name the lever that disarmed it: $(cat "$T/b/pipeline.log" 2>/dev/null)"
-grep -q '900' "$T/b/pipeline.log" \
+grep -q '1500' "$T/b/pipeline.log" \
   && ok || bad "the warning must carry the number that would have tripped it"
 # ...and it outranks an env var that says otherwise. The flag is the lever a box
 # has when nobody can push, so nothing may override it.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE=1)
+LINES: 1500')" SIZE_GATE_ENFORCE=1)
 grep -q CONTINUED <<<"$OUT" && ok || bad "the kill flag must outrank SIZE_GATE_ENFORCE=1 (got: $OUT)"
 rm -f "$T/h/flags/size-gate-enforce-off"
 
@@ -507,7 +507,7 @@ rm -f "$T/h/flags/size-gate-enforce-off"
 #        same per-project shape the THRESHOLD already has.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE_WIDGET_OS=0)
+LINES: 1500')" SIZE_GATE_ENFORCE_WIDGET_OS=0)
 grep -q CONTINUED <<<"$OUT" && ok || bad "SIZE_GATE_ENFORCE_<project>=0 must disarm this project (got: $OUT)"
 decomposed && bad "a project that opted out must not be split" || ok
 grep -q 'SIZE_GATE_ENFORCE_WIDGET_OS' "$T/b/pipeline.log" \
@@ -515,14 +515,14 @@ grep -q 'SIZE_GATE_ENFORCE_WIDGET_OS' "$T/b/pipeline.log" \
 # ...and it outranks the global switch, which is the point of having it.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE_WIDGET_OS=0 SIZE_GATE_ENFORCE=1)
+LINES: 1500')" SIZE_GATE_ENFORCE_WIDGET_OS=0 SIZE_GATE_ENFORCE=1)
 grep -q CONTINUED <<<"$OUT" && ok || bad "the project override must beat the global switch (got: $OUT)"
 # A project whose name IS a shell identifier is read verbatim too — env files are
 # written by hand, and `SIZE_GATE_ENFORCE_project-5=0` is what a person types.
 OUT=$( rm -rf "$T/b"; mkdir -p "$T/b"; : > "$T/decompose.log"
        printf '%s\n' "$(BODY '## Size
 FILES: 6
-LINES: 900')" > "$T/b/plan.md"
+LINES: 1500')" > "$T/b/plan.md"
        env HARNESS="$T/h" BUILD="$T/b" PROJECT=project-5 KEY=TK-9 TICKET=9 \
            ALERTS="$T/h/logs/ALERTS.log" SINK=/dev/null DECOMPOSE_LOG="$T/decompose.log" \
            SWITCHBLOCK="$T/switch.sh" SIZE_GATE_ENFORCE_project-5=0 \
@@ -544,7 +544,7 @@ grep -q CONTINUED <<<"$OUT" && ok || bad "the lower-case project override must b
 : > "$T/h/logs/ALERTS.log"
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE=maybe)
+LINES: 1500')" SIZE_GATE_ENFORCE=maybe)
 grep -q CONTINUED <<<"$OUT" && bad "a junk switch value must not disarm the gate (got: $OUT)" || ok
 decomposed && ok || bad "a junk switch value must fall through to the armed default"
 grep -q "SIZE_GATE_ENFORCE='maybe' is not a recognized" "$T/h/logs/ALERTS.log" \
@@ -555,7 +555,7 @@ grep -q 'size-gate-enforce-off' "$T/h/logs/ALERTS.log" \
 # is the whole behaviour, not a special case of the global name.
 OUT=$(drive "$(BODY '## Size
 FILES: 6
-LINES: 900')" SIZE_GATE_ENFORCE_WIDGET_OS=nope SIZE_GATE_ENFORCE=0)
+LINES: 1500')" SIZE_GATE_ENFORCE_WIDGET_OS=nope SIZE_GATE_ENFORCE=0)
 grep -q CONTINUED <<<"$OUT" && ok || bad "a junk override must fall through to the next source (got: $OUT)"
 
 # 4e-i. DEPTH 1, AND ONLY DEPTH 1. bin/run-decompose.sh titles every child
@@ -564,7 +564,7 @@ grep -q CONTINUED <<<"$OUT" && ok || bad "a junk override must fall through to t
 #       estimate files tickets forever.
 OVERSIZED=$(BODY '## Size
 FILES: 6
-LINES: 900')
+LINES: 1500')
 OUT=$(drive_meta "WD-9.1: the first slice" "$OVERSIZED")
 grep -q CONTINUED <<<"$OUT" && ok || bad "an oversized CHILD must be built whole (got: $OUT)"
 decomposed && bad "a split child must never be split again" || ok
@@ -595,7 +595,7 @@ grep -qi 'measured beats self-reported' "$T/b/pipeline.log" \
 #     Armed and OVER, XL and the gate agree: it splits.
 OUT=$(drive "$(BODY '## Size
 FILES: 2
-LINES: 900' XL)")
+LINES: 1500' XL)")
 decomposed && ok || bad "armed and over, SIZE: XL must still decompose"
 #     Disarmed, XL keeps its old power: the self-reported marker was the only
 #     trigger this pipeline had since 2026-07-28, and the kill flag promises

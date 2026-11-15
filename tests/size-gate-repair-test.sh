@@ -182,12 +182,12 @@ rm -f "$T/h/state/plan-malformed.txt"
 # G. THE LIMITS ARE UNTOUCHED. An unsized plan whose file list is past 2x the
 #    threshold still routes to the decomposer.
 rm -f "$T/h/state/plan-malformed.txt"
-WIDE=$(printf '# Plan\n\n'; for i in $(seq 1 45); do echo "- src/lib/mod$i.ts"; done
+WIDE=$(printf '# Plan\n\n'; for i in $(seq 1 70); do echo "- src/lib/mod$i.ts"; done
        printf '\n### Task 1\n- VALIDATE: npm test\n- SATISFIES: c1\n\nKIND: bug\nSIZE: M\n')
 OUT=$(drive "$WIDE" SIZE_GATE_ENFORCE=1)
 [ "$(called)" = 0 ] && ok || bad "G: no session, got $(called)"
 grep -q '^SIZE_VERDICT: over$' "$T/b/size-gate.txt" && grep -q 'estimated' "$T/b/size-gate.txt" \
-  && ok || bad "G: 45 files against a 20-file limit is an estimate past 2x: $(cat "$T/b/size-gate.txt")"
+  && ok || bad "G: 70 files against a 30-file limit is an estimate past 2x: $(cat "$T/b/size-gate.txt")"
 grep -q 'RESULT=DECOMPOSED' <<<"$OUT" && ok || bad "G: an estimate past 2x must split (got: $OUT)"
 grep -q CONTINUED <<<"$OUT" && bad "G: an over plan must not reach EXECUTE (got: $OUT)" || ok
 
