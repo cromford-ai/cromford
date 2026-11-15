@@ -13,6 +13,7 @@
 #   stage-day    (project, stage, UTC day) budget.stage.<s>.day_usd           D1 GET /api/metrics/
 #                                         budget.stage.<s>.day_calls           llm-spend?project=&stage=
 #   project-day  (project, UTC day)       budget.project.<p>.day_usd          D1 llm-spend?project=
+#                                         cost_ceiling.<p> (the lower wins)
 #
 # build-stage engages on a call whose $OUT lands in a build dir, ANY stage
 # (wave 1 was execute only). The day scopes engage on any call with a project
@@ -31,6 +32,14 @@
 # refuse everything on that axis (the opposite of llm-gate's 0 = unlimited).
 # Rows are read from the settings cache (state/settings-cache.json, filled by
 # lane-gate's _lg_settings_refresh), exactly as wave 1 reads them.
+#
+# COST CEILING (BH-9719). cost_ceiling.<p> is a second source for the
+# project-day cap: the spend brake of a project that pays with its own API key
+# (docs/COST.md "API key projects"). The effective cap is the LOWER of it and
+# the budget.project resolution, so it never loosens a cap. It has no
+# `_default`. `off` lifts only this row; `0` refuses every call, as above;
+# junk reads as unreadable. A refusal it set ends with ` key=cost_ceiling.<p>`
+# (BS_PKEY); on a tie the budget row keeps the line as it was.
 #
 # A TERMINAL VERDICT WINS, THEN THE TIGHTEST. Every engaged scope is evaluated.
 # Any build-stage axis at or over its cap wins outright: it is terminal, and a
@@ -93,6 +102,9 @@
 #                                      day_calls. Call it in this shell, not in
 #                                      $(...), to keep BS_VALUE / BS_REASON.
 #   bs_pcap <project>                  the same for budget.project.<p>.day_usd
+#                                      and cost_ceiling.<p> (lower wins);
+#                                      BS_PKEY = cost_ceiling.<p> when that row
+#                                      set the cap, else empty
 #   bs_total <csv> <stage>             prints "calls usd unpriced"; rc 2 unreadable
 #   bs_tokens <csv> <stage>            prints the token sum; rc 2 unreadable
 #   bs_check <project> <stage> <dir>   build-stage only: rc 0 allow | rc 1
@@ -121,6 +133,7 @@ BS_REASON=""
 BS_VALUE=""
 BS_LINE=""
 BS_REFUSE=""
+BS_PKEY=""
 
 _bs_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 
@@ -222,9 +235,22 @@ bs_cap() {
 }
 
 bs_pcap() {
-  local p="${1:-}" rc
-  BS_REASON=""; BS_VALUE=""
-  rc=0; _bs_resolve "budget.project.$p.day_usd" "budget.project._default.day_usd" '^[0-9]+(\.[0-9]+)?$' || rc=$?
+  local p="${1:-}" re='^[0-9]+(\.[0-9]+)?$' rc rcc=1 va="" vc=""
+  BS_REASON=""; BS_VALUE=""; BS_PKEY=""
+  rc=0; _bs_resolve "budget.project.$p.day_usd" "budget.project._default.day_usd" "$re" || rc=$?
+  [ "$rc" = 2 ] && return 2
+  va="$BS_VALUE"
+  if _bs_key_ok "cost_ceiling.$p"; then
+    rcc=0; _bs_row "cost_ceiling.$p" "$re" || rcc=$?
+    [ "$rcc" = 2 ] && { BS_VALUE=""; return 2; }
+    vc="$BS_VALUE"
+  fi
+  BS_VALUE="$va"
+  if [ "$rcc" = 0 ]; then
+    if [ "$rc" != 0 ] || awk -v c="$vc" -v a="$va" 'BEGIN{exit !(c + 0 < a + 0)}'; then
+      BS_VALUE="$vc"; BS_PKEY="cost_ceiling.$p"; rc=0
+    fi
+  fi
   [ "$rc" = 0 ] && printf '%s' "$BS_VALUE"
   return "$rc"
 }
@@ -404,7 +430,7 @@ _bs_tightest() {
 
 bs_gate() {
   local p="${1:-}" stage="${2:-}" out="${3:-}" inb=0 b="" rc axes="" unread="" over win rest also
-  local sdu="" sdc="" pdu="" sp scope axis spent cap name
+  local sdu="" sdc="" pdu="" pkey="" sp scope axis spent cap name
   BS_LINE=""; BS_REFUSE=""; BS_REASON=""
   _bs_off && return 0
   if bs_applies "$stage" "$out"; then
@@ -437,7 +463,7 @@ bs_gate() {
       case "$rc" in 0) sdc="$BS_VALUE" ;; 1) ;; *) [ -n "$unread" ] || unread="$BS_REASON"; sdu=""; sdc="" ;; esac
     fi
     rc=0; bs_pcap "$p" >/dev/null || rc=$?
-    case "$rc" in 0) pdu="$BS_VALUE" ;; 1) ;; *) [ -n "$unread" ] || unread="$BS_REASON" ;; esac
+    case "$rc" in 0) pdu="$BS_VALUE"; pkey="$BS_PKEY" ;; 1) ;; *) [ -n "$unread" ] || unread="$BS_REASON" ;; esac
     if [ -n "$sdu$sdc" ]; then
       if sp=$(_bs_spend "$p" "$stage"); then
         [ -n "$sdu" ] && axes="${axes}stage-day usd ${sp% *} $sdu"$'\n'
@@ -486,7 +512,7 @@ bs_gate() {
       BS_REFUSE="budget-stage-day $stage project=$p stage=$stage $sp$also"
       name="$p-$stage" ;;
     *)
-      BS_REFUSE="budget-project-day $stage project=$p usd=$spent/$cap$also"
+      BS_REFUSE="budget-project-day $stage project=$p usd=$spent/$cap${pkey:+ key=$pkey}$also"
       name="$p" ;;
   esac
   if [ "$inb" = 1 ] && bs_admitted "$b"; then
@@ -507,16 +533,16 @@ _bs_spend_pair() {
 }
 
 bs_launch_check() {
-  local p="${1:-}" rc cap sp st du dc
+  local p="${1:-}" rc cap pkey sp st du dc
   BS_REFUSE=""; BS_REASON=""
   _bs_off && return 0
   _bs_day_on "$p" || return 0
   rc=0; bs_pcap "$p" >/dev/null || rc=$?
   case "$rc" in
-    0) cap="$BS_VALUE"
+    0) cap="$BS_VALUE"; pkey="$BS_PKEY"
        sp=$(_bs_spend "$p") || { BS_REASON="budget-total-unreadable:project-day"; return 2; }
        if _bs_ge "${sp% *}" "$cap"; then
-         BS_REFUSE="budget-project-day project=$p usd=${sp% *}/$cap"; return 1
+         BS_REFUSE="budget-project-day project=$p usd=${sp% *}/$cap${pkey:+ key=$pkey}"; return 1
        fi ;;
     1) ;;
     *) return 2 ;;

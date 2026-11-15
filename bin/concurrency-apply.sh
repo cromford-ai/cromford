@@ -105,25 +105,39 @@ while IFS=$'\t' read -r P ROUTE CUR POOL; do
 "
     continue
   fi
+  # BH-9719: a project that pays for claude with its own API key has no session
+  # meter, so account-capacity answers `unlimited` for it and its row is the
+  # pool cap alone. Any other answer keeps the shared fleet count.
+  RACAP_N="$ACAP_N"; RACAP_WHY="$ACAP_WHY"; RSKIP=0
+  if [ -x "$ACAP" ]; then
+    RACAP_OUT=$("$ACAP" "$VENDOR" "$P" 2>/dev/null) || RACAP_OUT=""
+    if [ "$(printf '%s' "$RACAP_OUT" | awk '{print $1}')" = unlimited ]; then
+      RACAP_N=unlimited; RSKIP=1
+      RACAP_WHY=$(printf '%s' "$RACAP_OUT" | sed -n 's/^[^ ]* (\(.*\))$/\1/p')
+    fi
+  fi
   # min(pool cap, account ceiling), with the reason attached to whichever bound.
   PROP="$POOL"; WHY="the Fly pool cap of $POOL machine(s)"
   if [ "$POOL" = unlimited ]; then
     # 2026-09-14 autoscale: with no ceiling configured the pool is not a cap at
     # all — it follows queue depth — so min() is the account half alone, which
     # is the half this script was written for anyway.
-    PROP="$ACAP_N"
-    WHY="the pool is unlimited (autoscale), so account capacity $ACAP_N is what binds — $ACAP_WHY"
-  elif [ "$ACAP_N" != unlimited ] && [ "$POOL" != "?" ] && [ "$ACAP_N" -lt "$POOL" ] 2>/dev/null; then
-    PROP="$ACAP_N"
-    WHY="account capacity $ACAP_N below the pool cap of $POOL — $ACAP_WHY"
-  elif [ "$ACAP_N" != unlimited ] && [ "$ACAP_N" = "$POOL" ]; then
-    WHY="the pool cap and the account ceiling agree at $POOL — $ACAP_WHY"
+    PROP="$RACAP_N"
+    WHY="the pool is unlimited (autoscale), so account capacity $RACAP_N is what binds — $RACAP_WHY"
+  elif [ "$RACAP_N" != unlimited ] && [ "$POOL" != "?" ] && [ "$RACAP_N" -lt "$POOL" ] 2>/dev/null; then
+    PROP="$RACAP_N"
+    WHY="account capacity $RACAP_N below the pool cap of $POOL — $RACAP_WHY"
+  elif [ "$RACAP_N" != unlimited ] && [ "$RACAP_N" = "$POOL" ]; then
+    WHY="the pool cap and the account ceiling agree at $POOL — $RACAP_WHY"
   fi
+  [ "$RSKIP" = 1 ] && [ "$POOL" != unlimited ] && WHY="$WHY; no account ceiling — $RACAP_WHY"
   case "$PROP" in ''|*[!0-9]*)
     # Two different sentences, because they ask for two different things: an
     # unreadable cap is a box problem, and "both halves unlimited" is a
     # deliberate state this script must not invent a number for.
-    if [ "$PROP" = unlimited ]; then
+    if [ "$PROP" = unlimited ] && [ "$RSKIP" = 1 ]; then
+      PWHY="no proposal — the pool is unlimited (autoscale) and $P has no account ceiling ($RACAP_WHY); repo/$P/build is the only brake and it is not this script's to guess"
+    elif [ "$PROP" = unlimited ]; then
       PWHY="no proposal — the pool is unlimited (autoscale) and the account ceiling is unknown; repo/$P/build is the only brake and it is not this script's to guess"
     else
       PWHY="no proposal — the pool cap could not be read from this machine"
@@ -143,7 +157,7 @@ while IFS=$'\t' read -r P ROUTE CUR POOL; do
     [ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh" 2>/dev/null
     if command -v job_rule_set >/dev/null 2>&1; then
       job_rule_set repo "$P" build "$PROP" \
-        "bin/concurrency-apply.sh $(date -u '+%Y-%m-%d'): min(pool cap $POOL, account capacity $ACAP_N) — $WHY" \
+        "bin/concurrency-apply.sh $(date -u '+%Y-%m-%d'): min(pool cap $POOL, account capacity $RACAP_N) — $WHY" \
         >/dev/null 2>&1 && WROTE=$((WROTE+1))
     fi
   fi

@@ -567,15 +567,37 @@ the rows and the onboarding command).
   not the consumer terms of a subscription account.
 - One key per project (the Fly secret `ANTHROPIC_API_KEY_<PROJECT>`) keeps the
   spend attributable: the Console usage page of that key is that project's spend.
-- The brake is a cost ceiling per project, the row `cost_ceiling.<project>`. It
-  lands with #9676.
+- The brake is a cost ceiling per project, the settings row
+  `cost_ceiling.<project>` (BH-9719). `bin/lib/budget-stop.sh` `bs_pcap` reads
+  it as a second source for the project-day cap (`budget.project.<p>.day_usd`).
+  The LOWER of the two caps wins, so the row never loosens a cap.
+  - Set it: `bin/jobs-client.sh setting-set cost_ceiling.<p> <usd>`.
+  - `off` lifts only this row. `0` refuses every call. A value that is not a
+    number reads as unreadable: a call inside a build defers, a call outside one
+    runs with one alert.
+  - Over the cap, a call is refused rc 74 with
+    `AGENT_CALL_REFUSED budget-project-day <stage> project=<p> usd=<spent>/<cap> key=cost_ceiling.<p>`,
+    and the launch gate defers a new build (`BUILD_DEFERRED budget-project-day ...`).
+    The `key=` part is there only when this row set the cap.
+  - A ticket the launch gate already admitted finishes (BH-5526). The kill switch
+    `budget-stop-off` lifts this row with the rest.
+- The subscription meters skip the project (BH-9719, `bin/lib/meter-skip.sh`):
+  - `bin/account-capacity.sh claude <p>` answers `unlimited (...)` and reads no
+    quota. `bin/concurrency-apply.sh` passes the project, so the proposed build
+    rule of such a project is its pool cap alone. One line per project per UTC
+    day goes to `logs/account-capacity.log`.
+  - `bin/extra-usage-track.sh` polls nothing on a box with only the fallback
+    login (no `EXTRA_USAGE_LOGINS`, no catalog login for the box) when every
+    project fleet.conf puts on the box is `api-key`. One line per UTC day goes
+    to `logs/agent-rules.log`. A mixed box, a junk row or a named login polls as
+    before.
 - Check: compare one day of the project's cost rows with the Console usage page
   of its key for the same day.
 
-Status: the rows and the onboarding flags (`bin/load-project.sh --claude-auth
-api-key`) exist. The runtime path, the cost rows `auth_account=apikey:<project>`
-and the cost ceiling land with #9676 and #9675. Until then a row changes no build
-and no cost row.
+Status: the rows, the onboarding flags (`bin/load-project.sh --claude-auth
+api-key`), the call path and its cost rows (BH-9676 C0), the meter skips and the
+cost ceiling reader (BH-9719) exist. The Fly env bundle path (#9718) is still
+owed.
 
 ## Tests
 
@@ -590,6 +612,8 @@ and no cost row.
 | reasoning tokens in the output count: the sibling key added on the envelope and walk paths, the nested/codex/bad-value/no-output negatives, `--calls` input unchanged, and `bin/agent-call.sh` driven to a row with `output_toks` 413 | `tests/cost-grok-usage.bh-1636-test.sh` |
 | the `lib.agent-call.*` settings rows: 11 registered knobs, none of them the cooldowns other lanes read, whose defaults match agent-call.sh's literals, a row turning the envelope on and setting `--max-turns`, no row = today's call, `LANE_GATE_DISABLE=1` ignores rows | `tests/agent-call-knobs.bh-1636-test.sh` |
 | the rollup's daily unpriced line, its breakdown by cause and its link to this note | `tests/unpriced-alert-test.sh` |
+| `cost_ceiling.<p>`: the lower cap wins, `off`, `0`, junk, a tie keeps main's line, another project's row; the launch gate, the call gate, an admitted build and the real `bin/agent-call.sh` refusing with `key=cost_ceiling.<p>` | `tests/budget-stop-cost-ceiling.bh-9719-test.sh` |
+| the meter skips: `meter_skip_api_key`, one log line a day, `bin/account-capacity.sh` and `bin/concurrency-apply.sh` with an api-key project, `bin/extra-usage-track.sh` on an api-key box and every case that must still poll | `tests/meter-skip.bh-9719-test.sh` |
 | `cost_row_price` (the catalog product with `cache_read` as reported, `UNPRICED:*` markers, a vendor figure never overwritten, empty never `0`), plus `bin/agent-call.sh` driven across openrouter and grok and a mutation guard that proves the priced row goes blank without the function | `tests/cost-row-priced-test.sh` |
 | the blank-cost flood alert driven through `bin/cost-reconcile.sh`: 21 blank rows page and 20 do not, failed and priced rows never count, the 24h window never runs it, the daily dedupe, the knob, and an unreadable ledger logging `unread` instead of `clean` | `tests/cost-reconcile.bh-1020-test.sh` |
 

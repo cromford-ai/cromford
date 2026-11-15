@@ -484,6 +484,20 @@ Claude Code precedence (parent #9334): `ANTHROPIC_API_KEY` outranks
 `CLAUDE_CODE_OAUTH_TOKEN`, and a managed `forceLoginMethod` or
 `forceLoginOrgUUID` setting blocks the key.
 
+The subscription meters skip an api-key project (BH-9719, `bin/lib/meter-skip.sh`):
+
+- `bin/account-capacity.sh claude <p>` answers `unlimited (...)` for it and
+  reads no quota. `bin/concurrency-apply.sh` passes each pool project, so the
+  shared account count does not cap that project's build rule. One line per
+  project per UTC day goes to `logs/account-capacity.log`.
+- `bin/extra-usage-track.sh` polls nothing on a box with only the fallback login
+  when every project on the box is `api-key`. It writes no `status=no-login`
+  row and raises no `EXTRA-USAGE METER DOWN`. One line per UTC day goes to
+  `logs/agent-rules.log`.
+
+The spend brake of such a project is `cost_ceiling.<p>` (docs/COST.md, "API key
+projects").
+
 Status: the rows, the worker guard, the reader and these onboarding flags exist.
 The runtime path (the env bundle, the pool-lease skip, the own-account pin, the
 billing mode and the runner lock at build time) lands with #9676 and #9675. Until

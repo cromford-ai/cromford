@@ -1,8 +1,8 @@
 #!/bin/bash
-# bin/account-capacity.sh [vendor] — how many heavy sessions of a vendor this
+# bin/account-capacity.sh [vendor] [project] — how many heavy sessions of a vendor this
 # fleet can actually run at once, and why.
 #
-#   usage:  account-capacity.sh [claude|codex|grok|openrouter|fireworks]
+#   usage:  account-capacity.sh [claude|codex|grok|openrouter|fireworks] [project]
 #   stdout: "<n> (<why>)"  or  "unlimited (<why>)"
 #
 # THE CEILING NOBODY WROTE DOWN. Every other cap in the build path is about
@@ -35,8 +35,18 @@
 #      off, and an unrouted fleet has exactly one account).
 # multiplied by fly/account-capacity.conf's per-account number, else 4.
 #
+# API KEY PROJECTS (BH-9719). With vendor claude and a project whose settings
+# row claude_auth.<project> is `api-key`, the answer is `unlimited (...)`: that
+# project is billed per token and has no subscription session meter to count.
+# Its brake is a spend cap (bin/lib/budget-stop.sh). No quota or registry read
+# happens for it, and one line per project per UTC day goes to
+# logs/account-capacity.log (bin/lib/meter-skip.sh). bin/concurrency-apply.sh
+# passes the project.
+#
 # Read-only: never calls out, never reads a credential, never prints a label
-# that is not already in the registry. Always exits 0 — a planner that cannot
+# that is not already in the registry. With a project argument it reads the
+# settings cache through lane-gate (which can refresh it from the jobs worker),
+# and it writes one log line a day per skipped project. Always exits 0 — a planner that cannot
 # read this must fall back to its own judgement, never to a stack trace (the
 # bin/free-slots.sh contract).
 set -uo pipefail
@@ -51,6 +61,17 @@ case "$V" in
     echo "unlimited ($V is billed per token with no session ceiling — its limit is a spend cap, not concurrency)"
     exit 0 ;;
 esac
+
+# An api-key claude project has no session meter: say so, once a day in the log.
+if [ "$V" = claude ] && [ -n "${2:-}" ]; then
+  # shellcheck source=bin/lib/meter-skip.sh
+  if . "$(dirname "${BASH_SOURCE[0]}")/lib/meter-skip.sh" 2>/dev/null && meter_skip_api_key "$2"; then
+    echo "unlimited ($2 pays for claude with its own API key (claude_auth.$2=api-key): billed per token, no subscription session meter; its brake is a spend cap, budget.project.$2.day_usd / cost_ceiling.$2)"
+    meter_skip_log_once account-capacity "$2" "$H/logs/account-capacity.log" \
+      "account-capacity: skipped $2: claude_auth.$2=api-key, no subscription meter to count"
+    exit 0
+  fi
+fi
 
 num() { case "${1:-}" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac; }
 

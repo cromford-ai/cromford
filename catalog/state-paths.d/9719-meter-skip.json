@@ -1,0 +1,3 @@
+[
+    {"path": "meter-skip", "class": "box-local", "authority": "the once-a-day log dedupe of the meter skips (BH-9719)", "note": "state/meter-skip/<script>-<key>.day: one line, the UTC day (YYYYMMDD) bin/lib/meter-skip.sh meter_skip_log_once last wrote a skip line for that script and project or box. Written by bin/account-capacity.sh and bin/extra-usage-track.sh. One overwritten file per key, bounded by the project count, no growth, no retention job. Losing it costs one repeated log line"}
+]

@@ -724,6 +724,35 @@ xcheck_accounts() {
 
 _OK_LABELS=""
 LOGINS=$(resolve_logins)
+# ── API KEY BOX: NO METER TO POLL (BH-9719) ─────────────────────────────────
+# Only the FALLBACK login (no EXTRA_USAGE_LOGINS, no catalog login for this
+# box), and only when every project fleet.conf puts on this box pays for claude
+# with its own API key (claude_auth.<p>=api-key). Then there is no subscription
+# meter here: polling it writes status=no-login rows and, after 2h, a false
+# EXTRA-USAGE METER DOWN alert. One log line per UTC day says it skipped. An
+# empty project list, an oauth or junk row, or any named login polls as before.
+if [ -z "${EXTRA_USAGE_LOGINS:-}" ] && [ "$LOGINS" = "$BOX=$DEFAULT_DIR" ]; then
+  # shellcheck source=bin/lib/hub-box.sh
+  . "$H/bin/lib/hub-box.sh" 2>/dev/null || true
+  # shellcheck source=bin/lib/meter-skip.sh
+  . "$H/bin/lib/meter-skip.sh" 2>/dev/null || true
+  if command -v local_box_name >/dev/null 2>&1 && command -v meter_skip_api_key >/dev/null 2>&1 \
+     && [ -x "$H/bin/fleet-conf.sh" ]; then
+    _MS_BOX=$(local_box_name)
+    _MS_PROJECTS=""
+    [ -n "$_MS_BOX" ] && _MS_PROJECTS=$(FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}" "$H/bin/fleet-conf.sh" --projects-on-box "$_MS_BOX" 2>/dev/null)
+    _MS_ALL=0
+    if [ -n "$_MS_PROJECTS" ]; then
+      _MS_ALL=1
+      for _MS_P in $_MS_PROJECTS; do meter_skip_api_key "$_MS_P" || { _MS_ALL=0; break; }; done
+    fi
+    if [ "$_MS_ALL" = 1 ]; then
+      LOGINS=""
+      meter_skip_log_once extra-usage-track "$(printf '%s' "$BOX" | tr -c 'A-Za-z0-9._-' '_')" "$H/logs/agent-rules.log" \
+        "extra-usage-track[$BOX]: skipped: every project on this box ($(printf '%s' "$_MS_PROJECTS" | tr '\n' ' ' | sed 's/ $//')) pays with its own API key (claude_auth.<p>=api-key); there is no subscription meter to poll"
+    fi
+  fi
+fi
 IFS=',' read -r -a _PAIRS <<< "$LOGINS"
 for _P in "${_PAIRS[@]}"; do
   case "$_P" in *=*) : ;; *) continue ;; esac
