@@ -934,9 +934,20 @@ command -v pr_brief_line >/dev/null 2>&1 && REPRO_BRIEF_LINE="$(pr_brief_line "$
 #
 # Kill flag: PREPLAN_SPECULATIVE=0 or flags/preplan-speculative-off — no lib
 # call, no adopt, and this build plans for itself exactly as it does today.
+#
+# THE COMMENT THREAD IS CHECKED HERE TOO (BH-9672). TICKET_FP is empty on a
+# GitHub-issue project, so the check above never compares a pre-plan with the
+# thread there. psr_adopt_check runs the plan thread gate's own classifier
+# (ptg_check) before the copy: a pre-plan older than an uncited comment by a
+# person or our App is STALE, its DB row is retired, and the plan stage runs in
+# this build. Before this, the gate below refused the adopted plan and a branch
+# with commits ended PLAN_STALE, and the next build adopted the same DB row
+# again (BH-8841: 4 times). Kill switch: PSR_ADOPT_THREAD_CHECK=0.
 # shellcheck source=bin/lib/preplan-lib.sh
 [ -r "$HARNESS/bin/lib/preplan-lib.sh" ] && . "$HARNESS/bin/lib/preplan-lib.sh"
-PP_DIR=""; PP_OUTCOME=""; PP_WHY=""; PP_RC=0; PP_FP=""; PP_RESUMED=0
+# shellcheck source=bin/lib/plan-stale-replan.sh
+[ -r "$HARNESS/bin/lib/plan-stale-replan.sh" ] && . "$HARNESS/bin/lib/plan-stale-replan.sh" 2>/dev/null
+PP_DIR=""; PP_OUTCOME=""; PP_WHY=""; PP_RC=0; PP_FP=""; PP_RESUMED=0; PSR_RETIRED=""; PSR_REPLAN=0
 if [ -s "$BUILD/plan.md" ]; then
   # A RESUME. The plan is already here, so there is nothing to adopt — but if an
   # earlier attempt in this same dir recorded how it got here, THAT answer
@@ -985,7 +996,9 @@ else
     PP_OUTCOME="STALE thread moved since the pre-plan was written ($PP_FP -> $FP_BEFORE)"
   else
     PP_WHY=$(preplan_check "$PP_DIR" "$WT" "$BASE"); PP_RC=$?
-    if [ "$PP_RC" = 0 ]; then
+    if [ "$PP_RC" = 0 ] && command -v psr_adopt_check >/dev/null 2>&1 && ! psr_adopt_check "$PP_DIR" "$BUILD"; then
+      : # BH-9672: PP_OUTCOME is the thread STALE, the DB row is retired.
+    elif [ "$PP_RC" = 0 ]; then
       cp -f "$PP_DIR/plan.md" "$BUILD/plan.md" 2>/dev/null
       [ -s "$PP_DIR/ticket-fp" ] && cp -f "$PP_DIR/ticket-fp" "$BUILD/ticket-fp" 2>/dev/null
       [ -s "$PP_DIR/plan-thread-at" ] && cp -f "$PP_DIR/plan-thread-at" "$BUILD/plan-thread-at" 2>/dev/null
@@ -1159,8 +1172,13 @@ fi
 # BEFORE the checkpoint, which then takes its fresh-plan arm in this same run,
 # unless the build is a resume or its branch already carries a diff: then the
 # run ends PLAN_STALE (exit 3), as rb_review's call site does.
-# A refused hub pre-plan is removed like a PREPLAN_STALE one, so the next build
-# does not adopt it again. An unreadable thread fails open with one line.
+# A refused pre-plan is retired at its source like a PREPLAN_STALE one: the hub
+# dir and, since BH-9672, the coordination DB row (psr_retire), so the next
+# build does not adopt it again. An unreadable thread fails open with one line.
+# BH-9672: a refusal on a resumed branch whose comment ids match an earlier
+# build's PLAN_STALE RESULT for this ticket (psr_prior_stale) is a loop: one
+# ALERTS line, and this run plans fresh with the branch's commits in the
+# prompt (the replan on branch block) and EXECUTE runs under that plan.
 # shellcheck source=bin/lib/plan-thread.sh
 [ -r "$HARNESS/bin/lib/plan-thread.sh" ] && . "$HARNESS/bin/lib/plan-thread.sh" 2>/dev/null
 if [ -s "$BUILD/plan.md" ] && ! PLAN_IS_BLOCKED "$BUILD/plan.md" && command -v ptg_check >/dev/null 2>&1; then
@@ -1175,11 +1193,16 @@ if [ -s "$BUILD/plan.md" ] && ! PLAN_IS_BLOCKED "$BUILD/plan.md" && command -v p
         PTG_IDS=$(ptg_ids "$PTG_DETAIL")
         if [ "$(ptg_enforce)" = 1 ]; then
           ptg_refuse_plan "$BUILD"
+          printf '%s\n' "$PTG_IDS" > "$BUILD/plan-stale-ids"
           case "$(head -1 "$BUILD/preplan-outcome" 2>/dev/null)" in
             HIT*)
               PP_OUTCOME="STALE uncited newer comment(s) $PTG_IDS"
               printf '%s\n' "$PP_OUTCOME" > "$BUILD/preplan-outcome"
-              case "${PP_DIR:-}" in "$HARNESS/plans/"?*) rm -rf "$PP_DIR" ;; esac ;;
+              if command -v psr_retire >/dev/null 2>&1; then
+                PSR_RETIRED=$(psr_retire "$HARNESS" "$PROJECT" "$KEY" "${PP_DIR:-}" "$PTG_SINCE")
+              else
+                case "${PP_DIR:-}" in "$HARNESS/plans/"?*) rm -rf "$PP_DIR" && PSR_RETIRED="hub dir removed" ;; esac
+              fi ;;
           esac
           # A RESUMED build re-entered its branch before rb_plan, and EXECUTE
           # skips a branch that carries commits (rb/execute.sh). Planning fresh
@@ -1188,11 +1211,24 @@ if [ -s "$BUILD/plan.md" ] && ! PLAN_IS_BLOCKED "$BUILD/plan.md" && command -v p
           # already carries a diff over BASE (git diff exit 1, never an error),
           # ends PLAN_STALE like call site B in rb_review.
           if [ -n "${RESUME_BUILD:-}" ] || { git diff --quiet "${BASE:-main}"...HEAD >/dev/null 2>&1; [ "$?" = 1 ]; }; then
-            echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan, resumed branch) $PTG_DETAIL — PLAN_STALE, the branch carries work planned without it" >> "$BUILD/pipeline.log"
-            BB plan_stale "" "" "" false "uncited comment(s) newer than the plan: $PTG_IDS"
-            RESULT "PLAN_STALE uncited comment(s) newer than the plan: $PTG_IDS — re-plan"; exit 3
+            # BH-9672: the same ids as an earlier PLAN_STALE of this ticket.
+            PSR_PRIOR_RC=2; PSR_PRIOR_WHY="bin/lib/plan-stale-replan.sh is not on this box"
+            if command -v psr_prior_stale >/dev/null 2>&1; then
+              PSR_PRIOR_WHY=$(psr_prior_stale "$PROJECT" "$KEY" "$PTG_IDS" "${JOB_ID:-}" "$BUILD"); PSR_PRIOR_RC=$?
+            fi
+            if [ "$PSR_PRIOR_RC" = 0 ] && [ "$(psr_knob PSR_REPEAT_FRESH)" = 1 ]; then
+              psr_alert_once "$ALERTS" "$PROJECT" "$KEY" "$PTG_IDS" "planning fresh on the resumed branch ($PSR_PRIOR_WHY)"
+              PSR_REPLAN=1
+              echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan, resumed branch, repeat) $PTG_DETAIL — planning fresh with the branch commits in the prompt" >> "$BUILD/pipeline.log"
+            else
+              [ "$PSR_PRIOR_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] plan-stale: repeat check unknown ($PSR_PRIOR_WHY)" >> "$BUILD/pipeline.log"
+              echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan, resumed branch) $PTG_DETAIL — PLAN_STALE, the branch carries work planned without it" >> "$BUILD/pipeline.log"
+              BB plan_stale "" "" "" false "uncited comment(s) newer than the plan: $PTG_IDS"
+              RESULT "PLAN_STALE uncited comment(s) newer than the plan: $PTG_IDS — refused plan retired (${PSR_RETIRED:-no pre-plan}); the next build of $KEY plans fresh with this branch's commits in its prompt"; exit 3
+            fi
+          else
+            echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan) $PTG_DETAIL — planning fresh" >> "$BUILD/pipeline.log"
           fi
-          echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan) $PTG_DETAIL — planning fresh" >> "$BUILD/pipeline.log"
         else
           echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_WARN (reused plan) $PTG_DETAIL — PLAN_THREAD_GATE_ENFORCE=0, plan kept" >> "$BUILD/pipeline.log"
         fi ;;
@@ -1325,6 +1361,27 @@ else
   echo "$(STAMP) [$PROJECT/$KEY] no stable call fp ($BCF_OUT) — plan/execute/fix use the per-build fingerprint" >> "$BUILD/pipeline.log"
 fi
 # <<< call fp write
+# >>> replan on branch (BH-9672)
+# A FRESH PLAN ON A BRANCH THAT ALREADY CARRIES WORK sees that work. The branch
+# commits were planned before a comment the new plan must apply, so the plan
+# prompt gets the commit list, the diffstat and the refused ids, and the plan
+# must write '## Existing branch commits' (keep or drop per commit). The marker
+# $BUILD/replan-on-branch makes EXECUTE run on this branch (rb_execute), under
+# the new plan, never the checkpoint skip. Only for a branch with a diff over
+# BASE AND a resume signal: a checkpoint branch, a resumed build, a refused
+# plan in this dir, the repeat arm of the gate or an adopt-time thread STALE.
+# A TARGET_BRANCH fix round with none of those keeps today's prompt.
+if command -v psr_branch_note >/dev/null 2>&1 \
+   && { git diff --quiet "${BASE:-main}"...HEAD >/dev/null 2>&1; [ "$?" = 1 ]; } \
+   && { [ -n "${CKPT_START_POINT:-}" ] || [ -n "${RESUME_BUILD:-}" ] || [ -e "$BUILD/plan.md.thread-refused" ] \
+        || [ "${PSR_REPLAN:-0}" = 1 ] || case "${PP_OUTCOME:-}" in "STALE uncited"*) true ;; *) false ;; esac; }; then
+  PSR_NOTE=$(psr_branch_note "${BASE:-main}" "$BUILD")
+  if [ -n "$PSR_NOTE" ] && [ -s "$BUILD/replan-on-branch" ]; then
+    REPLAN_LINE="${REPLAN_LINE:-}$PSR_NOTE"
+    echo "$(STAMP) [$PROJECT/$KEY] replan-on-branch: $(( $(wc -l < "$BUILD/replan-on-branch") - 1 )) commit(s), ids $(head -1 "$BUILD/replan-on-branch" | cut -d' ' -f2-)" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< replan on branch (BH-9672)
 # BH-7970: sp_render (bin/lib/stage-prompt.sh). A box without the lib refuses the stage below; it never sends an empty prompt.
 . "$HARNESS/bin/lib/stage-prompt.sh" 2>/dev/null || sp_render() { echo "stage-prompt: bin/lib/stage-prompt.sh not loaded" >&2; return 1; }
 # >>> plan prompt (tests/run-build-test-home.bh-580-test.sh drives this block)

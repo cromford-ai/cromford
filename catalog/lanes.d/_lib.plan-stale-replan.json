@@ -1,0 +1,49 @@
+{
+  "libs": [
+    {
+      "id": "plan-stale-replan",
+      "file": "bin/lib/plan-stale-replan.sh",
+      "note": "BH-9672. Ends the PLAN_STALE loop on a resumed ticket. The pre-plan adopt step runs the plan thread gate's classifier before it adopts (PREPLAN_STALE, the plan stage runs). A refused pre-plan is retired at its source, the coordination DB row included (POST /api/preplans/retire). A refusal on a resumed branch whose comment ids match an earlier PLAN_STALE RESULT of the ticket writes one ALERTS line and plans fresh with the branch commits in the prompt; EXECUTE then runs under the new plan. Resolved by psr_knob with lib_env_apply plan-stale-replan.",
+      "knobs": [
+        {
+          "env": "PSR_ADOPT_THREAD_CHECK",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off: the adopt step does not read the thread, and the plan thread gate judges the adopted plan as before",
+          "required": true,
+          "note": "1 = a pre-plan older than an uncited comment by a person or our App is PREPLAN_STALE at adopt and its DB row is retired."
+        },
+        {
+          "env": "PSR_REPEAT_FRESH",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off: a repeat refusal on a resumed branch ends PLAN_STALE as the first one does",
+          "required": true,
+          "note": "1 = a refusal on a resumed branch with the same comment ids as an earlier PLAN_STALE of the ticket writes one ALERTS line and plans fresh in the same run."
+        },
+        {
+          "env": "PSR_LOOKBACK",
+          "type": "int",
+          "default": 5,
+          "min": 1,
+          "max": 50,
+          "required": true,
+          "note": "How many of the newest kind=build jobs rows (and local build dirs) of the ticket the repeat check reads. The measured loops were 2-4 builds long."
+        },
+        {
+          "env": "PSR_COMMITS_MAX",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 200,
+          "required": true,
+          "note": "The most branch commits (and diffstat lines) the branch note puts in the plan prompt and the replan-on-branch marker. It bounds the prompt."
+        }
+      ]
+    }
+  ]
+}

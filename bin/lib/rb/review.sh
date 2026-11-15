@@ -14,7 +14,7 @@
 #   E2E_PID E2E_RC E2E_SLUG E2E_VERDICT EV_BASE EV_OUT FIX_ROUND_CAP GATES_JOINED GATES_NOTE HIGHRISK
 #   L_ART L_CKPT L_FIX L_FIXLOG L_LOGLINE L_PROMPT L_PUSH L_RE L_RUN LENS_BLOCKED
 #   LENS_FIX_FILES LENS_LAUNCHED LENS_MR LENS_PIDS LENS_SHA LENS_T0 LENS_TAGS LENS_TIER LENS_V
-#   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
+#   LENSES NH_ISSUE NH_SLUG NH_SUFFIX PSR_PRIOR_WHY PSR_RETIRED PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE REFUTE_PRIORS REFUTE_PROMPT REFUTE_READ_PRIORS REVIEW_PROMPT REVIEW_TIER
 #   REVIEW_TIER_LINE RISKY RT_LINE SECURITY_PROMPT SLC_CLASSES SLC_LIB SLC_OUT SLC_RC SP_FIX_ROUND T_E2E T_LENSES
 #   VMAP_LIES_OUT VMAP_LINE VMAP_NOTE EI_PR_VERDICT EI_STATUS
 # shellcheck shell=bash
@@ -26,11 +26,17 @@ rb_review() {
 # after the plan's stamp, and that plan.md does not cite by id, means the build
 # may have shipped the body the comment changed. plan.md is moved aside BEFORE
 # the RESULT, so no later attempt can reuse it: a resume of this dir plans
-# fresh, and PLAN_STALE is already "re-plans next tick, no comment, no ALERTS".
+# fresh, and PLAN_STALE is "re-plans next tick, no comment". ALERTS gets a line
+# only on a repeat (BH-9672): the same comment ids as an earlier PLAN_STALE of
+# this ticket. There is no fresh-plan arm after EXECUTE, so a repeat here still
+# ends PLAN_STALE; the next build plans fresh with the branch note. An adopted
+# pre-plan refused here is retired at its source, DB row included (psr_retire).
 # This build's own posts (the replan comment, the BUILD BLOCKED notice) are in
 # own-comments.sha256 and never count. An unreadable thread fails open.
 # shellcheck source=bin/lib/plan-thread.sh
 command -v ptg_check >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/plan-thread.sh" ] && . "$HARNESS/bin/lib/plan-thread.sh" 2>/dev/null; }
+# shellcheck source=bin/lib/plan-stale-replan.sh
+command -v psr_retire >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/plan-stale-replan.sh" ] && . "$HARNESS/bin/lib/plan-stale-replan.sh" 2>/dev/null; }
 if [ -s "$BUILD/plan.md" ] && command -v ptg_check >/dev/null 2>&1; then
   if PTG_SINCE=$(ptg_since "$BUILD"); then
     PTG_SINCE=${PTG_SINCE%%$'\t'*}
@@ -42,9 +48,19 @@ if [ -s "$BUILD/plan.md" ] && command -v ptg_check >/dev/null 2>&1; then
         PTG_IDS=$(ptg_ids "$PTG_DETAIL")
         if [ "$(ptg_enforce)" = 1 ]; then
           ptg_refuse_plan "$BUILD"
+          printf '%s\n' "$PTG_IDS" > "$BUILD/plan-stale-ids"
+          PSR_RETIRED=""
+          if command -v psr_retire >/dev/null 2>&1; then
+            case "$(head -1 "$BUILD/preplan-outcome" 2>/dev/null)" in
+              HIT*) PSR_RETIRED=$(psr_retire "$HARNESS" "$PROJECT" "$KEY" "${PP_DIR:-}" "$PTG_SINCE") ;;
+            esac
+            if PSR_PRIOR_WHY=$(psr_prior_stale "$PROJECT" "$KEY" "$PTG_IDS" "${JOB_ID:-}" "$BUILD"); then
+              psr_alert_once "$ALERTS" "$PROJECT" "$KEY" "$PTG_IDS" "at review: the plan of a resumed branch missed the same comments again ($PSR_PRIOR_WHY); PLAN_STALE, the next build plans fresh"
+            fi
+          fi
           echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (pre-review) $PTG_DETAIL — plan moved to plan.md.thread-refused" >> "$BUILD/pipeline.log"
           BB plan_stale "" "" "" false "uncited comment(s) newer than the plan: $PTG_IDS"
-          RESULT "PLAN_STALE uncited comment(s) newer than the plan: $PTG_IDS — re-plan"; exit 3
+          RESULT "PLAN_STALE uncited comment(s) newer than the plan: $PTG_IDS — refused plan retired (${PSR_RETIRED:-no pre-plan}); the next build of $KEY plans fresh with this branch's commits in its prompt"; exit 3
         fi
         echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_WARN (pre-review) $PTG_DETAIL — PLAN_THREAD_GATE_ENFORCE=0, review continues" >> "$BUILD/pipeline.log" ;;
       *) echo "$(STAMP) [$PROJECT/$KEY] plan-thread: $PTG_DETAIL — gate fails open (pre-review)" >> "$BUILD/pipeline.log" ;;

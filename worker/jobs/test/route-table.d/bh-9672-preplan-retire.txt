@@ -1,0 +1,3 @@
+# PREPLAN-RETIRE (BH-9672): the plan thread gate retires a refused pre-plan row,
+# guarded by the refused plan's stamp. Bearer-gated.
+POST /api/preplans/retire

@@ -36,7 +36,14 @@ HOLD_STAGE_CHECK plan
 # stage finished" — a lane that died at minute 12 leaves exactly that shape. Skip
 # EXECUTE only when a NON-wip commit exists; otherwise the resume below runs the
 # stage again, and tells the session what is already on the branch.
-if [ -z "${CKPT_START_POINT:-}" ] && ! git diff --quiet "$BASE"...HEAD 2>/dev/null && [ "$(CKPT_NONWIP_COUNT)" -gt 0 ]; then
+#
+# A PLAN WRITTEN AGAIN ON THAT BRANCH IS NOT A CHECKPOINT (BH-9672). The plan
+# thread gate refused the plan the branch commits were built under, and the
+# replan on branch block in rb_plan wrote $BUILD/replan-on-branch with a new
+# plan that saw the comment. EXECUTE runs under that plan (keep, revert,
+# finish), so no diff ships unless an execute session ran under a plan that
+# cites the comment. The marker becomes .done after a good execute result.
+if [ -z "${CKPT_START_POINT:-}" ] && ! git diff --quiet "$BASE"...HEAD 2>/dev/null && [ "$(CKPT_NONWIP_COUNT)" -gt 0 ] && [ ! -e "$BUILD/replan-on-branch" ]; then
   echo "$(STAMP) [$PROJECT/$KEY] EXECUTE checkpoint hit — branch already carries commits" >> "$BUILD/pipeline.log"
 else
 CKPT_WIP_N=$(CKPT_WIP_COUNT)
@@ -50,6 +57,16 @@ if [ "$CKPT_WIP_N" -gt 0 ]; then
     cp -f "$RB_CAP_BRIEF_FILE" "$BUILD/cap-brief.md" 2>/dev/null
     CKPT_RESUME_NOTE+="The earlier machine stopped at its soft cap, not on an error. Its brief: $(tr '\n' ' ' < "$RB_CAP_BRIEF_FILE") "
   fi
+fi
+# BH-9672: the branch carries work planned before a comment the new plan applies.
+if [ -e "$BUILD/replan-on-branch" ]; then
+  command -v psr_exec_note >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/plan-stale-replan.sh" ] && . "$HARNESS/bin/lib/plan-stale-replan.sh" 2>/dev/null; }
+  if command -v psr_exec_note >/dev/null 2>&1; then
+    CKPT_RESUME_NOTE+=$(psr_exec_note "$BUILD/plan.md" "$BUILD/replan-on-branch")
+  else
+    CKPT_RESUME_NOTE+="THE PLAN WAS WRITTEN AGAIN ON A BRANCH THAT ALREADY CARRIES WORK. Read git log $BASE..HEAD, keep only what the plan at $BUILD/plan.md asks for, undo the rest, then finish the plan. "
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] replan-on-branch: EXECUTE runs under the new plan on $BRANCH ($(( $(wc -l < "$BUILD/replan-on-branch") - 1 )) commit(s) on the branch)" >> "$BUILD/pipeline.log"
 fi
 echo "$(STAMP) [$PROJECT/$KEY] EXECUTE ($EXECUTE_MODEL)" >> "$BUILD/pipeline.log"
 BB executing
@@ -247,6 +264,8 @@ if [ "$(CKPT_NONWIP_COUNT)" = 0 ] && [ -z "${EE_NP_PASS:-}" ]; then
   exit 5
 fi
 CKPT_SQUASH_WIP || CKPT_SQUASH_REFUSED execute
+# BH-9672: this execute ran under the new plan, so a resume of this dir skips EXECUTE again.
+if [ -e "$BUILD/replan-on-branch" ]; then mv -f "$BUILD/replan-on-branch" "$BUILD/replan-on-branch.done"; fi
 # <<< execute result
 fi  # end EXECUTE checkpoint
 
