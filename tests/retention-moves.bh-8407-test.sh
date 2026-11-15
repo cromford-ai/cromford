@@ -8,7 +8,13 @@
 #      the same count, each entry deep-equal by name (a function compared by
 #      name and source). A later fragment adds a rule with a new name, and that
 #      is not a change to these. $PIN's worker src comes from `git archive
-#      $PIN worker/jobs/src` in a scratch tree. An absent $PIN is a FAIL
+#      $PIN worker/jobs/src` in a scratch tree. The test host's git context
+#      is shallow (bin/remote-gate.sh _rg_ctx_depth) and never holds $PIN, so
+#      when $PIN is absent the baseline is the committed $FIXTURE, the
+#      normalized RULES of $PIN (BH-9732). When $PIN is present the fixture
+#      must equal the git archive normalize byte for byte, so it cannot drift.
+#      $PIN absent and the fixture missing or not a JSON array is a FAIL.
+#      `--write-fixture` rewrites the fixture from $PIN (rc 1 when absent)
 #   M2 NO LITERAL: retention.js holds no `rule: "` string; every retention.d/
 #      name passes fragmentNames; each fragment imports only from ../../lib/;
 #      retention.js still exports COST_ARCHIVE_FLOOR_DAYS = 60
@@ -31,6 +37,7 @@ command -v node >/dev/null 2>&1 || { echo "SKIPPED: node is not on PATH"; exit 0
 # onboarding_runs.finished, and its RULES has 49 entries.
 PIN=a43d2f083de99b6e0770c7c0667bffb45f4afc3a
 NRULES=49
+FIXTURE="$DIR/tests/fixtures/retention-rules-a43d2f08.bh-9732.json"
 FRAGS="bh-5563-staff.js bh-6739-hotspot-tickets.js bh-6744-landing-decisions.js bh-6750-core.js
 bh-6774-cost-rows.js bh-6822-staff-ticks.js bh-6823-staff-chat.js bh-6824-staff-autonomy.js bh-6877-fly-idle.js
 bh-6887-mc-budget.js bh-6889-alert-lines.js bh-6972-alert-decisions.js bh-6977-ticket-edges.js bh-6978-sched.js
@@ -86,22 +93,50 @@ scratch_worker() {
   rm -f "$1/src/retention-rules.gen.js"
 }
 
+# pin_json <scratch dir> — $PIN's RULES as JSON from git archive. rc 1 when
+# $PIN is absent or its tree does not load.
+pin_json() {
+  git -C "$DIR" cat-file -e "$PIN^{commit}" 2>/dev/null || return 1
+  mkdir -p "$1" && git -C "$DIR" archive "$PIN" worker/jobs/src worker/jobs/package.json | tar -x -C "$1" || return 1
+  normalize "$1/worker/jobs"
+}
+
+if [ "${1:-}" = "--write-fixture" ]; then
+  pin_json "$T/wf" >"$T/wf.json" 2>"$T/wf.err" \
+    || { echo "cannot write the fixture: $PIN is not in this checkout"; exit 1; }
+  mkdir -p "$(dirname "$FIXTURE")" && cp "$T/wf.json" "$FIXTURE"
+  echo "wrote ${FIXTURE#"$DIR"/}"; exit 0
+fi
+
 W="$T/w"; scratch_worker "$W"
 normalize "$W" >"$T/branch.json" 2>"$T/branch.err" && ok "the branch retention.js loads" \
   || bad "the branch retention.js does not load: $(head -3 "$T/branch.err")"
 
 # ── M1 same rules ─────────────────────────────────────────────────────────────
 echo "M1: the same rules as $PIN"
-P="$T/pin"; mkdir -p "$P"
-if git -C "$DIR" cat-file -e "$PIN^{commit}" 2>/dev/null \
-   && git -C "$DIR" archive "$PIN" worker/jobs/src worker/jobs/package.json | tar -x -C "$P" \
-   && normalize "$P/worker/jobs" >"$T/base.json" 2>"$T/base.err"; then
+BASE_OK=0
+if git -C "$DIR" cat-file -e "$PIN^{commit}" 2>/dev/null; then
+  if pin_json "$T/pin" >"$T/base.json" 2>"$T/base.err"; then
+    BASE_OK=1
+    cmp -s "$T/base.json" "$FIXTURE" && ok "M1 the fixture equals git archive $PIN" \
+      || bad "M1 the fixture differs from git archive $PIN (rerun with --write-fixture only if $PIN moved)"
+  else
+    bad "M1 $PIN does not load: $(head -3 "$T/base.err" 2>/dev/null)"
+  fi
+elif [ ! -f "$FIXTURE" ]; then
+  bad "M1 $PIN is not in this checkout and $FIXTURE is missing (fetch-depth 0 restores $PIN)"
+elif node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(Array.isArray(r)?0:1)' "$FIXTURE" 2>/dev/null; then
+  echo "NOTE: $PIN not in this checkout (fetch-depth 0 restores it); using the fixture"
+  cp "$FIXTURE" "$T/base.json" && BASE_OK=1
+else
+  bad "M1 $PIN is not in this checkout and $FIXTURE is not a JSON array"
+fi
+if [ "$BASE_OK" = 1 ]; then
   NB=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length)' "$T/base.json")
   [ "$NB" = "$NRULES" ] && ok "M1 $PIN has $NRULES rules" || bad "M1 $PIN has $NB rules, want $NRULES"
   compare "$T/base.json" "$T/branch.json" >"$T/m1.out" 2>&1 && ok "M1 same names, count and entries" \
     || bad "M1 the branch RULES differ: $(head -5 "$T/m1.out")"
 else
-  bad "M1 $PIN is not in this checkout or does not load (fetch-depth 0 restores it): $(head -3 "$T/base.err" 2>/dev/null)"
   echo '[]' >"$T/base.json"
 fi
 
