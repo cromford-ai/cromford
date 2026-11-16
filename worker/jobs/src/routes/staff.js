@@ -7,8 +7,10 @@
 //
 // An agent's level moves only through POST /api/staff/agents/autonomy. It is
 // refused above the agent's cap (409 above_cap) and a raise by archie or by any
-// staff agent is refused (403 self_promotion): a human promotes. A lower level
-// is open to any actor. agent-core decide() is not the gate here, because it
+// staff agent is refused (403 self_promotion): a human promotes. A raise, and a
+// delegate below, also need the owner proof (BH-9262, lib/owner-proof.js: 403
+// human_proof_required under owner_proof_mode enforce). A lower level is open
+// to any actor. agent-core decide() is not the gate here, because it
 // refuses every automation request, and automation is the level a demotion
 // goes to. The level must be one of agent-core LEVELS, and the UPDATE moves it
 // only when its rank is at or below the cap's rank (the table CHECK backs it).
@@ -37,6 +39,7 @@
 // one family is invisible to the other.
 
 import { json, d1Guarded } from "../lib/http.js";
+import { humanGate, gateRefusal } from "../lib/owner-proof.js";
 import { decide, validate, LEVELS } from "../../../../agent-core/src/index.js";
 import CHARTER from "../../../../agent-core/schema/charter.schema.json" with { type: "json" };
 import { isProtectedSlug } from "./archie-autonomy.js";
@@ -155,7 +158,7 @@ export const routes = [
   // ── POST /api/staff/agents/autonomy — set an agent's level, never above cap ─
   [
     "POST", "/api/staff/agents/autonomy",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const name = agentOf(b.agent);
       if (name === null) return bad("agent");
@@ -169,6 +172,11 @@ export const routes = [
         const row = await readAgent(env, name);
         if (!row) return NOT_FOUND();
         const rises = rank(b.autonomy) > rank(row.autonomy);
+        if (rises) {
+          // BH-9262: a raise needs the owner proof (lib/owner-proof.js).
+          const g = await humanGate(req, env, { route: "/api/staff/agents/autonomy", actor });
+          if (g.refuse) return gateRefusal(g);
+        }
         if (rises && await isAgentActor(env, actor)) return json(403, { error: "self_promotion" });
         if (row.autonomy === b.autonomy) {
           return json(200, { ok: true, existing: true, agent: charterOf(row, await readLanes(env, name)) });
@@ -202,7 +210,7 @@ export const routes = [
   // ── POST /api/staff/classes/delegation — delegate or ask_first one class ───
   [
     "POST", "/api/staff/classes/delegation",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const name = agentOf(b.agent);
       if (name === null) return bad("agent");
@@ -213,6 +221,12 @@ export const routes = [
       if (actor === null) return bad("actor");
       const reason = reasonOf(b.reason);
       if (reason === undefined) return bad("reason");
+      // BH-9262: delegate needs the owner proof (lib/owner-proof.js); ask_first
+      // stays open to any actor.
+      if (b.decision === "delegate") {
+        const g = await humanGate(req, env, { route: "/api/staff/classes/delegation", actor });
+        if (g.refuse) return gateRefusal(g);
+      }
 
       return d1Guarded("staff_classes", async () => {
         const agent = await readAgent(env, name);

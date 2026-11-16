@@ -7,7 +7,10 @@
 // is stamped. `ok(key, value)` narrows a field's type where the worker would
 // otherwise coerce it; `build(sent, env, actor)` replaces the pick for a row whose
 // body is rebuilt from the worker's own state. `needsReason` refuses the write
-// with a 400 unless `reason` is a non-blank string.
+// with a 400 unless `reason` is a non-blank string. `boxOps: true` (BH-9262)
+// adds the owner proof headers for an Access-verified identity
+// (functions/_lib/box-ops-proof.js); only owner commands and human-only staff
+// decisions carry it.
 //
 // WHERE A ROW LIVES. The rows that existed at BH-6487 stay in WRITES in
 // functions/api/coord/[[path]].js. A NEW row is a new file,

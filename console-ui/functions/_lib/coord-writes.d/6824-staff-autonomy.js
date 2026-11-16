@@ -5,7 +5,8 @@ export default [
   // delegate or ask_first one staff class. Strings only, and a reason is
   // required (the worker writes it into the staff_autonomy_changes row). The
   // actor is stamped here; the worker refuses a raise above the cap and any
-  // change to a protected class.
-  { method: 'POST', path: 'staff/agents/autonomy', body: ['agent', 'autonomy', 'reason'], ok: isStr, needsReason: true },
-  { method: 'POST', path: 'staff/classes/delegation', body: ['agent', 'class', 'decision', 'reason'], ok: isStr, needsReason: true }
+  // change to a protected class. BH-9262: `boxOps` sends the owner proof, which
+  // the worker needs for a raise and for delegate.
+  { method: 'POST', path: 'staff/agents/autonomy', body: ['agent', 'autonomy', 'reason'], ok: isStr, needsReason: true, boxOps: true },
+  { method: 'POST', path: 'staff/classes/delegation', body: ['agent', 'class', 'decision', 'reason'], ok: isStr, needsReason: true, boxOps: true }
 ];

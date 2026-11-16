@@ -27,8 +27,11 @@
 // writes nothing. archie or any staff agent as the actor is 403. A replay of
 // the same decision is 200 existing:true; anything else on a decided row is
 // 409 not_pending. A 200 carries the rows read back after the batch.
+// BH-9262: approve also needs the owner proof
+// (lib/owner-proof.js; 403 human_proof_required under owner_proof_mode enforce).
 
 import { json, d1Guarded } from "../lib/http.js";
+import { humanGate, gateRefusal } from "../lib/owner-proof.js";
 import { LEVELS, precision } from "../../../../agent-core/src/index.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
@@ -234,7 +237,7 @@ export const routes = [
   // ── POST /api/staff/promotions/decide — a human approves or voids one ──────
   [
     "POST", "/api/staff/promotions/decide",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       if (!(typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0)) return bad("id");
       if (b.decision !== "approve" && b.decision !== "void") return bad("decision");
@@ -242,6 +245,12 @@ export const routes = [
       if (reason.length < 1 || reason.length > 500) return bad("reason");
       const actor = typeof b.actor === "string" ? b.actor.trim() : "";
       if (actor.length < 1 || actor.length > 64) return bad("actor");
+      // BH-9262: approve raises a level, so it needs the owner proof
+      // (lib/owner-proof.js); void stays open.
+      if (b.decision === "approve") {
+        const g = await humanGate(req, env, { route: "/api/staff/promotions/decide", actor });
+        if (g.refuse) return gateRefusal(g);
+      }
 
       return d1Guarded("staff_promotion_decisions", async () => {
         const readPromotion = () => env.DB.prepare(`SELECT * FROM staff_promotions WHERE id=?1`).bind(b.id).first();

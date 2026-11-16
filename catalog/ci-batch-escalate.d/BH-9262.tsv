@@ -1,0 +1,2 @@
+# The Pages owner-proof header writer the worker test round-trips through worker.fetch (BH-9262).
+console-ui/functions/_lib/box-ops-proof.js	worker	worker/jobs/test/owner-proof.bh-9262.test.js reads console-ui/functions/_lib/box-ops-proof.js and sends its headers through the worker (BH-9262)

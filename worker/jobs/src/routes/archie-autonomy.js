@@ -20,6 +20,7 @@
 // different one is 409 (D16), and the class is normalised once, in classOf (D17).
 
 import { json, d1Guarded } from "../lib/http.js";
+import { humanGate, gateRefusal } from "../lib/owner-proof.js";
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const isIso = (v) => {
@@ -189,9 +190,10 @@ export const routes = [
   // (409 never_delegable), an unknown one (404), one whose streak is below
   // min_streak (409 not_earned) and for actor archie (403): Archie never moves
   // a class into his own authority. ask_first sets ask_first and streak 0.
+  // BH-9262: delegate also needs the owner proof (lib/owner-proof.js).
   [
     "POST", "/api/archie/classes/delegation",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const c = classOf(b.class);
       if (c === null) return bad("class");
@@ -201,6 +203,13 @@ export const routes = [
       }
       const actor = typeof b.actor === "string" ? b.actor.trim() : "";
       if (actor.length < 1 || actor.length > 64) return bad("actor");
+      // BH-9262: delegate needs the owner proof (lib/owner-proof.js); ask_first
+      // stays open. bin/archie.sh's chat path gets its proof in C1; until then
+      // shadow (the default) lets it through with a would-refuse line.
+      if (b.decision === "delegate") {
+        const g = await humanGate(req, env, { route: "/api/archie/classes/delegation", actor });
+        if (g.refuse) return gateRefusal(g);
+      }
       if (b.decision === "delegate" && actor === "archie") return json(403, { error: "archie_cannot_delegate" });
 
       return d1Guarded("archie_classes", async () => {

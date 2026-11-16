@@ -194,7 +194,8 @@ async function firstRowBySig(env, repo, pr, rows) {
 // The settings switches that decide how far a source=human row is trusted. Only
 // the human token changes them, and the worker signs every such write: a
 // setting_sigs row (BH-3905) and the v1 `<key>.sig` row (routes/settings.js).
-export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mode"];
+// BH-9262: owner_proof_mode is the owner-proof rollout switch (lib/owner-proof.js).
+export const PROTECTED_HUMAN_KEYS = ["human_verdict_mode", "human_verdict_sig_mode", "owner_proof_mode"];
 
 // BH-9334: claude_auth.<project> (oauth | api-key) decides how a project pays
 // for Claude, and runner_lock.<project> (claude) decides which vendors see the
@@ -242,7 +243,9 @@ export async function settingProof(env, key, value) {
 
 // A protected switch, read so that a direct D1 write can only ever make it
 // stricter. First match wins:
-//   1. HUMAN_VERDICT_ENFORCE === "1" (worker secret, the floor) -> enforce
+//   1. env[forceVar] === "1" (worker secret, the floor) -> enforce. forceVar
+//      is HUMAN_VERDICT_ENFORCE unless the caller names another (BH-9262:
+//      owner_proof_mode uses OWNER_PROOF_ENFORCE)
 //   2. a settings read that throws -> null (BH-3849: the worker cannot tell
 //      which rule applies; humanVerdictMode's callers fail closed on it)
 //   3. value exactly `enforce` -> enforce (the safe direction needs no proof)
@@ -257,8 +260,8 @@ export async function settingProof(env, key, value) {
 //      and logged, since a v1 sig has no nonce and can be replayed; no .sig row
 //      (the unsigned seed) -> shadow. A D1 writer can delete the .sig and write
 //      shadow; only the floor closes that, so it is a required rollout step
-export async function protectedMode(env, key) {
-  if (env.HUMAN_VERDICT_ENFORCE === "1") return "enforce";
+export async function protectedMode(env, key, forceVar = "HUMAN_VERDICT_ENFORCE") {
+  if (env[forceVar] === "1") return "enforce";
   let rows;
   try {
     rows = (await env.DB.prepare("SELECT key, value FROM settings WHERE key IN (?1, ?2)")

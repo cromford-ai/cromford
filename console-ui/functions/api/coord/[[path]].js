@@ -22,6 +22,7 @@
 // without them they carry 'console' (see functions/_lib/access-identity.js).
 
 import { resolveIdentity, FALLBACK_ACTOR } from '../../_lib/access-identity.js';
+import { boxOpsHeaders } from '../../_lib/box-ops-proof.js';
 import { readOnlyRefusal } from '../../_lib/qa-session.js';
 import { qaRead } from '../../_lib/qa-read-proxy.js'; // BH-9263: a QA session's GET
 import { importTheme, CUSTOM_KEY_RE, CUSTOM_PREFIX } from '../../../src/theme/custom.js';
@@ -42,13 +43,10 @@ const AUTH_PROBE = '/api/dash/fleet';
 // one shared operator login (DASH_SECRET) with no per-user identity in it, so
 // the identity it authenticates is the console itself: 'console', the same
 // actor every console write already names (lib/settings.js, lib/models.js).
-// BH-2515: the one lookup is writeActor below. When Cloudflare Access sits in
-// front of this host and its signed assertion verifies, the actor is the
-// operator's Access email; otherwise it is SESSION_ACTOR. Never a header the
-// browser can set on its own. The alert row actions (BH-2324: POST
-// alerts/actions, audited per actor in alert_actions) are stamped the same way.
+// BH-2515: one resolveIdentity per write: the verified Access email, else SESSION_ACTOR,
+// never a browser header; alert actions (BH-2324) too. BH-9262: it also feeds a `boxOps`
+// row's owner proof, with env BOX_OPS_TOKEN (functions/_lib/box-ops-proof.js).
 const SESSION_ACTOR = FALLBACK_ACTOR;
-const writeActor = async (request, env) => (await resolveIdentity(request, env)).actor;
 // BH-2323: an operator RETRY / REQUEUE on one job. The id segment is one path
 // segment and never `.` or `..`.
 const JOB_ACTION = /^jobs\/([^/]+)\/(retry|requeue)$/;
@@ -116,7 +114,7 @@ const WRITES = [
   // token (quote_id, confirm_monthly_usd), forwarded as sent; the worker
   // validates them and gates every one of those types on the stamped actor.
   { method: 'POST', path: 'box-commands', body: ['box', 'type', 'target', 'project', 'app', 'reason', 'confirm',
-    'account', 'vcpus', 'mem_gb', 'disk_gb', 'to', 'ip', 'delete', 'cap', 'quote_id', 'confirm_monthly_usd'] },
+    'account', 'vcpus', 'mem_gb', 'disk_gb', 'to', 'ip', 'delete', 'cap', 'quote_id', 'confirm_monthly_usd'], boxOps: true },
   // BH-2323: RETRY / REQUEUE on one job; `detail` only, as a string, because the
   // worker's requeue reads max_attempts and a click must not lift that cap.
   { method: 'POST', path: isJobAction, body: ['detail'], ok: isStr, rowOrder: true },
@@ -203,7 +201,7 @@ const writeRoute = (method, rest) => ROUTES.find((w) =>
   w.method === method && (typeof w.path === 'function' ? w.path(rest) : w.path === rest)) || null;
 
 // The forwarded body: the row's fields the browser sent, then the stamped
-// actor (writeActor's answer for this request). Own keys only, so a
+// actor (resolveIdentity's actor for this request). Own keys only, so a
 // `__proto__` key in the JSON is just an unlisted field and is dropped. A
 // plain row keeps the browser's key order with the actor where the browser put
 // it (the `{...sent, actor}` spread these routes always forwarded); a
@@ -422,7 +420,8 @@ export async function onRequest(context) {
 
   const target = new URL(`/api/${rest}`, JOBS);
   // The one actor every stamp below writes, resolved once per admitted write.
-  const actor = row ? await writeActor(request, env) : SESSION_ACTOR;
+  const identity = row ? await resolveIdentity(request, env) : null;
+  const actor = identity ? identity.actor : SESSION_ACTOR;
   if (!row) {
     target.search = url.search;
   } else {
@@ -441,6 +440,7 @@ export async function onRequest(context) {
     }
   };
   if (lead) init.headers['x-lead-verdict-token'] = lead;
+  if (row && row.boxOps) Object.assign(init.headers, boxOpsHeaders(identity, env));
   // BH-7999: a row with `idempotencyKey` forwards the browser's Idempotency-Key
   // (the worker's own key rule) and the stamped actor as x-harness-actor. A
   // missing or bad key is refused before anything is forwarded.

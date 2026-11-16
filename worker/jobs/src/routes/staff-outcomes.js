@@ -34,8 +34,11 @@
 // POST /api/staff/suppressions/decide is the human decision on a pending
 // suppression: approve (active until now + staff.noise_suppress_days, default
 // 30) or decline (revoked). archie or a staff agent as approver is 403.
+// BH-9262: approve also needs the owner proof
+// (lib/owner-proof.js; 403 human_proof_required under owner_proof_mode enforce).
 
 import { json, d1Guarded } from "../lib/http.js";
+import { humanGate, gateRefusal } from "../lib/owner-proof.js";
 import { LEVELS, nextLevel, precision } from "../../../../agent-core/src/index.js";
 import { isProtectedSlug } from "./archie-autonomy.js";
 import { classSlug, familyFingerprint } from "../lib/staff-family.js";
@@ -321,13 +324,19 @@ export const routes = [
   // ── POST /api/staff/suppressions/decide — a human decides a pending row ────
   [
     "POST", "/api/staff/suppressions/decide",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       if (!(typeof b.id === "number" && Number.isInteger(b.id) && b.id > 0)) return bad("id");
       if (b.decision !== "approve" && b.decision !== "decline") return bad("decision");
       const approver = typeof b.approver === "string" ? b.approver.trim() : "";
       if (approver.length < 1 || approver.length > 64) return bad("approver");
       const to = b.decision === "approve" ? "active" : "revoked";
+      // BH-9262: approve mutes findings, so it needs the owner proof
+      // (lib/owner-proof.js); decline stays open.
+      if (b.decision === "approve") {
+        const g = await humanGate(req, env, { route: "/api/staff/suppressions/decide", actor: approver });
+        if (g.refuse) return gateRefusal(g);
+      }
 
       return d1Guarded("staff_suppressions", async () => {
         if (await isAgentName(env, approver)) return json(403, { error: "agent_approver" });

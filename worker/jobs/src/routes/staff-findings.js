@@ -32,12 +32,15 @@
 // agent name is 403 agent_approver. expiresAt is stored as YYYY-MM-DDTHH:MM:SSZ,
 // the nowIso() shape, so the TEXT comparison in the claim is a time comparison.
 // An expired suppression (expires_at at or before now) no longer matches.
+// BH-9262: the POST also needs the owner proof
+// (lib/owner-proof.js; 403 human_proof_required under owner_proof_mode enforce).
 
 import { json, d1Guarded } from "../lib/http.js";
 import { fingerprint, canonicalUrl, isOwnOutput, validate } from "../../../../agent-core/src/index.js";
 import { classSlug, familyFingerprint } from "../lib/staff-family.js";
 import FINDING from "../../../../agent-core/schema/finding.schema.json" with { type: "json" };
 import SUPPRESSION from "../../../../agent-core/schema/suppression.schema.json" with { type: "json" };
+import { humanGate, gateRefusal } from "../lib/owner-proof.js";
 
 const AGENT_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const FP_RE = /^[0-9a-f]{64}$/;
@@ -171,7 +174,7 @@ export const routes = [
   // ── POST /api/staff/suppressions — a human mutes one fingerprint until expiry ─
   [
     "POST", "/api/staff/suppressions",
-    async ({ env, t, body }) => {
+    async ({ req, env, t, body }) => {
       const b = body && typeof body === "object" ? body : {};
       const fp = typeof b.fingerprint === "string" ? b.fingerprint.trim().toLowerCase() : "";
       if (!FP_RE.test(fp)) return bad("fingerprint");
@@ -185,6 +188,9 @@ export const routes = [
       if (!(expiresAt > t)) return bad("expiresAt_past");
       const v = validate(SUPPRESSION, { fingerprint: fp, reason, approver, expiresAt });
       if (!v.ok) return json(400, { error: "suppression", errors: v.errors });
+      // BH-9262: a mute needs the owner proof (lib/owner-proof.js).
+      const g = await humanGate(req, env, { route: "/api/staff/suppressions", actor: approver });
+      if (g.refuse) return gateRefusal(g);
 
       return d1Guarded("staff_suppressions", async () => {
         const a = approver.toLowerCase();
