@@ -20,6 +20,7 @@
 set -uo pipefail
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/git-history-full.bh-9733.sh" || exit 1
 mkdir -p "$T/bin" "$T/logs" "$T/state" "$T/locks" "$T/flags" "$T/prompts" \
          "$T/fly" "$T/catalog" "$T/checks" "$T/guardrails" "$T/config" "$T/env" "$T/fakebin"
 cp "$DIR/bin/alert-line.sh" "$T/bin/"
@@ -38,6 +39,8 @@ gitc() { git -c user.email=t@t -c user.name=t "$@"; }
 
 # B1. real repo, byte parity: --ref at a commit that tracks worker/jobs/schema.sql
 #     prints that commit's file, byte for byte. Read-only on the real repo.
+#     A shallow clone or the gate's snapshot cannot hold that commit: B1 prints
+#     a NOTE there and fails only on full history (ghf_full, BH-9733).
 REV=""
 if git -C "$DIR" cat-file -e HEAD:worker/jobs/schema.sql 2>/dev/null; then
   REV=HEAD
@@ -46,7 +49,11 @@ else
   [ -n "$DEL" ] && REV="$DEL^"
 fi
 if [ -z "$REV" ]; then
-  bad "B1: no commit in this repo tracks worker/jobs/schema.sql"
+  if ghf_full "$DIR"; then
+    bad "B1: no commit in this repo tracks worker/jobs/schema.sql"
+  else
+    echo "NOTE: B1 not run (history is shallow or a snapshot: the commit that deleted worker/jobs/schema.sql is not in it)"
+  fi
 elif cmp -s <("$SB" --root "$DIR" --ref "$REV" --worker jobs) <(git -C "$DIR" show "$REV:worker/jobs/schema.sql"); then
   ok
 else
