@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERIFY_PREV_BYTES",
+  "type": "int",
+  "default": 4000,
+  "min": 0,
+  "max": 20000,
+  "unit": "bytes",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-verify-baseline.sh",
+  "note": "BH-9437: the next fix round's brief carries this many bytes of the tail of the last failed round's verify output (<key>.fix-verify.prev.txt). A green push removes the copy. 0 = no previous-verify brief."
+}

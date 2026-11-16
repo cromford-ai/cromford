@@ -84,6 +84,12 @@ done
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/beats.txt"\nexit 0\n' "$T" > "$H/bin/beat.sh"
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/lane-alert.txt"\nexit 0\n' "$T" > "$H/bin/lane-alert.sh"
 chmod +x "$H/bin/beat.sh" "$H/bin/lane-alert.sh"
+# BH-9437: the resolver-ladder fragments travel with the lane, so §3 drives the
+# re-review ask after a green push and the review park's second round through
+# the real script. The lead CLI is RECORDED: the ask is one of the facts.
+mkdir -p "$H/bin/blocked-resolver.d" && cp "$DIR"/bin/blocked-resolver.d/bh-9437-*.sh "$H/bin/blocked-resolver.d/"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/lead-verdict.txt"\necho "requested lead review #r1"\nexit 0\n' "$T" > "$H/bin/lead-verdict.sh"
+chmod +x "$H/bin/lead-verdict.sh"
 # A jobs client whose queue_put is recorded rather than sent: "the escalation
 # must not enqueue a rebuild" is only provable against a recorder.
 cat > "$H/bin/jobs-client.sh" <<EOF
@@ -562,6 +568,11 @@ grep -q "conductor's head-bound re-review" "$T/comment-bodies.txt" \
 [ -s "$T/queue.txt" ] && bad "a review fix round must never enqueue a rebuild: $(cat "$T/queue.txt")" || ok
 [ "$(STATEJSON tproj-TK-71 | jq -r .outcome)" = "" ] && ok \
   || bad "a landed fix round is not a terminal, got outcome '$(STATEJSON tproj-TK-71 | jq -r .outcome)'"
+# BH-9437 item 4: the green push asks for a re-review of the head it pushed.
+grep -qx "request o/tproj 71 $(osha ticket/TK-71)" "$T/lead-verdict.txt" 2>/dev/null && ok \
+  || bad "a green fix push must request a re-review of the pushed head $(osha ticket/TK-71): $(cat "$T/lead-verdict.txt" 2>/dev/null)"
+[ "$(STATEJSON tproj-TK-71 | jq -r '.rereview.head + " " + .rereview.asked')" = "$(osha ticket/TK-71) ok" ] && ok \
+  || bad "the record must remember the re-review it asked for: $(STATEJSON tproj-TK-71 | jq -c .rereview)"
 
 # --- 3b. the SAME verdict on the SAME head again buys NOTHING -------------
 : > "$T/agent.txt"; : > "$H/logs/blocked-resolver.log"
@@ -578,6 +589,11 @@ grep -q 'fix round already ran on' "$H/logs/blocked-resolver.log" && ok \
 # TEST-CHANGE BH-4140 this section pinned the ESCALATED park (PR left open, a
 # comment asking a person to push, an ESCALATED ALERTS line and beat). The
 # terminal is br_abandon now, so the same facts are asserted for ABANDONED.
+# TEST-CHANGE BH-9437 the premise "ABANDONED in the same tick" was the bug
+# BH-9437 item 3 fixes: a review park gets BR_REVIEW_FIX_ROUNDS (2) rounds, not
+# 1. Tick 1 runs round 1 and owes round 2; tick 2 runs round 2, which reads
+# round 1's verify, and only then is the park ABANDONED. Every ABANDONED fact
+# below is asserted unchanged after tick 2.
 rm -f "$T/agent-commits"
 S72=$(osha ticket/TK-72)
 PRRESET
@@ -586,6 +602,17 @@ REVADD 72 11 CHANGES_REQUESTED "$S72" "cromford[bot]" "$(RBODY REQUEST_CHANGES "
 RESET
 RUN
 [ "$(NAGENT)" = 1 ] && ok || bad "the first round on a new head must run, got $(NAGENT) agent calls"
+[ "$(STATEJSON tproj-TK-72 | jq -r .outcome)" = "" ] && ok \
+  || bad "BH-9437: round 1 of 2 failed — the park is not a terminal yet, got outcome '$(STATEJSON tproj-TK-72 | jq -r .outcome)'"
+[ "$(STATEJSON tproj-TK-72 | jq -r '.review_fix_heads | length')" = 0 ] && ok \
+  || bad "BH-9437: the head is un-marked so round 2 runs on it: $(STATEJSON tproj-TK-72 | jq -c .review_fix_heads)"
+grep -q 'fix round 2 next tick' "$H/logs/blocked-resolver.log" && ok || bad "BH-9437: the log says round 2 is owed (log: $(tail -3 "$H/logs/blocked-resolver.log"))"
+[ "$(NCOMMENTS)" = 0 ] && ok || bad "BH-9437: a failed round with a round owed posts nothing, got $(NCOMMENTS)"
+: > "$T/prompt.txt"
+RUN
+[ "$(NAGENT)" = 2 ] && ok || bad "BH-9437: tick 2 runs round 2 of 2, got $(NAGENT) agent calls in total"
+grep -q 'PRODUCED NO VERIFIED COMMIT' "$T/prompt.txt" && ok || bad "BH-9437: round 2's brief carries round 1's verify output"
+[ "$(STATEJSON tproj-TK-72 | jq -r .fixrounds)" = 2 ] && ok || bad "BH-9437: two rounds counted, got $(STATEJSON tproj-TK-72 | jq -r .fixrounds)"
 [ "$(STATEJSON tproj-TK-72 | jq -r .outcome)" = ABANDONED ] && ok \
   || bad "a fix round that produced nothing must end ABANDONED, got outcome '$(STATEJSON tproj-TK-72 | jq -r .outcome)' (log: $(tail -6 "$H/logs/blocked-resolver.log"))"
 [ "$(NCOMMENTS)" = 1 ] && ok || bad "the abandon must post exactly ONE comment (the close reason), got $(NCOMMENTS): $(cat "$T/comments.txt")"

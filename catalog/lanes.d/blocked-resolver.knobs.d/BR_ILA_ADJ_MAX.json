@@ -1,0 +1,11 @@
+{
+  "env": "BR_ILA_ADJ_MAX",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 10,
+  "unit": "heads",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9437-ironlaw-adj.sh",
+  "note": "BH-9437: an iron-law park gets one adjudication per PR head, up to this many adjudicated heads per ticket record; past it the ticket is rebuilt fresh. Iron-law never goes to a fix round. A moved head is scanned first: hits already accepted are carried with no model call. Minimum 1; 0 is not allowed."
+}

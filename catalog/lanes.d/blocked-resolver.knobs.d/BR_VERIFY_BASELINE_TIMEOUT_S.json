@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERIFY_BASELINE_TIMEOUT_S",
+  "type": "int",
+  "default": 1800,
+  "min": 60,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9437-verify-baseline.sh",
+  "note": "BH-9437: the timeout of each baseline command (typecheck, unit) on current main. The default is the unit timeout the fix round already uses. A baseline that times out is could-not-run and the round stays red. Minimum 60; 0 is not allowed."
+}

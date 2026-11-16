@@ -1,0 +1,11 @@
+{
+  "env": "BR_REREVIEW_GATE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-rereview.sh",
+  "note": "BH-9437: a fix round that pushed a verified green commit asks for a lead re-review of the pushed head (bin/lead-verdict.sh request), and rebuild-fresh is held while that request is requested or running and no verdict stands on the head. A moved head, a standing verdict or a finished request releases it. 0 = no re-review ask after a push and no hold on rebuild-fresh, as before BH-9437."
+}

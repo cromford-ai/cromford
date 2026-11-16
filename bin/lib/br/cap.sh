@@ -129,6 +129,7 @@ br_floor_stands() {
 br_cap_notes() {
   local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}"
   local ck st slug num head rows standing n cap bodies ids id login lr rc out rid ref
+  BR_CAPN_FLOOR=0   # BH-9437: 1 only on the floor return below (bh-9437-review-replan.sh reads it)
   command -v rl_line_blocks >/dev/null 2>&1 || return 1
   case "$url" in https://github.com/*/pull/*) ;; *) return 1 ;; esac
   slug=$(br_slug_of_url "$url") || return 1
@@ -169,6 +170,7 @@ br_cap_notes() {
   bodies=$(mktemp "${TMPDIR:-/tmp}/br-capnotes.XXXXXX") || return 1
   printf '%s' "$standing" | jq -r '.[] | .b // ""' 2>/dev/null | tr -d '\r' > "$bodies"
   if br_floor_stands "$bodies"; then
+    BR_CAPN_FLOOR=1; mkdir -p "$ST/$p" 2>/dev/null; cp -f "$bodies" "$ST/$p/$ck.capnotes-floor.txt" 2>/dev/null   # BH-9437: the findings the re-plan carries
     rm -f "$bodies"
     say "$p/$rkey [$reason]: at the fix cap, an ALWAYS-BLOCK finding still stands on ${head:0:12} — the review terminal is today's"
     return 1

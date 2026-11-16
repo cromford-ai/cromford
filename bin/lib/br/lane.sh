@@ -256,3 +256,52 @@ br_fix_here_run() {
     *)          br_fix_round "$@" ;;
   esac
 }
+
+# SATURATED ALERT (BH-1457), moved from the driver (BH-9437) to hold the ceiling.
+# br_saturated_alert <streak> <candidates> <oldest-untouched> <skiplist>
+#                    <stop-reason> <retired> <secs>
+#   ONE actionable line: how long, how many parks, how many rungs a tick buys,
+#   how old the oldest untouched park is, where the rungs went over the streak,
+#   and the arithmetic that turns those into "hours to first touch". Every value
+#   comes from this tick and the streak file — nothing is invented (D26).
+#
+#   THE REMEDIATION DEPENDS ON WHICH BOUND BIT (BH-1457, review I4). Folding
+#   `tick-budget` into the streak is right — both endings mean this lane cannot
+#   reach the back of its own list — but the line said "ended on reason=budget"
+#   for both and told the operator to RAISE BR_PER_TICK, which on a wall-bound
+#   lane is precisely the action that produced the 53-minute tick this ticket
+#   exists to bound. It now names the ending it saw and advises accordingly.
+#
+#   `candidates` is the SAME number the tick line prints (what discovery found),
+#   with the retired count beside it. The first cut passed the post-retire array
+#   length here and RAWCOUNT there: two different numbers under one word, in two
+#   places an operator reads side by side.
+br_saturated_alert() {
+  local streak="$1" cands="$2" oldest="$3" skip="$4" stop="${5:-budget}" retd="${6:-0}" secs="${7:-0}"
+  local line top="" rate perh advice
+  if [ "${#SAT_RUNGS[@]}" -gt 0 ]; then
+    top=$(for PJ in "${!SAT_RUNGS[@]}"; do printf '%s\t%s\n' "${SAT_RUNGS[$PJ]}" "$PJ"; done \
+          | sort -rn -k1,1 | head -3 \
+          | awk -F'\t' '{printf "%s%s:%s", (n++ ? " " : ""), $2, $1}')
+  fi
+  [ -n "$top" ] || top=none
+  case "$PER_TICK" in
+    ''|*[!0-9]*) rate="BR_PER_TICK='$PER_TICK' is not a number, so this lane's budget is whatever bash made of it" ;;
+    0)           rate="BR_PER_TICK=0: nothing is ever touched" ;;
+    *)           perh=$((PER_TICK * 6))
+                 rate="At this rate candidates ÷ (rungs×6/h) = $cands ÷ $perh ≈ $(( (cands + perh - 1) / perh ))h to first touch" ;;
+  esac
+  case "$stop" in
+    tick-budget) advice="This lane is TIME-bound, not rung-bound: its last tick ran ${secs}s against BR_TICK_MAX_SECS=$TICK_MAX and the rungs it did not spend are already being carried. Raise BR_TICK_MAX_SECS in env/global.env, or shrink the list (the rungs themselves are what is slow). DO NOT raise BR_PER_TICK — on a time-bound lane that buys latency, which is what BH-1457 was filed about." ;;
+    *)           advice="Raise BR_PER_TICK in env/global.env (the arithmetic is in env-templates/global.env.example) or cap the busy projects with BR_PER_TICK_<PROJECT>." ;;
+  esac
+  line="[blocked-resolver] SATURATED: $streak consecutive ticks ended on reason=$stop. candidates=$cands retired=$retd rungs/tick=BR_PER_TICK=$PER_TICK secs=$secs oldest_untouched=$oldest skipped=[${skip:--}] top rung consumers over the streak: $top. $rate. $advice bin/merge-conductor.sh will not re-hand-off stuck parks while this stands."
+  if [ -x "$H/bin/lane-alert.sh" ]; then
+    "$H/bin/lane-alert.sh" blocked-resolver "$line" >/dev/null 2>&1 || true
+  else
+    HARNESS="$H" "$H/bin/alert-line.sh" "$line"
+    "$H/bin/beat.sh" "$(jq -nc --arg akey "blocked-resolver-saturated" --arg l "$line" \
+      '{kind:"fleet_alert",project:"-",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
+  fi
+  say "SATURATED — $streak consecutive budget ticks, $cands candidates, BR_PER_TICK=$PER_TICK, oldest_untouched=$oldest; one ALERTS line written"
+}

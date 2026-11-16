@@ -1,0 +1,11 @@
+{
+  "env": "BR_REVIEW_REPLAN_MAX",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 3,
+  "unit": "re-plans",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-review-replan.sh",
+  "note": "BH-9437: at the review fix-round cap, a standing ALWAYS-BLOCK finding sends the ticket to this many automatic re-plans (a KIND: review-replan build note with the finding and the fix-round history, then a fresh build) before the ticket is ABANDONED. Counted per ticket on .review_replans, with the carried notes as a floor. 0 = an ALWAYS-BLOCK finding at the review fix cap abandons, as before BH-9437."
+}

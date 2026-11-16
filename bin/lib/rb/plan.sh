@@ -600,6 +600,11 @@ if [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/d
 # automatic re-plan. Nothing was refused, so it is not framed as a ruling.
 elif [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/dev/null)" = "KIND: stale-replan" ]; then
   CARRIED_NOTE_LINE=" THIS BUILD IS AN AUTOMATIC RE-PLAN. A prior PR of this ticket sat with no new commits and no new review for days and was parked. Re-read the ticket thread and plan it fresh against current main; do not assume the prior PR's approach. EVIDENCE: $(tail -n +2 "$BUILD/carried-note.md" | head -c 1500 | tr '\n' ' ')"
+# KIND: review-replan (BH-9437): a prior PR of this ticket kept an ALWAYS-BLOCK
+# review finding through its fix rounds and was closed; this build is the
+# automatic re-plan, and the note carries the finding and the rounds.
+elif [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/dev/null)" = "KIND: review-replan" ]; then
+  CARRIED_NOTE_LINE=" THIS BUILD IS AN AUTOMATIC RE-PLAN AFTER A REVIEW BLOCK. A prior PR of this ticket kept an ALWAYS-BLOCK review finding through its fix rounds and was closed. Plan so the finding below cannot occur, and do not repeat the prior approach unchanged. EVIDENCE: $(tail -n +2 "$BUILD/carried-note.md" | head -c 1500 | tr '\n' ' ')"
 elif [ -s "$BUILD/carried-note.md" ]; then
   CARRIED_NOTE_LINE=" A PRIOR BUILD OF THIS TICKET WAS BLOCKED AND THE BLOCK WAS ADJUDICATED. The ruling is below, verbatim. Honor it: if it carries a 'TEST-CHANGE:' block, copy that block into plan.md word for word (the test-tamper gate reads plan.md for exactly that string, and without it this build blocks again on a change that has already been ruled acceptable). If it says something was REJECTED, do not do that thing again. RULING: $(head -c 1500 "$BUILD/carried-note.md" | tr '\n' ' ')"
 fi

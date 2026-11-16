@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERIFY_ON_MAIN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-verify-baseline.sh",
+  "note": "BH-9437: a fix round whose typecheck or unit step is red runs the same commands on current main (a detached worktree, cached per main sha in <key>.verify-baseline.txt). When every red step is red on main with the same failures, the round counts as verified and one BASELINE line per step is added to the verify output. 0 = any red typecheck or unit step fails the fix round, as before BH-9437."
+}

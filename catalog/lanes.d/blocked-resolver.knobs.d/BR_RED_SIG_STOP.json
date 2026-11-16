@@ -1,0 +1,11 @@
+{
+  "env": "BR_RED_SIG_STOP",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-red-sig.sh",
+  "note": "BH-9437: before rebuild-fresh closes a ci-red PR, the resolver stores the failing required check names of its head (.red_sigs) and compares them with the PR before it. The same set twice stops the ladder: no close, no enqueue, one warn alert (id red-repeat:<project>:<key>:<head12>) that names the checks. The PR stays open; a new push restarts the compare. 0 = no red-set compare, as before BH-9437."
+}

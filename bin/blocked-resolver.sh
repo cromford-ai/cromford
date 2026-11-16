@@ -4438,6 +4438,7 @@ br_rebuild_fresh() {
   if [ "${mst:-}" = open ] && ! br_supersede_guard "$p" "$ck" "$rkey" "$reason" "$url"; then
     return 0
   fi
+  command -v brlad_rereview_gate >/dev/null 2>&1 && ! brlad_rereview_gate "$p" "$ck" "$rkey" "$reason" "$url" && return 3   # BH-9437: a re-review of a pushed fix is pending
   if [ "$cap" -ge "$lim" ]; then
     if [ "$OBSERVE" = 1 ]; then
       say "$p/$rkey [$reason]: WOULD abandon — rebuilt fresh $cap times and the ladder is exhausted — observe mode"
@@ -4446,6 +4447,7 @@ br_rebuild_fresh() {
     br_abandon "$p" "$ck" "$reason" "$url" "$rec" "rebuilt fresh $cap times and the ladder is exhausted$(br_jobs_why "$st")" "$tkey"
     return 0
   fi
+  command -v brlad_red_gate >/dev/null 2>&1 && ! brlad_red_gate "$p" "$ck" "$rkey" "$reason" "$url" && return 3   # BH-9437: the same red set as the PR before it
   if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD rebuild fresh (rebuild $((n+1)) of $lim) — observe mode"; return 0; fi
   if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$ck" "$reason" "$url" || return 0; fi
   if command -v br_pm_release >/dev/null 2>&1; then br_pm_release "$p" "$rkey" "$reason" "$tkey" || return 0; fi   # BH-7836: a held ticket's rebuild must get a plan
@@ -4888,6 +4890,7 @@ br_fix_terminal() {
       # ALWAYS-BLOCK floor merge with notes (br_cap_notes, rc 0 = handled this
       # tick); a standing floor line keeps today's abandon.
       br_cap_notes "$1" "$2" "$3" "$4" "$5" "${6:--}" && return 0
+      command -v brlad_review_replan >/dev/null 2>&1 && brlad_review_replan "$1" "$2" "$3" "$4" "$5" "${6:--}" && return 0   # BH-9437: one re-plan before the abandon
       br_abandon "$1" "$(br_cap_key "$1" "$2" "${6:--}")" "$3" "$4" "$5" \
         "the review findings outlasted the harness fix round(s) on this branch" "${6:--}" || true ;;
     *) br_rebuild_fresh "$@" ;;
@@ -5515,6 +5518,7 @@ br_fix_round() {
   local frcl_w="" frcl_dir="" frtwhy=""
   local mref=main pbase="" nctail=""
   local cok="" cfail="" clines cbytes cbase cdiff cplan cplan_show cpaths=()
+  command -v brlad_ila_no_fix >/dev/null 2>&1 && brlad_ila_no_fix "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" && return 0   # BH-9437: iron-law never gets a fix round
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   st=$(br_load "$p" "$ck"); n=$(br_num "$st" fixrounds)
   n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" fixround fixrounds "$st")
@@ -5973,6 +5977,7 @@ br_fix_round() {
     brief="$brief"$'\n\n'"THE CI LINT STEPS WERE RED ON THE LAST ROUND (bin/ci-local.sh, the steps of CI's lint job and the rules pack). The harness re-runs them after you and will not push while they are red. Reproduce one step with \`bin/ci-local.sh --step '<step>'\`. Fix the code each line names; never edit .github/workflows/harness-ci.yml, bin/ci-local.sh or catalog/ci-local-skip.d/:"$'\n'"$(head -40 "$ST/$p/$ck.ci-local/findings.txt")"
   fi
   # <<< br ci-local brief
+  command -v brlad_prev_verify_brief >/dev/null 2>&1 && brief="$brief$(brlad_prev_verify_brief "$p" "$ck")"   # BH-9437: the last failed round's verify
   prompt="FIX ROUND on an open pull request. Branch $br of $slug ($url) is parked with the harness on: $reason. Your job is to make that park false, and nothing else. Apply ONLY what the brief below asks for — no refactors, no adjacent cleanups, no new features: every line you change must trace to it. Where an item in the brief is wrong, say so in the commit message with your reasoning rather than silently ignoring it. Never answer a finding, a conflict or a red test by weakening, skipping or deleting a test. When you are done, run the repo's own typecheck and unit suite yourself and make them pass; the harness re-runs both after you and will refuse to push if they are red or if any conflicted path is left unresolved. Commit with a message naming what you addressed. The harness has already merged what it needs; do not merge origin/main again unless this branch still conflicts with main: the merge queue tests every PR on current main, and a clean merge only makes a new head that loses its review and restarts CI.$xprline
 $live$brief"
   # THE LEDGER ROW, immediately before the spend. Written first so a crash
@@ -6064,6 +6069,7 @@ $live$brief"
     command -v brfr_verify >/dev/null 2>&1 && ! brfr_verify "$wt" "$ST/$p/$ck" && vrc=1   # BH-9472: the reproduced CI test, re-run on the round's tree; still-red or could-not-run refuses the push
   } > "$out" 2>&1
   grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]|SELECTION_GATE_EXIT: 1' "$out" && vrc=1
+  command -v brlad_vb_rescore >/dev/null 2>&1 && [ "$vrc" = 1 ] && [ "$rc" = 0 ] && brlad_vb_rescore "$p" "$ck" "$wt" "$out" "origin/${mref:-main}" && vrc=0   # BH-9437: red on main too
   grep -q '^CI_LOCAL_EXIT: 1' "$out" && { vrc=1; say "$p/$rkey [$reason]: the CI lint steps are red on the round's head ($(grep -c '^CI-LOCAL ' "$out") finding line(s), see $out) — not pushed"; }
   grep -q '^CLOSURE_LINT_EXIT: 1' "$out" && say "$p/$rkey [$reason]: the scratch-closure lint is red on the round's head ($(frcl_findings "$frcl_dir" | grep -c .) finding line(s), see $out) — not pushed"
   # A HALF-RESOLVED MERGE IS NEVER PUSHED. An agent that answered the conflict by
@@ -6106,6 +6112,7 @@ $live$brief"
     # sits with no round, no terminal and nobody told. Its remaining round is for
     # the next head, and for THIS head a failed round is the terminal.
     st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason" "$p")
+    command -v brlad_round_failed >/dev/null 2>&1 && brlad_round_failed "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$rc" "$wt" "$n" "$out" && return 0   # BH-9437: a review park's owed round
     if [ "$reason" != review-changes-requested ] && [ "$((n+1))" -lt "$cap" ]; then
       say "$p/$rkey [$reason]: fix round $((n+1)) of $cap did not land — fix round $((n+2)) next tick (agent rc=$rc, verify rc=$vrc)"
       br_wt_drop "the round did not land and another one is owed"
@@ -6277,6 +6284,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     # THE PUSH IS REMEMBERED FOR THE SUPERSEDE GUARD (BH-1642): the rebuild rung may not close this PR
     # inside the settle window after it, nor while a lead verdict stands on the head it pushed over (#1448).
     br_fix_push_note "$p" "$ck" "$url" "$(git -C "$wt" rev-parse HEAD)" "${head:-}"
+    command -v brlad_rereview_ask >/dev/null 2>&1 && brlad_rereview_ask "$p" "$ck" "$slug" "$url" "$(git -C "$wt" rev-parse HEAD)" "$reason"   # BH-9437: ask for a re-review of the pushed head
     # The body's live-CI block now names the pushed head (BH-1794).
     command -v br_preflight_after_push >/dev/null 2>&1 \
       && br_preflight_after_push "$slug" "$url" "$(git -C "$wt" rev-parse HEAD)" "$p" "$ck"
@@ -6353,6 +6361,7 @@ br_adjudicate() {
   local report adj_cases adj_prefix="" ilc_f="" ilc_rc=2 ilc_n ilc_arc
   st=$(br_load "$p" "$rkey"); n=$(br_num "$st" adjudications)
   n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" adjudicate adjudications)
+  [ "$reason" = iron-law ] && command -v brlad_ila_head_n >/dev/null 2>&1 && brlad_ila_head_n "$p" "$rkey" "$url" "$st" "$n" && n=$BRLAD_N   # BH-9437: one ruling per head
   if [ "$n" -ge 1 ]; then
     [ "$reason" = iron-law ] && command -v br_ila_pending_retry >/dev/null 2>&1 && br_ila_pending_retry "$p" "$rkey" "$reason" "$url" && return 0  # BH-7804: a kept ACCEPT is written first
     say "$p/$rkey [$reason]: already adjudicated once — dropping to the rung below"
@@ -6394,11 +6403,15 @@ br_adjudicate() {
     dslug=$(br_slug_of_url "$url") || dslug="$slug"
     dnum=$(mc_num_of_url "$url")
     if [ -n "$dslug" ] && [ -n "$dnum" ]; then
+      # THE RULING BINDS TO THE HEAD READ BEFORE THE DIFF (BH-9437), and a head that moved during the read buys nothing.
+      head=$(br_pr_field "$url" .head.sha 'head sha' | tr 'A-F' 'a-f')
+      [ -n "$head" ] || { rm -f "$df"; say "$p/$rkey [iron-law]: the PR head is UNVERIFIABLE — adjudication not bought this tick, retried next tick"; return 0; }
       if ! gh_rest GET "repos/$dslug/pulls/$dnum" -H "Accept: application/vnd.github.v3.diff" > "$df" 2>/dev/null; then
         rm -f "$df"
         say "$p/$rkey [iron-law]: the PR diff is UNVERIFIABLE (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON}) — adjudication not bought this tick, retried next tick"
         return 0
       fi
+      [ "$(br_pr_field "$url" .head.sha 'head sha' | tr 'A-F' 'a-f')" = "$head" ] || { rm -f "$df"; say "$p/$rkey [iron-law]: the head moved during the diff read — adjudication not bought, retried next tick"; return 0; }
     fi
     evidence="The merge gate's iron-law scan flagged added lines in this diff. The flagged lines with 30 lines of context each:
 $(br_ironlaw_context "$df")"
@@ -6480,6 +6493,7 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
     fi
     # <<< adjudication issue post (BH-5799)
   fi
+  [ "$reason" = iron-law ] && [ -n "$verdict" ] && command -v brlad_ila_rule_mark >/dev/null 2>&1 && brlad_ila_rule_mark "$p" "$rkey" "$url" "${head:-}" "$verdict"   # BH-9437
   case "$verdict" in
     ACCEPT)
       br_record "$p" "$rkey" adjudicate "$reason" "ACCEPT — $adj" adjudications "$url" "${head:--}"
@@ -6487,7 +6501,7 @@ Write your reasoning, then the LAST LINE of your answer must be exactly one word
         # A head this tick could not read leaves $head empty, and the else-branch
         # below is the right answer for it: the ACCEPT is BOUND to a sha, so
         # writing one for a sha nobody read would unpark code nobody judged.
-        head=$(br_pr_field "$url" .head.sha 'head sha')
+        # BH-9437: $head is the head read BEFORE the diff, never re-read after the ruling.
         if [ -n "$head" ]; then
           # BOUND TO THE SHA IT JUDGED, exactly like the head-bound approval. A
           # push after this ruling is code nobody adjudicated and the scan must
@@ -8458,54 +8472,6 @@ if [ -r "$SAT_FILE" ]; then
     esac
   done < "$SAT_FILE"
 fi
-
-# br_saturated_alert <streak> <candidates> <oldest-untouched> <skiplist>
-#                    <stop-reason> <retired> <secs>
-#   ONE actionable line: how long, how many parks, how many rungs a tick buys,
-#   how old the oldest untouched park is, where the rungs went over the streak,
-#   and the arithmetic that turns those into "hours to first touch". Every value
-#   comes from this tick and the streak file — nothing is invented (D26).
-#
-#   THE REMEDIATION DEPENDS ON WHICH BOUND BIT (BH-1457, review I4). Folding
-#   `tick-budget` into the streak is right — both endings mean this lane cannot
-#   reach the back of its own list — but the line said "ended on reason=budget"
-#   for both and told the operator to RAISE BR_PER_TICK, which on a wall-bound
-#   lane is precisely the action that produced the 53-minute tick this ticket
-#   exists to bound. It now names the ending it saw and advises accordingly.
-#
-#   `candidates` is the SAME number the tick line prints (what discovery found),
-#   with the retired count beside it. The first cut passed the post-retire array
-#   length here and RAWCOUNT there: two different numbers under one word, in two
-#   places an operator reads side by side.
-br_saturated_alert() {
-  local streak="$1" cands="$2" oldest="$3" skip="$4" stop="${5:-budget}" retd="${6:-0}" secs="${7:-0}"
-  local line top="" rate perh advice
-  if [ "${#SAT_RUNGS[@]}" -gt 0 ]; then
-    top=$(for PJ in "${!SAT_RUNGS[@]}"; do printf '%s\t%s\n' "${SAT_RUNGS[$PJ]}" "$PJ"; done \
-          | sort -rn -k1,1 | head -3 \
-          | awk -F'\t' '{printf "%s%s:%s", (n++ ? " " : ""), $2, $1}')
-  fi
-  [ -n "$top" ] || top=none
-  case "$PER_TICK" in
-    ''|*[!0-9]*) rate="BR_PER_TICK='$PER_TICK' is not a number, so this lane's budget is whatever bash made of it" ;;
-    0)           rate="BR_PER_TICK=0: nothing is ever touched" ;;
-    *)           perh=$((PER_TICK * 6))
-                 rate="At this rate candidates ÷ (rungs×6/h) = $cands ÷ $perh ≈ $(( (cands + perh - 1) / perh ))h to first touch" ;;
-  esac
-  case "$stop" in
-    tick-budget) advice="This lane is TIME-bound, not rung-bound: its last tick ran ${secs}s against BR_TICK_MAX_SECS=$TICK_MAX and the rungs it did not spend are already being carried. Raise BR_TICK_MAX_SECS in env/global.env, or shrink the list (the rungs themselves are what is slow). DO NOT raise BR_PER_TICK — on a time-bound lane that buys latency, which is what BH-1457 was filed about." ;;
-    *)           advice="Raise BR_PER_TICK in env/global.env (the arithmetic is in env-templates/global.env.example) or cap the busy projects with BR_PER_TICK_<PROJECT>." ;;
-  esac
-  line="[blocked-resolver] SATURATED: $streak consecutive ticks ended on reason=$stop. candidates=$cands retired=$retd rungs/tick=BR_PER_TICK=$PER_TICK secs=$secs oldest_untouched=$oldest skipped=[${skip:--}] top rung consumers over the streak: $top. $rate. $advice bin/merge-conductor.sh will not re-hand-off stuck parks while this stands."
-  if [ -x "$H/bin/lane-alert.sh" ]; then
-    "$H/bin/lane-alert.sh" blocked-resolver "$line" >/dev/null 2>&1 || true
-  else
-    HARNESS="$H" "$H/bin/alert-line.sh" "$line"
-    "$H/bin/beat.sh" "$(jq -nc --arg akey "blocked-resolver-saturated" --arg l "$line" \
-      '{kind:"fleet_alert",project:"-",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
-  fi
-  say "SATURATED — $streak consecutive budget ticks, $cands candidates, BR_PER_TICK=$PER_TICK, oldest_untouched=$oldest; one ALERTS line written"
-}
 
 SAT_TMP="$SAT_FILE.tmp.$$"
 # A WALL-BUDGET TICK IS A SATURATED TICK TOO (BH-1457). `budget` and

@@ -1,0 +1,9 @@
+{
+  "source": "project-4#2205: one iron-law park on one head, adjudicated ACCEPT once; the DB accept failed to write on the first ticks and every later tick dropped to a fix round (156 rounds before BH-9437)",
+  "reason": "iron-law",
+  "head": "2205220522052205220522052205220522052205",
+  "first_verdict": "ACCEPT",
+  "ila_put_fail_first": 3,
+  "ticks": 12,
+  "expect": { "adjudications": 1, "model_calls": 1, "fix_rounds": 0, "execute_calls": 0 }
+}
