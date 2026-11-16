@@ -320,10 +320,13 @@ TOKEN=ghp_FIXTURE_ADMIN_TOKEN
 # client, a gh stub, suites, a protected list and the admin token.
 hub() {
   local c="$1" h="$T/$1/h" fx="$T/$1/st"
-  mkdir -p "$h/bin/lib" "$h/env" "$h/tests" "$h/catalog" "$T/$c/stubbin" "$fx"
+  mkdir -p "$h/bin/lib/tracker" "$h/env" "$h/tests" "$h/catalog" "$T/$c/stubbin" "$fx"
   for f in env-path.sh gh-rest.sh gh-rest-list.sh gh-rest-var.sh test-protected.sh gh-ci-read.sh flaky-tier-release.sh suite-quarantine-hub.sh; do
     ln -sf "$DIR/bin/lib/$f" "$h/bin/lib/$f"
   done
+  # BH-9730: sqh_file creates the issue through the tracker seam.
+  ln -sf "$DIR/bin/lib/tracker.sh" "$h/bin/lib/tracker.sh"
+  ln -sf "$DIR/bin/lib/tracker/github-issues.sh" "$h/bin/lib/tracker/github-issues.sh"
   for s in a b c d e switch-x; do printf '#!/bin/bash\n' > "$h/tests/$s-test.sh"; done
   printf 'tests/switch-x-test.sh   fixture protected suite\n' > "$h/catalog/test-quarantine-protected.txt"
   printf 'GH_ADMIN_TOKEN=%s\n' "$TOKEN" > "$h/env/github-admin.env"
@@ -334,15 +337,17 @@ hub() {
 shift; M=GET; P=
 while [ \$# -gt 0 ]; do case "\$1" in -i) shift ;; -X) M="\$2"; shift 2 ;; *) P="\$1"; shift; break ;; esac; done
 echo "GH \$M \$P | \$*" >> "$fx/calls"
-val=; body=; title=
-for a in "\$@"; do case "\$a" in value=*) val="\${a#value=}" ;; body=@*) body="\${a#body=@}" ;; title=*) title="\${a#title=}" ;; esac; done
+val=; body=; title=; pl=; nx=
+for a in "\$@"; do [ "\$nx" = 1 ] && { pl="\$a"; nx=; continue; }; [ "\$a" = --input ] && { nx=1; continue; }; case "\$a" in value=*) val="\${a#value=}" ;; body=@*) body="\${a#body=@}" ;; title=*) title="\${a#title=}" ;; esac; done
 reply() { printf 'HTTP/2 %s X\r\n\r\n%s\n' "\$1" "\${2:-}"; }
 case "\$M \$P" in
   "GET repos/$SLUG/issues") reply "\$(cat "$fx/issues.status" 2>/dev/null || echo 200)" "\$(cat "$fx/issues.json" 2>/dev/null || echo '[]')" ;;
   "POST repos/$SLUG/issues")
     [ -f "$fx/post.fail" ] && { reply 500 '{}'; exit 0; }
     n=\$(( \$(cat "$fx/next" 2>/dev/null || echo 40) + 1 )); echo "\$n" > "$fx/next"
-    cp "\$body" "$fx/issue-body.\$n"; echo "\$title" > "$fx/issue-title.\$n"
+    if [ -n "\$pl" ]; then
+      jq -r .title "\$pl" > "$fx/issue-title.\$n"; jq -r .body "\$pl" > "$fx/issue-body.\$n"; cp "\$pl" "$fx/issue-payload.\$n"
+    else cp "\$body" "$fx/issue-body.\$n"; echo "\$title" > "$fx/issue-title.\$n"; fi
     reply 201 "{\"number\":\$n,\"labels\":[{\"name\":\"ai-build\"}]}" ;;
   "GET repos/$SLUG/actions/variables/CI_QUARANTINE")
     if [ -f "$fx/var" ]; then reply 200 "{\"name\":\"CI_QUARANTINE\",\"value\":\"\$(cat "$fx/var")\"}"; else reply 404 '{"message":"Not Found"}'; fi ;;
@@ -371,7 +376,7 @@ tick q11
 [ "$TRC" = 0 ] && [ "$(hc q11 "^GH POST repos/$SLUG/issues |")" = 1 ] && ok || bad "Q11 one issue POST (rc $TRC): $(cat "$T/q11/st/calls")"
 [ "$(cat "$T/q11/st/issue-title.41" 2>/dev/null)" = "[suite-quarantine] tests/a-test.sh" ] && ok || bad "Q11 the title: '$(cat "$T/q11/st/issue-title.41" 2>/dev/null)'"
 grep -qxF '<!-- harness-suite-quarantine: tests/a-test.sh -->' "$T/q11/st/issue-body.41" 2>/dev/null && ok || bad "Q11 the body has no marker"
-grep -q 'labels\[\]=ai-build' <<<"$(grep "^GH POST repos/$SLUG/issues |" "$T/q11/st/calls")" && ok || bad "Q11 no ai-build label on the create"
+jq -e '.labels == ["ai-build"]' "$T/q11/st/issue-payload.41" >/dev/null 2>&1 && ok || bad "Q11 no ai-build label on the create: $(cat "$T/q11/st/issue-payload.41" 2>/dev/null)"
 [ "$(rowv q11 tests/a-test.sh repair_issue)" = 41 ] && ok || bad "Q11 the row links #41 ($(cat "$T/q11/st/sq.json"))"
 LP=$(grep -n "^GH POST repos/$SLUG/issues |" "$T/q11/st/calls" | cut -d: -f1); LL=$(grep -n '^JOBS POST /api/suite-quarantine/issue' "$T/q11/st/calls" | cut -d: -f1)
 [ -n "$LP" ] && [ -n "$LL" ] && [ "$LP" -lt "$LL" ] && grep -q 'suite-quarantine: filed #41 for tests/a-test.sh' "$T/q11/out" && ok \

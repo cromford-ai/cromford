@@ -15,7 +15,10 @@
 #                              issue, at most <max> new per tick. The issue
 #                              first, the row link second; a failed link leaves
 #                              the row NULL and the next tick finds the issue by
-#                              its marker (no duplicate).
+#                              its marker (no duplicate). The create goes
+#                              through tracker_create (bin/lib/tracker.sh,
+#                              github-issues adapter), loaded lazily after the
+#                              DRY gate (BH-9730).
 #   sqh_release <slug> <file> <released-out>   a row whose suite passed in the
 #                              newest cached nightly run that is newer than the
 #                              row and on another sha than main_sha_red is
@@ -46,6 +49,21 @@ _sqh_link() {
   body=$(jq -cn --arg r "$1" --arg s "$2" --argjson n "$3" '{repo: $r, suite: $s, repair_issue: $n}') || return 1
   out=$(bash "$root/bin/jobs-client.sh" suite-quarantine-issue "$body" 2>/dev/null) || return 1
   [ "$(jq -r '.updated // empty' <<<"$out" 2>/dev/null)" = 1 ]
+}
+
+# _sqh_tracker — load the tracker seam for the issue create (BH-9730): source
+# $root/bin/lib/tracker.sh when tracker_create is not defined, then load the
+# github-issues adapter. rc 1 when either step fails.
+_sqh_tracker() {
+  local root
+  root=$(_sqh_root)
+  if ! declare -F tracker_create >/dev/null 2>&1; then
+    [ -n "$root" ] && [ -r "$root/bin/lib/tracker.sh" ] || return 1
+    # shellcheck source=/dev/null
+    . "$root/bin/lib/tracker.sh" || return 1
+    declare -F tracker_create >/dev/null 2>&1 || return 1
+  fi
+  tracker_load github-issues || return 1
 }
 
 sqh_file() {
@@ -79,7 +97,11 @@ sqh_file() {
       printf 'Quarantined at %s. The rules are in `docs/gates/prequeue-fresh-main.md`.\n' "$at"
     } > "$body"
     if [ "${DRY:-0}" = 1 ]; then say "would: suite-quarantine issue '[suite-quarantine] $s' (ai-build), then link the row"; continue; fi
-    rc=0; gh_rest POST "repos/$slug/issues" -f "title=[suite-quarantine] $s" -F "body=@$body" -f 'labels[]=ai-build' > "$out" || rc=$?
+    _sqh_tracker || { say "suite-quarantine: ticket create for $s failed (tracker seam bin/lib/tracker.sh not loadable); the row stays NULL, retried next tick"; continue; }
+    jq -n --arg t "[suite-quarantine] $s" --rawfile b "$body" '{title: $t, body: $b, labels: ["ai-build"]}' > "$TMPD/sq-payload.json" 2>/dev/null \
+      || { say "suite-quarantine: ticket create for $s failed (payload not written); the row stays NULL, retried next tick"; continue; }
+    rm -f "$out"
+    rc=0; TRK_SLUG="$slug" tracker_create "$TMPD/sq-payload.json" "$out" || rc=$?
     t=$(jq -r '.number // empty' "$out" 2>/dev/null)
     case "$rc:$t" in 0:[0-9]*) ;; *)
       say "suite-quarantine: ticket create for $s failed (HTTP ${GH_REST_STATUS:-?}); the row stays NULL, retried next tick"; continue ;; esac
