@@ -144,9 +144,10 @@ llm-call-ratchet-test.sh ratchet-markers-test.sh registry-no-commit-test.sh
 share-publish-clean.bh-795-test.sh verification-map-no-commit-test.sh
 generated-not-tracked.bh-5518-test.sh"
 # Each bound is the after-number this build measured on its own tree plus at
-# most 10% for corpus growth (docs/notes/2026-10-23-BH-8098-always-cut.md).
-ALWAYS_MAX=62   # after 51, before 84; re-measured at 57 with BH-8473's two whole-tree suites
-Z2_MAX=106      # after 88 (this suite names the prompt), before 118 (119 with this suite); re-measured at 97 with BH-8473
+# most 10% for corpus growth (docs/notes/2026-10-23-BH-8098-always-cut.md,
+# docs/notes/2026-11-15-BH-9729-always-remeasure.md).
+ALWAYS_MAX=70   # after 51, before 84; 57 with BH-8473; re-measured at 64 with BH-9729 (7 new suites, docs/notes/2026-11-15-BH-9729-always-remeasure.md)
+Z2_MAX=116      # after 88, before 118 (119 with this suite); 97 with BH-8473; re-measured at 106 with BH-9729
 
 # in_tree <path> — rc 0 when the checkout holds <path>. A cd, not a rooted
 # path: the map reads a checkout tail it cannot bind as a whole-tree read.
