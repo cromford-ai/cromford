@@ -23,6 +23,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 # TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+# TEST-CHANGE BH-9771: the kill cases (a, b, c) ran a 40-entry (~8 s) session that a slow meter read outlived; they now run until the meter kills them (KILL_ENTRIES bound), no assertion changed
 export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$T/logs" "$T/locks" "$T/flags" "$T/state" "$T/bin/lib/jobs" "$T/fakebin" "$T/noenv" "$T/.claude/projects/-work"
@@ -40,6 +41,12 @@ cat > "$T/budgets.json" <<'EOF'
   ]
 }
 EOF
+
+# KILL_ENTRIES: the kill cases' session bound (600 x 0.2 s = ~120 s). The meter
+# kills on its first read after the ceiling; a read costs 1.5-2.5 s at low load
+# and more on a loaded gate host (BH-9771). The bound is reached only when the
+# kill never fires, and then the case fails as before.
+KILL_ENTRIES=600
 
 # STUB_ON_TERM: what the stub does when TERM reaches it.
 #   (unset) die with the default action (rc 143)
@@ -124,7 +131,7 @@ transcript_in() { jq -s '[.[]|.message.usage.input_tokens]|add' "$T/.claude/proj
 
 # --- a: the meter kills a started session ------------------------------------
 : > "$T/logs/cost.csv"
-RC=$(run_call "$T/out.a" STUB_ENTRIES=40)
+RC=$(run_call "$T/out.a" STUB_ENTRIES=$KILL_ENTRIES)
 ROW=$(last_row)
 SID=$(sed -n 's/.*session=\([0-9a-f-]*\).*/\1/p' "$T/out.a.ctxkill" 2>/dev/null)
 [ "$RC" != 0 ] && [ -f "$T/out.a.ctxkill" ] \
@@ -141,7 +148,7 @@ case "$(col "$ROW" 24)" in context-kill:ceiling=100000:*) ok ;; *) bad "a: note 
 # --- b: a ceiling the price cliff lowered ------------------------------------
 jq '.per_token["claude-fable-5-1"].cliff_tokens = 60000' "$DIR/catalog/model-prices.json" > "$T/prices.json"
 : > "$T/logs/cost.csv"
-RC=$(run_call "$T/out.b" STUB_ENTRIES=40 CONTEXT_KILL_CLIFF=1 CONTEXT_KILL_CLIFF_MARGIN=10000 MODEL_PRICES="$T/prices.json")
+RC=$(run_call "$T/out.b" STUB_ENTRIES=$KILL_ENTRIES CONTEXT_KILL_CLIFF=1 CONTEXT_KILL_CLIFF_MARGIN=10000 MODEL_PRICES="$T/prices.json")
 ROW=$(last_row)
 [ "$(col "$ROW" 18)" = killed ] \
   && ok || bad "b: a cliff-avoided kill's row_source is '$(col "$ROW" 18)', want killed: $ROW"
@@ -151,7 +158,7 @@ case "$(col "$ROW" 24)" in *cliff-avoided:ceiling=50000:*) ok ;; *) bad "b: note
 
 # --- c: killed, and nothing left to read the usage from ----------------------
 : > "$T/logs/cost.csv"
-RC=$(run_call "$T/out.c" STUB_ENTRIES=40 STUB_ON_TERM=wipe)
+RC=$(run_call "$T/out.c" STUB_ENTRIES=$KILL_ENTRIES STUB_ON_TERM=wipe)
 ROW=$(last_row)
 [ -f "$T/out.c.ctxkill" ] \
   && ok || bad "c: fixture: the session was not killed"
