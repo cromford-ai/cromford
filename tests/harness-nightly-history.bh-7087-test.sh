@@ -12,8 +12,9 @@
 #   N3  the N1 checker refuses fixtures: no fetch-depth, fetch-depth 1, "0" as a
 #       string, fetch-depth 0 only on another job, a shard with no checkout;
 #       and accepts fetch-depth 0
-#   N4  end to end: on a depth-1 clone of this repo B1 prints its FAIL line,
-#       and after --unshallow it does not (history depth alone decides B1)
+#   N4  end to end: on a depth-1 clone of this repo B1 prints its NOTE line
+#       (BH-9733) and no FAIL; after --unshallow it prints neither (B1 ran).
+#       History depth alone decides whether B1 runs.
 # Run from anywhere: tests/harness-nightly-history.bh-7087-test.sh   (exit 0 = all pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -83,18 +84,21 @@ if m=$(check "$T/zero.yml" depth); then ok; else bad "N3: fixture 'zero' failed 
 
 # N4: depth decides B1, end to end on a clone of this repo.
 B1LINE='FAIL: B1: no commit in this repo tracks worker/jobs/schema.sql'
+B1NOTE='NOTE: B1 not run'
 if [ -z "$(git -C "$DIR" log -1 --diff-filter=D --format=%H -- worker/jobs/schema.sql 2>/dev/null)" ]; then
   echo "skip: N4 source repo has no schema.sql deletion commit"
 elif ! git clone -q --no-local --depth 1 "file://$DIR" "$T/shallow" 2>"$T/clone.err"; then
   bad "N4: depth-1 clone failed: $(head -c 300 "$T/clone.err")"
 else
   out=$(HARNESS_TEST_SANDBOX=1 bash "$T/shallow/tests/schema-compose-deploy.bh-6005-0-test.sh" 2>&1)
-  if grep -qF "$B1LINE" <<<"$out"; then ok; else bad "N4: depth-1 clone did not print the B1 FAIL line"; fi
+  if grep -q "^$B1NOTE" <<<"$out" && ! grep -qF "$B1LINE" <<<"$out"; then ok
+  else bad "N4: depth-1 clone: B1 must print its NOTE line, not FAIL: $(grep -m1 -e "^$B1NOTE" -e "$B1LINE" <<<"$out" || echo '(no B1 line)')"; fi
   if ! git -C "$T/shallow" fetch -q --unshallow 2>"$T/fetch.err"; then
     bad "N4: --unshallow failed: $(head -c 300 "$T/fetch.err")"
   else
     out=$(HARNESS_TEST_SANDBOX=1 bash "$T/shallow/tests/schema-compose-deploy.bh-6005-0-test.sh" 2>&1)
     if grep -qF "$B1LINE" <<<"$out"; then bad "N4: B1 still fails on the unshallowed clone"; else ok; fi
+    if grep -q "^$B1NOTE" <<<"$out"; then bad "N4: B1 printed its NOTE on the unshallowed clone"; else ok; fi
   fi
 fi
 
