@@ -498,10 +498,40 @@ The subscription meters skip an api-key project (BH-9719, `bin/lib/meter-skip.sh
 The spend brake of such a project is `cost_ceiling.<p>` (docs/COST.md, "API key
 projects").
 
-Status: the rows, the worker guard, the reader and these onboarding flags exist.
-The runtime path (the env bundle, the pool-lease skip, the own-account pin, the
-billing mode and the runner lock at build time) lands with #9676 and #9675. Until
-then a row changes no build.
+### On a Fly pool machine (BH-9718)
+
+1. `bin/fly-envbundle.sh` (dispatch, `--pool` and `--hub-global`) writes no
+   `CLAUDE_CODE_OAUTH_TOKEN` line. It writes the marker line
+   `CLAUDE_AUTH_MODE=api-key`. Its sanity check requires the marker. A
+   `claude_auth.<p>` row with any other value stops the bundle (rc 1).
+2. `pool_account_lease` (`bin/lib/pool-account.sh`) takes no lease, makes no
+   DB claim and writes no pin or overlay. It strips the token line, writes the
+   marker and answers `name=apikey:<p> reason=api_key`. `bin/fly-pool.sh` then
+   records `auth_account=apikey:<p>` on the machine json. If the rewrite fails,
+   the bundle is emptied (`apikey_swap_failed`): the hub token never ships.
+3. `fly/entrypoint.sh` reads the app secret `ANTHROPIC_API_KEY_<PROJECT>` and
+   writes it to `/run/harness-env/claude-api-key.env` (RAM tmpfs, mode 600).
+   Then it unsets every `ANTHROPIC_API_KEY_*` name, so the runner gets no other
+   project's key.
+4. `fly/builder-runner.sh` `load_env`: when the bundle has the marker, it
+   exports `ANTHROPIC_API_KEY` from `claude-api-key.env` only and unsets
+   `CLAUDE_CODE_OAUTH_TOKEN` and any inherited `ANTHROPIC_API_KEY`.
+
+The key is never in the hub bundle, a log or the machine json. A missing secret
+stops the machine before any model call:
+
+- Pull path: `global.env` is composed at boot. The entrypoint writes the
+  pool-result row `BUILD_DEFERRED api-key: no Fly secret ANTHROPIC_API_KEY_<P>
+  on this app` and exits 1.
+- Push path: `global.env` arrives after boot. `warm_up` returns 1 and the caller
+  writes its setup-failed result (`BUILD_DEFERRED warm-up failed` for a build).
+
+With no `claude_auth.<p>` row, the bundle, the lease, the boot and `load_env`
+are the same as before.
+
+Status: the rows, the worker guard, the reader, the onboarding flags, the
+billing mode (#9712), the meter skips (BH-9719) and the Fly path above exist.
+The runner lock at build time lands with #9675.
 
 ## Pool machines (Fly)
 

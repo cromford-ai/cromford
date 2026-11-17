@@ -32,7 +32,10 @@
 #
 # FAIL-OPEN, ALWAYS. Every path returns 0 and every failure ships the bundle
 # exactly as it arrived (the project-6 token), because a launch refused for lack
-# of an account is a build that does not happen. Unarmed, this touches nothing at
+# of an account is a build that does not happen. Two exceptions fail closed and
+# strip the token: a project pinned to its own account (BH-1657) and a project
+# whose settings row claude_auth.<project> is api-key (BH-9718, answer
+# name=apikey:<project> reason=api_key, no lease). Unarmed, this touches nothing at
 # all and returns a reason string the caller can `say`.
 #
 # LEASE ACCOUNTING — the part bin/account-pick.sh does not have. The hub's picker
@@ -574,6 +577,42 @@ pool_account_lease() {
 
   [ -s "$bundle" ] || { _pa_answer default no_bundle "" 0 ""; return 0; }
   case "$mid" in ''|*[!A-Za-z0-9._-]*) _pa_answer default bad_machine_id "" 0 ""; return 0 ;; esac
+  # API KEY PROJECTS (BH-9718). The settings row claude_auth.<project> =
+  # api-key means the project pays with its own Anthropic API key (a Fly
+  # secret on its pool app). So no lease, no DB claim, no pin and no
+  # fingerprint overlay: the token line is STRIPPED and the marker
+  # CLAUDE_AUTH_MODE=api-key is written. The answer apikey:<project> becomes
+  # the machine's auth_account in bin/fly-pool.sh. This FAILS CLOSED, unlike
+  # the rest of this file: the hub's OAuth token must never ship to an api-key
+  # project. A rewrite that does not land empties the bundle; a row outside
+  # the list strips the token. No lib (rc 3) reads oauth, as in agent-call.sh.
+  local cam carc
+  cam=$( _cl="$(dirname "${BASH_SOURCE[0]}")/claude-auth.sh"
+         [ -r "$_cl" ] || exit 3
+         . "$_cl" >/dev/null 2>&1 || exit 3
+         claude_auth_mode "$project" 2>/dev/null ); carc=$?
+  if [ "$carc" = 0 ] && [ "$cam" = api-key ]; then
+    # grep -v exits 1 on a bundle that holds only the token line (the pull
+    # path's skeleton), so its rc is not the test; the redirect is.
+    ( umask 077
+      { grep -v -e '^CLAUDE_CODE_OAUTH_TOKEN=' -e '^CLAUDE_AUTH_MODE=' "$bundle"
+        printf 'CLAUDE_AUTH_MODE=api-key\n'; } > "$bundle.new" ) 2>/dev/null
+    if [ -f "$bundle.new" ] && [ -s "$bundle.new" ] && mv "$bundle.new" "$bundle" 2>/dev/null; then
+      chmod 600 "$bundle" 2>/dev/null || true
+      command -v _acct_log >/dev/null 2>&1 && _acct_log "$project" pool-execute "" "apikey:$project" api_key
+      _pa_answer "apikey:$project" api_key "" 0 ""; return 0
+    fi
+    [ -f "$bundle.new" ] && rm -f "$bundle.new"
+    : > "$bundle"
+    command -v _acct_log >/dev/null 2>&1 && _acct_log "$project" pool-execute "" default apikey_swap_failed
+    _pa_answer default apikey_swap_failed "" 0 ""; return 0
+  fi
+  if [ "$carc" != 0 ] && [ "$carc" != 3 ]; then
+    ( umask 077; grep -v '^CLAUDE_CODE_OAUTH_TOKEN=' "$bundle" > "$bundle.new" 2>/dev/null )
+    mv "$bundle.new" "$bundle" 2>/dev/null || { rm -f "$bundle.new"; : > "$bundle"; }
+    command -v _acct_log >/dev/null 2>&1 && _acct_log "$project" pool-execute "" default claude_auth_invalid
+    _pa_answer default claude_auth_invalid "" 0 ""; return 0
+  fi
   # BH-1657: a project pinned to its own account never spends a pool account. No
   # lease, no DB claim; the bundle's token is REPLACED by the pinned label's. A
   # pinned project whose token file is missing fails closed: the token line is

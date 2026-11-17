@@ -361,6 +361,43 @@ if [ "${POOL_CLAIM_MACHINE:-0}" = 1 ] && [ -s "$BOOT_ROOT/run/harness/job.json" 
   fi
 fi
 # <<< harness pull (BH-7430)
+
+# >>> api-key (BH-9718)
+# A project whose settings row claude_auth.<project> is api-key pays with its
+# own Anthropic API key. The key is the pool app's Fly secret
+# ANTHROPIC_API_KEY_<PROJECT> (the name rule of bin/load-project.sh). It is
+# staged in RAM as $ENV_DIR/claude-api-key.env (mode 600), and
+# fly/builder-runner.sh's load_env exports it only when the bundle carries the
+# marker CLAUDE_AUTH_MODE=api-key. Every ANTHROPIC_API_KEY_* name is then
+# unset, so a pool app shared by projects gives the runner no other project's
+# key. On the pull path global.env is composed by now: the marker with no
+# secret defers the job here. On the push path global.env arrives later, and
+# the runner's warm_up stops instead. The log names the secret, never the value.
+CA_VAR="ANTHROPIC_API_KEY_$(printf '%s' "$PROJECT" | tr 'a-z-' 'A-Z_')"
+CA_KEY=""
+[[ "$CA_VAR" =~ ^ANTHROPIC_API_KEY_[A-Z0-9_]+$ ]] && CA_KEY="${!CA_VAR:-}"
+CA_STAGED=""
+if [ -n "$CA_KEY" ]; then
+  if ( umask 077; printf 'ANTHROPIC_API_KEY=%s\n' "$CA_KEY" > "$ENV_DIR/claude-api-key.env" ) 2>/dev/null \
+     && chmod 600 "$ENV_DIR/claude-api-key.env" 2>/dev/null; then
+    CA_STAGED=1
+    log "api-key: staged $CA_VAR in RAM"
+  else
+    rm -f "$ENV_DIR/claude-api-key.env" 2>/dev/null
+    log "api-key: could not stage $CA_VAR in RAM"
+  fi
+fi
+CA_KEY=""
+while IFS= read -r v; do
+  case "$v" in ANTHROPIC_API_KEY_*) unset "$v" ;; esac
+done < <(compgen -e)
+CA_MODE=$(sed -n 's/^CLAUDE_AUTH_MODE=//p' "$ENV_DIR/global.env" 2>/dev/null | tail -n 1)
+if [ "$CA_MODE" = api-key ] && [ -z "$CA_STAGED" ]; then
+  log "FATAL: CLAUDE_AUTH_MODE=api-key and no Fly secret $CA_VAR on this app — deferring the job and exiting"
+  seed_deferred "api-key: no Fly secret $CA_VAR on this app" || log "the pool-result row was not written — the hub reap finds no RESULT"
+  exit 1
+fi
+# <<< api-key (BH-9718)
 RUNNER=/data/harness/fly/builder-runner.sh
 log "volume layout ready; runner=$RUNNER"
 

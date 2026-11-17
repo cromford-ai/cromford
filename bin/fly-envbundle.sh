@@ -61,6 +61,15 @@
 #   deploy, no secrets, no other app), valid only for the route's hours, to
 #   /run/harness-env/testhost.env (BH-8335).
 #
+# API KEY PROJECTS (BH-9718): when the settings row claude_auth.<project> is
+# `api-key` (bin/lib/claude-auth.sh), the project pays with its own Anthropic
+# API key. The bundle then has no CLAUDE_CODE_OAUTH_TOKEN line and has the
+# marker line CLAUDE_AUTH_MODE=api-key, in all three modes. The key itself is
+# never in the bundle and never on the hub: it is the pool app's Fly secret
+# ANTHROPIC_API_KEY_<PROJECT>, which fly/entrypoint.sh stages in RAM on the
+# machine. A row with any other value dies (rc 1, no bundle file left). With
+# no row the bundle is the same as before. See docs/ACCOUNT-ROUTING.md.
+#
 # SSH OFF (BH-8316): the settings row pool.envbundle_ssh.<project> = off refuses
 # the ssh extract (rc 1, 0 ssh calls, one ALERTS line "push path refused: ssh
 # off"). See envbundle_ssh_guard below and
@@ -218,8 +227,39 @@ printf '%s\n' "$RAW" | awk '
 # has no project part, so no slug either.
 [ -n "$HUBG" ] || echo "REPO_SLUG=$SLUG" >> "$OUTDIR/$PROJECT.env"
 
+# --- the Claude credential mode (BH-9718) -------------------------------------
+# Read on the hub, after the extract, so the box's extractor does not change.
+# The lib in a subshell: rc 3 = no lib on this hub, which reads `oauth` (the
+# rule agent-call.sh uses). Its stderr names the row value, so it is dropped.
+# CACHE ONLY: the hub's lanes keep state/settings-cache.json fresh (60 s TTL),
+# so the read makes no GET and writes no jobs-client alert. No cache reads
+# `oauth`; on the machine agent-call.sh reads the row again and refuses (rc 76)
+# a claude call with no key, so a missed row never bills the wrong account.
+CAUTH=$( [ -r "$HARNESS/bin/lib/claude-auth.sh" ] || exit 3
+         . "$HARNESS/bin/lib/claude-auth.sh" >/dev/null 2>&1 || exit 3
+         _lg_settings_refresh() { :; }
+         claude_auth_mode "$PROJECT" 2>/dev/null ); CARC=$?
+case "$CARC" in
+  0) ;;
+  3) CAUTH=oauth ;;
+  *) rm -f "$OUTDIR/global.env" "$OUTDIR/$PROJECT.env"
+     die "settings row claude_auth.$PROJECT is not oauth or api-key; no Claude credential is bundled" ;;
+esac
+if [ "$CAUTH" = api-key ]; then
+  # Replace, never append: the builder sources global.env, so a second line wins.
+  { grep -v -e '^CLAUDE_CODE_OAUTH_TOKEN=' -e '^ANTHROPIC_API_KEY=' -e '^CLAUDE_AUTH_MODE=' "$OUTDIR/global.env"
+    printf 'CLAUDE_AUTH_MODE=api-key\n'; } > "$OUTDIR/global.env.new" 2>/dev/null \
+    && mv "$OUTDIR/global.env.new" "$OUTDIR/global.env" 2>/dev/null
+  rm -f "$OUTDIR/global.env.new" 2>/dev/null
+fi
+
 # Sanity: the two things a real build cannot proceed without.
+if [ "$CAUTH" = api-key ]; then
+  grep -qx 'CLAUDE_AUTH_MODE=api-key' "$OUTDIR/global.env" 2>/dev/null || die "bundle missing the api-key marker CLAUDE_AUTH_MODE=api-key"
+  ! grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null || die "api-key bundle still carries CLAUDE_CODE_OAUTH_TOKEN"
+else
 grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null || die "bundle missing CLAUDE_CODE_OAUTH_TOKEN"
+fi
 # GH_TOKEN is only required here for fly-dispatch, which ships the bundle as-is.
 # The pool swaps the line for a builders-App token when this hub is armed, so a
 # --pool bundle with no PAT warns and ships (BH-4798; the header has the why).

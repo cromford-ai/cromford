@@ -303,10 +303,35 @@ load_env() {
     gh_token_live_sync_env "$ENVDIR/global.env" >/dev/null 2>&1 \
       && log "load_env: GH_TOKEN in global.env synced from the rotated token file"
   fi
+  # >>> api-key (BH-9718)
+  # A reused machine must not keep an earlier job's mode.
+  unset CLAUDE_AUTH_MODE; APIKEY_MISSING=""
+  # <<< api-key (BH-9718)
   set -a
   [ -f "$ENVDIR/global.env" ]      && . "$ENVDIR/global.env"
   [ -f "$ENVDIR/$PROJECT.env" ]    && . "$ENVDIR/$PROJECT.env"
   set +a
+  # >>> api-key (BH-9718)
+  # The bundle's marker CLAUDE_AUTH_MODE=api-key: the project pays with its own
+  # Anthropic API key, which fly/entrypoint.sh staged in RAM from the app secret
+  # ANTHROPIC_API_KEY_<PROJECT>. Only that file counts: an inherited key is
+  # dropped, and so is any OAuth token. The file is read, not sourced. No key
+  # sets APIKEY_MISSING, and warm_up then starts nothing.
+  if [ "${CLAUDE_AUTH_MODE:-}" = api-key ]; then
+    unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+    local ca_key=""
+    [ -s "$ENVDIR/claude-api-key.env" ] && ca_key=$(sed -n 's/^ANTHROPIC_API_KEY=//p' "$ENVDIR/claude-api-key.env" | tail -n 1)
+    if [ -n "$ca_key" ]; then
+      export ANTHROPIC_API_KEY="$ca_key"; APIKEY_LOADED=1
+    else
+      APIKEY_MISSING=1
+      log "load_env: CLAUDE_AUTH_MODE=api-key and no staged key ($ENVDIR/claude-api-key.env); the Fly secret ANTHROPIC_API_KEY_<PROJECT> is missing on this app"
+    fi
+    ca_key=""
+  elif [ "${APIKEY_LOADED:-}" = 1 ]; then
+    unset ANTHROPIC_API_KEY; APIKEY_LOADED=""
+  fi
+  # <<< api-key (BH-9718)
   # git plumbing (2026-07-31 e2e finding): plain git has no credential helper on
   # a fresh builder — wire gh (which honors $GH_TOKEN) and the fleet identity so
   # run-build's pull/commit/push work exactly as on a watcher box.
@@ -404,6 +429,7 @@ resolve_slug() {
 warm_up() {
   local slug cold=0 seeded=0 t0 t1 base wt
   load_env
+  [ -z "${APIKEY_MISSING:-}" ] || { log "warm-up: api-key project with no key, nothing starts"; return 1; }
   base="${BASE_BRANCH:-main}"
   # Baked warm checkout (build speed pass 2, 2026-08-13): the image carries a
   # <=24h-stale checkout + node_modules + build caches at /opt/warm/repo (see
