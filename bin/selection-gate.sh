@@ -329,9 +329,10 @@ host_note() {
     grep -vqE -- "${HN_ERE[$i]}" <<<"$fl" && continue
     # The section is a tail window (bin/remote-gate.sh RG_TAIL), so a real FAIL
     # above it must not hide behind a noted one inside it. When the suite prints
-    # its own count (`<n> passed, <m> failed`, both shipped suites do), m must
-    # equal the FAIL lines seen here; a larger m is a red the window cut off.
-    cnt=$(grep -oE '[0-9]+ failed' <<<"$sec" | tail -n 1 | grep -oE '^[0-9]+' || true)
+    # its own count (`<n> passed, <m> failed`, or `<n> pass, <m> fail` as the
+    # context-kill suites do, BH-9258), m must equal the FAIL lines seen here; a
+    # larger m is a red the window cut off.
+    cnt=$(grep -oE '[0-9]+ fail(ed)?\b' <<<"$sec" | tail -n 1 | grep -oE '^[0-9]+' || true)
     if [ -n "$cnt" ] && [ "$cnt" != "$(grep -c . <<<"$fl")" ]; then continue; fi
     printf '%s' "${HN_CLASS[$i]}"; return 0
   done

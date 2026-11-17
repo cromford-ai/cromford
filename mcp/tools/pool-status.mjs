@@ -5,7 +5,10 @@
 // row key, what stopped the tick or the last start, the last hour's env bundle
 // failures and max-ticks waits, today's respawns), plus the per-key spawn cap
 // from the settings rows. This file groups the decisions and parses no log. A
-// field the answer lacks stays null here, never 0.
+// field the answer lacks stays null here, never 0. BH-9258: gates_today is
+// today's (UTC) pre-PR selection-gate count of the project's pool builds
+// ({day, gates, rc0, rc1_attributed, rc1_unattributed, could_not_run}), passed
+// through as the route gives it, or null.
 import { consoleFetch, redact } from '../lib/console.mjs';
 import { checkArgs } from './lib/schema.mjs';
 
@@ -17,6 +20,7 @@ const GROUPS = ['waits_for', 'hold', 'spawn_cap', 'env_bundle', 'quota', 'not_qu
 const LAST_TICK = ['at', 'started_at', 'ended_at', 'complete', 'rows_decided', 'rows_spawned', 'stop', 'window_stop',
   'cap', 'knob', 'in_progress_since', 'max_ticks_waits_1h', 'last_max_ticks_at'];
 const PROJECT_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const GATE_KEYS = ['day', 'gates', 'rc0', 'rc1_attributed', 'rc1_unattributed', 'could_not_run'];
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nullable = (v) => (v === undefined ? null : v);
@@ -84,6 +88,7 @@ async function poolStatus(a, ctx) {
     respawns: Array.isArray(d.respawns) ? d.respawns : null,
     respawns_since: nullable(d.respawns_since),
     respawns_truncated: nullable(d.respawns_truncated),
+    gates_today: isPlain(d.gates_today) ? Object.fromEntries(GATE_KEYS.map((k) => [k, nullable(d.gates_today[k])])) : null,
   });
 }
 
@@ -97,7 +102,7 @@ const schema = {
 export const tools = [
   {
     name: 'pool_status',
-    description: "Why a project's queued builds do not spawn: the pool's queued, running and spawning counts, its cap and the per-key spawn cap, the last pool tick (start, end, rows decided and spawned, and what stopped it or the last start: budget, age, code change, max-ticks, load shed or spawn hold), its skip reasons grouped with up to 5 example keys each, the env bundle failures of the last hour, and today's respawned keys.",
+    description: "Why a project's queued builds do not spawn: the pool's queued, running and spawning counts, its cap and the per-key spawn cap, the last pool tick (start, end, rows decided and spawned, and what stopped it or the last start: budget, age, code change, max-ticks, load shed or spawn hold), its skip reasons grouped with up to 5 example keys each, the env bundle failures of the last hour, today's respawned keys, and today's pre-PR selection-gate counts (gates, rc 0, red attributed, red unattributed, could not run).",
     kind: 'read',
     inputSchema: schema,
     precheck: checkArgs(schema),

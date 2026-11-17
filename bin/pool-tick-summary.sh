@@ -41,6 +41,11 @@
 #   with 2 or more, at most 50 (respawns_truncated), count desc then key.
 #   last_result is the first word of P's newest `reaped <K> from <mid>: ` line.
 #   respawns_since is the later of today's 00:00Z and the first tail line.
+#   gates_today (BH-9258): today's (UTC) builds/pool-<P>-*/gate.txt counts,
+#   {day, gates, rc0, rc1_attributed, rc1_unattributed, could_not_run}, from
+#   sg_day_counts (bin/lib/sg-day-counts.sh, the class rules); null when the
+#   lib is missing or the builds dir cannot be read. The run log line ends
+#   with gates=<sum> unattributed=<sum> (or "-").
 #
 # A RECORDER, NOT AN ALERTER. The one ALERTS line is a bad knob: exit 1, nothing
 # read. No pool project: one log line, exit 0, nothing posted. A missing log:
@@ -65,6 +70,9 @@ HARNESS="${HARNESS:-/root/harness}"
 . "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit pool-tick-summary
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pool-tick-summary
+# BH-9258: sg_day_counts. A missing lib leaves gates_today null, never a dead lane.
+# shellcheck source=bin/lib/sg-day-counts.sh
+. "$HARNESS/bin/lib/sg-day-counts.sh" 2>/dev/null || true
 
 LOG="$HARNESS/logs/pool-tick-summary.log"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
@@ -272,17 +280,29 @@ END {
 W=$(mktemp -d "${TMPDIR:-/tmp}/pool-tick-summary.XXXXXX") || { log "mktemp failed; nothing read"; exit 0; }
 trap 'rm -rf "$W"' EXIT
 if [ "$HAVE_LOG" = 1 ]; then tail -n "$TAIL_N" "$POOL_LOG"; fi | summarize > "$W/rows.jsonl" 2> "$W/counts"
+# BH-9258 (#9061 Fix 4): today's selection-gate counts per project, read from
+# builds/pool-<P>-*/gate.txt (bin/lib/sg-day-counts.sh). No lib, or an
+# unreadable builds dir: {} here, so each row carries gates_today null.
+GATE_COUNTS='{}'
+if declare -F sg_day_counts >/dev/null 2>&1; then
+  GATE_COUNTS=$(sg_day_counts "$HARNESS/builds" "$((NOW - NOW % 86400))" "${PROJECTS[@]}" 2>/dev/null)
+  jq -e 'type == "object"' <<<"$GATE_COUNTS" >/dev/null 2>&1 || GATE_COUNTS='{}'
+fi
 # Respawns: count desc then key, at most 50, the cap visible as respawns_truncated.
-BODY=$(jq -sc '{rows: map(.respawns_truncated = ((.respawns | length) > 50)
-                         | .respawns |= (sort_by(-.count, .key) | .[:50]))}' "$W/rows.jsonl" 2>/dev/null) \
+BODY=$(jq -sc --argjson c "$GATE_COUNTS" '{rows: map(.respawns_truncated = ((.respawns | length) > 50)
+                         | .respawns |= (sort_by(-.count, .key) | .[:50])
+                         | .gates_today = ($c[.project] // null))}' "$W/rows.jsonl" 2>/dev/null) \
   || { log "the summary rows did not parse as JSON; nothing posted"; exit 0; }
 [ "$(jq '.rows | length' <<<"$BODY")" = "${#PROJECTS[@]}" ] || { log "the summary has $(jq '.rows | length' <<<"$BODY") rows for ${#PROJECTS[@]} projects; nothing posted"; exit 0; }
 read -r TICKS DECS < "$W/counts"
 
 # shellcheck source=/dev/null
 [ -f "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh" 2>/dev/null
+GSUM=$(jq -r '[.rows[].gates_today | select(. != null)] | if length == 0 then "gates=- unattributed=-"
+  else "gates=\(map(.gates) | add) unattributed=\(map(.rc1_unattributed) | add)" end' <<<"$BODY" 2>/dev/null) \
+  || GSUM="gates=- unattributed=-"
 SUM="projects=${#PROJECTS[@]} ticks=${TICKS:-0} decisions=${DECS:-0}"
-if ! declare -F _jobs_req >/dev/null 2>&1; then log "$SUM; no jobs client, nothing posted"; exit 0; fi
+if ! declare -F _jobs_req >/dev/null 2>&1; then log "$SUM; no jobs client, nothing posted; $GSUM"; exit 0; fi
 _jobs_req POST /api/pool/tick-summary "$BODY" >/dev/null 9>&-; PRC=$?
-log "$SUM POST rc=$PRC http=${JOBS_HTTP:-none}"
+log "$SUM POST rc=$PRC http=${JOBS_HTTP:-none} $GSUM"
 exit 0

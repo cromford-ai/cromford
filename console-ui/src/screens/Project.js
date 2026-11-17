@@ -26,6 +26,7 @@ import DeployQueuePanel from './DeployQueuePanel.js';
 import MergeTrainsPanel from './MergeTrainsPanel.js';
 import ConflictHotspotsPanel from './ConflictHotspotsPanel.js';
 import { SetupRunLink } from './SetupLine.js';
+import GateCountsPanel from './GateCountsPanel.js';
 
 export function ProjectScreen({ project }) {
   const p = useApi(() => api.project(project), [project], { intervalMs: 30000 });
@@ -168,6 +169,7 @@ export function ProjectScreen({ project }) {
       </div>
       <${PauseDetail} rows=${shapePauses(pausesApi.data, Date.now()).rows} project=${project} paused=${paused} />
       <${MainRedBanner} project=${project} confirm=${confirm} />
+      <${GateCountsPanel} project=${project}/>
 
       ${actionMsg ? html`
         <div class=${actionMsg.ok ? 'banner banner--warn' : 'banner'}

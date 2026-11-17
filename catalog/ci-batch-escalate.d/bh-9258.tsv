@@ -1,0 +1,3 @@
+# BH-9258: the gate-counts fixture is read by a console-ui test and a worker test (cross-tree rows, BH-8573).
+tests/fixtures/pool-tick-gate-counts.bh-9258/post.json	spa	console-ui/tests/gate-counts.bh-9258.test.js reads tests/fixtures/pool-tick-gate-counts.bh-9258/post.json (BH-9258)
+tests/fixtures/pool-tick-gate-counts.bh-9258/post.json	worker	worker/jobs/test/pool-tick-gates.bh-9258.test.js reads tests/fixtures/pool-tick-gate-counts.bh-9258/post.json (BH-9258)

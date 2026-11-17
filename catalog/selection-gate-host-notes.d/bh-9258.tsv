@@ -1,0 +1,4 @@
+# catalog/selection-gate-host-notes.d/bh-9258.tsv — suites the pre-PR selection gate notes, not reds, on the test host (BH-9258).
+# <suite path>TAB<class>TAB<ERE every failure line must match>TAB<reason>. Classes: shallow-context, host-timing. Read by bin/selection-gate.sh step 5.
+# The merge-queue batch still runs and gates these suites; this list changes only the gate's gate.txt.
+tests/context-kill-lanes.bh-2538-test.sh	host-timing	^FAIL: E: 	case E runs a real triage shard against a stub session and a context-kill poll; on a loaded shared test host the shard finished CLEAN before the kill fired (main b3a3541c under 2 x nproc load: 7 fail on run 1, fixture tests/fixtures/selection-gate-host-notes.bh-9258/context-kill-lanes-2538.run.txt); CI runs it on its own runner

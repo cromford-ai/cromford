@@ -1,0 +1,84 @@
+{
+  "rows": [
+    {
+      "cap": null,
+      "decisions": null,
+      "decisions_truncated": null,
+      "env_bundle_failures_1h": 0,
+      "gates_today": {
+        "could_not_run": 1,
+        "day": "2026-11-08",
+        "gates": 4,
+        "rc0": 1,
+        "rc1_attributed": 1,
+        "rc1_unattributed": 1
+      },
+      "hotfix": null,
+      "last_tick": {
+        "at": null,
+        "cap": null,
+        "complete": null,
+        "ended_at": null,
+        "in_progress_since": null,
+        "knob": null,
+        "last_max_ticks_at": null,
+        "max_ticks_waits_1h": 0,
+        "rows_decided": null,
+        "rows_spawned": null,
+        "started_at": null,
+        "stop": null,
+        "window_stop": null
+      },
+      "project": "p",
+      "queued": null,
+      "reason": "no pool log",
+      "respawns": [],
+      "respawns_since": null,
+      "respawns_truncated": false,
+      "running": null,
+      "spawning": null,
+      "tail_lines": 20000,
+      "tick": null
+    },
+    {
+      "cap": null,
+      "decisions": null,
+      "decisions_truncated": null,
+      "env_bundle_failures_1h": 0,
+      "gates_today": {
+        "could_not_run": 0,
+        "day": "2026-11-08",
+        "gates": 0,
+        "rc0": 0,
+        "rc1_attributed": 0,
+        "rc1_unattributed": 0
+      },
+      "hotfix": null,
+      "last_tick": {
+        "at": null,
+        "cap": null,
+        "complete": null,
+        "ended_at": null,
+        "in_progress_since": null,
+        "knob": null,
+        "last_max_ticks_at": null,
+        "max_ticks_waits_1h": 0,
+        "rows_decided": null,
+        "rows_spawned": null,
+        "started_at": null,
+        "stop": null,
+        "window_stop": null
+      },
+      "project": "q",
+      "queued": null,
+      "reason": "no pool log",
+      "respawns": [],
+      "respawns_since": null,
+      "respawns_truncated": false,
+      "running": null,
+      "spawning": null,
+      "tail_lines": 20000,
+      "tick": null
+    }
+  ]
+}

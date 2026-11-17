@@ -1,0 +1,13 @@
+FAIL tests/context-kill-lanes.bh-2538-test.sh (rc 1)
+
+===== tests/context-kill-lanes.bh-2538-test.sh (rc 1) =====
+FAIL: E: the session was never cut short (entries=40) — project-triage's kill did not fire
+FAIL: E: $OUT's last line is not the truncation marker: tickets=1 CLEAN DONE
+FAIL: E: want exactly one CONTEXT KILL alert naming ceiling 2700000: 
+FAIL: E: the refused row's rc is '0': 2026-11-08T14:39:14Z,fixture-box,shardproj
+FAIL: E: the refused row does not say why — note '', want context-kill:ceiling=2700000:total=<n above it>
+FAIL: E: the shard's log line does not carry a non-zero rc: 2026-11-08 14:39:14Z [shardproj] shard BH-1 rc=0 :: tickets=1 CLEAN DONE [gate=? scope=? runner=claude model=fixture-model cost=$135.0204 spend1h=$? 15s]
+FAIL: E: the killed shard did not say it put its ticket back: 2026-11-08 14:39:00Z [jobs-client] harness-jobs unreachable (HARNESS_SECRET unset) — coordination is degraded to per-box files (double-build guard OFF, lane caps from catalog file). Check worker/jobs deploy + HARNESS_SECRET.
+2026-11-08 14:39:01Z [shardproj] triage: act-time iron-law guard MISSING at /tmp/scratch.rPdV80/bin/iron-law-guard.sh — this lane is running UNGUARDED (merge/push/deploy/prod-write are prompt-only here). Deploy the harness: bin/harness-sync.sh.
+context-kill-lanes.bh-2538-test: 111 pass, 7 fail
+remote-gate: 1 suites, 1 failing

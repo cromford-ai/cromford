@@ -17,7 +17,13 @@
 //                      in_progress_since, max_ticks_waits_1h, last_max_ticks_at},
 //          decisions: [[key, class]] | null, decisions_truncated,
 //          env_bundle_failures_1h, respawns: [{key, count, last_result, last_at}],
-//          respawns_since, respawns_truncated}
+//          respawns_since, respawns_truncated,
+//          gates_today: {day, gates, rc0, rc1_attributed, rc1_unattributed,
+//                        could_not_run} | null}
+//   gates_today (BH-9258, #9061 Fix 4) is today's (UTC) selection-gate count
+//   from builds/pool-<P>-*/gate.txt (bin/lib/sg-day-counts.sh). Absent or null
+//   is stored as null; any other shape that is not day YYYY-MM-DD plus the five
+//   counts fails the row.
 //   rows: 1..MAX_ROWS entries, else 400 and nothing written. A row with a bad
 //   field, or a project named twice, is counted in `rejected` and not written.
 //   Only the fields above are stored (summary_json), so a stray field never
@@ -91,6 +97,19 @@ const isDecisions = (v) => Array.isArray(v) && v.length <= MAX_DECISIONS
   && v.every((d) => Array.isArray(d) && d.length === 2 && isKey(d[0]) && CLASSES.has(d[1]));
 const isRespawn = (r) => isPlain(r) && isKey(r.key) && Number.isInteger(r.count) && r.count >= 2 && r.count <= MAX_COUNT
   && (r.last_result === null || isKey(r.last_result)) && isIso(r.last_at);
+const DAY_RE = /^\d{4}-\d\d-\d\d$/;
+const GATE_COUNTS = ["gates", "rc0", "rc1_attributed", "rc1_unattributed", "could_not_run"];
+// gates_today → the stored object, null (absent or null), or undefined (bad: the row fails).
+function parseGates(v) {
+  if (v === undefined || v === null) return null;
+  if (!isPlain(v) || typeof v.day !== "string" || !DAY_RE.test(v.day)) return undefined;
+  const out = { day: v.day };
+  for (const k of GATE_COUNTS) {
+    if (!isCount(v[k])) return undefined;
+    out[k] = v[k];
+  }
+  return out;
+}
 const ROW = {
   tail_lines: isCount, tick: (v) => v === "ok", reason: (v) => typeof v === "string" && v.length <= 200,
   queued: isCount, running: isCount, spawning: isCount, cap: isCount, hotfix: isCount,
@@ -107,13 +126,15 @@ function parseRow(r) {
   const top = pick(r, ROW);
   const lastTick = pick(r.last_tick, LAST_TICK);
   if (!top || !lastTick) return null;
+  const gatesToday = parseGates(r.gates_today);
+  if (gatesToday === undefined) return null;
   const respawns = r.respawns.map((x) => ({ key: x.key, count: x.count, last_result: x.last_result, last_at: x.last_at }));
   const { decisions, decisions_truncated, env_bundle_failures_1h, respawns_since, respawns_truncated, ...head } = top;
   return {
     project: r.project,
     summary: {
       ...head, last_tick: lastTick, decisions, decisions_truncated, env_bundle_failures_1h,
-      respawns, respawns_since, respawns_truncated,
+      respawns, respawns_since, respawns_truncated, gates_today: gatesToday,
     },
   };
 }

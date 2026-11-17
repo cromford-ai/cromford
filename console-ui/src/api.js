@@ -321,6 +321,8 @@ export const api = {
   preplanAdoption: (p, days) =>
     get(`/api/coord/preplans/adoption?${new URLSearchParams({ project: p, days: String(days) })}`),
   // BH-5267: the files that conflicted or were rebased most on one project's box.
+  // BH-9258: the pool row of one project (gates_today: today's selection-gate counts).
+  poolStatus: (project) => get(coordPath(`/api/pool/status?project=${encodeURIComponent(project)}`)),
   conflictHotspots: (project, limit) => get(`/api/coord/conflict-hotspots?project=${encodeURIComponent(project)}&limit=${encodeURIComponent(limit)}`),
   // BH-6061: the Fly idle reaper's last started-machine snapshot and its stops in the last 24 h.
   flyIdle: () => get('/api/coord/fly-idle'),
