@@ -348,7 +348,7 @@ rl_prompt_note() {
   ms=$(rl_knob review.perf_block_ms "$p" 300 '^[0-9]{1,6}$')
   pct=$(rl_knob review.perf_block_stmt_pct "$p" 20 '^[0-9]{1,3}$')
   flows=$(rl_knob review.core_flows "$p" "" '.*')
-  printf '\n## Review level (BH-7123)\nmode: %s. Tag every finding [BLOCK <class>] (class from the ALWAYS-BLOCK list in the REVIEW LEVELS rule) or [NOTE]; a review whose findings are all [NOTE] approves. Speed: a BLOCK only for a measured regression on a key screen over %s ms or over %s%% more DB statements, or on a perf ticket. Core flows of this project%s: %s.\n' \
+  printf '\n## Review level (BH-7123)\nmode: %s. Tag every finding [BLOCK <class>] (class from the ALWAYS-BLOCK list in the REVIEW LEVELS rule) or [NOTE]; a review whose findings are all [NOTE] approves. Speed: [BLOCK perf-at-scale] only for a measured regression on a key screen over %s ms or over %s%% more DB statements, or for an unbounded or unindexed read that this diff adds or changes on a table the plan expects past 100k rows. A BLOCK also on a perf ticket. Core flows of this project%s: %s.\n' \
     "$mode" "$ms" "$pct" "${p:+ ($p)}" "${flows:-none listed; review at smoke level}"
 }
 

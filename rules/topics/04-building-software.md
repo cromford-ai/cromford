@@ -31,7 +31,7 @@
 - Severity in review (BH-7123): the UI rules above are build defaults. A reviewer notes a miss; it is a BLOCK only when a user cannot finish a core flow.
 
 ### Performance by default (the operator, 2026-10-15; BH-6946)
-- PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
+- PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen, loader, background job, sweep or agent poll lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
 - PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
 
 ### Code-level gotchas that bite in PRs (from the operator's global rules)

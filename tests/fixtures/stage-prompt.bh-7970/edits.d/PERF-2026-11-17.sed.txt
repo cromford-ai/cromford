@@ -1,0 +1,5 @@
+# Performance at scale (2026-11-17): the performance plan sentence also binds
+# background jobs, sweeps and agent polls, and the review class list gained
+# perf-at-scale. Applied to the old render after BH-8739.sed.txt.
+s#a plan for a screen or loader lists its reads#a plan for a screen, loader, background job, sweep or agent poll lists its reads#g
+s#hardcoded-knob, user-flows, weakened-test, scalable-tests)#hardcoded-knob, user-flows, weakened-test, scalable-tests, perf-at-scale)#g

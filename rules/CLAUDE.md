@@ -44,6 +44,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [User flows (BH-8029)](#user-flows-bh-8029)
 - [Security audit (2026-10-21)](#security-audit-2026-10-21)
 - [Build resources (BH-9288)](#build-resources-bh-9288)
+- [Performance at scale (2026-11-17)](#performance-at-scale-2026-11-17)
 
 ## Iron guardrails (this machine)
 
@@ -103,7 +104,7 @@ Creation is supported on all four boards (project-1 + project-2 via the internal
 - Severity in review (BH-7123): the UI rules above are build defaults. A reviewer notes a miss; it is a BLOCK only when a user cannot finish a core flow.
 
 ### Performance by default (the operator, 2026-10-15; BH-6946)
-- PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
+- PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen, loader, background job, sweep or agent poll lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.
 - PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.
 
 ### Code-level gotchas that bite in PRs (from the operator's global rules)
@@ -213,10 +214,10 @@ When the factory tests or splits work, it must act like one engineer who reads e
 ## Review levels (BH-7123)
 
 REVIEW LEVELS (iron law, BH-7123, 2026-10-16). Strictness scales to user impact. A review hunts for what would hurt a real user, not for every defect. Tag every finding `[BLOCK <class>]` or `[NOTE]`. A BLOCK needs a class from the ALWAYS-BLOCK list below; a finding with no such class is a NOTE, whatever its size. A review whose findings are all NOTEs ends APPROVE (or MERGE-WITH-NOTES): the PR merges and the notes ride in the review for a later cleanup ticket.
-ALWAYS BLOCK, at every level, in every mode. Classes: `data-loss` (rows, documents or user input lost or overwritten); `tenant-leak` (a cross-company or cross-workspace read or write); `auth-bypass` (a missing or fail-open auth, role or permission check; an open redirect; injection); `money` (wrong billing, double charge, a metered call with no dedup before the spend, a billed answer dropped, a lane whose cost rows come out unpriced on a live call); `destructive-migration` (a non-additive schema change, a new table with no RLS on Supabase); `red-build` (main is red, or the build or typecheck of this head does not pass; a CANCELLED run on a superseded head is not red); `core-flow-broken` (a flow a user cannot finish: sign-in, the ticket's own primary action, a dead button or link the ticket asked for); `wrong-data` (a stored or shown value that is wrong, a screen the ticket asked for that is missing); `secret` (a credential in a commit or a log); `model-id` (a hardcoded claude-* model string); `weakened-test` (an existing test softened, skipped or deleted to get green); `scalable-tests` (a PR-path test that calls a real vendor, a vendor client outside its seam, a real-provider test sign-in, a test-only route with no production-404 test, tests that share data or depend on order); `hardcoded-knob` (a new or changed literal limit, rate, threshold, price, timeout, cap or `max_tokens` with no DB row or knob read; the literal may stay only as the documented fallback of a knob that exists); `user-flows` (a user-facing feature a user cannot reach from an existing entry point: nav, picker, builder, in-app AI, Connect or setup flow, list or detail).
+ALWAYS BLOCK, at every level, in every mode. Classes: `data-loss` (rows, documents or user input lost or overwritten); `tenant-leak` (a cross-company or cross-workspace read or write); `auth-bypass` (a missing or fail-open auth, role or permission check; an open redirect; injection); `money` (wrong billing, double charge, a metered call with no dedup before the spend, a billed answer dropped, a lane whose cost rows come out unpriced on a live call); `destructive-migration` (a non-additive schema change, a new table with no RLS on Supabase); `red-build` (main is red, or the build or typecheck of this head does not pass; a CANCELLED run on a superseded head is not red); `core-flow-broken` (a flow a user cannot finish: sign-in, the ticket's own primary action, a dead button or link the ticket asked for); `wrong-data` (a stored or shown value that is wrong, a screen the ticket asked for that is missing); `secret` (a credential in a commit or a log); `model-id` (a hardcoded claude-* model string); `weakened-test` (an existing test softened, skipped or deleted to get green); `scalable-tests` (a PR-path test that calls a real vendor, a vendor client outside its seam, a real-provider test sign-in, a test-only route with no production-404 test, tests that share data or depend on order); `hardcoded-knob` (a new or changed literal limit, rate, threshold, price, timeout, cap or `max_tokens` with no DB row or knob read; the literal may stay only as the documented fallback of a knob that exists); `user-flows` (a user-facing feature a user cannot reach from an existing entry point: nav, picker, builder, in-app AI, Connect or setup flow, list or detail); `perf-at-scale` (a measured speed regression on a key screen over the SPEED thresholds; an unbounded or unindexed read that this diff adds or changes, in a screen, cron, sweep or agent poll, on a table the plan expects past 100k rows in 12 months).
 CORE-FLOW level: the diff touches a flow the project lists in `review.core_flows.<project>`. Check that the flow works end to end and that the screen looks like the reference to a person's eye. A few px, copy, contrast, a cache window, an eviction policy, a missing loading.tsx, a sequential await, a missing sort indicator, a dead non-identity row, a missing test for a branch no user reaches: `[NOTE]`. Never a BLOCK, never NEEDS_HUMAN, never a new ticket. At most one follow-up ticket per area, never per screen, and only for a defect a user would notice.
 SMOKE level (everything else): it works and breaks nothing else. Every other observation is a `[NOTE]`. File no follow-up ticket.
-SPEED: a BLOCK only for a measured regression on a key screen over the thresholds the `## Review level` section gives (defaults 300 ms or 20% more DB statements), or when the ticket is a perf ticket. Ask for no perf proof otherwise. "A speed claim without numbers" is a `[NOTE]`.
+SPEED: `[BLOCK perf-at-scale]` only for a measured regression on a key screen over the thresholds the `## Review level` section gives (defaults 300 ms or 20% more DB statements), or for an unbounded or unindexed read that this diff adds or changes on a table the plan expects past 100k rows. A BLOCK also when the ticket is a perf ticket. Ask for no perf proof otherwise. "A speed claim without numbers" is a `[NOTE]`.
 HUMAN STEPS: `NEEDS_HUMAN:` / `[BLOCK needs-human]` only for a go-live step a user depends on (a live connector key, a vendor console, a DNS or billing account, a product decision). A verification this box cannot run (no Clerk key, no prod database, no browser, no CI token, a Lighthouse run, a design screenshot) is `[NOTE] not verified here: <what>`, and the verdict does not wait on it.
 PROCESS: a plan, PR body, docs/notes, change note, migration file number, scope-stacking or evidence-format gap is a `[NOTE]`. A VALIDATE recorded NOT RUN because it needs a key, prod or a browser is a `[NOTE]`. A requirement of the ticket the diff does not deliver is `[BLOCK wrong-data]` or `[BLOCK core-flow-broken]`, not a process note.
 
@@ -255,3 +256,26 @@ BUILD RESOURCES (BH-9288, 2026-11-09). An execute session shares one machine wit
 3. Before you start the next heavy check, make sure the last one has exited.
 4. If a check ends out of memory (exit 137, heap out of memory), stop. Read the cause in `oom-procs.txt` and the stop reason. Do not raise the heap or the machine size first.
 - The harness records the processes alive at an out-of-memory exit in `<build-dir>/oom-procs.txt`. It kills the process groups an execute session leaves alive.
+
+## Performance at scale (2026-11-17)
+
+PERFORMANCE AT SCALE (iron law, 2026-11-17). The performance-by-default law (BH-6946) also binds a background job, sweep, queue worker and agent poll. Plan for the row count in 12 months.
+PLAN, for a change to a database read, a list screen, a job or poll, or a queue table, states:
+- each table it reads, and its expected row count in 12 months
+- the index for each filter and sort (existing, or added here)
+- which reads run in parallel
+- a list screen's payload budget (default: 10,000 seeded rows under 300 KB)
+- for an agent or vendor call, the check before the spend that the output is still needed
+- for a mirror or backfill, the readers of each table it fills
+EXECUTE:
+- If package.json has a `test:perf` script, run it with the final checks. A new violation is a failing test.
+- A migration that adds an index states its EXPLAIN at seeded volume in its header and the PR body.
+- With Prisma, a partial index never names an enum column in its WHERE (Prisma sends a cast). Put the enum in the index key.
+REVIEW, each a [NOTE]:
+- a job or poll query with no index or no bound
+- a plan with no 12-month row count
+- a partial index on an enum column under Prisma, or index proof with SQL the ORM does not send
+- one loading boundary around two or more independent read groups
+- a queue table with no end state by age, or a screen that renders the full queue
+- a draft LLM or vendor call with no still-needed check (no dedup before the spend stays `[BLOCK money]`)
+REVIEW BLOCK: `[BLOCK perf-at-scale]` for a measured regression on a key screen over the speed thresholds. Also for an unbounded or unindexed read that this diff adds or changes, on a table the plan expects past 100k rows.

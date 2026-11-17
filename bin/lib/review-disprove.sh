@@ -115,7 +115,7 @@ _dp_usd() {
 # word) is protected: a class that cannot be read is never judged safe.
 _dp_droppable() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
-    wrong-data|core-flow-broken|user-flows|hardcoded-knob|scalable-tests|weakened-test|model-id) return 0 ;;
+    wrong-data|core-flow-broken|user-flows|hardcoded-knob|scalable-tests|weakened-test|model-id|perf-at-scale) return 0 ;;
   esac
   return 1
 }

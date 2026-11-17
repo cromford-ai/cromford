@@ -27,7 +27,9 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-P='PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen or loader lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.'
+# TEST-CHANGE (2026-11-17, performance at scale): the plan sentence P now also
+# names background jobs, sweeps and agent polls (the operator: the rules bind them too).
+P='PERFORMANCE BY DEFAULT (BH-6946): a plan for a screen, loader, background job, sweep or agent poll lists its reads, which of them run in parallel, the expected statement count, the indexes they use, and the loading skeleton.'
 R='PERFORMANCE BY DEFAULT (BH-6946), each one a [NOTE] (a BLOCK only on a measured regression on a key screen over the REVIEW LEVELS thresholds, or on a perf ticket): a new sequential await over independent reads; a list read in a layout where a count would do; a route without loading.tsx; a repeated config read without a request memo; a list query without a matching index at seeded volume; unbounded rows to the client; a speed claim without before and after numbers; a client snapshot that holds a token, is not keyed by user and company, or survives sign-out; a key screen with two or more independent requests in sequence before its first content.'
 S='a client snapshot (localStorage, sessionStorage, IndexedDB, a persisted store) that holds a token, is not keyed by user and company, or survives sign-out'
 
