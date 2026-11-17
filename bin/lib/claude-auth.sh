@@ -20,6 +20,11 @@
 #                                            (a later slice refuses to build).
 #   a project that is not [A-Za-z0-9._-]+ -> rc 1, empty stdout, one stderr line.
 #
+# Readers. claude_auth_mode: bin/agent-call.sh, the claude rung (BH-9676).
+# runner_lock_for: bin/agent-call.sh (BH-9675). With the lock, the call runs
+# only claude rungs and exits 75 when none can run. agent-call fails closed on
+# rc 1: a bad runner_lock value locks the call to claude.
+#
 # The jobs worker (routes/settings.js PUT) accepts only the allowed values and
 # only with the human verdict token, and signs each write into setting_sigs
 # (PROTECTED_PREFIXES). So a bad value here came from a raw D1 write.

@@ -36,6 +36,12 @@
 # is then `AGENT_CALL_REFUSED budget-stop budget_stop <stage> <reason> ...`;
 # or — since BH-4489 — a day budget cap: `AGENT_CALL_REFUSED budget-stage-day`,
 # `budget-project-day` or, inside a build, `budget-cap-unreadable`).
+# Since BH-9675, 75 also means RUNNER LOCK WAIT: the settings row
+# runner_lock.<project>=claude keeps the call on claude rungs, and claude was
+# asked and refused (a rate limit, an overload or 5xx, auth, no headroom) or is
+# not on the box. The vendor billed no tokens for that; each attempt's cost row
+# stands. $OUT's first line is `AGENT_CALL_REFUSED runner-lock-wait` only when
+# nothing was called.
 # ALL OF 74..79 MEAN "nothing was called and nothing was billed" and a caller
 # must not charge a budget, write a terminal key or drop work for one of them.
 # WHICH IS WHY 74 NEVER ESCAPES A LADDER THAT SPENT MONEY (BH-1141 round 2): if
@@ -537,6 +543,7 @@ if   [ -r "$(dirname "$0")/lib/claude-auth.sh" ]; then . "$(dirname "$0")/lib/cl
 elif [ -r "$HARNESS/bin/lib/claude-auth.sh" ];    then . "$HARNESS/bin/lib/claude-auth.sh"; fi
 command -v claude_auth_mode          >/dev/null 2>&1 || claude_auth_mode()          { echo oauth; }
 command -v claude_auth_managed_guard >/dev/null 2>&1 || claude_auth_managed_guard() { return 0; }
+command -v runner_lock_for           >/dev/null 2>&1 || runner_lock_for()           { echo; }
 # THE ADVISOR (BH-3491): `--advisor <m>` on the claude rung of the stages in
 # AGENT_ADVISOR_STAGES (lib.advisor.* row, registry default "execute fix"), when
 # the settings row advisor.<project> / advisor.default names one. Same settings
@@ -684,6 +691,36 @@ if [ -n "$AGENT_CALL_RUNNERS" ]; then
   done
   AGENT_CALL_RUNNERS="${AGENT_CALL_RUNNERS#,}"; AGENT_CALL_RUNNERS="${AGENT_CALL_RUNNERS%,}"
 fi
+# >>> runner lock (BH-9675)
+# THE RUNNER LOCK (BH-9334 Fix 3): the settings row runner_lock.<project>=claude
+# lets this call reach only claude rungs. It narrows AGENT_CALL_RUNNERS to
+# `claude`, so the runner_allowed gates below refuse the primary rewrite, the
+# configured fallback, grok tier-2, the BH-1853 swap, OpenRouter, Fireworks and
+# a ledger replay of a row a non-claude runner served. No row, or no settings
+# answer, is no lock: every line below is skipped. A row with any other value
+# (a raw D1 write) fails CLOSED to the lock: a wrong row never widens the set
+# of vendors that see the code. A caller whose own list holds no claude is
+# refused rc 2 (a config conflict, never a wait). A plain variable, not exported.
+RUNNER_LOCK=""
+_rl_err=$(mktemp 2>/dev/null) || _rl_err=/dev/null
+if _rl_v=$(runner_lock_for "$PROJECT" 2>"$_rl_err"); then
+  [ "$_rl_v" = claude ] && RUNNER_LOCK=claude
+else
+  RUNNER_LOCK=claude
+  echo "$(STAMP) [$PROJECT] $STAGE runner_lock.$PROJECT is not claude ('$(head -1 "$_rl_err" 2>/dev/null)'); locking to claude" >> "$HARNESS/logs/failovers.log" 2>/dev/null
+fi
+[ "$_rl_err" = /dev/null ] || rm -f "$_rl_err"
+unset _rl_v _rl_err
+if [ "$RUNNER_LOCK" = claude ]; then
+  if [ -z "$AGENT_CALL_RUNNERS" ] || case ",$AGENT_CALL_RUNNERS," in *,claude,*) true ;; *) false ;; esac; then
+    AGENT_CALL_RUNNERS=claude
+  else
+    printf 'AGENT_CALL_REFUSED runner-lock runner_lock.%s=claude and this caller allows only: %s\n' "$PROJECT" "$AGENT_CALL_RUNNERS" | tee "$OUT.err" > "$OUT" 2>/dev/null
+    echo "$(STAMP) [$PROJECT] $STAGE refused: runner_lock.$PROJECT=claude and this caller allows only: $AGENT_CALL_RUNNERS — nothing was called and nothing was billed" >> "$HARNESS/logs/failovers.log" 2>/dev/null
+    exit 2
+  fi
+fi
+# <<< runner lock
 runner_allowed() {
   [ -n "$AGENT_CALL_RUNNERS" ] || return 0
   case ",$AGENT_CALL_RUNNERS," in *",${1:-},"*) return 0 ;; esac
@@ -4413,6 +4450,25 @@ fi
 # failed at once with no usage, so "not installed/authed" would be false here.
 _RFF_COOL=""
 rff_enabled "$RUNNER" && rff_live "$HARNESS" "$RUNNER" && _RFF_COOL=1
+# runner_lock_wait_note <classes> <rc> (BH-9675) — the ONE failovers.log line a
+# runner-lock wait writes, plus one ALERTS line per locked project per UTC day,
+# so a lock that waits for ever is not silent and does not page every tick.
+runner_lock_wait_note() {
+  echo "$(STAMP) [$PROJECT] $STAGE RUNNER LOCK WAIT: runner_lock.$PROJECT=claude and no claude rung could run (classes: $1, last rc $2) — exiting 75; no codex, grok, openrouter, fireworks or gemini rung was tried; the caller defers and retries" >> "$HARNESS/logs/failovers.log" 2>/dev/null
+  # One ALERTS line per project per UTC day through _bs_alert_once
+  # (bin/lib/budget-stop.sh): it owns the once-marker, so no raw flags/ write
+  # here (no-flag-files, BH-4154).
+  command -v _bs_alert_once >/dev/null 2>&1 || return 0
+  _bs_alert_once "runner-lock-wait-$PROJECT-$(date -u +%Y%m%d)" "$PROJECT" \
+    "[$PROJECT] RUNNER LOCK WAIT: $PROJECT is locked to claude and claude could not run ($1); builds defer until a claude rung answers"
+}
+# A LOCKED CALL WHOSE CLAUDE IS NOT THERE WAITS (BH-9675): rc 75, not the rc 2
+# refusal below. Nothing was called; the caller defers and retries.
+if [ "$RUNNER_LOCK" = claude ] && { [ -n "$_RFF_COOL" ] || ! runner_ready "$RUNNER"; }; then
+  printf 'AGENT_CALL_REFUSED runner-lock-wait claude is not available on this box\n' > "$OUT" 2>/dev/null
+  runner_lock_wait_note claude-not-ready "${RC:-none}"
+  exit 75
+fi
 if [ -n "$AGENT_CALL_RUNNERS" ] && ! runner_ready "$RUNNER"; then
   if [ -n "$_RFF_COOL" ]; then
     printf 'AGENT_CALL_REFUSED runners-restricted %s is cooling down after instant failures until %s and this caller allows only: %s\n' \
@@ -4857,6 +4913,25 @@ if [ "$RC" -ne 0 ] && [ -z "${BUDGET_STOP:-}" ] && [ -z "${KILL_STOP:-}" ] && [ 
   fi
 fi
 
+# runner_lock_waitable (BH-9675) — rc 0 when this call is locked to claude and
+# failed only because claude could not run: every classified failure was a
+# rate limit, an overload or 5xx, an auth refusal or no headroom (rc 76). A
+# timeout, a kill, a budget stop or a real failure is rc 1: claude ran, and the
+# real rc stands.
+runner_lock_waitable() {
+  local k
+  [ "$RUNNER_LOCK" = claude ] && [ "$RC" -ne 0 ] || return 1
+  [ -z "${BUDGET_STOP:-}" ] && [ -z "${KILL_STOP:-}" ] || return 1
+  ladder_classify "${PHASE_RUNNER:-$RUNNER}" >/dev/null 2>&1
+  for k in ${LADDER_KINDS:-} "$LADDER_CLASS:${LADDER_CLASS_DETAIL:-}"; do
+    case "$k" in
+      transient:rate_limited|transient:vendor|account-exhausted:*|auth:*) : ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
 # >>> llm-gate-exit
 # THE EXIT BELONGS TO THE LAST RUNG THAT RAN (BH-1141 round 2, B1). RC is the
 # LAST attempt's, and on a mixed ladder the last attempt is a refusal while the
@@ -4879,8 +4954,16 @@ if [ "$RC" -eq 74 ] && [ -n "${ANY_RAN:-}" ]; then
 fi
 # <<< llm-gate-exit
 
+LOCK_WAIT=""
 if [ "$RC" -ne 0 ]; then
-  if cliff_routed_rc; then
+  if runner_lock_waitable; then
+    # A RUNNER LOCK WAIT (BH-9675) is not a dead stage: claude refused, and the
+    # lock keeps every other vendor out. One failovers line per wait; no DEAD.
+    _RL_KINDS="${LADDER_KINDS:-}"
+    case " $_RL_KINDS " in *" $LADDER_CLASS:${LADDER_CLASS_DETAIL:-} "*) : ;; *) _RL_KINDS="${_RL_KINDS:+$_RL_KINDS }$LADDER_CLASS:${LADDER_CLASS_DETAIL:-}" ;; esac
+    runner_lock_wait_note "$_RL_KINDS" "$RC"
+    LOCK_WAIT=1
+  elif cliff_routed_rc; then
     # "Every available lane failed" would be a lie about a lane that was never
     # called. This one names the knob that fixes it, because the fix is config.
     echo "$(STAMP) [$PROJECT] $STAGE STUCK: Grok was cliff-routed (projected context past the $(grok_model 2>/dev/null || echo grok) cliff) and no lane below it was available — nothing ran and nothing was billed. Set $FVAR to a runner with no cliff at this size, or turn routing off (RUNNER_CLIFF_ROUTE=0 / a switch.cliff-route-off=1 settings row / flags/cliff-route-off)." >> "$ALERTS"
@@ -4915,6 +4998,8 @@ if [ "$RC" -ne 0 ]; then
     "${LADDER_EXHAUSTED_RUNNERS:+ exhausted=$LADDER_EXHAUSTED_RUNNERS}" \
     "${LADDER_RESETS_AT:+ resets_at=$LADDER_RESETS_AT}" > "$OUT.class" 2>/dev/null
 fi
+# The lock wait's exit: 75, after the .class sidecar recorded the real ladder.
+[ -n "$LOCK_WAIT" ] && RC=75
 # The ledger's write half: the stage's real rc, the body it actually produced,
 # and the lane that served it. Last thing before the exit so nothing after it
 # can change what was recorded (BH-1037).
