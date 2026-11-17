@@ -1,0 +1,105 @@
+{
+  "startAt": 0,
+  "maxResults": 100,
+  "total": 3,
+  "comments": [
+    {
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/x/comment/20011",
+      "id": "20121",
+      "author": {
+        "accountId": "557058:55555555-5555-5555-5555-555555555555",
+        "displayName": "Client User",
+        "accountType": "atlassian",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Use the billing address."
+              }
+            ]
+          }
+        ]
+      },
+      "updateAuthor": {
+        "accountId": "557058:44444444-4444-4444-4444-444444444444",
+        "displayName": "Harness Bot",
+        "accountType": "atlassian",
+        "active": true
+      },
+      "created": "2026-10-20T10:00:00.000+0000",
+      "updated": "2026-10-20T10:00:00.000+0000"
+    },
+    {
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/x/comment/20011",
+      "id": "20122",
+      "author": {
+        "accountId": "557058:55555555-5555-5555-5555-555555555555",
+        "displayName": "Client User",
+        "accountType": "atlassian",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Small grey text."
+              }
+            ]
+          }
+        ]
+      },
+      "updateAuthor": {
+        "accountId": "557058:44444444-4444-4444-4444-444444444444",
+        "displayName": "Harness Bot",
+        "accountType": "atlassian",
+        "active": true
+      },
+      "created": "2026-10-20T11:00:00.000+0000",
+      "updated": "2026-10-20T11:00:00.000+0000"
+    },
+    {
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10012/comment/20124",
+      "id": "20124",
+      "author": {
+        "accountId": "557058:44444444-4444-4444-4444-444444444444",
+        "displayName": "Harness Bot",
+        "accountType": "app",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "PR: https://github.com/o/jp/pull/52",
+                "marks": [
+                  {
+                    "type": "strong"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "created": "2026-10-21T12:05:00.000+0000",
+      "updated": "2026-10-21T12:05:00.000+0000"
+    }
+  ]
+}

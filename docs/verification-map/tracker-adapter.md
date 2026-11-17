@@ -372,3 +372,47 @@ line. The ratchet is per file.
 column 4, so during an outage a Linear project with column 4 `-` reads as
 github-issues for that process. The row is the truth; the fallback is today's
 rule.
+
+## run-build on the contract (BH-7921)
+
+**Why.** `run-build.sh <p> CRO-12 CRO-12` must plan, execute and open a PR
+for a Linear or Jira ticket, put the PR on the ticket, and close the ticket
+after a tier-1 merge. Slice C0 of #7921 moves the run-build pipeline itself
+onto the contract. Each site asks `rbt_tracked <project>` (`tracker_kind` is
+`jira` or `linear`); every other kind, and a box with no `bin/lib/tracker.sh`,
+runs the code it ran before, byte for byte.
+
+**The seam** is `bin/lib/rb-tracker.sh` (`rbt_*`). Every write runs
+`tracker_context` in a subshell, with `TRK_LOG`/`TRK_ERR` set to
+`$BUILD/tracker.log` and `TRK_DRY=0`.
+
+| stage site | what it does on jira/linear |
+|---|---|
+| `bin/lib/rb/gates.d/closed-issue-skip.sh` | a fresh `tracker_read`; normalized `state: closed` (Jira category `done`, Linear `completed`/`canceled`) is `BUILD_REFUSED SKIP_CLOSED <key>`, exit 3. A failed read is one `closed-ticket check unavailable (rc N)` line and the build goes on. The GitHub check below it never runs for these kinds. |
+| `TICKET_FP` (`bin/lib/rb/plan.sh`) | a fresh read each call, kept in `$BUILD/tracker-ticket.json`; prints `trk:<sha256>` of `{title, body, comments: [[createdAt, body]]}` without `status` and without the comments in `$BUILD/own-comments.sha256`. So `FP_BEFORE`, `FP_AFTER`, the resume stale gate and `TICKET_THREAD_SIG` all work for these kinds. |
+| `TICKET_META` | `{title, type: "", labels, body}` from `$BUILD/tracker-ticket.json` (one read serves both). |
+| plan ambiguity rule | keys on `tracker_kind`: github-issues, jira and linear are assumption-forward; a board asks. No kind: column 4, as before. |
+| `escalate_block` (`bin/lib/rb/execute.sh`) | the BUILD BLOCKED notice through `tracker_comment`, under the same `blocked <p> <key>` mark. |
+| `# >>> tracker link pr (BH-7921)` (`bin/lib/rb/pr.sh`) | `tracker_link_pr` (Linear: an attachment; Jira: a `PR: <url>` comment), mark `link-pr <p> <key> <n>`, then `tracker_transition <key> review`. A failed step is one line; the build goes on. |
+| `CLOSE_ISSUE_AFTER_MERGE` | kept open on a REFUTED claim or a `SLICE: C<k> of` plan line; else `tracker_close_out` (comment, then done), mark `merge-close <p> <key>` after the comment is on the ticket, so a retry only moves it. |
+
+**The fingerprint refresh** (comment 6522650545). `rbt_own_write` wraps each
+harness write that a resume can see (the notice, the Jira `PR:` comment). If
+`$BUILD/ticket-fp` exists, it reads the ticket before the write (fp0). After a
+write that took, and only when fp0 equals the stored fp, it reads again and
+stores the new fp (`ticket-fp refreshed after own write`). When fp0 differs, a
+person moved the thread first, so the stored fp stays (`ticket-fp kept`) and
+the resume still goes PLAN_STALE on that person's turn. A failed read or a
+failed write leaves the file alone. Known window: a human comment that lands
+between our post and the read after it is folded into the new fp.
+
+| what | how |
+|---|---|
+| Linear (L1-L15) | `HARNESS_TEST_SANDBOX=1 bash tests/run-build-linear-stub-test.sh` |
+| Jira (J1-J10) | `HARNESS_TEST_SANDBOX=1 bash tests/run-build-jira-stub-test.sh` |
+| what a build did on the tracker | `$BUILD/pipeline.log` (`linked PR`, `moved <key> to review`, `closed out <key> after merge`, `ticket-fp refreshed`/`kept`) and `$BUILD/tracker.log` (the adapter's request lines; the token variable's name, never its value) |
+
+**Not in C0** (child slices): C1 the needs-human hold, C2 the close-out lanes
+that retry a failed close-out, C3 the blocker reads (stack-wait rollout body,
+`Blocked-by: CRO-9`), C4 the live proof on the sandbox. Until C4 runs, this is
+built, not yet exercised live.

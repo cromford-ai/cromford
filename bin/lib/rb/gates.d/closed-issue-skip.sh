@@ -27,7 +27,29 @@
 if [ -r "$(dirname "$0")/lib/issue-state-lib.sh" ]; then . "$(dirname "$0")/lib/issue-state-lib.sh" 2>/dev/null
 elif [ -r "$HARNESS/bin/lib/issue-state-lib.sh" ]; then . "$HARNESS/bin/lib/issue-state-lib.sh" 2>/dev/null
 fi
-if command -v issue_is_closed >/dev/null 2>&1 \
+# A JIRA OR LINEAR TICKET (tracker_kind, BH-7921) is read through the tracker
+# contract (bin/lib/rb-tracker.sh), live every time: the normalized `state` is
+# closed for a Jira status category `done` and a Linear state type `completed`
+# or `canceled`. A read that fails builds, as above. Its key is never a GitHub
+# issue number (CRO-12 is not #12), so it never reaches the GitHub check below.
+CI_TRK=""
+{ declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+  && rbt_tracked "$PROJECT" && CI_TRK="$RBT_KIND"
+if [ -n "$CI_TRK" ]; then
+  CI_RC=0
+  rbt_read "$PROJECT" "$TICKET" "$BUILD/tracker-ticket.json" fresh >/dev/null 2>&1 || CI_RC=$?
+  if [ "$CI_RC" != 0 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] closed-ticket check unavailable (rc $CI_RC) — building as today" >> "$BUILD/pipeline.log"
+  elif [ "$(jq -r '.state // ""' "$BUILD/tracker-ticket.json" 2>/dev/null)" = closed ]; then
+    CI_LINE="SKIP_CLOSED $KEY — the ticket is closed on $CI_TRK; the ai-build label is stale, nothing enqueued"
+    echo "$(STAMP) [$PROJECT/$KEY] $CI_LINE" >> "$BUILD/pipeline.log"
+    mkdir -p "$HARNESS/logs" 2>/dev/null
+    echo "$(STAMP) [$PROJECT/$KEY] $CI_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+    RESULT "BUILD_REFUSED SKIP_CLOSED $KEY — the ticket is closed on $CI_TRK; nothing enqueued, nothing built"
+    exit 3
+  fi
+fi
+if [ -z "$CI_TRK" ] && command -v issue_is_closed >/dev/null 2>&1 \
    && [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ]; then
   CI_N=$(printf '%s' "$KEY" | sed -nE 's/^[A-Za-z]+-([0-9]+)$/\1/p')
   CI_REPO="${GH_ISSUES_REPO:-$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)}"

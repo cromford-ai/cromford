@@ -30,8 +30,8 @@
 #   CHECKPOINT_PARENT_PID CN_SRC CP_M CP_PARENT CP_PREAMBLE CP_RC CP_WHY CKPT_ACTIVE CKPT_PID CTX_COMMIT CTX_FRESH CTX_SIG CTX_SYNC FP_AFTER
 #   FP_BEFORE FP_PLAN KIND KIND_EXEC_NOTE KIND_HINT KIND_HINT_LINE KIND_HINT_SRC KIND_MISS
 #   KIND_OUT KIND_PROBE KIND_REPRO KIND_SKIP_E2E KIND_SKIP_SECLENS KIND_SRC PG_LIST PG_TASKS
-#   PG_UNTRACED PG_VERDICT PG_WHY PLAN_AMBIGUITY_RULE PLAN_MODEL PM_ART PM_STATUS PP_DIR PP_EV PP_EV_DETAIL PP_EV_RC PP_FP PP_OUTCOME
-#   PP_RESUMED PP_WHY PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE PTG_SRC REROUTE_EXEC_NOTE SG_BODY SG_CHILD SG_CHILD_SRC SG_DECL SG_ENFORCE SG_LIMITS SG_MAXF SG_MAXL
+#   PAR_FWD PG_UNTRACED PG_VERDICT PG_WHY PLAN_AMBIGUITY_RULE PLAN_MODEL PM_ART PM_STATUS PP_DIR PP_EV PP_EV_DETAIL PP_EV_RC PP_FP PP_OUTCOME
+#   PP_RESUMED PP_WHY PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE PTG_SRC RBT_KIND REROUTE_EXEC_NOTE SG_BODY SG_CHILD SG_CHILD_SRC SG_DECL SG_ENFORCE SG_LIMITS SG_MAXF SG_MAXL
 #   SG_OUT SG_RC SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY TH_N TH_REC
 #   TH_RN VMAP_ORIENT
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
@@ -427,9 +427,20 @@ STAGE_LANE_DEFER() { # STAGE_LANE_DEFER <stage-label> <outfile>... — exits 3 w
 # fingerprint the ticket's activity before PLAN, re-fetch after, and defer the
 # build if the thread moved underneath the planner. Fail-OPEN on API weather
 # (board down must not stop builds); boardless projects (fleet prefix "-")
-# return an empty fingerprint and skip the gate entirely.
+# return an empty fingerprint and skip the gate entirely. A Jira or Linear
+# ticket (tracker_kind, BH-7921) is read through the tracker contract
+# (bin/lib/rb-tracker.sh): `trk:<sha256>` of its title, body and thread from a
+# fresh read each call, without this build's own posts (own-comments.sha256).
+# The read is kept in $BUILD/tracker-ticket.json for TICKET_META below.
 TICKET_FP() {
-  local base prefix tok tv
+  local base prefix tok tv j
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && if rbt_tracked "$PROJECT"; then
+      j=$(rbt_read "$PROJECT" "$TICKET") || return 0
+      printf '%s\n' "$j" > "$BUILD/tracker-ticket.json.$$" && mv -f "$BUILD/tracker-ticket.json.$$" "$BUILD/tracker-ticket.json" || return 0
+      rbt_fp "$BUILD/tracker-ticket.json" "$BUILD/own-comments.sha256"
+      return 0
+    fi
   base=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" prod 2>/dev/null)
   prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)
   [ -n "$base" ] && [ "$base" != "-" ] || return 0
@@ -462,6 +473,14 @@ FP_BEFORE=$(TICKET_FP)
 # re-reading a board that may have moved.
 TICKET_META() {
   local base prefix tok tv repo issue t rc=0
+  # A Jira or Linear ticket (BH-7921): the read TICKET_FP kept, else one read
+  # now. type is "" (the classifier then reads the labels and the title).
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && if rbt_tracked "$PROJECT"; then
+      rbt_read "$PROJECT" "$TICKET" "$BUILD/tracker-ticket.json" >/dev/null 2>&1 || return 0
+      rbt_meta "$BUILD/tracker-ticket.json"
+      return 0
+    fi
   base=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" prod 2>/dev/null)
   prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)
   if [ -n "$base" ] && [ "$base" != "-" ] && [ "$prefix" != "-" ]; then
@@ -529,7 +548,18 @@ fi
 # most conservative reading it can defend, writes what it assumed under an
 # ASSUMPTIONS heading, and builds. The assumptions ride into the PR body
 # (PR_BODY_FOR below), which is where they are cheap to correct.
-if [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ]; then
+#
+# THE RULE KEYS ON tracker_kind (BH-7921), not on column 4: github-issues,
+# jira and linear are assumption-forward, a board asks. With no kind (no
+# tracker lib, no answer) column 4 decides, as before.
+RBT_KIND=""
+{ declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } && { rbt_tracked "$PROJECT" || true; }
+case "$RBT_KIND" in
+  github-issues|jira|linear) PAR_FWD=1 ;;
+  board) PAR_FWD=0 ;;
+  *) PAR_FWD=0; [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ] && PAR_FWD=1 ;;
+esac
+if [ "$PAR_FWD" = 1 ]; then
   PLAN_AMBIGUITY_RULE="AMBIGUITY IS NOT A STOP ON THIS LANE. This ticket is a GitHub issue, and nobody is standing by to answer a question about it — a plan that parks is a ticket that never ships. So do NOT write BLOCKED-NEEDS-CLARIFICATION for an unconfirmed mechanism. Instead: pick the MOST CONSERVATIVE reading you can defend (the one that changes the least, breaks the least, and is easiest to reverse if it is wrong), and write a '## ASSUMPTIONS' section in plan.md listing every such pick as its own line — what was ambiguous, what you assumed, and what you would have done under the other reading. That section is copied verbatim into the PR body, so a wrong assumption is caught at review instead of stalling the build. The ONE thing that still stops you: if the thread's LATEST state says the work is on hold, manual/data-entry, or already shipped, that is not ambiguity and it is not yours to assume past — write BLOCKED as the first line with that quote."
 else
   PLAN_AMBIGUITY_RULE="If the thread does NOT actually confirm the mechanism, write BLOCKED-NEEDS-CLARIFICATION as the first line of plan.md with the open questions."
@@ -1086,7 +1116,9 @@ true
 # Any missing input is NO build fp, and those calls fall back to the per-build
 # fingerprint: never an fp that could fold two pieces of work. The issue
 # number comes only from trk_gh_issue_number (BH-7919): a Linear or Jira
-# project has column 4 `-` too, and it has no GitHub thread to sign.
+# project has column 4 `-` too, and it has no GitHub thread to sign. Its
+# thread is FP_BEFORE, which TICKET_FP signs through the tracker contract
+# (BH-7921).
 TICKET_THREAD_SIG() { # prints the thread signature, rc 1 when there is none
   local repo issue t rc page acc='[]' sig=""
   if [ -n "${FP_BEFORE:-}" ]; then printf '%s\n' "$FP_BEFORE"; return 0; fi

@@ -37,8 +37,11 @@ This is the default. It needs nothing beyond your GitHub credential.
 
 ## Jira Cloud
 
-Today Cromford reads, triages and wakes on Jira issues. A build does not
-post its PR link or close-out comment back to the Jira issue yet.
+Cromford reads, triages and wakes on Jira issues. A build posts a
+`PR: <url>` comment on the issue. When the build merges its own PR, it posts
+a what-shipped comment and moves the issue with a done transition from the
+issue's own list. Hold labels, merges by the merge queue and blocker reads
+still use GitHub only.
 
 - **Credentials**, in the project's env file: `JIRA_BASE`, `JIRA_EMAIL`,
   `JIRA_API_TOKEN`, and optionally `JIRA_SITE`.
@@ -101,8 +104,10 @@ post its PR link or close-out comment back to the Jira issue yet.
 
 ## Linear
 
-Today Cromford reads, triages and wakes on Linear issues. A build does not
-post its PR link or close-out comment back to the Linear issue yet.
+Cromford reads, triages and wakes on Linear issues. A build attaches its PR
+to the issue and moves it to In Review. When the build merges its own PR, it
+posts a what-shipped comment and moves the issue to Done. Hold labels, merges
+by the merge queue and blocker reads still use GitHub only.
 
 - **Reads:** your team's open issues with a label (default `ai-build`), over
   Linear's GraphQL API.

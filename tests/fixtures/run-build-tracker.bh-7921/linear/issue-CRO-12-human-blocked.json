@@ -1,0 +1,111 @@
+{
+  "data": {
+    "issue": {
+      "id": "00000000-0000-0000-0000-120000000012",
+      "identifier": "CRO-12",
+      "title": "Ledger export as CSV",
+      "description": "Export the ledger as a CSV file from the reports page.",
+      "url": "https://linear.app/crosstest/issue/CRO-12/ledger-export-as-csv",
+      "state": {
+        "id": "00000000-0000-0000-0000-500000000002",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "00000000-0000-0000-0000-b00000000001",
+            "name": "ai-build"
+          }
+        ]
+      },
+      "team": {
+        "id": "00000000-0000-0000-0000-7000000000c0",
+        "key": "CRO",
+        "states": {
+          "nodes": [
+            {
+              "id": "00000000-0000-0000-0000-500000000001",
+              "name": "Backlog",
+              "type": "backlog",
+              "position": 0
+            },
+            {
+              "id": "00000000-0000-0000-0000-500000000002",
+              "name": "Todo",
+              "type": "unstarted",
+              "position": 1
+            },
+            {
+              "id": "00000000-0000-0000-0000-500000000003",
+              "name": "In Progress",
+              "type": "started",
+              "position": 2
+            },
+            {
+              "id": "00000000-0000-0000-0000-500000000004",
+              "name": "In Review",
+              "type": "started",
+              "position": 3
+            },
+            {
+              "id": "00000000-0000-0000-0000-500000000007",
+              "name": "Done",
+              "type": "completed",
+              "position": 6
+            },
+            {
+              "id": "00000000-0000-0000-0000-500000000008",
+              "name": "Canceled",
+              "type": "canceled",
+              "position": 7
+            }
+          ]
+        }
+      },
+      "comments": {
+        "nodes": [
+          {
+            "body": "Reports page only, please.",
+            "createdAt": "2026-10-20T10:00:00.000Z",
+            "user": {
+              "name": "Client User",
+              "displayName": "client"
+            },
+            "botActor": null
+          },
+          {
+            "body": "Comma separated, UTF-8.",
+            "createdAt": "2026-10-20T11:00:00.000Z",
+            "user": {
+              "name": "Client User",
+              "displayName": "client"
+            },
+            "botActor": null
+          },
+          {
+            "body": "Please also add a date column.",
+            "createdAt": "2026-10-21T11:30:00.000Z",
+            "user": {
+              "name": "Client User",
+              "displayName": "client"
+            },
+            "botActor": null
+          },
+          {
+            "body": "**This build is blocked and stopped - an agent is adjudicating it.**\n\nThe test-tamper gate refused it, so no pull request was opened and no reviewer was asked.",
+            "createdAt": "2026-10-21T12:00:00.000Z",
+            "user": {
+              "name": "Harness",
+              "displayName": "harness"
+            },
+            "botActor": null
+          }
+        ],
+        "pageInfo": {
+          "hasNextPage": false
+        }
+      }
+    }
+  }
+}

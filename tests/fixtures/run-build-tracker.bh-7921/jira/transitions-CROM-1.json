@@ -1,0 +1,71 @@
+{
+  "expand": "transitions",
+  "transitions": [
+    {
+      "id": "11",
+      "name": "Start progress",
+      "to": {
+        "self": "x",
+        "description": "",
+        "name": "In Progress",
+        "id": "111",
+        "statusCategory": {
+          "id": 3,
+          "key": "indeterminate",
+          "colorName": "green",
+          "name": "In Progress"
+        }
+      },
+      "hasScreen": false,
+      "isGlobal": false,
+      "isInitial": false,
+      "isAvailable": true,
+      "isConditional": false,
+      "isLooped": false
+    },
+    {
+      "id": "21",
+      "name": "Send to review",
+      "to": {
+        "self": "x",
+        "description": "",
+        "name": "In Review",
+        "id": "121",
+        "statusCategory": {
+          "id": 3,
+          "key": "indeterminate",
+          "colorName": "green",
+          "name": "In Review"
+        }
+      },
+      "hasScreen": false,
+      "isGlobal": false,
+      "isInitial": false,
+      "isAvailable": true,
+      "isConditional": false,
+      "isLooped": false
+    },
+    {
+      "id": "31",
+      "name": "Finish",
+      "to": {
+        "self": "x",
+        "description": "",
+        "name": "Done",
+        "id": "131",
+        "statusCategory": {
+          "id": 3,
+          "key": "done",
+          "colorName": "green",
+          "name": "Done"
+        }
+      },
+      "hasScreen": false,
+      "isGlobal": false,
+      "isInitial": false,
+      "isAvailable": true,
+      "isConditional": false,
+      "isLooped": false
+    }
+  ]
+}

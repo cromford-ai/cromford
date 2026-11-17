@@ -1266,7 +1266,31 @@ fi
 # The belt to that brace: after a VERIFIED tier-1 merge, comment on and close
 # the issue explicitly — a squash by another actor may not carry the body.
 # One pipeline.log line either way; never fails the build.
+#
+# A JIRA OR LINEAR TICKET (tracker_kind, BH-7921) has no Closes line and no
+# GitHub close at merge, so this is its only close: the comment, then done,
+# through the tracker contract (bin/lib/rb-tracker.sh rbt_close_out). The same
+# two rules keep it open: a REFUTED claim in evidence.json (BH-5798) and a
+# `SLICE: C<k> of ...` plan line (BH-2477).
 CLOSE_ISSUE_AFTER_MERGE() { # CLOSE_ISSUE_AFTER_MERGE <pr-url>
+  local _tf
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && if rbt_tracked "$PROJECT"; then # the route: tracker_kind jira|linear
+      if [ -r "$BUILD/evidence.json" ] && jq -e 'any(.claims[]?; .verdict == "REFUTED")' "$BUILD/evidence.json" >/dev/null 2>&1; then
+        echo "$(STAMP) [$PROJECT/$KEY] left $KEY open after merge, a partial build (a REFUTED claim in evidence.json)" >> "$BUILD/pipeline.log"
+        return 0
+      fi
+      if [ -r "$BUILD/plan.md" ] && grep -qE '^SLICE: C[0-9]+ of ' "$BUILD/plan.md" 2>/dev/null; then
+        echo "$(STAMP) [$PROJECT/$KEY] left $KEY open after merge, slice delivered (SLICE line in plan.md)" >> "$BUILD/pipeline.log"
+        return 0
+      fi
+      _tf=$(mktemp "${TMPDIR:-/tmp}/close-body.XXXXXX") || return 0
+      printf 'Merged in %s (tier-1, reviewed and gated in this build). Closing this ticket.\n' "$1" > "$_tf"
+      rbt_close_out "$PROJECT" "$TICKET" "$_tf" "$BUILD" \
+        || echo "$(STAMP) [$PROJECT/$KEY] merged $1 but $KEY is not closed out on $RBT_KIND — the C2 close-out lanes of BH-7921 take it over" >> "$BUILD/pipeline.log"
+      rm -f "$_tf"
+      return 0
+    fi
   [ -n "$CLOSES_LINE" ] || return 0
   # A `Refs` line (a partial build, BH-5798) never closes the issue.
   case "$CLOSES_LINE" in "Closes #"*) ;; *) return 0 ;; esac
@@ -1770,6 +1794,17 @@ if [ -n "$PR_URL" ]; then
   command -v fcl_apply >/dev/null 2>&1 && fcl_apply "$PROJECT" "$PR_URL" "$PWD" "$BASE" "$BUILD/pipeline.log"
 fi
 # <<< full-ci label
+# >>> tracker link pr (BH-7921)
+# On a Jira or Linear project the PR goes onto the ticket through the tracker
+# contract (bin/lib/rb-tracker.sh rbt_link_pr: a Linear attachment, a Jira
+# `PR: <url>` comment), and then the ticket moves to review. A GitHub issue
+# needs neither: the body's Closes/Refs line links it. A failed step is one
+# pipeline.log line; it never fails the build.
+if [ -n "$PR_URL" ]; then
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && rbt_tracked "$PROJECT" && rbt_link_pr "$PROJECT" "$TICKET" "$PR_URL" "$BUILD" # the route: tracker_kind jira|linear
+fi
+# <<< tracker link pr
 STAGE_END pr-open "$T_PR"
 # >>> live emit pr
 # THE #745 FINDING, as code: a build whose `gh pr create` failed must never emit

@@ -24,6 +24,9 @@
 #       resolves only GitHub issues), the "## Jira Cloud" and "## Linear"
 #       sections of each page say "Today Cromford reads, triages and wakes"
 #       and that a build does not post its PR link back yet
+#       (BH-7921 routed pr.sh on `tracker_kind`, so the checkout now stands
+#       D6 down; N6 strips the route from its own fixture copy of pr.sh to
+#       keep proving the unrouted case goes red)
 #
 # The suite runs the checker on the checkout, then on fixture copies that put
 # one fault back each (N1-N6), so a checker that cannot go red is red here.
@@ -253,11 +256,24 @@ i = t.index("Set up Jira")
 j = t.index("\n#", i)
 t = t[:i] + t[i:j].replace("PROBE NOW", "the probe button") + t[j:]
 open(p, "w").write(t)'
-neg N6 "D6 docs/connecting-a-board.md: '## Linear' does not say what runs today" '
+# N6: a pr.sh with no tracker_kind route (BH-7921 added the route to the
+# checkout, so the fixture strips it), and no "Today" sentence: D6 is red.
+r="$T/N6"
+if scratch_rm "$r" && fixture "$r"; then
+  sed -i 's/tracker_kind/tracker_kxnd/g' "$r/bin/lib/rb/pr.sh"
+  python3 - "$r/docs" <<'PY'
 import sys
 p = sys.argv[1] + "/connecting-a-board.md"
 t = open(p).read().replace("Today Cromford reads, triages and wakes on Linear issues.", "Linear works.")
-open(p, "w").write(t)'
+open(p, "w").write(t)
+PY
+  check "$r"
+  w="D6 docs/connecting-a-board.md: '## Linear' does not say what runs today"
+  [ "$RC" = 1 ] && [[ "$OUT" == *"$w"* ]] && ok || bad "N6 want rc 1 with '$w', got rc=$RC:
+$OUT"
+else
+  bad "N6 fixture failed"
+fi
 # N6b: once pr.sh routes on tracker_kind, D6 does not ask for the sentence.
 r="$T/N6b"
 if scratch_rm "$r" && fixture "$r"; then

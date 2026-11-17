@@ -32,8 +32,11 @@ them as empty instead of guessing.
 
 ## Jira Cloud
 
-Today Cromford reads, triages and wakes on Jira issues. A build does not
-post its PR link or close-out comment back to the Jira issue yet.
+Cromford reads, triages and wakes on Jira issues. A build posts a
+`PR: <url>` comment on the issue. When the build merges its own PR, it posts
+a what-shipped comment and moves the issue with a done transition from the
+issue's own list. Hold labels, merges by the merge queue and blocker reads
+still use GitHub only.
 
 Source: [bin/lib/tracker/jira.sh](../bin/lib/tracker/jira.sh).
 
@@ -108,8 +111,10 @@ with the same key in the same project.
 
 ## Linear
 
-Today Cromford reads, triages and wakes on Linear issues. A build does not
-post its PR link or close-out comment back to the Linear issue yet.
+Cromford reads, triages and wakes on Linear issues. A build attaches its PR
+to the issue and moves it to In Review. When the build merges its own PR, it
+posts a what-shipped comment and moves the issue to Done. Hold labels, merges
+by the merge queue and blocker reads still use GitHub only.
 
 Source: [bin/lib/tracker/linear.sh](../bin/lib/tracker/linear.sh).
 

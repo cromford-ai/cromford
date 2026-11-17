@@ -1,0 +1,46 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "10013",
+  "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/issue/10012",
+  "key": "SCRUM-13",
+  "fields": {
+    "summary": "Old invoice header",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Add the company address to the invoice PDF footer."
+            }
+          ]
+        }
+      ]
+    },
+    "status": {
+      "name": "Done",
+      "id": "3",
+      "statusCategory": {
+        "id": 3,
+        "key": "done",
+        "name": "Done"
+      }
+    },
+    "labels": [
+      "ai-build"
+    ],
+    "project": {
+      "self": "https://api.atlassian.com/ex/jira/33333333-3333-3333-3333-333333333333/rest/api/3/project/10000",
+      "id": "10010",
+      "key": "SCRUM",
+      "name": "Sandbox SCRUM",
+      "projectTypeKey": "software"
+    },
+    "issuetype": {
+      "name": "Task"
+    }
+  }
+}

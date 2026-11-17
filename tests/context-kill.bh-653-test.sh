@@ -28,6 +28,7 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
 # TEST-CHANGE BH-9536: the meter default is alert; this suite pins the kill mode
+# TEST-CHANGE BH-9755: sections 1, 2b and 8 run a slow stub tail so the meter's first read is not a race
 export CONTEXT_KILL_MODE=kill
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 NOW=$(date -u '+%Y%m%d')
@@ -53,6 +54,9 @@ cat > "$T/budgets.json" <<'EOF'
 EOF
 
 # --- the fake claude ----------------------------------------------------------
+# BH-9755: the meter needs its start-up plus one poll before the stub ends. Under
+# load that passed the 8 s a 40 x 0.2 s stub runs, so the kill cases set
+# STUB_TAIL_S to slow the entries after STUB_FAST (default 20, the last at or under the ceiling).
 # Writes $$ so the test can ask whether the child really died, then grows a real
 # transcript, then answers like the CLI's json envelope.
 cat > "$T/fakebin/claude" <<'EOF'
@@ -69,7 +73,8 @@ n=0
 while [ "$n" -lt "${STUB_ENTRIES:-10}" ]; do
   n=$((n+1))
   printf '{"type":"assistant","uuid":"u-%s","timestamp":"2026-09-17T18:00:00Z","message":{"id":"msg_%s","model":"claude-fable-5-1","usage":{"input_tokens":5000,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' "$n" "$n" >> "$PROJ/$sid.jsonl"
-  sleep 0.2
+  s=0.2; [ "$n" -gt "${STUB_FAST:-20}" ] && s="${STUB_TAIL_S:-0.2}"
+  sleep "$s"
 done
 printf '{"result":"CLEAN DONE","usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"session_id":"%s","total_cost_usd":0.01}\n' "$sid"
 EOF
@@ -93,7 +98,8 @@ n=0
 while [ "$n" -lt "${STUB_ENTRIES:-10}" ]; do
   n=$((n+1))
   printf '{"type":"assistant","uuid":"u-%s","timestamp":"2026-09-17T18:00:00Z","message":{"id":"msg_%s","model":"claude-fable-5-1","usage":{"input_tokens":5000,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' "$n" "$n" >> "$PROJ/$sid.jsonl"
-  sleep 0.2
+  s=0.2; [ "$n" -gt "${STUB_FAST:-20}" ] && s="${STUB_TAIL_S:-0.2}"
+  sleep "$s"
 done
 printf '{"result":"CLEAN DONE","usage":{"input_tokens":50,"output_tokens":10},"session_id":"%s","total_cost_usd":0.01}\n' "$sid"
 EOF
@@ -146,7 +152,7 @@ child_alive() { # child_alive -> 0 when the stub is still running
 # 1. THE KILL. 40 entries x 5,000 = 200K against a 100,000 ceiling.
 # =============================================================================
 : > "$T/logs/ALERTS.log"; : > "$T/logs/failovers.log"; : > "$T/logs/cost.csv"
-RC1=$(run_call "$T/out.kill" testproj STUB_ENTRIES=40 XAI_API_KEY=x)
+RC1=$(run_call "$T/out.kill" testproj STUB_ENTRIES=40 XAI_API_KEY=x STUB_TAIL_S=2)
 [ "$RC1" != 0 ] \
   && ok || bad "1: a killed session reported rc=0 — every caller would treat a truncated answer as a finished one"
 child_alive \
@@ -240,7 +246,7 @@ RCF=$(cut -d, -f7 <<<"$ROW"); SRC=$(cut -d, -f18 <<<"$ROW"); INF=$(cut -d, -f9 <
 # =============================================================================
 cp "$T/fakebin/claude-trapper" "$T/fakebin/claude"
 : > "$T/logs/ALERTS.log"
-RC2B=$(run_call "$T/out.trap" testproj STUB_ENTRIES=40)
+RC2B=$(run_call "$T/out.trap" testproj STUB_ENTRIES=40 STUB_TAIL_S=2)
 [ "$RC2B" != 0 ] \
   && ok || bad "2b: a CLI that swallowed the TERM and exited 0 turned a killed session into a success (rc=$RC2B)"
 tail -1 "$T/out.trap" 2>/dev/null | grep -q '^CONTEXT KILL: eval/testproj' \
@@ -308,7 +314,7 @@ RC6=$(run_call "$T/out.free" freeproj STUB_ENTRIES=40)
 #    meter that kills on a read failure is worse than no meter.
 # =============================================================================
 : > "$T/logs/ALERTS.log"; : > "$T/logs/claude-cost.log"
-RC8=$(run_call "$T/out.blind" testproj STUB_ENTRIES=40 STUB_TRANSCRIPT_DIR="$T/elsewhere/-work")
+RC8=$(run_call "$T/out.blind" testproj STUB_ENTRIES=40 STUB_TRANSCRIPT_DIR="$T/elsewhere/-work" STUB_TAIL_S=1)
 [ "$RC8" = 0 ] \
   && ok || bad "8: an unreadable transcript killed a healthy session (rc=$RC8)"
 [ ! -f "$T/out.blind.ctxkill" ] \

@@ -433,12 +433,23 @@ escalate_block() { # escalate_block <gate> <detail>
   # it posts nothing rather than guessing at a number. The number comes only
   # from trk_gh_issue_number (bin/lib/tracker.sh, BH-7919), which answers
   # nothing for a board, Jira or Linear project, whatever column 4 says.
-  local repo issue stamp
-  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 0
-  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 0
-  repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || return 0
-  [ -n "$repo" ] && [ -n "$issue" ] || return 0
-  command -v gh >/dev/null 2>&1 || return 0
+  #
+  # A Jira or Linear ticket (tracker_kind, BH-7921) is the client's own
+  # tracker, where a stopped build is as silent as on GitHub, so the same
+  # notice goes there through the tracker contract (bin/lib/rb-tracker.sh
+  # rbt_comment), under the same mark. rbt_comment posts inside
+  # rbt_own_write, so $BUILD/ticket-fp follows the notice and the resolver's
+  # resume does not go PLAN_STALE on it. The board stays silent.
+  local repo="" issue="" stamp tk=""
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && rbt_tracked "$PROJECT" && tk="$RBT_KIND"
+  if [ -z "$tk" ]; then
+    command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 0
+    issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 0
+    repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || return 0
+    [ -n "$repo" ] && [ -n "$issue" ] || return 0
+    command -v gh >/dev/null 2>&1 || return 0
+  fi
   # One comment per blocked build. exit 6 is terminal, but a resumed or
   # relaunched attempt must not restate the same block on the operator's thread.
   mkdir -p "$HARNESS/state" 2>/dev/null
@@ -473,9 +484,15 @@ EOF
   # thread gate never refuses this build's plan on its own notice when the
   # resolver's ACCEPT resumes the review stage.
   declare -F ptg_own_post >/dev/null || . "$HARNESS/bin/lib/plan-thread.sh" 2>/dev/null
-  gh_rest_comment "$repo" "$issue" "$body" \
-    && { cm_put "blocked $PROJECT $KEY" "$(basename "$BUILD")" "$stamp" 2>/dev/null || : > "$stamp"
-         command -v ptg_own_post >/dev/null 2>&1 && ptg_own_post "$BUILD" "$body"; } || true
+  if [ -n "$tk" ]; then
+    # rbt_comment marks the same `blocked` key and writes the own-post ledger
+    # line, both after a post that took.
+    rbt_comment "$PROJECT" "$TICKET" "$body" "blocked $PROJECT $KEY" "$stamp" "$BUILD" || true
+  else
+    gh_rest_comment "$repo" "$issue" "$body" \
+      && { cm_put "blocked $PROJECT $KEY" "$(basename "$BUILD")" "$stamp" 2>/dev/null || : > "$stamp"
+           command -v ptg_own_post >/dev/null 2>&1 && ptg_own_post "$BUILD" "$body"; } || true
+  fi
   rm -f "$body"
 }
 # >>> rules pack block

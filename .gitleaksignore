@@ -177,6 +177,8 @@ tests/queue-scopes-evidence.bh-8052-test.sh:generic-api-key:31
 tests/roadmap-file.bh-7243-test.sh:generic-api-key:198
 tests/roadmap-issue-sync.bh-7243-test.sh:generic-api-key:175
 tests/roadmap-render.bh-7243-test.sh:generic-api-key:263
+tests/run-build-linear-stub-test.sh:generic-api-key:47
+tests/run-build-linear-stub-test.sh:generic-api-key:161
 tests/run-decompose-fresh-token-test.sh:generic-api-key:55
 tests/run-decompose-fresh-token-test.sh:generic-api-key:62
 tests/run-decompose-inapp-deps-test.sh:generic-api-key:50
