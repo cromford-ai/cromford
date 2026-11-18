@@ -103,6 +103,37 @@ brlad_ila_no_fix() {
   return 0
 }
 
+# brlad_ila_note_hits — knob BR_ILA_NOTE_HITS (catalog/lanes.d/
+#   blocked-resolver.knobs.d/BR_ILA_NOTE_HITS.json, fallback 20, 0..100, 0 = off).
+brlad_ila_note_hits() {
+  brlad_knob BR_ILA_NOTE_HITS "${BR_ILA_NOTE_HITS:-20}" 20 0 100
+}
+
+# brlad_ila_note_rules <p> <rkey> <url> <note-file> — the REJECT note names the
+#   rule and the lines (BH-9696): one line "RULES: <rule> <file>:<line>; ..."
+#   from the PR diff (ilr_rules, bin/lib/ironlaw-rules.sh), so the fresh build
+#   reads which lines the gate refused. One diff read. A failed read is one say
+#   line and the note stays as it is; the rebuild runs either way. Always rc 0.
+brlad_ila_note_rules() {
+  local p="$1" rkey="$2" url="$3" note="$4" max slug num df line
+  max=$(brlad_ila_note_hits)
+  [ "${max:-0}" -gt 0 ] 2>/dev/null || return 0
+  command -v ilr_rules >/dev/null 2>&1 || { [ -r "$H/bin/lib/ironlaw-rules.sh" ] && . "$H/bin/lib/ironlaw-rules.sh"; }
+  command -v ilr_rules >/dev/null 2>&1 && command -v gh_rest >/dev/null 2>&1 || return 0
+  slug=$(br_slug_of_url "$url") || return 0
+  num=$(mc_num_of_url "$url"); [ -n "$slug" ] && [ -n "$num" ] || return 0
+  df=$(mktemp) || return 0
+  if ! gh_rest GET "repos/$slug/pulls/$num" -H "Accept: application/vnd.github.v3.diff" > "$df" 2>/dev/null; then
+    rm -f "$df"
+    say "$p/$rkey [iron-law]: the PR diff could not be read — the REJECT note has no RULES line (BH-9696)"
+    return 0
+  fi
+  line=$(ilr_rules "$df" | ilr_join "$max")
+  rm -f "$df"
+  [ -n "$line" ] && printf 'RULES: %s\n' "$line" >> "$note"
+  return 0
+}
+
 # brlad_ila_hold <p> <rkey> <reason> <url> <rec> <ticket-key> — what an
 #   iron-law park does instead of a fix round, read off the ruling on the
 #   CURRENT head: an ACCEPT is written again (idempotent, no model); a REJECT
@@ -132,6 +163,7 @@ brlad_ila_hold() {
         mkdir -p "$NOTES/$p" 2>/dev/null
         printf 'ADJUDICATED REJECT by bin/blocked-resolver.sh on %s: the iron-law gate was right about %s at %s. The flagged change is REJECTED; do not make it again. RULING: %s\n' \
           "$(STAMP)" "${url:--}" "${cur:0:12}" "$(grep -vE '^[[:space:]]*(ACCEPT|REJECT)[[:space:]]*$' "$adj" 2>/dev/null | tail -20 | tr '\n' ' ' | head -c 900)" > "$NOTES/$p/$tkey.md"
+        brlad_ila_note_rules "$p" "$rkey" "$url" "$NOTES/$p/$tkey.md"
         command -v bn_put >/dev/null 2>&1 && ! bn_put "$p" "$tkey" "$NOTES/$p/$tkey.md" \
           && say "$p/$rkey [iron-law]: the REJECT note is NOT in the DB — only hub/pool builds will see it"
       fi

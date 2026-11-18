@@ -1,0 +1,11 @@
+{
+  "env": "MC_ILR_MAX",
+  "read_in": "bin/merge-conductor.d/bh-9696-ironlaw-rules.sh",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 50,
+  "unit": "rules",
+  "zero_means": "off",
+  "note": "BH-9696: a BLOCKED_HUMAN iron-law reason names up to this many hits as '<rule> <file>:<line>', then '+K more'. 0 = off: the reason stays 'iron-law (N hit(s))'. Settings row: lane.merge-conductor.mc_ilr_max."
+}

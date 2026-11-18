@@ -1643,6 +1643,8 @@ pr_worker() {
         *) mc_log "$KEY iron-law: carry UNVERIFIABLE on ${HEAD:0:8} ($(printf '%s' "$ILC_OUT" | head -1)) — parking as before" ;;
       esac
     fi
+    # THE BLOCK NAMES THE RULE AND THE LINES (BH-9696): ilr_rules, fragment bh-9696-ironlaw-rules.sh.
+    MC_HIT_RULES=""; command -v ilr_rules >/dev/null 2>&1 && [ "${SCAN:-0}" -gt 0 ] 2>/dev/null && [ -n "$DF" ] && [ -s "$DF" ] && MC_HIT_RULES=$(ilr_rules "$DF")
     [ -n "$DF" ] && rm -f "$DF"; DF=""
     # >>> merge verdict publish (BH-5914; tests/mc-diff-local.bh-5914-test.sh drives this block)
     # THE VERDICT LEAVES THIS PROCESS (BH-5914). Other lanes merge too (the
@@ -1681,6 +1683,7 @@ pr_worker() {
   fi
   mc_step classify
   IFS=$'\t' read -r STATE WHY <<<"$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" "$SCAN" "$PREARM" "$PREV" "${HEADBOUND:--}")"
+  command -v ilr_why >/dev/null 2>&1 && WHY=$(ilr_why "$STATE" "$WHY" "${MC_HIT_RULES:-}" "$(mc_ilr_max)")
   # MIGRATION NOT IN PROD IS NOT READY (BH-7785): mc_mig_hold, fragment bh-7785-migration-hold.sh
   command -v mc_mig_hold >/dev/null 2>&1 && mc_mig_hold
   # A BUILDER APPROVE ALONE IS NOT READY ON A LEAD-REQUIRED REPO (BH-8890): fragment bh-8890-lead-required.sh

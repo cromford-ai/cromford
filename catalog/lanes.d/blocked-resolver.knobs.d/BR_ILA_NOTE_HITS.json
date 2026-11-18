@@ -1,0 +1,11 @@
+{
+  "env": "BR_ILA_NOTE_HITS",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 100,
+  "unit": "rules",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9437-ironlaw-adj.sh",
+  "note": "BH-9696: an adjudicated iron-law REJECT writes a build note for the fresh rebuild; the note gets one 'RULES:' line that names up to this many hits as '<rule> <file>:<line>', then '+K more'. 0 = off: no RULES line."
+}
