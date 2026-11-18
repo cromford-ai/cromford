@@ -36,9 +36,17 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 # unzip and sha256sum are what the library itself needs; a box without them
 # cannot run the code under test, so the suite fails rather than skips.
-for c in unzip sha256sum; do
-  command -v "$c" >/dev/null || { echo "FAIL: $c missing"; exit 1; }
-done
+# BH-9731: the Fly test host image installs no unzip (production installs it in
+# bin/bootstrap-machine.sh before the library runs). There each case gets a
+# python3 zipfile shim for the one form the library uses, in $C/bin, which is
+# ahead of /usr/bin in every PATH below.
+command -v sha256sum >/dev/null || { echo "FAIL: sha256sum missing"; exit 1; }
+UNZIP_SHIM=""; PY3=""
+if ! command -v unzip >/dev/null; then
+  PY3=$(command -v python3) || { echo "FAIL: unzip missing and no python3"; exit 1; }
+  UNZIP_SHIM=1
+  echo "unzip: absent; the cases use a python3 zipfile shim"
+fi
 # zip_dir <zip> <dir-name> (run in the parent of <dir-name>): zip, or python3's
 # zipfile where zip is absent.
 zip_dir() {
@@ -94,6 +102,16 @@ pkg=""; for a in "\$@"; do case "\$a" in playwright@*) pkg="\$a" ;; esac; done
 for a in "\$@"; do [ "\$a" = --version ] && echo "Version \${pkg##*@}"; done
 exit 0
 EOF
+  # unzip (BH-9731, only where the runner has none): `unzip -q <zip> -d <dir>`
+  # through python3 zipfile; any other form, or a bad zip, is rc 1.
+  if [ -n "$UNZIP_SHIM" ]; then
+    cat > "$C/bin/unzip" <<EOF
+#!/bin/bash
+[ \$# -eq 4 ] && [ "\$1" = -q ] && [ "\$3" = -d ] || { echo "unzip shim: only 'unzip -q <zip> -d <dir>'" >&2; exit 1; }
+exec "$PY3" -I -c 'import sys,zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "\$2" "\$4"
+EOF
+  fi
   chmod +x "$C/bin/"*
   # The real readers, behind a stub jobs client (rows_client writes it).
   ln -sf "$DIR/bin/lib/cli-version.sh" "$C/hd/lib/cli-version.sh"
