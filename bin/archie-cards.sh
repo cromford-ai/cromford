@@ -63,11 +63,24 @@
 #      the project's unblock mode row, head moved, the marker. Outcome done =
 #      unblock-reply.sh archie <id> acted "lever <l> done: <detail>. <reason>"
 #      <l> (the detail is the writer's answer after the side effect answered
-#      rc 0: the probe). A lever that does not fit the subject, rc 1, would,
-#      refused or failed = needs-operator with the lever, the outcome and the
-#      detail in the reason: the operator gets the card, with what Archie tried.
+#      rc 0: the probe). A lever that does not fit the subject, rc 1, would
+#      or refused = needs-operator with the lever, the outcome and the detail in
+#      the reason: the operator gets the card, with what Archie tried.
+#      fix_round and re_review also fit a ticket subject whose evidence
+#      record carries has_pr true, a numeric pr and a 40-hex head (the tick's
+#      ticket PR resolve, BH-9446); the PR number is the record's pr, and
+#      fix_round gets {ticket: KEY}. requeue and rebase need a PR subject.
+#   6. RETRY (BH-9446). A lever outcome `failed` (a read or a write that did
+#      not answer) writes state/archie-cards-retry/<card id>.json and no
+#      reply. Each later tick, before new rows, retry_pass builds the record
+#      again from the open row (no claim, no model call) and runs ub_act:
+#      done = acted; refused, would or rc 1 = needs-operator at once; failed =
+#      one more try, up to ARCHIE_CARDS_LEVER_RETRY_MAX (default 3; 0 =
+#      needs-operator at once), then needs-operator "<n> times: failed <detail>".
+#      One log line per retry. A card no longer open, or routed (the sweep's
+#      timeout), drops its file with no reply. Unread open rows keep the files.
 # One line per project in logs/archie-cards.log:
-#   archie-cards <p> seen=<n> claimed=<n> calls=<n> answered=<n> routed=<n> deferred=<n> acted=<n>
+#   archie-cards <p> seen=<n> claimed=<n> calls=<n> answered=<n> routed=<n> deferred=<n> acted=<n> retried=<n>
 #
 # Spend cap: agent-call's stage-day cap, settings row
 # budget.stage.archie-card.day_usd (bin/lib/budget-stop.sh).
@@ -157,6 +170,10 @@ PRI=$(knob ARCHIE_CARDS_REREVIEW_PRIORITY "${ARCHIE_CARDS_REREVIEW_PRIORITY:-5}"
 # act.sh's own bound on lead_rerequest notes (UNBLOCK_NOTES_MAX_CHARS, fallback
 # 300): the brief is cut to it so a long brief never makes the record bad input.
 NOTES_MAX=$(knob UNBLOCK_NOTES_MAX_CHARS "${UNBLOCK_NOTES_MAX_CHARS:-300}" 300 20 2000)
+# BH-9446: how many more ticks a lever whose outcome is `failed` is pulled
+# again before needs-operator (0 = needs-operator at once).
+RETRY_MAX=$(knob ARCHIE_CARDS_LEVER_RETRY_MAX "${ARCHIE_CARDS_LEVER_RETRY_MAX:-3}" 3 0 10)
+RETRY_DIR="$H/state/archie-cards-retry"
 
 exec 9>"$H/locks/archie-cards.lock" || exit 0
 flock -n 9 || { log "lock held (locks/archie-cards.lock); skipped"; exit 0; }
@@ -177,15 +194,21 @@ lever_record() {
        // ((.project // "") as $pj | if ($pj != "" and ($s | startswith($pj + ":"))) then $s[(($pj | length) + 1):] else null end)) as $k0
     | (if ($k0 != null and ($k0 | test($tre))) then $k0 else null end) as $key
     | ((.subject_kind == "pr") and $pr != null and ((.head // "") | test("^[0-9a-f]{40}$"))) as $is_pr
+    | (.evidence | if type == "object" then . else {} end) as $ev
+    | ($key != null and $ev.has_pr == true and ($ev.pr | type) == "number" and $ev.pr > 0
+       and ((.head // "") | test("^[0-9a-f]{40}$"))) as $tpr
+    | (if $is_pr then $pr elif $tpr then $ev.pr else $pr end) as $prn
     | ($b | gsub("[\r\n\t]+"; " ")) as $brief
     | ([$r] + (if $brief == "" then [] else [$brief] end)
        + ["Archie answered Tackler card \($cid) (\(.stall_class // "unknown class") on \($s))."]) as $lines
-    | {decision_key: ("archie:" + $cid), project, repo, subject_kind, subject, pr: $pr, head,
+    | {decision_key: ("archie:" + $cid), project, repo, subject_kind, subject, pr: $prn, head,
        rule_id: "archie-card", class: (.card.class // null), cites: []} as $base
-    | if ($l | IN("requeue", "fix_round", "re_review", "rebase")) and ($is_pr | not) then {why: "lever \($l) needs a PR subject"}
+    | if ($l | IN("requeue", "rebase")) and ($is_pr | not) then {why: "lever \($l) needs a PR subject"}
+      elif ($l | IN("fix_round", "re_review")) and ($is_pr | not) and ($tpr | not) then {why: "lever \($l) needs a PR subject"}
       elif ($l | IN("rebuild", "re_offer")) and $key == null then {why: "lever \($l) needs a ticket subject"}
       elif $l == "requeue" then $base + {action: {name: "requeue", args: {}}}
-      elif $l == "fix_round" then $base + {action: {name: "fix_round", args: {brief: (if $brief == "" then $r else $brief end)}}}
+      elif $l == "fix_round" then $base + {action: {name: "fix_round", args: ({brief: (if $brief == "" then $r else $brief end)}
+        + (if $tpr and ($is_pr | not) then {ticket: $key} else {} end))}}
       elif $l == "re_review" then $base + {action: {name: "lead_rerequest",
         args: ({request_id: "none", priority: $pri} + (if $brief == "" then {} else {notes: $brief[0:$nmax]} end))}}
       elif $l == "rebase" then $base + {action: {name: "update_branch", args: {}}}
@@ -218,9 +241,15 @@ reply() {
   esac
 }
 
+# retry_write <file> <json> — the retry file, temp file + mv. rc 1 = not written.
+retry_write() {
+  mkdir -p "${1%/*}" 2>/dev/null && printf '%s\n' "$2" > "$1.tmp" 2>/dev/null && mv "$1.tmp" "$1" 2>/dev/null \
+    || { rm -f "$1.tmp" 2>/dev/null; return 1; }
+}
+
 # pull <project> <row-json> <card id> <lever> <reason> <brief> — step 5.
 pull() {
-  local p="$1" row="$2" cid="$3" lever="$4" reason="$5" rec rc
+  local p="$1" row="$2" cid="$3" lever="$4" reason="$5" rec rc rid
   if ! rec=$(lever_record "$row" "$lever" "$reason" "$6"); then
     log "$p $cid: lever $lever not pulled: ${rec:-no record}"
     reply "$p" "$cid" needs-operator "Archie picked lever $lever, not pulled: ${rec:-no record}. $reason"; return 0
@@ -230,9 +259,63 @@ pull() {
   log "$p $cid: lever $lever ${UB_ACT_OUTCOME:-bad-input} ${UB_ACT_DETAIL:-} (ub_act rc $rc)"
   if [ "$rc" = 0 ] && [ "$UB_ACT_OUTCOME" = done ]; then
     reply "$p" "$cid" acted "lever $lever done: $UB_ACT_DETAIL. $reason" "$lever"
+  elif [ "$rc" = 0 ] && [ "$UB_ACT_OUTCOME" = failed ] && [ "$RETRY_MAX" -gt 0 ]; then
+    # BH-9446: a read or a write that did not answer is tried again on the
+    # next tick (retry_pass), with no model call; no reply yet.
+    rid=$(jq -r '.id' <<<"$row")
+    if retry_write "$RETRY_DIR/$cid.json" "$(jq -nc --argjson i "$rid" --arg p "$p" --arg l "$lever" --arg r "$reason" \
+         --arg b "$6" --arg d "$UB_ACT_DETAIL" '{row_id: $i, project: $p, lever: $l, reason: $r, brief: $b, attempts: 1, last_detail: $d}')"; then
+      log "$p $cid: lever $lever failed $UB_ACT_DETAIL; retry 1 of $RETRY_MAX next tick"
+    else
+      log "$p $cid: lever $lever failed; retry file not written ($RETRY_DIR/$cid.json), needs-operator now"
+      reply "$p" "$cid" needs-operator "Archie pulled lever $lever: failed ${UB_ACT_DETAIL:-}. $reason"
+    fi
   else
     reply "$p" "$cid" needs-operator "Archie pulled lever $lever: ${UB_ACT_OUTCOME:-bad-input} ${UB_ACT_DETAIL:-}. $reason"
   fi
+}
+
+# retry_pass <project> <open rows JSONL> — BH-9446: each retry file of this
+# project. The card is gone from the open rows or routed: the file is
+# dropped, no reply. Else the record is built again from the row (no model
+# call) and ub_act runs: done = acted; refused, would or rc 1 = needs-operator;
+# failed = attempts + 1, and needs-operator once attempts > RETRY_MAX. Sets RETRIED.
+retry_pass() {
+  local p="$1" rows="$2" f cid st rid lever reason brief att row rec rc
+  for f in "$RETRY_DIR"/u-*.json; do
+    [ -f "$f" ] || continue
+    st=$(cat "$f" 2>/dev/null)
+    [ "$(jq -r '.project // ""' <<<"$st" 2>/dev/null)" = "$p" ] || continue
+    cid=${f##*/}; cid=${cid%.json}
+    rid=$(jq -r '.row_id // ""' <<<"$st"); lever=$(jq -r '.lever // ""' <<<"$st")
+    reason=$(jq -r '.reason // ""' <<<"$st"); brief=$(jq -r '.brief // ""' <<<"$st")
+    att=$(jq -r '.attempts // 0' <<<"$st"); [[ $att =~ ^[0-9]+$ ]] || att=0
+    row=$(jq -c --arg i "$rid" 'select((.id | tostring) == $i)' <<<"$rows" 2>/dev/null | head -n 1)
+    if [ -z "$row" ] || [ "$(jq -r '.routed_to // ""' <<<"$row")" != "" ]; then
+      rm -f "$f"; log "$p $cid: retry dropped: card closed or routed"; continue
+    fi
+    if ! rec=$(lever_record "$row" "$lever" "$reason" "$brief"); then
+      rm -f "$f"; log "$p $cid: retry: lever $lever not pulled: ${rec:-no record}"
+      reply "$p" "$cid" needs-operator "Archie picked lever $lever, not pulled: ${rec:-no record}. $reason"; continue
+    fi
+    att=$((att + 1)); RETRIED=$((RETRIED + 1))
+    UB_ACT_OUTCOME="" UB_ACT_DETAIL=""
+    UNBLOCK_ACT="$ACT" ub_act "$rec" >/dev/null 2>&1; rc=$?
+    log "$p $cid: retry lever $lever try $att: ${UB_ACT_OUTCOME:-bad-input} ${UB_ACT_DETAIL:-} (ub_act rc $rc)"
+    if [ "$rc" = 0 ] && [ "$UB_ACT_OUTCOME" = done ]; then
+      reply "$p" "$cid" acted "lever $lever done: $UB_ACT_DETAIL. $reason" "$lever"; rm -f "$f"
+    elif [ "$rc" = 0 ] && [ "$UB_ACT_OUTCOME" = failed ]; then
+      if [ "$att" -gt "$RETRY_MAX" ]; then
+        reply "$p" "$cid" needs-operator "Archie pulled lever $lever $att times: failed ${UB_ACT_DETAIL:-}. $reason"; rm -f "$f"
+      elif retry_write "$f" "$(jq -c --argjson a "$att" --arg d "$UB_ACT_DETAIL" '.attempts = $a | .last_detail = $d' <<<"$st")"; then
+        log "$p $cid: lever $lever failed $UB_ACT_DETAIL; retry $att of $RETRY_MAX next tick"
+      else
+        reply "$p" "$cid" needs-operator "Archie pulled lever $lever $att times: failed ${UB_ACT_DETAIL:-}. $reason"; rm -f "$f"
+      fi
+    else
+      reply "$p" "$cid" needs-operator "Archie pulled lever $lever (try $att): ${UB_ACT_OUTCOME:-bad-input} ${UB_ACT_DETAIL:-}. $reason"; rm -f "$f"
+    fi
+  done
 }
 
 # work <project> <row-json> — steps 1 to 5 for one row. Sets CLAIMED, CALLS,
@@ -301,15 +384,17 @@ work() {
 LIST=$(unb_scope_projects)
 while IFS=$'\t' read -r -u 3 P MODE; do
   [ -n "$P" ] && [ "$MODE" = act ] || continue
-  if ! ROWS=$(unblock_card_open_rows "$P" "$NOW"); then log "archie-cards $P: open rows unreadable; skipped"; continue; fi
+  if ! ROWS=$(unblock_card_open_rows "$P" "$NOW"); then log "archie-cards $P: open rows unreadable; skipped (retry files kept)"; continue; fi
+  CLAIMED=0 CALLS=0 ANSWERED=0 ACTED=0 ROUTED=0 RETRIED=0
+  retry_pass "$P" "$ROWS"
   printf '%s\n' "$ROWS" | jq -c 'select(.card.route == "archie" and .routed_to == null and .archie_claimed_at == null)' \
     2>/dev/null | jq -sc 'sort_by(.id) | .[]' > "$TMPD/kept"
-  SEEN=$(grep -c . "$TMPD/kept"); CLAIMED=0 CALLS=0 ANSWERED=0 ACTED=0 ROUTED=0 N=0
+  SEEN=$(grep -c . "$TMPD/kept"); N=0
   while IFS= read -r -u 4 ROW; do
     N=$((N + 1)); [ "$N" -le "$MAXN" ] || break
     work "$P" "$ROW"
   done 4< "$TMPD/kept"
   DEFERRED=$(( SEEN > MAXN ? SEEN - MAXN : 0 ))
-  log "archie-cards $P seen=$SEEN claimed=$CLAIMED calls=$CALLS answered=$ANSWERED routed=$ROUTED deferred=$DEFERRED acted=$ACTED"
+  log "archie-cards $P seen=$SEEN claimed=$CLAIMED calls=$CALLS answered=$ANSWERED routed=$ROUTED deferred=$DEFERRED acted=$ACTED retried=$RETRIED"
 done 3<<< "$LIST"
 exit 0

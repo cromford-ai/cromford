@@ -60,7 +60,9 @@
 #     pr-verdict-old-head (U13-RESTAMP): an open PR outside the queue with
 #       nothing standing on its head while its newest lead/human verdict is a
 #       MERGE or MERGE-WITH-NOTES on an older head. Fields: old_head,
-#       old_verdict, lead_request_open (null unread), idle_min (since the head
+#       old_verdict, lead_request_open (null unread), lead_request_id (the
+#       matched open request's id; null when none matched, the list was
+#       unread, or the match has no id: BH-9446), idle_min (since the head
 #       commit), restamp_idle_min (UNBLOCK_RESTAMP_IDLE_MIN), request_id
 #       "none" (act.sh: no reset, a new request), priority.
 #
@@ -503,7 +505,7 @@ ubq_lead_open() {
 # this head. A verdict history that is unread or does not parse is one
 # queue-unreadable record for the PR (subject_kind pr), never silence.
 _ubq_old_head() {
-  local proj="$1" slug="$2" d="$3" n="$4" head="$5" labels="$6" rows old lo=null cdate idle=null knob pri
+  local proj="$1" slug="$2" d="$3" n="$4" head="$5" labels="$6" rows old lo=null lid=null cdate idle=null knob pri
   local -a unread=()
   rows=$(ubq_verdict_rows "$slug" "$n") || { _ubq_unreadable_pr "$proj" "$slug" verdict-history "$n"; return 0; }
   old=$(jq -c --arg h "$head" '[(if type == "object" then .rows else . end)[]? | select(type == "object" and ((.source // "") | IN("lead", "human")))]
@@ -515,6 +517,15 @@ _ubq_old_head() {
   lo=$(jq -c --argjson n "$n" --arg h "$head" 'if type == "object" and (.requests | type) == "array" and (.truncated // false) == false
         then any(.requests[]; .pr == $n and .head_sha == $h) else null end' "$d/lead-open.json" 2>/dev/null) || lo=null
   [ "$lo" = null ] && unread+=(lead_requests)
+  # BH-9446: the id of the open request that matched (null: nothing matched,
+  # the list was unread, or the match has no id). U13-RESTAMP reads an open
+  # request with a null id as not open.
+  lid=$(jq -c --argjson n "$n" --arg h "$head" 'if type == "object" and (.requests | type) == "array" and (.truncated // false) == false
+        then (first(.requests[] | select(.pr == $n and .head_sha == $h)) // {}) | .id
+          | (if type == "number" then tostring else . end)
+          | if type == "string" and . != "" and . != "none" then . else null end
+        else null end' "$d/lead-open.json" 2>/dev/null) || lid=null
+  [ -n "$lid" ] || lid=null
   if gh_rest GET "repos/$slug/commits/$head" > "$d/commit-$n.json" 2>/dev/null; then
     cdate=$(jq -r '.commit.committer.date // ""' "$d/commit-$n.json" 2>/dev/null)
     idle=$(jq -n --arg at "$cdate" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
@@ -522,12 +533,12 @@ _ubq_old_head() {
   [ "$idle" = null ] && unread+=(head_commit)
   knob=$(_ubq_int "${UNBLOCK_RESTAMP_IDLE_MIN:-}" 20)
   pri=$(_ubq_int "${UNBLOCK_RERQ_PRIORITY:-}" 900)
-  jq -nc --arg proj "$proj" --arg slug "$slug" --argjson n "$n" --arg head "$head" --argjson old "$old" --argjson lo "$lo" \
+  jq -nc --arg proj "$proj" --arg slug "$slug" --argjson n "$n" --arg head "$head" --argjson old "$old" --argjson lo "$lo" --argjson lid "$lid" \
     --argjson idle "$idle" --argjson knob "$knob" --argjson pri "$pri" --argjson labels "$labels" \
     --argjson unread "$(printf '%s\n' "${unread[@]+"${unread[@]}"}" | jq -Rsc 'split("\n") | map(select(. != ""))')" '
     {kind: "pr-verdict-old-head", project: $proj, repo: $slug, pr: $n, subject: "\($slug)#\($n)", head: $head,
      verdict_on_head: "none", old_head: $old.head_sha, old_verdict: $old.verdict, old_verdict_id: $old.id,
-     old_verdict_at: $old.created_at, lead_request_open: $lo, idle_min: $idle, restamp_idle_min: $knob,
+     old_verdict_at: $old.created_at, lead_request_open: $lo, lead_request_id: $lid, idle_min: $idle, restamp_idle_min: $knob,
      request_id: "none", priority: $pri, labels: $labels, stall_at: $old.created_at, truncated: false,
      inputs_unreadable: $unread}'
 }

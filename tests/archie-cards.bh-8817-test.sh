@@ -687,8 +687,11 @@ lever l3key0000002 '.subject = "ticket:cromford:BH-1" | .repo = "example-org/pro
 eq "L3 ticket_comment on another repo's ticket: not pulled" "$(cnt '^UBACT' "$FXT/seq.log") $(posts route)" "0 1"
 
 # L4: the writer refuses, fails or answers rc 1: needs-operator with what Archie tried.
+# BH-9446: a `failed` is retried on later ticks (ARCHIE_CARDS_LEVER_RETRY_MAX,
+# tests/archie-cards-lever-retry.bh-9446-test.sh); with no retries left (0) it
+# is needs-operator at once, which is what this case pins.
 for S in "$(printf 'refused\tno-opt-in')" "$(printf 'failed\tfix-round-enqueue-failed')" "$(printf 'would\tWOULD_REQUEUE')" rc1; do
-  lever l4key0000001 "$PRROW" '{"pick":"act","lever":"requeue","reason":"x"}' "$S"
+  lever l4key0000001 "$PRROW" '{"pick":"act","lever":"requeue","reason":"x"}' "$S" $( [ "${S%%$'\t'*}" = failed ] && echo ARCHIE_CARDS_LEVER_RETRY_MAX=0 )
   eq "L4 [$S]: 1 writer call, 0 answers, 1 route" "$(cnt '^UBACT' "$FXT/seq.log") $(posts answer) $(posts route)" "1 0 1"
   has "L4 [$S]: the reason carries the outcome" "$FXT/seq.log" "Archie pulled lever requeue: $( [ "$S" = rc1 ] && echo bad-input || printf '%s' "${S%%$'\t'*}")"
 done

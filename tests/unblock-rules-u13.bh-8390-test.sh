@@ -229,7 +229,7 @@ run_queue "$C" "ubq_verdict_rows() { echo 'not json'; }"
 check "C3d verdict history unparseable: one queue-unreadable record for #8136" "$(jq -r 'select(.kind == "queue-unreadable") | "\(.input) \(.pr)"' "$C/records.jsonl")" "verdict-history 8136"
 
 C=$(mkcase c3b review-stalls.json)
-jq '.lead_open.requests = [{pr: 8136, head_sha: ("c7ace3fb" + ("1" * 32)), status: "requested"}]' "$C/fx.json" > "$C/fx.new" && mv "$C/fx.new" "$C/fx.json"
+jq '.lead_open.requests = [{id: "lr-8136", pr: 8136, head_sha: ("c7ace3fb" + ("1" * 32)), status: "requested"}]' "$C/fx.json" > "$C/fx.new" && mv "$C/fx.new" "$C/fx.json"
 run_queue "$C"
 case "$(dec_of "$C" 8136)" in *U13-RESTAMP*) no "C3b an open request: no U13-RESTAMP" "$(dec_of "$C" 8136)" ;; *) ok "C3b an open request: no U13-RESTAMP" ;; esac
 check "C3b lead_request_open true" "$(jq -r 'select(.pr == 8136) | .lead_request_open' "$C/records.jsonl")" true

@@ -22,6 +22,10 @@
 #      collector call.
 #   2. COLLECT: ubc_collect (bin/lib/unblock/collect.sh) over
 #      bin/lib/unblock/collectors/*.sh, at most UNBLOCK_MAX_RECORDS records.
+#      Then ub_ticket_pr_enrich (bin/lib/unblock/ticket-pr.sh, BH-9446) gives
+#      each ticket-subject record its open PR: pr, head, has_pr, pr_url,
+#      pr_source (the jobs ledger's pr_url first, then one GitHub read by
+#      branch ticket/<key>); unread = has_pr null, named in unknown.
 #      Then ubs_fold (bin/lib/unblock/seam-defect.sh, BH-8748) removes each
 #      lane_defect record: one ALERT per project and reason per
 #      UNBLOCK_SEAM_ALERT_WINDOW_H, no card. The tick line adds
@@ -29,6 +33,12 @@
 #   3. RULES: ub_rules_eval, when bin/lib/unblock/rules.sh defines it, reads
 #      the records (JSONL on stdin) and prints decisions (JSONL). Not defined
 #      = `rules=unwired`, 0 decisions.
+#      Then ubu_fold (bin/lib/unblock/unreadable.sh, BH-9446) holds each U12
+#      escalation whose record has an unread GitHub input: no claim, no card,
+#      one `wait inputs-unreadable <repo>` line per repo. After
+#      UNBLOCK_UNREADABLE_CARD_AFTER_TICKS ticks in a row it adds ONE
+#      escalation per repo (subject source:pr-inputs:<repo>). The tick line
+#      adds `unreadable_wait=<n>` when n > 0.
 #   4. Per decision, BEFORE the claim, the seam it needs must be loaded:
 #      a judge question -> ubt_stage_judge; decision escalate -> ubt_stage_card;
 #      decision act -> ub_act (bin/lib/unblock/act.sh); refuse -> none;
@@ -43,6 +53,8 @@
 #      a record over 8000 bytes AFTER JSON encoding is cut, truncated:true). 409 = another tick owns the key: stop
 #      for this decision, no further call. Any other failure: one line, stop
 #      (nothing was spent).
+#      A new claim on a record with lead_request_open true and
+#      lead_request_id null logs one `lead-request-noid` line (BH-9446).
 #   6. ROUTE (judge, card): lane_role_model <role> (unblock.judge,
 #      stage.unblock). No route = RECORD no-route (the detail names the role),
 #      0 model calls, and ONE bin/lane-alert.sh --severity warn --id
@@ -155,6 +167,13 @@ for m in rules judge card; do
   # shellcheck disable=SC1090
   [ -r "$SELF/lib/unblock/$m.sh" ] && . "$SELF/lib/unblock/$m.sh"
 done
+# BH-9446: the ticket-subject PR resolve (ub_ticket_pr_enrich) and the
+# unread-inputs fold (ubu_fold). Optional: not on the tree = the step is
+# skipped and the tick runs as before.
+# shellcheck source=bin/lib/unblock/ticket-pr.sh
+. "$SELF/lib/unblock/ticket-pr.sh" 2>/dev/null || true
+# shellcheck source=bin/lib/unblock/unreadable.sh
+. "$SELF/lib/unblock/unreadable.sh" 2>/dev/null || true
 # The suite's seam. Sandbox only, and settable:false in the registry.
 COLLECTORS_DIR="$SELF/lib/unblock/collectors"
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ]; then
@@ -270,7 +289,11 @@ ubt_decide() {
     || { ubt_log "decision $key dropped: unreadable"; return 0; }
   out=$(_jobs_req POST /api/unblock/decisions/claim "$body"); rc=$?
   case "$rc" in
-    0) CLAIMED=$((CLAIMED + 1)); UBT_CLAIMED_KEY=$key ;;
+    0) CLAIMED=$((CLAIMED + 1)); UBT_CLAIMED_KEY=$key
+       # BH-9446: once per PR head (the claim is UNIQUE per decision key).
+       if jq -e '.evidence | type == "object" and .lead_request_open == true and has("lead_request_id") and .lead_request_id == null' >/dev/null 2>&1 <<<"$d"; then
+         ubt_log "$(jq -r '"lead-request-noid \(.subject // "?") \((.head // "") | .[0:12]): an open lead request with no id read as not open"' <<<"$d")"
+       fi ;;
     9) ubt_log "claim $key: held by row $(jq -r '.id // "?"' <<<"$out" 2>/dev/null) ($(jq -r '.outcome // "?"' <<<"$out" 2>/dev/null)); skipped"; return 0 ;;
     *) ubt_log "claim $key failed (http ${JOBS_HTTP:-none}); nothing spent"; return 0 ;;
   esac
@@ -339,6 +362,16 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { ubt_log "tick $P: no fleet.conf repo; skipped"; ubt_unlock; continue; }
   CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 WAITED=0 PAGED_DIRECT=0 ALERTED=""
   UBC_MAX=$MAXREC ubc_collect "$P" "$REPO" "$COLLECTORS_DIR" > "$TMPD/records.jsonl"
+  # BH-9446: a ticket-subject record gets its open PR (pr, head, has_pr).
+  # In this shell (redirects, not a pipe) so the per-tick memo stays. A
+  # failed pass keeps the collected records.
+  if declare -F ub_ticket_pr_enrich >/dev/null; then
+    if ub_ticket_pr_enrich "$P" "$REPO" < "$TMPD/records.jsonl" > "$TMPD/records.enriched" 2>/dev/null; then
+      mv "$TMPD/records.enriched" "$TMPD/records.jsonl"
+    else
+      ubt_log "tick $P: ticket PR resolve failed; records kept as collected"
+    fi
+  fi
   # BH-8748: a lane-wide batch_failure seam defect is one ALERT, never a card.
   SEAMD=$(ubs_fold "$P" "$TMPD/records.jsonl"); [[ $SEAMD =~ ^[0-9]+$ ]] || SEAMD=0
   UBC_RECORDS=$((UBC_RECORDS - SEAMD))
@@ -351,6 +384,12 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   elif [ "$UBC_RECORDS" -gt 0 ]; then
     ub_rules_eval < "$TMPD/records.jsonl" > "$TMPD/decisions.jsonl" 2>/dev/null \
       || ubt_log "tick $P: ub_rules_eval rc $?"
+  fi
+  # BH-9446: a U12 escalation with an unread GitHub input waits; after
+  # UNBLOCK_UNREADABLE_CARD_AFTER_TICKS ticks in a row, one card per repo.
+  HELD=0
+  if declare -F ubu_fold >/dev/null; then
+    HELD=$(ubu_fold "$P" "$TMPD/decisions.jsonl"); [[ $HELD =~ ^[0-9]+$ ]] || HELD=0
   fi
   while IFS= read -r D; do
     [ -n "$D" ] || continue
@@ -374,6 +413,7 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   [ "$RULES" = unwired ] && [ "$UBC_RECORDS" -gt 0 ] && LINE="$LINE rules=unwired"
   [ "$SEAMD" -gt 0 ] && LINE="$LINE seam_defect=$SEAMD"
   [ "$WAITED" -gt 0 ] && LINE="$LINE waited=$WAITED"
+  [ "$HELD" -gt 0 ] && LINE="$LINE unreadable_wait=$HELD"
   [ "$SWEPT" -gt 0 ] && LINE="$LINE sweep_paged=$SWEPT"
   [ "$PAGED_DIRECT" -gt 0 ] && LINE="$LINE paged_direct=$PAGED_DIRECT"
   ubt_log "$LINE"

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_UNREADABLE_CARD_AFTER_TICKS",
+  "read_in": "bin/lib/unblock/unreadable.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 100,
+  "unit": "ticks",
+  "zero_means": null,
+  "note": "BH-9446: a U12 escalation whose record has an unread GitHub input (mergeable_state, checks or changes_requested_open null, or a PR subject with no 40-hex head) waits and is read again on the next tick. After this many ticks in a row with such a record on a repo, the tick makes ONE inputs-unreadable card for the repo (subject source:pr-inputs:<repo>), not one card per PR. A bad value is the code fallback 3.",
+  "settable": true
+}

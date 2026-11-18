@@ -260,6 +260,11 @@ fi
 setting_get() { case "$1" in unblock.enabled) printf 1; return 0 ;; esac; return 2; }
 lane_gate_or_exit() { return 0; }
 lane_env_apply() { return 0; }
+# BH-9446: the tick's ticket PR resolve (bin/lib/unblock/ticket-pr.sh) reads
+# GitHub for each ticket-subject record. Its own suite pins it
+# (tests/unblock-ticket-pr-resolve.bh-9446-test.sh); here the records pass
+# unchanged, so this suite still pins the rules contract with 0 vendor calls.
+ub_ticket_pr_enrich() { cat; }
 _jobs_req() {
   local k n
   seq_log "JOBS $1 $2 ${3:-}"

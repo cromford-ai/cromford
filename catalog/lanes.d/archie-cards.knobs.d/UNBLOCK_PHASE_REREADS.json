@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_PHASE_REREADS",
+  "read_in": "bin/lib/unblock/act.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 3,
+  "unit": "reads",
+  "zero_means": "off",
+  "note": "BH-9446: the same knob as the unblock lane's (act.sh runs in this lane too, for lever rebuild): the planned transition is sent again this many times when the 409 names no current phase. A bad value is the code fallback 1. 0 is off: a 409 with no current phase is failed phase-unreadable at once.",
+  "settable": true
+}

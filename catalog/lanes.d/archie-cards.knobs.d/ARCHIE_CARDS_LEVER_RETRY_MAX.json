@@ -1,0 +1,12 @@
+{
+  "env": "ARCHIE_CARDS_LEVER_RETRY_MAX",
+  "read_in": "bin/archie-cards.sh",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 10,
+  "unit": "retries",
+  "zero_means": "off",
+  "note": "BH-9446: a lever whose ub_act outcome is failed (a read or a write that did not answer) is pulled again on later ticks, at most this many times, with one log line per retry and no model call. needs-operator goes out when the retries are used up. refused, would, rc 1 and a lever that does not fit go out at once. Out of range is one warn line and the default. 0 is off: a failed lever is needs-operator at once.",
+  "settable": true
+}

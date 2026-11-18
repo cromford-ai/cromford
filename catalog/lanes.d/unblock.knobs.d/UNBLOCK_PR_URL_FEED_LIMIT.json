@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_PR_URL_FEED_LIMIT",
+  "read_in": "bin/lib/unblock/ticket-pr.sh",
+  "type": "int",
+  "default": 200,
+  "min": 1,
+  "max": 500,
+  "unit": "rows",
+  "zero_means": null,
+  "note": "BH-9446: the newest pr_url artifact rows the unblock tick reads once per tick (job_artifact_feed, the /api/artifacts route caps at 500) to find the open PR of a ticket-subject record. A ticket older than these rows falls back to one GitHub read by branch ticket/<key>. A bad value is the code fallback 200.",
+  "settable": true
+}

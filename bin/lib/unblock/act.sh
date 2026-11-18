@@ -118,6 +118,9 @@
 #   UNBLOCK_CARD_TTL_H         72   the ask card's deadline (card.sh's knob)
 #   UNBLOCK_ASK_QUESTION_MAX   2000 the longest question an ask accepts (the
 #                                   #8731 route's QUESTION_MAX is the ceiling)
+#   UNBLOCK_PHASE_REREADS      1    rebuild: how many more times the phase
+#                                   is read when a 409 names no current phase
+#                                   (0..3; 0 = no re-read)
 # Rows: unblock.project.<p>.mode; unblock.knob_allowlist (comma list, `*`
 #   matches one dot-free segment). Absent -> the code list below. A key under
 #   unblock.* or lane.unblock.* is refused whatever the row says.
@@ -590,17 +593,29 @@ _ub_send_card() {
 # _ub_to_planned <reason> — lifecycle_transition <p> <key> planned lifecycle.
 # rc 0 = the ticket is planned now (moved, or a 409 whose current is planned);
 # rc 1 = an outcome was already given.
+# A 409 (rc 9) whose body names no current phase is an UNREAD phase, not a
+# moved one: the transition is sent again, at most UNBLOCK_PHASE_REREADS more
+# times (the worker compares and sets, so a repeat is safe). Still no phase:
+# failed phase-unreadable.
 _ub_to_planned() {
-  local out rc cur
-  out=$(lifecycle_transition "$_UB_P" "$(_ub_arg key)" planned lifecycle "$1" 2>/dev/null); rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    9) cur=$(jq -r '.current // ""' <<<"$out" 2>/dev/null)
-       [ "$cur" = planned ] && return 0
-       _ub_out refused "phase-moved:$(printf '%s' "${cur:-unknown}" | tr -c 'A-Za-z0-9_-' '_')"; return 1 ;;
-    2) _ub_out refused no-row; return 1 ;;
-    *) _ub_out failed "transition rc $rc"; return 1 ;;
-  esac
+  local out rc cur n=0 max
+  # Fallback 1 = the knob default (catalog/lanes.d/unblock.knobs.d/UNBLOCK_PHASE_REREADS.json).
+  max="${UNBLOCK_PHASE_REREADS:-1}"; [[ $max =~ ^[0-3]$ ]] || max=1
+  while :; do
+    out=$(lifecycle_transition "$_UB_P" "$(_ub_arg key)" planned lifecycle "$1" 2>/dev/null); rc=$?
+    case "$rc" in
+      0) return 0 ;;
+      9) cur=$(jq -r 'if type == "object" and (.current | type) == "string" then .current else "" end' <<<"$out" 2>/dev/null) || cur=""
+         [ "$cur" = planned ] && return 0
+         if [ -n "$cur" ]; then
+           _ub_out refused "phase-moved:$(printf '%s' "$cur" | tr -c 'A-Za-z0-9_-' '_')"; return 1
+         fi
+         [ "$n" -lt "$max" ] || { _ub_out failed phase-unreadable; return 1; }
+         n=$((n + 1)) ;;
+      2) _ub_out refused no-row; return 1 ;;
+      *) _ub_out failed "transition rc $rc"; return 1 ;;
+    esac
+  done
 }
 
 # rebuild (BH-8736, U14-REBUILD): the phase first (after #8734 the queue

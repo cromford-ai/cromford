@@ -11,7 +11,7 @@
     "kind": "pr-verdict-old-head",
     "all": [
       ".old_verdict | test(\"^MERGE\")",
-      ".lead_request_open == false",
+      "(.lead_request_open == false) or (.lead_request_open == true and has(\"lead_request_id\") and .lead_request_id == null)",
       "(.idle_min | type) == \"number\" and .idle_min >= .restamp_idle_min"
     ],
     "wait": [
@@ -35,5 +35,5 @@
     "head",
     "id"
   ],
-  "note": "BH-8390. A MERGE or MERGE-WITH-NOTES stands on an older head after a restamp or a main merge, nothing stands on the new head, and no lead request is open for it for restamp_idle_min (UNBLOCK_RESTAMP_IDLE_MIN): ask the lead for the new head (request_id none: no reset). Hand fixes 2026-10-21..26 (#7767 #8014 #8136)."
+  "note": "BH-8390. A MERGE or MERGE-WITH-NOTES stands on an older head after a restamp or a main merge, nothing stands on the new head, and no lead request is open for it for restamp_idle_min (UNBLOCK_RESTAMP_IDLE_MIN): ask the lead for the new head (request_id none: no reset). Hand fixes 2026-10-21..26 (#7767 #8014 #8136). BH-9446: an open lead request whose matched row has no id (lead_request_id null) reads as not open; a record with no lead_request_id key keeps the old result."
 }
