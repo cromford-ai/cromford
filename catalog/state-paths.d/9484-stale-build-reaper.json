@@ -1,0 +1,3 @@
+[
+    {"path": "stale-build-reaper", "class": "box-local", "authority": "the stale-build reaper's evidence-outage latch (BH-9484)", "note": "state/stale-build-reaper/evidence-down: one empty file bin/stale-build-reaper.sh creates when a feed or evidence read fails, after it writes the one alert line for that outage. The first complete read deletes it, so the directory holds at most one file. Losing it costs one repeated alert line. Machine-local, never carried"}
+]

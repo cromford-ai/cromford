@@ -1,0 +1,74 @@
+{
+  "id": "stale-build-reaper",
+  "name": "Stale build reaper",
+  "scope": "hub",
+  "script": "bin/stale-build-reaper.sh",
+  "cadence": "*/10 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-stale-build-reaper",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "STALE_REAPER_ACT",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "max": 1,
+      "unit": null,
+      "zero_means": "off",
+      "note": "BH-9484 item 7. Read by bin/stale-build-reaper.sh. 0 (off) is observe mode: the lane logs what it would do and changes nothing. Only 1 makes the lane act: close the quiet running build job row, POST /api/builds/close, one alert per reaped build. Any other value (and --dry-run) writes one OBSERVE line per dead build and changes nothing. Switch on: bin/harness-ctl.sh set stale-build-reaper STALE_REAPER_ACT 1."
+    },
+    {
+      "env": "STALE_REAPER_MINUTES",
+      "type": "int",
+      "default": 60,
+      "min": 60,
+      "max": 1440,
+      "unit": "minutes",
+      "zero_means": null,
+      "note": "BH-9484 item 4. Read by bin/stale-build-reaper.sh. A planning or executing console row quiet this long, with no queue row, machine, fresh job row or fresh build dir, is dead. The console feed takes whole hours, so the minimum is 60."
+    },
+    {
+      "env": "STALE_REAPER_MAX",
+      "type": "int",
+      "default": 20,
+      "min": 1,
+      "max": 200,
+      "unit": "builds",
+      "zero_means": null,
+      "note": "Read by bin/stale-build-reaper.sh. Close POSTs in one tick, act mode only. A dead build past the cap gets one DEFERRED log line and is reaped next tick, never dropped."
+    },
+    {
+      "env": "STALE_REAPER_HTTP_TIMEOUT_S",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "Read by bin/stale-build-reaper.sh. curl --max-time for each console call (the stale feed and the close POST). The jobs worker calls keep JOBS_TIMEOUT."
+    },
+    {
+      "env": "STALE_REAPER_PAGE",
+      "type": "int",
+      "default": 500,
+      "min": 50,
+      "max": 500,
+      "unit": "rows",
+      "zero_means": null,
+      "note": "Read by bin/stale-build-reaper.sh. Page size of the build_queue, machines and running job reads. The worker caps a page at 500, and a full page is a fail-closed refusal (the live set may be truncated)."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/stale-build-reaper.log"
+  }
+}

@@ -1,0 +1,3 @@
+# @hub-lanes
+# BH-9484: mark a build dead after STALE_REAPER_MINUTES with no queue row, machine, fresh job or build dir. Observe mode until STALE_REAPER_ACT=1.
+*/10 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/stale-build-reaper.sh >/dev/null 2>&1
