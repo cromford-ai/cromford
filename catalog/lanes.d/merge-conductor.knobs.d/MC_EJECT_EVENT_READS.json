@@ -1,0 +1,11 @@
+{
+  "env": "MC_EJECT_EVENT_READS",
+  "read_in": "bin/merge-conductor.d/bh-9695-eject-unknown.sh",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 50,
+  "unit": "reads per project per tick",
+  "zero_means": "off",
+  "note": "BH-9695: how many Mergify activity-log reads (one per head, ever) the conductor makes per project per tick for a second ejection with an unknown cause. Over it, the park waits with no fix round and the parked-row pass asks again next tick. 0 = off: no Mergify event read, the cause stays unknown and the one extra requeue still runs. Each read is bounded by MERGIFY_API_TIMEOUT_S. Settings row: lane.merge-conductor.mc_eject_event_reads."
+}

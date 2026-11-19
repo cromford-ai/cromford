@@ -1,0 +1,461 @@
+{
+ "_head": "abcdef0123456789abcdef0123456789abcdef01",
+ "_other": "1111111111111111111111111111111111111111",
+ "_note": "BH-9695: Mergify activity-log answers (GET /v1/repos/{owner}/{repo}/logs?event_type=action.queue.leave), one per case of tests/mc-eject-unknown.bh-9695-test.sh. The field names follow docs.mergify.com/api (read 2026-11-18); the contract suite pins them live.",
+ "E1": {
+  "events": [
+   {
+    "id": 11,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "The merge queue checks failed",
+     "dequeue_code": "CHECKS_FAILED",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": [
+      "Tests"
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E2": {
+  "events": [
+   {
+    "id": 12,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "The merge queue checks failed",
+     "dequeue_code": "CHECKS_FAILED",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": [
+      {
+       "name": "Tests",
+       "conclusion": "failure"
+      }
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E3": {
+  "events": [
+   {
+    "id": 13,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "Batch failed",
+     "dequeue_code": "BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS",
+     "pull_request_head_sha": null,
+     "unsuccessful_checks": [
+      {
+       "name": "Tests (shard 7/12)"
+      },
+      {
+       "name": "Lint"
+      }
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E4": {
+  "events": [
+   {
+    "id": 14,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "The pull request conflicts with the base branch",
+     "dequeue_code": "CONFLICT_WITH_BASE_BRANCH",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E5": {
+  "events": [
+   {
+    "id": 15,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "Checks timed out",
+     "dequeue_code": "CHECKS_TIMEOUT",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E6": {
+  "events": [
+   {
+    "id": 16,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "The pull request has been manually dequeued by `@x`\nsecond line",
+     "dequeue_code": "PR_DEQUEUED",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E7": {
+  "events": [
+   {
+    "id": 17,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "Queue rule conditions no longer match",
+     "dequeue_code": null,
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E8": {
+  "events": [
+   {
+    "id": 18,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": null,
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E9": {
+  "events": [
+   {
+    "id": 19,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T09:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "older, this head",
+     "dequeue_code": "CHECKS_TIMEOUT",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   },
+   {
+    "id": 20,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T11:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "newer, another head",
+     "dequeue_code": "CHECKS_FAILED",
+     "pull_request_head_sha": "1111111111111111111111111111111111111111",
+     "unsuccessful_checks": [
+      "Tests"
+     ]
+    }
+   }
+  ],
+  "size": 2,
+  "per_page": 10
+ },
+ "E10": {
+  "events": [
+   {
+    "id": 21,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "another head",
+     "dequeue_code": "CHECKS_FAILED",
+     "pull_request_head_sha": "1111111111111111111111111111111111111111",
+     "unsuccessful_checks": [
+      "Tests"
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E11": {
+  "events": [
+   {
+    "id": 22,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": true,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "The pull request has been merged",
+     "dequeue_code": "PR_MERGED",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E12": {
+  "events": [
+   {
+    "id": 23,
+    "type": "action.queue.checks_end",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "x",
+     "dequeue_code": "CHECKS_FAILED",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": [
+      "Tests"
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E13": {
+  "events": [
+   {
+    "id": 24,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": "CHECKS_TIMEOUT",
+     "pull_request_head_sha": null,
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E14": {
+  "events": [
+   {
+    "id": 25,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": "CONFLICT_WITH_BASE_BRANCH",
+     "pull_request_head_sha": "abcdef0",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E15a": {},
+ "E15b": {
+  "events": []
+ },
+ "E16": {
+  "events": [
+   {
+    "id": 26,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "lower case code",
+     "dequeue_code": "checks_failed",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": [
+      "Tests"
+     ]
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "E17": {
+  "events": [
+   {
+    "id": 27,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": "CONFLICT_WITH_BASE_BRANCH",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   },
+   {
+    "id": 28,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": "CHECKS_TIMEOUT",
+     "pull_request_head_sha": "abcdef0123456789abcdef0123456789abcdef01",
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 2,
+  "per_page": 10
+ },
+ "unknown": {
+  "events": [
+   {
+    "id": 30,
+    "type": "action.queue.leave",
+    "received_at": "2026-11-18T10:00:00Z",
+    "pull_request": 42,
+    "repository": "example-org/cromford",
+    "metadata": {
+     "branch": "main",
+     "merged": false,
+     "queue_name": "default",
+     "queued_at": "2026-11-18T09:00:00Z",
+     "reason": "",
+     "dequeue_code": null,
+     "pull_request_head_sha": null,
+     "unsuccessful_checks": []
+    }
+   }
+  ],
+  "size": 1,
+  "per_page": 10
+ },
+ "none": {
+  "events": [],
+  "size": 0,
+  "per_page": 10
+ }
+}

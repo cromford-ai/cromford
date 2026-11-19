@@ -1,0 +1,12 @@
+{
+  "env": "MERGIFY_EVENTS_PER_PAGE",
+  "read_in": "bin/lib/vendor/mergify.sh",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 100,
+  "unit": "events",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9695: per_page of the Mergify activity-log read in mergify_queue_leave_events (one PR's action.queue.leave events, newest first). Read as ${MERGIFY_EVENTS_PER_PAGE:-10}; a value that is not an integer in 1..100 is 10."
+}

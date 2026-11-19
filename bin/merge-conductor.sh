@@ -1760,6 +1760,7 @@ pr_worker() {
     elif [ "${EJN:-0}" -ge 2 ]; then
       STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
       command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
+      command -v mc_eu_why >/dev/null 2>&1 && WHY="$WHY$(mc_eu_why "$KEY" "$HEAD")"
     elif [ "$PROVIDER" != mergify ] || [ "${MC_QUEUE_REENTRY:-1}" = 0 ]; then
       STATE=WAIT_CI; WHY="$EJWHY"
     elif [ -n "$(mc_requeued_mark "$KEY" "$HEAD")" ]; then
@@ -1810,6 +1811,7 @@ pr_worker() {
       EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
       if [ "${EJN:-0}" -ge 2 ]; then STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
         command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
+        command -v mc_eu_why >/dev/null 2>&1 && WHY="$WHY$(mc_eu_why "$KEY" "$HEAD")"
       else STATE=WAIT_CI; WHY="ejected on ${HEAD:0:8} as the culprit: never re-queued; only a new head clears it"; fi
     # <<< eject culprit
     elif [ "$MERGES" != 1 ]; then
@@ -3043,6 +3045,7 @@ tick_project() {
           if command -v ec_cause >/dev/null 2>&1 && [ "$(ec_knob MC_EJECT_CAUSE 1)" != 0 ]; then
             QEC=$(ec_cause "$PROVIDER" "$SLUG" "$QURL" "$QHEAD" "${QLIVE:-}")
             QORD=first; [ -n "$(mc_requeued_mark "$QKEY" "$QHEAD")" ] && QORD=again
+            command -v mc_eu_ord >/dev/null 2>&1 && QORD=$(mc_eu_ord "$QKEY" "$QHEAD" "$QORD")
             ec_record "$SLUG" "${QKEY##*#}" "$QHEAD" "$QORD" "${QEC%%$'\t'*}" "${QEC#*$'\t'}"
             QEWHY="${QEC%%$'\t'*}"; [ -n "${QEC#*$'\t'}" ] && QEWHY="$QEWHY (${QEC#*$'\t'})"
             mc_log "EJECT_CAUSE $QKEY ${QHEAD:0:8} $QORD $QEWHY"
@@ -3066,14 +3069,27 @@ tick_project() {
           [ "${EJN:-1}" -ge 2 ] && command -v mc_bv_solo >/dev/null 2>&1 \
             && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" && QBV=0
           # <<< batch victim (BH-9253)
+          # >>> eject unknown (BH-9695)
+          # A second ejection with no named cause: one Mergify event read, and
+          # when that names nothing either, one more requeue (rc 0) instead of
+          # the park. rc 1 = park as before; rc 2 = park, no fix round yet (a
+          # budget is spent; the parked-row pass asks again next tick).
+          QEU=1
+          [ "$QBV" = 1 ] && [ "${EJN:-1}" -ge 2 ] && command -v mc_eu_requeue >/dev/null 2>&1 \
+            && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
+          # <<< eject unknown (BH-9695)
           if [ "$QBV" = 0 ]; then
             mc_log "$QKEY ejected again on ${QHEAD:0:8} (ejections: $EJN) — a batch victim, requeued solo instead of parked (BH-9253)"
+          elif [ "${QEU:-1}" = 0 ]; then
+            mc_log "$QKEY ejected again on ${QHEAD:0:8} (ejections: $EJN) — no named cause after the Mergify event read, requeued once more instead of parked (BH-9695)"
           elif [ "${EJN:-1}" -ge 2 ]; then
             mc_log "$QKEY EJECTED from the merge queue again on ${QHEAD:0:8} (ejections: $EJN, provider $PROVIDER)"
-            mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice${QEWHY:+: $(ec_summary "$SLUG" "${QKEY##*#}")}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
+            mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice${QEWHY:+: $(ec_summary "$SLUG" "${QKEY##*#}")}$(command -v mc_eu_why >/dev/null 2>&1 && mc_eu_why "$QKEY" "$QHEAD")" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
             mc_log "$QKEY BLOCKED_AGENT queue-ejected-twice — its batch build fails against current main, which its own checks never test; handed to bin/blocked-resolver.sh (its ladder: an agent fix round with the failing batch runs when they could be read, else merge main / re-run CI first; then a fresh rebuild): $QURL"
             # BH-6000 part 5: the fix round starts now, with the two failing runs.
-            mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
+            # Not on a deferred extra requeue (BH-9695 rc 2): the parked-row
+            # pass offers it again first.
+            [ "${QEU:-1}" = 2 ] || mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
           else
             mc_log "$QKEY ejected from the merge queue on ${QHEAD:0:8} — cause: ${QEWHY:-not read (MC_EJECT_CAUSE=0)} (provider $PROVIDER)"
             mc_transition "$QKEY" WAIT_CI "queue-ejected${QEWHY:+: $QEWHY}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
@@ -3113,9 +3129,12 @@ tick_project() {
         # is stamped (mc_eject_fix_now returns at once for a stamped head).
         # BH-9253: a parked batch victim is requeued solo first; any other
         # queue-ejected-twice park (rc 1) gets the fix round as before.
+        # BH-9695: else a park with no named cause gets its one Mergify event
+        # read and one more requeue (rc 0); rc 2 (a budget) waits a tick.
         case "$QWHY" in queue-ejected-twice*)
           if ! { command -v mc_bv_solo >/dev/null 2>&1 && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; }; then
-            mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
+            QEU=1; command -v mc_eu_requeue >/dev/null 2>&1 && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
+            [ "$QEU" = 1 ] && mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
           fi ;;
         esac
       fi

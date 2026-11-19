@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "vendor-mergify",
+      "file": "bin/lib/vendor/mergify.sh",
+      "note": "BH-9695: the Mergify REST seam. mergify_queue_leave_events GETs one PR's action.queue.leave events from Mergify's activity log (or answers from the local fake in vendor fake mode). The token is passed by variable name and reaches curl only on stdin. Its knobs are the curl wall-clock limit and the page size.",
+      "knobs": []
+    }
+  ]
+}

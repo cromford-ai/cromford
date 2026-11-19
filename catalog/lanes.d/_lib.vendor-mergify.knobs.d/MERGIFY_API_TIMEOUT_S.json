@@ -1,0 +1,12 @@
+{
+  "env": "MERGIFY_API_TIMEOUT_S",
+  "read_in": "bin/lib/vendor/mergify.sh",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9695: curl --max-time for each Mergify activity-log read in mergify_queue_leave_events. A conductor tick waits on it, so it is short. Read as ${MERGIFY_API_TIMEOUT_S:-10}; a value that is not an integer in 1..120 is 10."
+}
