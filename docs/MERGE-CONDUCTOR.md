@@ -3323,3 +3323,19 @@ dates are newer than the review, so the text walk read even a real marker as "fi
 The refusal reads `MERGE_REFUSED block-gate: standing CHANGES_REQUESTED (lead/human BLOCK) <url>
 by @<login> at <time> on <blocked-head> blocks head <head> (every head since only merged main …)`;
 the row stays `READY`. Unreadable reviews are rc 2 `review-states`: no merge this tick.
+
+## 18. One review verdict of record per head (BH-9823, 2026-11-19)
+
+A pending lead review (a `lead_review_requests` row on the head, status `requested` or
+`running`) is waited for, not raced. On HEAD_MOVED the conductor does not consume the
+autopilot verdict (`WAIT_LEAD_REVIEW` why, no comment, no rebind, no re-review bought);
+on READY the row is `WAIT_LEAD` and nothing is enqueued. When the request ends on a head
+the conductor waited on, the lead verdict is of record: a lead/human MERGE rebinds, a
+lead/human BLOCK parks `head-not-reapproved` for the resolver. The wait is bounded by
+`MC_LEAD_REVIEW_WAIT_S` (default 2700 s, 0 = off); past it, one `LEAD_REVIEW_OVERDUE`
+warn alert per (PR, head) and the autopilot verdict is used. An unreadable request list
+is today's path. Lead gate 12 (`bin/lib/lead-gates.d/12-autopilot-bound.sh`) skips a
+worklist head whose newest box row is MERGE or MERGE-WITH-NOTES, except on a
+lead_required repo. A box BLOCK is not bound and the lead still reviews that head. Every queue decision line ends `review_source=<word>`. Code:
+`bin/merge-conductor.d/bh-9823-one-verdict.sh`. Note:
+`docs/notes/2026-11-19-bh-9823-one-verdict-per-head.md`.

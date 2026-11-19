@@ -1688,6 +1688,8 @@ pr_worker() {
   command -v mc_mig_hold >/dev/null 2>&1 && mc_mig_hold
   # A BUILDER APPROVE ALONE IS NOT READY ON A LEAD-REQUIRED REPO (BH-8890): fragment bh-8890-lead-required.sh
   command -v mc_lead_req_hold >/dev/null 2>&1 && mc_lead_req_hold
+  # NO QUEUE WHILE A LEAD REVIEW OF THIS HEAD IS PENDING (BH-9823): fragment bh-9823-one-verdict.sh
+  command -v mc_ovh_ready_hold >/dev/null 2>&1 && mc_ovh_ready_hold
   # ---- the merge-queue re-entry arm (BH-636) ------------------------------
   # A head the merge queue already EJECTED is not READY, whatever the PR's own
   # checks say: the merge_group build tested main+this and went red, and
@@ -2167,6 +2169,8 @@ pr_worker() {
       esac ;;
     HEAD_MOVED)
       [ "$ACTIONS" = 1 ] || return 0
+      # ONE VERDICT OF RECORD PER HEAD (BH-9823): a pending lead review is waited for, not raced.
+      command -v mc_ovh_moved_hold >/dev/null 2>&1 && mc_ovh_moved_hold && return 0
       headbound_review moved "$KEY" "$SLUG" "$NUM" "$P" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$CI" ;;
     READY)
       mc_step base-guard
@@ -2554,6 +2558,8 @@ pr_worker() {
         return 0
       fi
       mc_step enqueue
+      # The review source of record for the enqueue line (BH-9823).
+      MC_REVIEW_SRC=$(command -v mc_ovh_source >/dev/null 2>&1 && mc_ovh_source "$KEY" "$SLUG" "$NUM" "$HEAD"); MC_REVIEW_SRC=${MC_REVIEW_SRC:-unknown}
       # The refusal above sits BEFORE the take, so a PR that never reached gh
       # costs the project no unit of this tick's merge budget.
       mc_tick_budget_take "$P" merge "$MERGE_BUDGET" || { budget_spent "$P" merge "$KEY"
@@ -2623,7 +2629,7 @@ pr_worker() {
           0) mc_count_inc "$P" merges >/dev/null
              command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"   # BH-1668 F2: no second ask
              mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: re-queued after a cleared CR
-             mc_log "$KEY enqueued in the $PROVIDER merge queue at ${HEAD:0:8} — the conductor settles it when the queue merges it"
+             mc_log "$KEY enqueued in the $PROVIDER merge queue at ${HEAD:0:8} — the conductor settles it when the queue merges it review_source=$MC_REVIEW_SRC"
              [ -n "${MC_LANDED_FILE:-}" ] && printf 'queued %s\n' "$KEY" >> "$MC_LANDED_FILE"
              mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
              command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "$BR" "$NUM" "$HEAD" "enqueued in the $PROVIDER merge queue at ${HEAD:0:8}" ;;

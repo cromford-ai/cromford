@@ -1,0 +1,12 @@
+{
+  "env": "MC_LEAD_REVIEW_WAIT_S",
+  "read_in": "bin/merge-conductor.d/bh-9823-one-verdict.sh",
+  "type": "int",
+  "default": 2700,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": true,
+  "note": "BH-9823: how long the conductor waits for a pending lead review (a lead_review_requests row on the head, status requested or running) before it consumes the autopilot verdict or enqueues. Past it: one LEAD_REVIEW_OVERDUE warn alert per (PR, head), then the autopilot verdict is used. 2700 = MC_REREVIEW_TIMEOUT_SECS; a lead review runs 7-9 minutes; below MC_BUDGET_WAIT_LEAD (3600). 0 = no wait (the behavior before BH-9823). Settings key lane.merge-conductor.mc_lead_review_wait_s."
+}
