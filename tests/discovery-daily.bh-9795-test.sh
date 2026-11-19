@@ -42,6 +42,13 @@
 #   N2  the missed-run marker retention is a knob (review fix)
 #   N3  calls with no cost row: usd unknown, not 0 (review fix)
 #   N4  a retry row past the attempts: failed and one failed alert (review fix)
+#   M1  model text cannot plant a marker in a ticket or a comment (BH-9820 item 1)
+#   M2  bin/discovery-setup.sh writes the since row once (BH-9820 item 2)
+#   M3  the missed-run alert: alert_digest, held open, closed by a later done run (BH-9820 items 4, 5)
+#   M4  the project env file gives only DISCOVERY_SENTRY_TOKEN (BH-9820 item 6)
+#   M5  bin/discovery-setup.sh --sentry-org (BH-9820 item 6)
+#   M6  a 401/403/404 list: one log line with org and slug, no token (BH-9820 item 6)
+#   M7  the run-claim stale pad is a knob (BH-9820 item 4)
 #   R   the registry knobs
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/discovery-daily.bh-9795-test.sh
@@ -115,6 +122,8 @@ cat > "$T/fakebin/curl" <<'SH'
 out=""; prev=""; m=GET
 for a in "$@"; do
   case "$prev" in -o) out="$a" ;; -X) m="$a" ;; esac
+  # BH-9820: the bearer each call carries, and the GH_TOKEN the lane passed on.
+  case "$prev $a" in "-H Authorization: "*) printf '%s GH_TOKEN=%s\n' "${a#Authorization: }" "${GH_TOKEN-<unset>}" >> "$FXT/auth.log" ;; esac
   prev="$a"
 done
 url="${!#}"
@@ -151,7 +160,7 @@ job_ledger_put() {
   jq -nc --arg s "$3" --arg d "${4:-}" '{status:$s, detail:$d[0:4000]}' > "$FXT/ledger/$1.${2//\//+}"
 }
 job_ledger_claim() {
-  printf 'claim %s %s %s\n' "$1" "$2" "$3" >> "$FXT/ledger.log"
+  printf 'claim %s %s %s %s\n' "$1" "$2" "$3" "$4" >> "$FXT/ledger.log"
   [ "$(cat "$FXT/ledger.rc" 2>/dev/null)" = 1 ] && return 1
   local f="$FXT/ledger/$1.${2//\//+}" st
   if [ -f "$f" ]; then
@@ -486,11 +495,15 @@ check "D17 settings unreadable: rc 1, nothing written" '[ "$(cat "$T/src")" = 1 
 
 # ── D18: the missed-run check ────────────────────────────────────────────────
 YDAY=$(date -u -d "@$((NOW - 86400))" +%F)
-missed() { # missed <sources> -> the alert count after the call
-  env HARNESS="$H" FXT="$FXT" FLEET_CONF="$H/fleet.conf" SRC="$1" NOW="$NOW" JOBS_URL= bash -c '
+missed() { # missed <sources> -> the alert count after the call (MNOW overrides NOW)
+  env HARNESS="$H" FXT="$FXT" FLEET_CONF="$H/fleet.conf" SRC="$1" NOW="${MNOW:-$NOW}" JOBS_URL= bash -c '
     . "$HARNESS/bin/lib/lane-gate.sh"
     lane_knob() { [ "$3" = project-6-os ] && printf "%s" "$SRC"; return 0; }
     alert() { printf "%s %s %s\n" "$1" "$2" "$3" >> "$FXT/ph-alerts.log"; }
+    # BH-9820: as pipeline-health'"'"'s alert_digest: every call is fired (ph-fired.log),
+    # the TTL dedupe lets only the first call per key beat (ph-alerts.log).
+    alert_digest() { printf "%s\n" "$2" >> "$FXT/ph-fired.log"
+      grep -qF " $2 " "$FXT/ph-alerts.log" 2>/dev/null || printf "%s %s %s\n" "$1" "$2" "$3" >> "$FXT/ph-alerts.log"; }
     . "$HARNESS/bin/lib/discovery-missed.sh"; . "$FXT/../fixture.sh"
     dd_missed_check "$NOW"' 2>/dev/null
   if [ -f "$FXT/ph-alerts.log" ]; then wc -l < "$FXT/ph-alerts.log"; else echo 0; fi
@@ -498,7 +511,10 @@ missed() { # missed <sources> -> the alert count after the call
 sincerow() { jq -nc --arg s "$1" '{status: "active", detail: ({since: $s} | tojson)}' > "$FXT/ledger/discovery-daily-since.$P"; }
 reset; sincerow "$(date -u -d "@$((NOW - 3 * 86400))" +%F)"
 check "D18 missed: exactly 1 alert" '[ "$(missed sentry)" = 1 ]'
-check "D18 the alert key names the project and day" 'grep -q "^86400 discovery-missed:$P:$YDAY " "$FXT/ph-alerts.log"'
+# TEST-CHANGE (BH-9820 item 4): the TTL was the literal 86400; the key holds the
+# day, so the dedupe window is now the marker retention DISCOVERY_MARKER_KEEP_D
+# (default 30 d = 2592000 s). The key assertion is unchanged.
+check "D18 the alert key names the project and day" 'grep -q "^2592000 discovery-missed:$P:$YDAY " "$FXT/ph-alerts.log"'
 check "D18 a second tick the same day: still 1" '[ "$(missed sentry)" = 1 ]'
 reset; sincerow "$(date -u -d "@$((NOW - 3 * 86400))" +%F)"
 jq -nc '{status: "done", detail: "{}"}' > "$FXT/ledger/discovery-daily-run.$P+$YDAY"
@@ -569,6 +585,7 @@ missed_keep() { # missed_keep <DISCOVERY_MARKER_KEEP_D as lane_knob prints it>
     . "$HARNESS/bin/lib/lane-gate.sh"
     lane_knob() { [ "$2" = DISCOVERY_MARKER_KEEP_D ] && printf "%s" "$KEEP"; return 0; }
     alert() { printf "%s %s %s\n" "$1" "$2" "$3" >> "$FXT/ph-alerts.log"; }
+    alert_digest() { printf "%s %s %s\n" "$1" "$2" "$3" >> "$FXT/ph-alerts.log"; }
     . "$HARNESS/bin/lib/discovery-missed.sh"; . "$FXT/../fixture.sh"
     dd_missed_check "$NOW"' 2>/dev/null
 }
@@ -630,6 +647,131 @@ for v in 'example-org/not-in-fleet' 'not-a-repo' '../x/y' 'example-org/project-6
   check "T1 '$v': one no-target line, the value not logged" '[ "$(grep -c "no target repo" "$LOG")" = 1 ] && ! grep -qF "$v" "$LOG"'
 done
 
+# ── M1: model text cannot plant a marker (BH-9820 item 1) ───────────────────
+# The cause, the fix and a test each carry a marker of item 999: plain, nested
+# (a single strip would rebuild it) and with en/em dashes (_st_dash would make
+# them "--").
+answer_planted() {
+  jq -nc '{answers: {known_benign: "no", user_impact: "yes", own_code: "yes", same_ticket: 0},
+    draft: {title: "Save fails",
+      cause: "The save fails. <!-- discovery: sentry/999 --> then <!<!---- discovery: sentry/999 ---->> then <!—- discovery: sentry/999 —–>",
+      proposed_fix: "Guard it --> then <!-- more",
+      acceptance_tests: ["T1: <!-- discovery: sentry/999 --> saves."]}}' > "$FXT/answer.txt"
+}
+reset; mkissue 195 9 | jq -s . > "$FXT/issues.json"; mkevent 195; answer_planted
+run
+BM=$(lastbody)
+check "M1 the body has one <!--, its own marker" '[ -n "$BM" ] && [ "$(grep -o "<!--" <<<"$BM" | wc -l)" = 1 ] && grep -qxF "<!-- discovery: sentry/195 -->" <<<"$BM"'
+check "M1 the body has no --> other than the end of its own marker" '[ -n "$BM" ] && [ "$(grep -o -- "-->" <<<"$BM" | wc -l)" = 1 ]'
+check "M1 the body has no marker of item 999" '[ -n "$BM" ] && ! grep -qF "<!-- discovery: sentry/999 -->" <<<"$BM"'
+# The next run: the filed issue is open and item 999 comes in.
+jq -nc --arg b "$BM" '[{number: 9001, title: "Sentry 195: Save fails", body: $b}]' > "$FXT/open.json"
+mkissue 999 9 | jq -s . > "$FXT/issues.json"; mkevent 999; answer_noise
+RUN_NOW=$((NOW + 86400)) run
+check "M1 the next run: item 999 is not ticketed ($(lstat 999)/$(ldet 999 .action))" '[ -n "$(lstat 999)" ] && [ "$(lstat 999)" != ticketed ]'
+# The comment path.
+reset; mkissue 196 9 | jq -c '.title = "Payment webhook rejects a signed request"' | jq -s . > "$FXT/issues.json"; mkevent 196
+jq -nc '[{number: 502, title: "Payment webhook rejects a signed request", body: "b"}]' > "$FXT/open.json"
+answer_planted; jq -c '.answers.same_ticket = 502' "$FXT/answer.txt" > "$FXT/a.tmp" && mv "$FXT/a.tmp" "$FXT/answer.txt"
+run
+CBM=$(grep '^COMMENT ' "$FXT/gh.log" 2>/dev/null | tail -n 1 | cut -d' ' -f4- | jq -r . 2>/dev/null)
+check "M1 the comment has one <!-- and one -->, its own marker" '[ -n "$CBM" ] && [ "$(grep -o "<!--" <<<"$CBM" | wc -l)" = 1 ] && [ "$(grep -o -- "-->" <<<"$CBM" | wc -l)" = 1 ] && grep -qxF "<!-- discovery: sentry/196 -->" <<<"$CBM"'
+
+# ── M2: bin/discovery-setup.sh writes the since row once (BH-9820 item 2) ────
+sincev() { jq -r ".detail | fromjson | .since" "$FXT/ledger/discovery-daily-since.$P" 2>/dev/null; }
+sinceputs() { if [ -f "$FXT/ledger.log" ]; then grep -c "^put discovery-daily-since " "$FXT/ledger.log"; else echo 0; fi; }
+reset
+DISCOVERY_DAILY_NOW=$NOW setup --project "$P" --sources sentry
+check "M2 no since row: setup writes it with the setup date ($(sincev); $(head -c 200 "$T/sout"))" '[ "$(cat "$T/src")" = 0 ] && [ "$(sincev)" = "$DAY" ] && [ "$(sinceputs)" = 1 ]'
+DISCOVERY_DAILY_NOW=$((NOW + 86400)) setup --project "$P" --sources sentry
+check "M2 a second setup does not change the row ($(sincev), puts $(sinceputs))" '[ "$(cat "$T/src")" = 0 ] && [ "$(sincev)" = "$DAY" ] && [ "$(sinceputs)" = 1 ]'
+reset; echo 1 > "$FXT/ledger.rc"
+DISCOVERY_DAILY_NOW=$NOW setup --project "$P" --sources sentry
+check "M2 the since row is unreadable: rc 1, nothing written" '[ "$(cat "$T/src")" = 1 ] && [ "$(sets)" = 0 ] && [ "$(sinceputs)" = 0 ]'
+
+# ── M3: the missed-run alert (BH-9820 items 4, 5) ────────────────────────────
+firedn() { if [ -f "$FXT/ph-fired.log" ]; then grep -cx "discovery-missed:$P:$1" "$FXT/ph-fired.log"; else echo 0; fi; }
+reset; sincerow "$(date -u -d "@$((NOW - 2 * 86400))" +%F)"
+check "M3 a since row from 2 days before and no run row: 1 alert" '[ "$(missed sentry)" = 1 ]'
+check "M3 the alert went through alert_digest, TTL the marker retention" '[ "$(firedn "$YDAY")" = 1 ] && grep -q "^2592000 discovery-missed:$P:$YDAY " "$FXT/ph-alerts.log"'
+MNOW=$((NOW + 3600)) missed sentry >/dev/null
+check "M3 a later tick, no done row: the alert is fired again (held open), no second beat" '[ "$(firedn "$YDAY")" = 2 ] && [ "$(wc -l < "$FXT/ph-alerts.log")" = 1 ]'
+echo 1 > "$FXT/ledger.rc"; MNOW=$((NOW + 7200)) missed sentry >/dev/null; rm -f "$FXT/ledger.rc"
+check "M3 a ledger outage holds the alert open" '[ "$(firedn "$YDAY")" = 3 ]'
+# Day D = YDAY. A done run row for D+1 (today): the next tick does not fire D.
+jq -nc '{status: "done", detail: "{}"}' > "$FXT/ledger/discovery-daily-run.$P+$DAY"
+MNOW=$((NOW + 10800)) missed sentry >/dev/null
+check "M3 a done run row for D+1 (today): the alert of D is not fired again" '[ "$(firedn "$YDAY")" = 3 ] && [ "$(wc -l < "$FXT/ph-alerts.log")" = 1 ]'
+MNOW=$((NOW + 86400)) missed sentry >/dev/null
+check "M3 the next day: D stays closed, D+1 raises nothing" '[ "$(firedn "$YDAY")" = 3 ] && [ "$(firedn "$DAY")" = 0 ] && [ "$(wc -l < "$FXT/ph-alerts.log")" = 1 ]'
+# D+1 = yesterday: a missed day two ticks back closes once yesterday is done.
+reset; sincerow "$(date -u -d "@$((NOW - 5 * 86400))" +%F)"
+D2=$(date -u -d "@$((NOW - 2 * 86400))" +%F)
+MNOW=$((NOW - 86400)) missed sentry >/dev/null
+check "M3 the missed day D is alerted and fired" '[ "$(firedn "$D2")" = 1 ]'
+jq -nc '{status: "done", detail: "{}"}' > "$FXT/ledger/discovery-daily-run.$P+$YDAY"
+: > "$FXT/ph-fired.log"; missed sentry >/dev/null
+check "M3 a done run row for D+1 (yesterday): the alert of D is not fired" '[ "$(grep -c "discovery-missed:$P:$D2 " "$FXT/ph-alerts.log")" = 1 ] && [ "$(firedn "$D2")" = 0 ] && [ "$(firedn "$YDAY")" = 0 ]'
+check "M3 discovery-missed is in RETRACT_NS" 'grep -qE "^RETRACT_NS=\"([a-z|]*\|)?discovery-missed(\||\")" "$DIR/bin/pipeline-health.sh"'
+check "M3 the check calls alert_digest, never alert" 'grep -q "alert_digest " "$DIR/bin/lib/discovery-missed.sh" && ! grep -qE "^[[:space:]]*alert [0-9]" "$DIR/bin/lib/discovery-missed.sh"'
+
+# ── M4: the project env file (BH-9820 item 6) ────────────────────────────────
+authok() { [ -s "$FXT/auth.log" ] && [ -z "$(grep -vxF -- "$1" "$FXT/auth.log")" ]; }
+reset; printf 'SENTRY_API_TOKEN=tok-fixture-global-A\n' > "$H/env/global.env"
+printf '%s\n' '# the project token' 'DISCOVERY_SENTRY_TOKEN="tok-fixture-proj-B"' > "$H/env/$P.env"
+mkissue 197 9 | jq -s . > "$FXT/issues.json"; mkevent 197
+run GH_TOKEN=tok-fixture-gh-orig
+check "M4 global A, project B: every Sentry call is Bearer tok-fixture-proj-B [$(sort -u "$FXT/auth.log" 2>/dev/null | head -3 | tr '\n' ' ')]" 'authok "Bearer tok-fixture-proj-B GH_TOKEN=tok-fixture-gh-orig"'
+reset; mkissue 198 9 | jq -s . > "$FXT/issues.json"; mkevent 198
+P=other-os; run GH_TOKEN=tok-fixture-gh-orig; P=project-6-os
+check "M4 a project with no project file: Bearer tok-fixture-global-A" 'authok "Bearer tok-fixture-global-A GH_TOKEN=tok-fixture-gh-orig"'
+reset; mkissue 199 9 | jq -s . > "$FXT/issues.json"; mkevent 199
+printf '%s\n' 'GH_TOKEN=tok-fixture-gh-X' 'SENTRY_API_TOKEN=tok-fixture-proj-Z' 'touch "$FXT/sourced"' 'export DISCOVERY_SENTRY_ORG=evil-org' > "$H/env/$P.env"
+run GH_TOKEN=tok-fixture-gh-orig
+check "M4 other names in the project file change nothing" 'authok "Bearer tok-fixture-global-A GH_TOKEN=tok-fixture-gh-orig" && [ ! -e "$FXT/sourced" ] && ! grep -q evil-org "$FXT/curl.log"'
+reset; mkissue 200 9 | jq -s . > "$FXT/issues.json"; mkevent 200
+printf '%s\n' "export DISCOVERY_SENTRY_TOKEN='tok-fixture-proj-C'" > "$H/env/$P.env"
+run GH_TOKEN=tok-fixture-gh-orig
+check "M4 export and single quotes: Bearer tok-fixture-proj-C" 'authok "Bearer tok-fixture-proj-C GH_TOKEN=tok-fixture-gh-orig"'
+reset; mkissue 200 9 | jq -s . > "$FXT/issues.json"; mkevent 200
+printf '%s\n' 'DISCOVERY_SENTRY_TOKEN=$(touch "$FXT/sourced")' > "$H/env/$P.env"
+run GH_TOKEN=tok-fixture-gh-orig
+check "M4 a value is never run" '[ ! -e "$FXT/sourced" ]'
+check "M4 no project or global token in the log" '! grep -qE "tok-fixture-proj-[A-Z]|tok-fixture-global-A" "$LOG"'
+: > "$H/env/global.env"; scratch_rm "$H/env/$P.env"
+
+# ── M5: bin/discovery-setup.sh --sentry-org (BH-9820 item 6) ─────────────────
+orgsets() { if [ -f "$FXT/ctl.log" ]; then grep -cx "set discovery-daily DISCOVERY_SENTRY_ORG project-6-llc $P" "$FXT/ctl.log"; else echo 0; fi; }
+reset
+setup --project "$P" --sources sentry --sentry-org project-6-llc
+check "M5 --sentry-org writes the org row ($(orgsets); $(head -c 200 "$T/sout"))" '[ "$(cat "$T/src")" = 0 ] && [ "$(orgsets)" = 1 ]'
+setup --project "$P" --sources sentry --sentry-org project-6-llc
+check "M5 a second run: the org row is written once" '[ "$(cat "$T/src")" = 0 ] && [ "$(orgsets)" = 1 ] && grep -q "^unchanged lane.discovery-daily.$P.discovery_sentry_org=project-6-llc$" "$T/sout"'
+for v in '../x' 'Bad/Org' 'org;id'; do
+  reset; setup --project "$P" --sources sentry --sentry-org "$v"
+  check "M5 --sentry-org '$v': rc 2, nothing written" '[ "$(cat "$T/src")" = 2 ] && [ "$(sets)" = 0 ] && [ "$(sinceputs)" = 0 ]'
+done
+
+# ── M6: a 401/403/404 list answer (BH-9820 item 6) ───────────────────────────
+for code in 401 403 404; do
+  reset; echo "$code" > "$FXT/list.code"; printf 'DISCOVERY_SENTRY_TOKEN=tok-fixture-proj-B\n' > "$H/env/$P.env"
+  run DISCOVERY_SENTRY_ORG=project-6-llc
+  check "M6 HTTP $code: one log line names the org and the slug [$(grep -c project-6-llc "$LOG" 2>/dev/null)]" '[ "$(grep project-6-llc "$LOG" 2>/dev/null | grep -c project-6-web)" = 1 ]'
+  check "M6 HTTP $code: no token in the log or the alerts" '! grep -qE "tok-fixture-proj-B|tok-fixture-1" "$LOG" "$FXT/alerts.log" 2>/dev/null'
+done
+scratch_rm "$H/env/$P.env"
+
+# ── M7: the run-claim stale pad is a knob (BH-9820 item 4) ───────────────────
+reset; echo '[]' > "$FXT/issues.json"
+run
+check "M7 default: stale after 1500 + 60 s" 'grep -qx "claim discovery-daily-run $P/$DAY running 1560" "$FXT/ledger.log"'
+reset; echo '[]' > "$FXT/issues.json"
+run DISCOVERY_STALE_PAD_S=120
+check "M7 DISCOVERY_STALE_PAD_S=120: stale after 1620 s" 'grep -qx "claim discovery-daily-run $P/$DAY running 1620" "$FXT/ledger.log"'
+reset; echo '[]' > "$FXT/issues.json"
+run DISCOVERY_STALE_PAD_S=99999
+check "M7 out of range: one warn line and the default" 'grep -q "DISCOVERY_STALE_PAD_S=99999 is outside" "$LOG" && grep -qx "claim discovery-daily-run $P/$DAY running 1560" "$FXT/ledger.log"'
+
 # ── D19: the composed schema ─────────────────────────────────────────────────
 SQL="$T/schema.sql"
 ( cd "$DIR" && HARNESS_TEST_SANDBOX=1 bash bin/schema-build.sh --to "$SQL" ) > "$T/sb.out" 2>&1
@@ -651,6 +793,8 @@ check "R the target-repo knob is settable per project" '[ "$(jq -c ".knobs[] | s
 check "R every per-project settings key fits 64 chars with the longest fleet slug" \
   'L=$(awk "NF && \$1 !~ /^#/ {print length(\$1)}" "$DIR/fleet.conf" | sort -n | tail -1); [ -n "$L" ] && [ -z "$(jq -r --argjson l "$L" ".knobs[] | select(.settable != false) | select(.project_scoped != false) | .env | ascii_downcase | select((21 + \$l + 1 + length) > 64)" "$DIR/catalog/lanes.d/discovery-daily.json")" ]'
 check "R the seams are settable:false" '[ "$(jq -c "[.knobs[] | select(.env | IN(\"DISCOVERY_DAILY_NOW\",\"DISCOVERY_DAILY_FIXTURE\",\"HARNESS_TEST_SANDBOX\")) | .settable] | unique" "$DIR/catalog/lanes.d/discovery-daily.json")" = "[false]" ]'
+check "R the stale pad knob (BH-9820)" '[ "$(jq -c "[.env, .default, .min, .max, .settable]" "$DIR/catalog/lanes.d/discovery-daily.knobs.d/DISCOVERY_STALE_PAD_S.json")" = "[\"DISCOVERY_STALE_PAD_S\",60,0,600,true]" ]'
+check "R DISCOVERY_SENTRY_TOKEN is a secret, not a knob (BH-9820)" '! jq -e ".knobs[] | select(.env == \"DISCOVERY_SENTRY_TOKEN\")" "$DIR/catalog/lanes.d/discovery-daily.json" >/dev/null && grep -qx "#DISCOVERY_SENTRY_TOKEN=" "$DIR/env-templates/lanes/386-discovery-daily.env.example"'
 check "R scope project, hub box" '[ "$(jq -c "[.scope, .boxes]" "$DIR/catalog/lanes.d/discovery-daily.json")" = "[\"project\",[\"hub\"]]" ]'
 
 echo "discovery-daily: $PASS passed, $FAIL failed"

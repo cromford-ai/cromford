@@ -328,7 +328,7 @@ fi
 # (costcap et al under a stamp) would false-retract on the ticks they skip.
 FIRED="$H/state/health-fired.$$"; : > "$FIRED"
 ACTIVE="$H/state/health-active.txt"; touch "$ACTIVE"
-RETRACT_NS="noprogress|stuckqueue|strandedqueue|staledequeue|leadunqueued|staleremote|emptyurl|tickloop|stalepr|uncommented|hungmachine|driftfail|sweepstall|starved|overcap|hubreposhallow|tmpfull|backupstale|backupmissing|restoredrillfail|restoredrillstale|preplanzero|wakearmed|staleparent|stalehold|stalledblocker"
+RETRACT_NS="noprogress|stuckqueue|strandedqueue|staledequeue|leadunqueued|staleremote|emptyurl|tickloop|stalepr|uncommented|hungmachine|driftfail|sweepstall|starved|overcap|hubreposhallow|tmpfull|backupstale|backupmissing|restoredrillfail|restoredrillstale|preplanzero|wakearmed|staleparent|stalehold|stalledblocker|discovery-missed"
 # BH-5941: the per-project namespaces. Each key is <ns>:<project>[:…]; a project
 # run owns its own, the fleet run owns every other key (the epilogue).
 PH_PROJ_NS="stuckqueue poolhalt uncommented emptyurl staleremote tickloop stalepr starved strandedqueue staledequeue staleparent noprogress stalehold stalledblocker"
@@ -3113,7 +3113,10 @@ esac
 # <<< wake classes armed
 # >>> discovery-daily missed run (BH-9795)
 # A project with the discovery-daily lane on and no done run row for yesterday:
-# ONE alert per project per day (key discovery-missed:<p>:<day>). The lib decides.
+# ONE warn per project per day (key discovery-missed:<p>:<day>) through
+# alert_digest (BH-9820), fired every tick while it is open. It closes when a
+# later day's run is done, and then the epilogue retracts it (discovery-missed
+# is in RETRACT_NS). The lib decides.
 if ! command -v dd_missed_check >/dev/null 2>&1 && [ -r "$H/bin/lib/discovery-missed.sh" ]; then
   # shellcheck source=bin/lib/discovery-missed.sh
   . "$H/bin/lib/discovery-missed.sh"

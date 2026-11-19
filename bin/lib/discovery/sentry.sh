@@ -16,11 +16,19 @@
 # Knobs (registry catalog/lanes.d/discovery-daily.json): DISCOVERY_SENTRY_ORG
 # (default operator), DISCOVERY_SENTRY_PROJ (empty = not-configured),
 # and the lane's DISCOVERY_LOOKBACK_H through ST_LOOKBACK_H. The token is
-# SENTRY_API_TOKEN, the one bin/sentry-triage.sh reads.
+# DISCOVERY_SENTRY_TOKEN when it is set (BH-9820: a secret, the one name
+# bin/discovery-daily.sh takes from env/<project>.env), else SENTRY_API_TOKEN,
+# the hub token bin/sentry-triage.sh reads. The chosen token is put in
+# SENTRY_API_TOKEN for this per-project run, so the list, the latest event and
+# the writeback all use it (the shared _st_curl reads that name).
+# A list answer of HTTP 401, 403 or 404 also writes one log line that names the
+# org and the project slug (the token's org is the usual cause). The token is
+# never logged.
 
 dd_src_sentry_list() {
   local dir=$1 out code peek
   DD_SRC_ERR=""
+  [ -n "${DISCOVERY_SENTRY_TOKEN:-}" ] && SENTRY_API_TOKEN=$DISCOVERY_SENTRY_TOKEN
   [ -n "${SENTRY_API_TOKEN:-}" ] || return 3
   ST_PROJECT="${DISCOVERY_SENTRY_PROJ:-}"
   ST_ORG="${DISCOVERY_SENTRY_ORG:-operator}"
@@ -31,6 +39,9 @@ dd_src_sentry_list() {
   if ! [[ $code == 2?? ]] || ! jq -e 'type == "array"' "$out" >/dev/null 2>&1; then
     peek=$(head -c 200 "$out" 2>/dev/null | tr '\n' ' ')
     DD_SRC_ERR="Sentry issue list for $ST_ORG/$ST_PROJECT answered HTTP $code: $peek"
+    case "$code" in
+      401|403|404) _dd_log "sentry list HTTP $code for org $ST_ORG project $ST_PROJECT: the token ($( [ -n "${DISCOVERY_SENTRY_TOKEN:-}" ] && echo DISCOVERY_SENTRY_TOKEN || echo SENTRY_API_TOKEN )) cannot read this org or project; check DISCOVERY_SENTRY_ORG, DISCOVERY_SENTRY_PROJ and the token (value not logged)" ;;
+    esac
     return 1
   fi
   # The title cut is the knob DISCOVERY_ITEM_TITLE_CHARS (dd_knobs sets

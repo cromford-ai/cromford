@@ -11,10 +11,13 @@ table in code decide what to do. Part 1 has one source: Sentry.
 `bin/lib/discovery-daily.sh`):
 
 1. It claims the run row `discovery-daily-run/<project>/<date>` in the jobs
-   ledger. A `done` row stops the run with one log line. The first run writes
-   `discovery-daily-since/<project>`.
+   ledger. A `done` row stops the run with one log line. A `running` row is
+   stale after `DISCOVERY_RUN_TIMEOUT_S` + `DISCOVERY_STALE_PAD_S` seconds. If
+   `discovery-daily-since/<project>` is absent (no setup), the run writes it.
 2. It lists each source in `DISCOVERY_SOURCES`. A source with no credential or
-   no project slug is `not-configured`: one log line, no fetch. A value that
+   no project slug is `not-configured`: one log line, no fetch. A Sentry list
+   answer of HTTP 401, 403 or 404 writes one log line with the org and the
+   project slug (never the token) and raises one warn `discovery-daily-list`. A value that
    is not `^[a-z0-9,-]*$` (spaces removed) reads no source. A name with no
    `bin/lib/discovery/<name>.sh` is logged and skipped.
 3. It saves each raw answer under `state/discovery-daily/<project>/<date>/` and
@@ -32,7 +35,9 @@ table in code decide what to do. Part 1 has one source: Sentry.
    `DISCOVERY_HOTFIX_24H` events in 24 h), comments on one open
    candidate ticket, or marks noise. The body has `## Scope`,
    `## Acceptance tests`, `## Out of scope` and the marker. The source id, the
-   link and the event counts come from the fetch, never from the model.
+   link and the event counts come from the fetch, never from the model. Every
+   model text in a ticket body or a comment body loses each `<!--` and `-->`
+   first (`_dd_unmark`, BH-9820), so only the lane writes a marker.
 8. It stops at `DISCOVERY_TICKETS_DAY` or `DISCOVERY_MAX_CALLS_DAY`. An
    item that fails `DISCOVERY_MAX_ATTEMPTS` times is `failed` and raises one
    warn alert `discovery-daily-failed`.
@@ -46,8 +51,12 @@ the source adapters.
 
 `bin/pipeline-health.sh` runs the missed-run check on the hub
 (`bin/lib/discovery-missed.sh`). A project with the lane on and no `done` run
-row for yesterday raises ONE alert `discovery-missed:<project>:<date>`. The
-check starts the day after the first run.
+row for yesterday raises ONE warn `discovery-missed:<project>:<date>` through
+`alert_digest` (the warn digest, no page). The check starts the day after the
+since date. The alert stays open (fired every tick, one beat) until a `done`
+run row of a later day exists; then the check stops firing it and the
+pipeline-health epilogue retracts it (`discovery-missed` is in `RETRACT_NS`).
+The dedupe window is `DISCOVERY_MARKER_KEEP_D` days.
 
 Off: `flags/lane-off-discovery-daily`, or `bin/harness-ctl.sh off discovery-daily`.
 
@@ -58,8 +67,14 @@ Off: `flags/lane-off-discovery-daily`, or `bin/harness-ctl.sh off discovery-dail
    nothing.
 
    ```
-   bin/discovery-setup.sh --project <project> --sources sentry --sentry-project <slug> [--repo <owner/repo>]
+   bin/discovery-setup.sh --project <project> --sources sentry --sentry-project <slug> [--sentry-org <org>] [--repo <owner/repo>]
    ```
+
+   It also writes `discovery-daily-since/<project>` with the date of the setup
+   when that row is absent, so the missed-run check alerts from the day after
+   the setup even if the lane never ran. A second run keeps the row.
+   `--sentry-org` writes `DISCOVERY_SENTRY_ORG` (default `operator`); the
+   value must match `^[a-z0-9_-]+$`.
 
    With no `--repo`, tickets go to the project's `fleet.conf` repo. `--repo`
    writes `DISCOVERY_TARGET_REPO`; the value must be a repo `fleet.conf` names,
@@ -70,8 +85,10 @@ Off: `flags/lane-off-discovery-daily`, or `bin/harness-ctl.sh off discovery-dail
    ```
    23 7 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/discovery-daily.sh <project> >> /root/harness/logs/discovery-daily.log 2>&1
    ```
-3. The first run writes the `discovery-daily-since/<project>` row. The
-   missed-run check reads the project from the next day.
+3. A project in another Sentry org needs its own token: put
+   `DISCOVERY_SENTRY_TOKEN=<token>` in `env/<project>.env` on the hub. The lane
+   takes ONLY that name from the file and does not source it. Unset, the
+   sentry source uses `SENTRY_API_TOKEN` from `env/global.env`.
 
 project-6-os is on (BH-9795): sources `sentry`, tickets in its `fleet.conf` repo `example-org/project-6`.
 Its Sentry project slug is not set yet, so its runs log `sentry not-configured`
@@ -100,4 +117,4 @@ and make no call until the lead runs step 1 with `--sentry-project`.
 | `discovery-daily` | `<project>/<source>/<id>` | `retry`, `diagnosed`, `ticketed`, `noise`, `failed`; the fetched fields, attempts, answers, the draft, the decision, the action |
 | `discovery-daily-day` | `<project>/<date>` | `{filed: [<source>/<id>], calls: n}` |
 | `discovery-daily-run` | `<project>/<date>` | `running`, `done`, `failed`; the run counts and `usd` |
-| `discovery-daily-since` | `<project>` | `{since: <date of the first run>}` |
+| `discovery-daily-since` | `<project>` | `{since: <date of the setup, or of the first run>}` |

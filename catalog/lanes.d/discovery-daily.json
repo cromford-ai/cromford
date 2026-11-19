@@ -29,7 +29,7 @@
       "default": "operator",
       "zero_means": null,
       "read_in": "bin/lib/discovery/sentry.sh",
-      "note": "BH-9795: the Sentry organization slug of the sentry source. Read in bin/lib/discovery/sentry.sh as ${DISCOVERY_SENTRY_ORG:-operator}; a value outside ^[a-z0-9_-]+$ is not-configured.",
+      "note": "BH-9795: the Sentry organization slug of the sentry source. Read in bin/lib/discovery/sentry.sh as ${DISCOVERY_SENTRY_ORG:-operator}; a value outside ^[a-z0-9_-]+$ is not-configured. BH-9820: set it per project with bin/discovery-setup.sh --sentry-org <slug>, which refuses a value outside ^[a-z0-9_-]+$ (rc 2, nothing written). A project in another org also needs its own token: DISCOVERY_SENTRY_TOKEN in env/<project>.env (a secret, not a knob).",
       "settable": true
     },
     {
@@ -147,7 +147,7 @@
       "max": 365,
       "zero_means": null,
       "read_in": "bin/lib/discovery-missed.sh",
-      "note": "BH-9795: days the missed-run check keeps its missed-ok-* and missed-alerted-* markers under state/discovery-daily/; each pipeline-health tick deletes older ones. Read in bin/lib/discovery-missed.sh as lane_knob discovery-daily DISCOVERY_MARKER_KEEP_D; empty or outside 1..365 is the fallback 30. The check reads it with no project, so only the lane-wide row applies.",
+      "note": "BH-9795: days the missed-run check keeps its missed-ok-* and missed-alerted-* markers under state/discovery-daily/; each pipeline-health tick deletes older ones. Read in bin/lib/discovery-missed.sh as lane_knob discovery-daily DISCOVERY_MARKER_KEEP_D; empty or outside 1..365 is the fallback 30. The check reads it with no project, so only the lane-wide row applies. BH-9820: it is also the dedupe window of the missed-run alert (alert_digest TTL = this many days x 86400 s), since the alert key holds the day; an open alert whose marker is deleted is no longer fired and retracts.",
       "settable": true
     },
     {
@@ -158,7 +158,7 @@
       "max": 3600,
       "zero_means": null,
       "read_in": "bin/discovery-daily.sh",
-      "note": "BH-9795: the whole run is killed after this many seconds (timeout re-exec). The run row is claimed with a stale time of this plus 60 s. Read in bin/discovery-daily.sh and bin/lib/discovery-daily.sh as ${DISCOVERY_RUN_TIMEOUT_S:-1500}.",
+      "note": "BH-9795: the whole run is killed after this many seconds (timeout re-exec). The run row is claimed with a stale time of this plus DISCOVERY_STALE_PAD_S (BH-9820). Read in bin/discovery-daily.sh and bin/lib/discovery-daily.sh as ${DISCOVERY_RUN_TIMEOUT_S:-1500}.",
       "settable": true
     },
     {
@@ -258,7 +258,7 @@
       "type": "string",
       "default": "",
       "zero_means": null,
-      "note": "Test seam: epoch seconds bin/discovery-daily.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "note": "Test seam: epoch seconds bin/discovery-daily.sh (and, BH-9820, bin/discovery-setup.sh for the since row date) uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
       "settable": false
     },
     {

@@ -1,0 +1,11 @@
+{
+  "env": "DISCOVERY_STALE_PAD_S",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 600,
+  "zero_means": null,
+  "read_in": "bin/lib/discovery-daily.sh",
+  "note": "BH-9820: seconds added to DISCOVERY_RUN_TIMEOUT_S for the stale time of the run row claim (discovery-daily-run/<project>/<date>): a running row older than timeout + this is stale and a new run may claim it. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_STALE_PAD_S:-60}; outside 0..600 is one log line and the default.",
+  "settable": true
+}

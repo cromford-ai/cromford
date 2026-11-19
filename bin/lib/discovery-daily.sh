@@ -10,7 +10,7 @@
 #
 # dd_run, in this order:
 #   1. claim discovery-daily-run/<project>/<date> (running, stale after
-#      DISCOVERY_RUN_TIMEOUT_S + 60, terminal done). Held done or running: one
+#      DISCOVERY_RUN_TIMEOUT_S + DISCOVERY_STALE_PAD_S, terminal done). Held done or running: one
 #      log line, return. Ledger outage: one warn discovery-daily-ledger, return.
 #      Write discovery-daily-since/<project> {since: <date>} when absent.
 #      Delete raw date dirs older than DISCOVERY_RAW_KEEP_D days.
@@ -32,6 +32,8 @@
 #   discovery-daily-run    <project>/<date>  running | done | failed {counts}
 #   discovery-daily-since  <project>         active {since: <first run date>}
 # Body marker: <!-- discovery: <source>/<id> --> on a ticket and on a comment.
+# Every model text that goes into a body passes _dd_unmark first (BH-9820), so
+# only the lane writes a marker.
 #
 # gh-rest: no-graphql
 # shellcheck source=bin/lib/sentry-triage.sh
@@ -56,6 +58,7 @@ dd_knobs() {
   ST_MAX_ATTEMPTS=$(_st_knob_int DISCOVERY_MAX_ATTEMPTS "${DISCOVERY_MAX_ATTEMPTS:-3}" 3 1 10)
   DD_RAW_KEEP_D=$(_st_knob_int DISCOVERY_RAW_KEEP_D "${DISCOVERY_RAW_KEEP_D:-14}" 14 1 365)
   DD_RUN_TIMEOUT_S=$(_st_knob_int DISCOVERY_RUN_TIMEOUT_S "${DISCOVERY_RUN_TIMEOUT_S:-1500}" 1500 60 3600)
+  DD_STALE_PAD_S=$(_st_knob_int DISCOVERY_STALE_PAD_S "${DISCOVERY_STALE_PAD_S:-60}" 60 0 600)
   DD_CALL_TIMEOUT_S=$(_st_knob_int DISCOVERY_CALL_TIMEOUT_S "${DISCOVERY_CALL_TIMEOUT_S:-300}" 300 30 1200)
   DD_DETAIL_MAX_BYTES=$(_st_knob_int DISCOVERY_DETAIL_MAX_BYTES "${DISCOVERY_DETAIL_MAX_BYTES:-12000}" 12000 1000 100000)
   DD_CAND_MATCH_CHARS=$(_st_knob_int DISCOVERY_CAND_MATCH_CHARS "${DISCOVERY_CAND_MATCH_CHARS:-60}" 60 10 300)
@@ -105,6 +108,15 @@ dd_cost() {
 
 # _dd_marker <src> <id>
 _dd_marker() { printf '<!-- discovery: %s/%s -->' "$1" "$2"; }
+
+# _dd_unmark: stdin to stdout with every "<!--" and "-->" removed (BH-9820).
+# The ONE filter for model text on its way into an issue or comment body: the
+# marker heal (dd_item) reads "<!-- discovery: <src>/<id> -->" in open bodies,
+# so model text must not be able to write one. The dashes are made ASCII first
+# (_st_dash runs on the whole body later and would turn "<!—-" into "<!--"),
+# and the strip repeats until nothing changes ("<!<!---->" leaves "<!--" after
+# one pass).
+_dd_unmark() { _st_dash | sed -e ':a' -e 's/<!--//g' -e 's/-->//g' -e 'ta'; }
 
 # dd_prompt <item-json> <pf>: the prompt file. Every fetched text goes through
 # ui_wrap. Sets DD_CANDS (the candidate numbers as a JSON array).
@@ -156,7 +168,7 @@ dd_act() {
     comment\ *)
       n=${dec#comment }; bf="$ST_TMP/comment.md"
       { printf 'The discovery lane found more events of this problem.\n\n'
-        jq -r '.diagnosis.cause // ""' <<<"$det"
+        jq -r '.diagnosis.cause // ""' <<<"$det" | _dd_unmark
         printf '\n'; _dd_evidence "$det"
         printf '\n%s\n' "$(_dd_marker "$src" "$id")"
       } | _st_dash > "$bf"
@@ -173,10 +185,10 @@ dd_act() {
       srcname=$(jq -r '.source | ascii_upcase[0:1] + .[1:]' <<<"$det")
       tf=$(printf '%s %s: %s' "$srcname" "$id" "$(jq -r '.diagnosis.title' <<<"$det")" | tr '\n' ' ' | _st_dash | cut -c1-"$DD_TICKET_TITLE_CHARS")
       bf="$ST_TMP/body.md"
-      { printf '## Scope\n\n'; jq -r '.diagnosis.cause' <<<"$det"
-        printf '\nProposed fix: %s\n\n' "$(jq -r '.diagnosis.proposed_fix // ""' <<<"$det")"
+      { printf '## Scope\n\n'; jq -r '.diagnosis.cause' <<<"$det" | _dd_unmark
+        printf '\nProposed fix: %s\n\n' "$(jq -r '.diagnosis.proposed_fix // ""' <<<"$det" | _dd_unmark)"
         _dd_evidence "$det"
-        printf '\n## Acceptance tests\n\n'; jq -r '(.diagnosis.acceptance_tests // []) | if type == "array" then .[] else . end | "- \(.)"' <<<"$det"
+        printf '\n## Acceptance tests\n\n'; jq -r '(.diagnosis.acceptance_tests // []) | if type == "array" then .[] else . end | "- \(.)"' <<<"$det" | _dd_unmark
         printf '\n## Out of scope\n\nOther errors of this project.\n\n'
         _dd_marker "$src" "$id"; printf '\n'
       } | _st_dash > "$bf"
@@ -310,7 +322,7 @@ dd_run() {
   dd_knobs
 
   # 1. The run row, FIRST.
-  out=$(job_ledger_claim discovery-daily-run "$DD_P/$day" running "$((DD_RUN_TIMEOUT_S + 60))" done); rc=$?
+  out=$(job_ledger_claim discovery-daily-run "$DD_P/$day" running "$((DD_RUN_TIMEOUT_S + DD_STALE_PAD_S))" done); rc=$?
   case "$rc" in
     0) ;;
     3) if [ "$out" = done ]; then _dd_log "run $day already done; nothing read"

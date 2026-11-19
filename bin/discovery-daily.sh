@@ -35,6 +35,27 @@ awk -v p="$DD_P" 'NF && $1 !~ /^#/ && $1 == p {f=1} END {exit !f}' "$DD_FLEET" 2
 HENV=$(harness_env_dir "$H")
 # shellcheck disable=SC1091
 [ -r "$HENV/global.env" ] && { set -a; . "$HENV/global.env" 2>/dev/null; set +a; }
+# BH-9820: env/<project>.env, after global.env. The lane takes ONE name from it,
+# DISCOVERY_SENTRY_TOKEN (the project's own Sentry token; the adapter falls back
+# to SENTRY_API_TOKEN). The file is NOT sourced: the last
+# `[export ]DISCOVERY_SENTRY_TOKEN=<v>` line is parsed, one pair of matching
+# outer quotes is dropped, and the value is used as text (no eval, no
+# expansion). Every other line is ignored. The value is never logged.
+dd_project_token() { # dd_project_token <file>: prints the value, rc 1 = no line
+  local f=$1 line v
+  [ -r "$f" ] || return 1
+  line=$(grep -E '^[[:space:]]*(export[[:space:]]+)?DISCOVERY_SENTRY_TOKEN=' "$f" 2>/dev/null | tail -n 1)
+  [ -n "$line" ] || return 1
+  v=${line#*DISCOVERY_SENTRY_TOKEN=}
+  v=${v%$'\r'}
+  if [[ $v =~ ^\"(.*)\"[[:space:]]*$ ]] || [[ $v =~ ^\'(.*)\'[[:space:]]*$ ]]; then v=${BASH_REMATCH[1]}
+  else v=${v%%[[:space:]]#*}; v=${v%"${v##*[![:space:]]}"}; fi
+  printf '%s' "$v"
+}
+if DD_PTOK=$(dd_project_token "$HENV/$DD_P.env") && [ -n "$DD_PTOK" ]; then
+  export DISCOVERY_SENTRY_TOKEN="$DD_PTOK"
+fi
+unset DD_PTOK
 
 # shellcheck disable=SC1091
 {
