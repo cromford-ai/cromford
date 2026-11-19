@@ -21,7 +21,7 @@
 
 import { d1Guarded, json } from "../lib/http.js";
 import { laneName, str } from "../lib/core.js";
-import { webTaskEnqueueRefused } from "./web-vault.js";
+import { operatorLaneEnqueueRefused } from "../lib/signal-lanes.js";
 
 // lp_enqueue_batch's LP_BATCH_MAX is the same number.
 export const BATCH_MAX = 500;
@@ -66,8 +66,9 @@ export const routes = [
     ({ req, env, t, body }) => d1Guarded("lane_runs", async () => {
       const lane = laneName(body.lane);
       if (!lane) return json(400, { error: `lane is required and ${NAME_ERR}` });
-      // BH-7595: a web-task run unlocks the project's web_vault reads.
-      const refused = webTaskEnqueueRefused(req, env, lane);
+      // BH-7595: a web-task run unlocks the project's web_vault reads; BH-9800:
+      // a lane in signal_keys.read_lanes unlocks its signal key reads.
+      const refused = await operatorLaneEnqueueRefused(req, env, lane);
       if (refused) return refused;
       const rows = body.rows;
       if (!Array.isArray(rows) || rows.length < 1 || rows.length > BATCH_MAX) {

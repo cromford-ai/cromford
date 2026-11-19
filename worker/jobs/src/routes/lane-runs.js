@@ -100,7 +100,8 @@ import { harnessShaOf } from "../lib/harness-sha.js";
 import { sweepDead } from "./lane-runs-lease.js";
 import { failReason, runStatus } from "../lib/lane-run-status.js";
 import { prefixesOf, readGroups } from "../lib/lane-fleet-groups.js";
-import { mintRunToken, webTaskEnqueueRefused, WEB_TASK_LANE } from "./web-vault.js";
+import { mintRunToken } from "./web-vault.js";
+import { operatorLaneEnqueueRefused, runTokenLane } from "../lib/signal-lanes.js";
 import {
   allBoxKeys, boxKeysFor, boxMatch, boxNameOf, exceptKeys, fallbackKeys, readBoxPlacements,
 } from "../lib/lane-box-placement.js";
@@ -347,8 +348,9 @@ export const routes = [
       const lane = laneName(body.lane);
       const project = laneName(body.project);
       if (!lane || !project) return json(400, { error: `lane and project are required and ${NAME_ERR}` });
-      // BH-7595: a web-task run unlocks the project's web_vault reads.
-      const refused = webTaskEnqueueRefused(req, env, lane);
+      // BH-7595: a web-task run unlocks the project's web_vault reads; BH-9800:
+      // a lane in signal_keys.read_lanes unlocks its signal key reads.
+      const refused = await operatorLaneEnqueueRefused(req, env, lane);
       if (refused) return refused;
       const a = argsOf(body.args);
       if (a.err) return json(400, { error: a.err });
@@ -450,9 +452,10 @@ export const routes = [
         id: Number(row.id), lane: row.lane, project: row.project, args: JSON.parse(row.args_json),
         attempts: Number(row.attempts), lease_until: row.lease_until, ...(box !== null ? { box } : {}),
       };
-      // BH-7595: the run token of a web-task claim (routes/web-vault.js). Only
-      // its hash is stored; a re-claim mints a new one, so the old one stops.
-      if (row.lane === WEB_TASK_LANE) {
+      // BH-7595: the run token of a web-task claim (routes/web-vault.js), and
+      // BH-9800: of a lane in signal_keys.read_lanes. Only its hash is stored;
+      // a re-claim mints a new one, so the old one stops.
+      if (await runTokenLane(env, row.lane)) {
         const token = await mintRunToken(env, out.id, machine, t);
         if (token) out.vault_token = token;
       }

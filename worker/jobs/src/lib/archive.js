@@ -32,6 +32,8 @@ export const ARCHIVE_TABLES = {
   pm_runs: { key: ["id"], time: "created_at" },
   // BH-7595: the web_vault audit rule (routes/retention.js).
   web_vault_audit: { key: ["id"], time: "at" },
+  // BH-9800: the signal key audit rule (routes/retention.d/bh-9800-signal-keys.js).
+  signal_key_audit: { key: ["id"], time: "at" },
   // BH-7722: the Tackler decision ledger (routes/retention.js unblock_decisions.age).
   unblock_decisions: { key: ["id"], time: "created_at" },
   // BH-7965: the secret envelope sweep (routes/secret-envelope-apply.js).

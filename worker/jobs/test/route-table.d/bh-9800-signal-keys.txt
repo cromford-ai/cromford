@@ -1,0 +1,10 @@
+# SIGNAL KEYS (BH-9800, slice C0): per-project Sentry and PostHog keys in an
+# encrypted store. set, clear and test need the operator token or the owner
+# proof; read is bound to the caller's claimed lane run; hub-read needs the hub
+# envelope token. Bearer-gated.
+POST /api/signal-keys/set
+POST /api/signal-keys/clear
+GET /api/signal-keys
+POST /api/signal-keys/test
+POST /api/signal-keys/read
+POST /api/signal-keys/hub-read
