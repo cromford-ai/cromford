@@ -1,0 +1,287 @@
+{
+  "id": "discovery-daily",
+  "name": "Discovery daily (per-project sources become ai-build tickets)",
+  "scope": "project",
+  "script": "bin/discovery-daily.sh",
+  "cadence": "23 7 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-discovery-daily",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "DISCOVERY_SOURCES",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: comma list of the discovery sources this project reads (part 1: sentry). Each name needs bin/lib/discovery/<name>.sh. Empty = the lane does nothing for the project and the missed-run check skips it. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_SOURCES:-}. Set it per project with bin/discovery-setup.sh. Checked before use: with the spaces removed the whole value must match ^[a-z0-9,-]*$ (else one log line and no source is read), and each name must match ^[a-z0-9-]+$ and have bin/lib/discovery/<name>.sh (else one log line and that name is skipped).",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_SENTRY_ORG",
+      "type": "string",
+      "default": "operator",
+      "zero_means": null,
+      "read_in": "bin/lib/discovery/sentry.sh",
+      "note": "BH-9795: the Sentry organization slug of the sentry source. Read in bin/lib/discovery/sentry.sh as ${DISCOVERY_SENTRY_ORG:-operator}; a value outside ^[a-z0-9_-]+$ is not-configured.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_SENTRY_PROJ",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/discovery/sentry.sh",
+      "note": "BH-9795: the Sentry project slug of the sentry source. Empty = the source is not-configured (one log line, no fetch, no call). Read in bin/lib/discovery/sentry.sh as ${DISCOVERY_SENTRY_PROJ:-}; a value outside ^[a-z0-9_-]+$ is not-configured. Set it per project with bin/discovery-setup.sh.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_TARGET_REPO",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: owner/repo the lane files tickets in and reads open issues from. Empty = the project's fleet.conf repo (the registry repo). A value that is not owner/repo, or that fleet.conf does not name in column 2, is not used: the run logs one line (value not logged) and reads nothing. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_TARGET_REPO:-}. Set it per project with bin/discovery-setup.sh --repo.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_MIN_EVENTS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 100000,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: the event count an item needs before the lane acts on it. Below it: no ledger row and no model call. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_MIN_EVENTS:-3}; outside 1..100000 is one log line and the default.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_LOOKBACK_H",
+      "type": "int",
+      "default": 24,
+      "min": 1,
+      "max": 336,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: the sentry source reads unresolved issues seen in the last this many hours. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_LOOKBACK_H:-24}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_TICKETS_DAY",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 50,
+      "zero_means": "off",
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: new tickets the lane may file per project per UTC day (ledger row discovery-daily-day/<project>/<date>). At the cap the run stops; the rest count as capped and are offered again the next day. 0 files no ticket. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_TICKETS_DAY:-5}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_MAX_CALLS_DAY",
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "max": 200,
+      "zero_means": "off",
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: model calls the lane may start per project per UTC day, counted in the day row BEFORE each call. With DISCOVERY_MAX_USD this bounds the day's spend at calls x MAX_USD (default 10 x 0.50). 0 makes no call. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_MAX_CALLS_DAY:-10}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_MAX_USD",
+      "type": "number",
+      "default": 0.5,
+      "min": 0,
+      "max": 5,
+      "unit": "usd",
+      "zero_means": "off",
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: USD cap on each model call, passed as AGENT_CALL_BUDGET_USD_DISCOVERY_DAILY. 0 makes no call and writes no row. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_MAX_USD:-0.50}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_MAX_ATTEMPTS",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 10,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: call attempts an item gets before it is written failed and raises one warn alert discovery-daily-failed. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_MAX_ATTEMPTS:-3}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_HOTFIX_24H",
+      "type": "int",
+      "default": 50,
+      "min": 1,
+      "max": 1000000,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: a new ticket gets the hotfix label when the item's events in the last 24 h are at or above this number. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_HOTFIX_24H:-50}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_RAW_KEEP_D",
+      "type": "int",
+      "default": 14,
+      "min": 1,
+      "max": 365,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: days the raw fetch snapshots under state/discovery-daily/<project>/<date>/ are kept; each run deletes older date dirs. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_RAW_KEEP_D:-14}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_MARKER_KEEP_D",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 365,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-missed.sh",
+      "note": "BH-9795: days the missed-run check keeps its missed-ok-* and missed-alerted-* markers under state/discovery-daily/; each pipeline-health tick deletes older ones. Read in bin/lib/discovery-missed.sh as lane_knob discovery-daily DISCOVERY_MARKER_KEEP_D; empty or outside 1..365 is the fallback 30. The check reads it with no project, so only the lane-wide row applies.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_RUN_TIMEOUT_S",
+      "type": "int",
+      "default": 1500,
+      "min": 60,
+      "max": 3600,
+      "zero_means": null,
+      "read_in": "bin/discovery-daily.sh",
+      "note": "BH-9795: the whole run is killed after this many seconds (timeout re-exec). The run row is claimed with a stale time of this plus 60 s. Read in bin/discovery-daily.sh and bin/lib/discovery-daily.sh as ${DISCOVERY_RUN_TIMEOUT_S:-1500}.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_CALL_TIMEOUT_S",
+      "type": "int",
+      "default": 300,
+      "min": 30,
+      "max": 1200,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: seconds one model call may run (agent-call.sh timeout argument). Read in bin/lib/discovery-daily.sh as ${DISCOVERY_CALL_TIMEOUT_S:-300}. LANE-WIDE: lane.discovery-daily.<project>.discovery_call_timeout_s is 65 characters for the longest fleet slug and PUT /api/settings refuses anything over 64, so this one has no per-project row.",
+      "settable": true,
+      "project_scoped": false
+    },
+    {
+      "env": "DISCOVERY_DETAIL_MAX_BYTES",
+      "type": "int",
+      "default": 12000,
+      "min": 1000,
+      "max": 100000,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: bytes of the item detail (the source adapter's detail file) dd_prompt puts in the prompt; the rest is cut. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_DETAIL_MAX_BYTES:-12000}; outside 1000..100000 is one log line and the default. LANE-WIDE: lane.discovery-daily.<project>.discovery_detail_max_bytes is 67 characters for the longest fleet slug and PUT /api/settings refuses anything over 64, so this one has no per-project row.",
+      "settable": true,
+      "project_scoped": false
+    },
+    {
+      "env": "DISCOVERY_CAND_MATCH_CHARS",
+      "type": "int",
+      "default": 60,
+      "min": 10,
+      "max": 300,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: chars of the item title dd_prompt passes to st_candidates to find candidate open tickets. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_CAND_MATCH_CHARS:-60}; outside 10..300 is one log line and the default. LANE-WIDE: lane.discovery-daily.<project>.discovery_cand_match_chars is 67 characters for the longest fleet slug and PUT /api/settings refuses anything over 64, so this one has no per-project row.",
+      "settable": true,
+      "project_scoped": false
+    },
+    {
+      "env": "DISCOVERY_TICKET_TITLE_CHARS",
+      "type": "int",
+      "default": 120,
+      "min": 40,
+      "max": 256,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: the title of a ticket dd_act files is cut to this many chars (GitHub allows 256). Read in bin/lib/discovery-daily.sh as ${DISCOVERY_TICKET_TITLE_CHARS:-120}; outside 40..256 is one log line and the default. LANE-WIDE: lane.discovery-daily.<project>.discovery_ticket_title_chars is 69 characters for the longest fleet slug and PUT /api/settings refuses anything over 64, so this one has no per-project row.",
+      "settable": true,
+      "project_scoped": false
+    },
+    {
+      "env": "DISCOVERY_ITEM_TITLE_CHARS",
+      "type": "int",
+      "default": 300,
+      "min": 40,
+      "max": 2000,
+      "zero_means": null,
+      "read_in": "bin/lib/discovery-daily.sh",
+      "note": "BH-9795: chars of the fetched item title dd_item keeps in the item ledger row. Read in bin/lib/discovery-daily.sh as ${DISCOVERY_ITEM_TITLE_CHARS:-300}; outside 40..2000 is one log line and the default. LANE-WIDE: lane.discovery-daily.<project>.discovery_item_title_chars is 67 characters for the longest fleet slug and PUT /api/settings refuses anything over 64, so this one has no per-project row.",
+      "settable": true,
+      "project_scoped": false
+    },
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung, i.e. today's ladder unchanged. A rung outside the list is refused before the call.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Dollars this lane may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend, never from the box's own logs/cost.csv.",
+      "settable": true
+    },
+    {
+      "env": "DISCOVERY_DAILY_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/discovery-daily.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "DISCOVERY_DAILY_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/discovery-daily.sh and bin/discovery-setup.sh source after their libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/discovery-daily.sh honours DISCOVERY_DAILY_NOW and sources DISCOVERY_DAILY_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": "discovery-daily",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/discovery-daily.log"
+  }
+}

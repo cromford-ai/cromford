@@ -651,7 +651,30 @@ HAZ='(^|_)(SSH|CMD|CALL|BIN|FETCH|GH|CLIENT|URL|BASE|HOOK|WEBHOOK|DIR|ROOT|ROOTS
 # a run uses comes from fleet.conf and passed fleet-conf.sh before the row is
 # read. A row can turn paging on or off for a project the fleet already runs.
 # TEST-CHANGE (BH-5943): stuck-work/STUCK_WORK_PROJECTS added to HAZ_OK with the argument above.
-HAZ_OK='alert-triage/HOUSEKEEPING_RUNNER alerts-medic/HOUSEKEEPING_RUNNER run-triage/RUNNER_TRIAGE split-watchdog/SPLIT_WATCHDOG_PROJECTS cost-rows-push/COST_ROWS_LANE_PROJECTS fly-pool/EXTRA_READ_REPOS fly-pool/POOL_TEST_SETUP_CMD stuck-work/STUCK_WORK_PROJECTS'
+# THE NINTH (BH-9795): discovery-daily/DISCOVERY_SOURCES. It matches the
+# `SOURCES` arm. It is the per-project on-switch bin/discovery-setup.sh writes,
+# so it stays settable. It names adapters the repo ships, never a host, a
+# command or an identity: dd_run (bin/lib/discovery-daily.sh) removes the
+# spaces and refuses the whole value unless it matches ^[a-z0-9,-]*$ (one log
+# line, no source read, the value not logged); dd_source_list then loads a name
+# only when it matches ^[a-z0-9-]+$ AND bin/lib/discovery/<name>.sh exists in
+# the repo, and an unknown name is logged and skipped. The value is never passed
+# to a shell or used as a path before those checks (bin/discovery-setup.sh runs
+# the same per-name check before it writes the row;
+# bin/lib/discovery-missed.sh only tests it for empty). A value such as `../x`
+# or `sentry;id` loads no file (tests/discovery-daily.bh-9795-test.sh S1).
+# TEST-CHANGE (BH-9795): discovery-daily/DISCOVERY_SOURCES added to HAZ_OK with the argument above.
+# THE TENTH (BH-9795): discovery-daily/DISCOVERY_TARGET_REPO. It matches the
+# `REPO` arm. The ticket asks for it (default: the project's registry repo) and
+# bin/discovery-setup.sh --repo writes it, so it stays settable. It can only
+# name a repo the fleet already owns: dd_target_repo (bin/lib/discovery-daily.sh)
+# uses a value only when it matches ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ AND
+# fleet.conf names it in column 2; else the run logs one line (value not
+# logged) and reads nothing. discovery-setup.sh runs the same check before it
+# writes. The value is passed to gh_rest as a path part only after the check
+# (tests/discovery-daily.bh-9795-test.sh T1).
+# TEST-CHANGE (BH-9795): discovery-daily/DISCOVERY_TARGET_REPO added to HAZ_OK with the argument above.
+HAZ_OK='alert-triage/HOUSEKEEPING_RUNNER alerts-medic/HOUSEKEEPING_RUNNER run-triage/RUNNER_TRIAGE split-watchdog/SPLIT_WATCHDOG_PROJECTS cost-rows-push/COST_ROWS_LANE_PROJECTS fly-pool/EXTRA_READ_REPOS fly-pool/POOL_TEST_SETUP_CMD stuck-work/STUCK_WORK_PROJECTS discovery-daily/DISCOVERY_SOURCES discovery-daily/DISCOVERY_TARGET_REPO'
 HAZARD=""
 while read -r k; do
   [ -n "$k" ] || continue

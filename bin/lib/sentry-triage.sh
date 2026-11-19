@@ -47,6 +47,16 @@
 # calls counts the model calls started that day; SENTRY_TRIAGE_MAX_CALLS_DAY caps it.
 # Body marker: <!-- sentry-issue: <key> --> on a ticket and on a comment.
 #
+# SHARED WITH discovery-daily (BH-9795). bin/lib/discovery-daily.sh sources this
+# file and sets these globals; each one defaults to the sentry-triage value, so
+# sentry-triage sets nothing and behaves as before:
+#   ST_LANE          log file, log tag and ledger kinds (<lane>, <lane>-day)
+#   ST_MAX_ATTEMPTS  attempts before an item is failed (3)
+#   ST_OPEN_LABEL    the label of the open-issue read (ai-build; empty = all)
+#   ST_RAW_DIR       when set, st_latest_event keeps Sentry's raw answer there
+# and these helpers carry the ledger, filing and call rules for both lanes:
+# _st_attempt_put, _st_after_call, _st_create, _st_comment_once, _st_day_filed_add.
+#
 # gh-rest: no-graphql
 [ "$(type -t gh_rest)" = function ] || . "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh" 2>/dev/null
 [ "$(type -t gh_rest_issue_list)" = function ] || . "$(dirname "${BASH_SOURCE[0]}")/gh-rest-list.sh" 2>/dev/null
@@ -58,7 +68,7 @@ ST_API="https://sentry.io/api/0"
 ST_DETAIL_MAX=3900
 
 _st_root() { printf '%s' "${HARNESS:-${H:-}}"; }
-_st_log() { local r; r=$(_st_root); [ -n "$r" ] || return 0; printf '%s sentry-triage %s\n' "$(date -u +%FT%TZ)" "$*" >> "$r/logs/sentry-triage.log"; }
+_st_log() { local r l="${ST_LANE:-sentry-triage}"; r=$(_st_root); [ -n "$r" ] || return 0; printf '%s %s %s\n' "$(date -u +%FT%TZ)" "$l" "$*" >> "$r/logs/$l.log"; }
 _st_dash() { sed 's/[—–]/-/g'; }
 
 # _st_knob_int <name> <value> <default> <min> <max>: out of range is one log line
@@ -117,6 +127,7 @@ st_latest_event() {
   local id=$1 out=$2 raw code
   raw=$(mktemp "${TMPDIR:-/tmp}/st-event.XXXXXX") || return 1
   code=$(_st_curl "$raw" "$ST_API/issues/$id/events/latest/")
+  [ -n "${ST_RAW_DIR:-}" ] && cp "$raw" "$ST_RAW_DIR/event-$id.json" 2>/dev/null
   if [[ $code != 2?? ]] || ! jq -e 'type == "object"' "$raw" >/dev/null 2>&1; then
     printf 'latest event unavailable (HTTP %s)\n' "$code" > "$out"; rm -f "$raw"; return 1
   fi
@@ -152,13 +163,14 @@ st_log_lines() {
   if [ -z "$out" ]; then echo "no line of $lane.log is near the event or names its reason"; else printf '%s\n' "$out"; fi
 }
 
-# st_open_list: the ONE open ai-build issue read of the tick, cached in ST_OPEN.
+# st_open_list: the ONE open-issue read of the tick (label ST_OPEN_LABEL,
+# default ai-build; empty reads every open issue), cached in ST_OPEN.
 # rc 1 when the read failed or hit the 1000-row cap (nothing absent is proven).
 st_open_list() {
   [ -n "${ST_OPEN:-}" ] && [ -s "$ST_OPEN" ] && return 0
   local rc=0 len
   ST_OPEN="$ST_TMP/open.json"
-  gh_rest_issue_list "$ST_REPO" open ai-build 1000 > "$ST_OPEN" 2>/dev/null || rc=$?
+  gh_rest_issue_list "$ST_REPO" open "${ST_OPEN_LABEL-ai-build}" 1000 > "$ST_OPEN" 2>/dev/null || rc=$?
   len=$(jq 'length' "$ST_OPEN" 2>/dev/null) || len=""
   if [ "$rc" != 0 ] || ! [[ $len =~ ^[0-9]+$ ]] || [ "$len" -ge 1000 ]; then
     rm -f "$ST_OPEN"; ST_OPEN=""
@@ -198,7 +210,7 @@ _st_save() {
   local d
   d=$(_st_fit "$3")
   [ "$d" = "$3" ] || _st_log "$1 detail over $ST_DETAIL_MAX bytes; the diagnosis text was cut to $(jq -r '.cut' <<<"$d") chars"
-  job_ledger_put sentry-triage "$1" "$2" "$d"
+  job_ledger_put "${ST_LANE:-sentry-triage}" "$1" "$2" "$d"
 }
 # _st_put <key> <status> <prior-detail> <patch-json>: the prior detail carried forward.
 _st_put() {
@@ -210,7 +222,7 @@ _st_put() {
 # _st_day: today's day row detail as {filed: [ids], calls: n}. rc 1 = unreadable.
 _st_day() {
   local row rc=0
-  row=$(job_ledger_row sentry-triage-day "$ST_DAY") || rc=$?
+  row=$(job_ledger_row "${ST_LANE:-sentry-triage}-day" "$ST_DAY") || rc=$?
   case "$rc" in
     0) jq -c '.detail | if type == "string" then (fromjson? // {}) else . end | if type == "object" then . else {} end
          | {filed: (.filed // [] | if type == "array" then . else [] end), calls: (.calls // 0 | numbers? // 0 | floor)}' <<<"$row" 2>/dev/null \
@@ -233,8 +245,16 @@ _st_day_call() {
   d=$(_st_day) || { _st_log "day row unreadable; no calls this tick"; return 2; }
   n=$(jq -r '.calls' <<<"$d")
   [ "$n" -ge "$ST_MAX_CALLS_DAY" ] && return 1
-  job_ledger_put sentry-triage-day "$ST_DAY" counted "$(jq -c '.calls += 1' <<<"$d")" \
-    || { _st_log "ledger put sentry-triage-day/$ST_DAY calls failed; no call"; return 2; }
+  job_ledger_put "${ST_LANE:-sentry-triage}-day" "$ST_DAY" counted "$(jq -c '.calls += 1' <<<"$d")" \
+    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/$ST_DAY calls failed; no call"; return 2; }
+}
+# _st_day_filed_add <id>: add one id to today's filed list. rc 1 = the day row
+# is unreadable or the write failed (the write failure is logged).
+_st_day_filed_add() {
+  local day
+  day=$(_st_day) || return 1
+  job_ledger_put "${ST_LANE:-sentry-triage}-day" "$ST_DAY" counted "$(jq -c --arg i "$1" '.filed += [$i]' <<<"$day")" \
+    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/$ST_DAY failed"; return 1; }
 }
 # _st_day_capped: rc 0 when no new ticket may be filed today, 1 when one may,
 # 2 when the day row is unreadable.
@@ -261,6 +281,62 @@ _st_reply() {
   printf '%s\n' "$j"
 }
 
+# _st_attempt_put <key> <detail> <n>: the attempt n+1 written as `retry` BEFORE
+# the call. Prints the new detail. rc 1 = the write failed (no call).
+_st_attempt_put() {
+  _st_put "$1" retry "$2" "$(jq -nc --argjson a "$(($3 + 1))" '{attempts: $a}')" || return 1
+  jq -c --argjson a "$(($3 + 1))" '. + {attempts: $a}' <<<"$2"
+}
+
+# _st_after_call <key> <prior-detail> <detail> <n> <rc>: the outcome of a
+# non-zero agent-call rc. rc 74-79 billed nothing and restores the prior
+# attempts; another rc keeps the attempt and is failed at ST_MAX_ATTEMPTS.
+# Sets ST_OUT. rc 0 = handled; rc 1 = the call answered rc 0, go on.
+_st_after_call() {
+  local key=$1 prior=$2 det=$3 n=$4 arc=$5 max="${ST_MAX_ATTEMPTS:-3}"
+  [ "$arc" != 0 ] || return 1
+  if [ "$arc" -ge 74 ] && [ "$arc" -le 79 ]; then
+    _st_put "$key" retry "$prior" "$(jq -nc --argjson a "$n" --argjson r "$arc" '{attempts: $a, last_rc: $r}')" \
+      || _st_log "ledger put restore for $key failed"
+    _st_log "$key agent-call refused (rc $arc), nothing billed; attempts stay $n"; ST_OUT=skip; return 0
+  fi
+  if [ "$((n + 1))" -ge "$max" ]; then
+    _st_put "$key" failed "$det" "$(jq -nc --argjson r "$arc" '{last_rc: $r, why: "attempts"}')" || _st_log "ledger put failed for $key failed"
+    _st_log "$key agent-call rc $arc; failed after $((n + 1)) attempts"; ST_OUT=failed; return 0
+  fi
+  _st_put "$key" retry "$det" "$(jq -nc --argjson r "$arc" '{last_rc: $r}')" || _st_log "ledger put retry for $key failed"
+  _st_log "$key agent-call rc $arc; attempt $((n + 1)) of $max"; ST_OUT=skip; return 0
+}
+
+# _st_create <title> <body-file> <labels-json>: POST repos/$ST_REPO/issues.
+# Only a 201 with a number counts. Sets ST_NUM and ST_URL. rc 1 = not created.
+_st_create() {
+  local pf="$ST_TMP/payload.json" rc=0
+  ST_NUM=""; ST_URL=""
+  jq -n --arg t "$1" --rawfile b "$2" --argjson l "$3" '{title: $t, body: $b, labels: $l}' > "$pf" || return 1
+  gh_rest POST "repos/$ST_REPO/issues" --input "$pf" > "$ST_TMP/created" || rc=$?
+  ST_NUM=$(jq -e '.number | numbers' "$ST_TMP/created" 2>/dev/null) || ST_NUM=""
+  if [ "$rc" != 0 ] || [ "${GH_REST_STATUS:-}" != 201 ] || [ -z "$ST_NUM" ]; then ST_NUM=""; return 1; fi
+  ST_URL=$(jq -r '.html_url // ""' "$ST_TMP/created")
+}
+
+# _st_comment_once <key> <n> <body-file> <marker>: post the comment on #n
+# unless the first comment page (100) already holds the marker. rc 0 = posted
+# or already there; rc 1 = the page is unreadable or the post failed (logged).
+_st_comment_once() {
+  local key=$1 n=$2 bf=$3 m=$4 rc=0
+  gh_rest GET "repos/$ST_REPO/issues/$n/comments" -F per_page=100 > "$ST_TMP/comments.json" 2>/dev/null || rc=$?
+  if [ "$rc" != 0 ] || ! jq -e 'type == "array"' "$ST_TMP/comments.json" >/dev/null 2>&1; then
+    _st_log "$key comments of #$n unreadable (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; return 1
+  fi
+  if jq -e --arg m "$m" 'any(.[]; (.body // "") | contains($m))' "$ST_TMP/comments.json" >/dev/null 2>&1; then
+    _st_log "$key comment already on #$n (marker); not posted again"
+  elif ! gh_rest_comment "$ST_REPO" "$n" "$bf"; then
+    _st_log "$key comment on #$n failed (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; return 1
+  fi
+  return 0
+}
+
 # _st_writeback <key> <detail> <url>: the ticket link on the Sentry issue, once.
 _st_writeback() {
   local key=$1 det=$2 url=$3 id code wb body
@@ -279,7 +355,7 @@ _st_writeback() {
 
 # _st_act <key> <detail> <issue-json>: act on detail.diagnosis. No model call.
 _st_act() {
-  local key=$1 det=$2 issue=$3 dg verdict n id perm cnt c24 tf bf pf rc num url labels now
+  local key=$1 det=$2 issue=$3 dg verdict n id perm cnt c24 tf bf rc num url labels now
   dg=$(jq -c '.diagnosis' <<<"$det"); verdict=$(jq -r '.verdict' <<<"$dg")
   id=$(jq -r '.sentry_id' <<<"$det"); perm=$(jq -r '.permalink // ""' <<<"$det")
   cnt=$(jq -r '.count // "0"' <<<"$issue")
@@ -299,15 +375,7 @@ _st_act() {
       } | _st_dash > "$bf"
       # A comment posted on an earlier tick whose ticketed put failed: no repost.
       # The first page (100 comments) is read; an unreadable page posts nothing.
-      rc=0; gh_rest GET "repos/$ST_REPO/issues/$n/comments" -F per_page=100 > "$ST_TMP/comments.json" 2>/dev/null || rc=$?
-      if [ "$rc" != 0 ] || ! jq -e 'type == "array"' "$ST_TMP/comments.json" >/dev/null 2>&1; then
-        _st_log "$key comments of #$n unreadable (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; ST_OUT=skip; return 0
-      fi
-      if jq -e --arg m "<!-- sentry-issue: $key -->" 'any(.[]; (.body // "") | contains($m))' "$ST_TMP/comments.json" >/dev/null 2>&1; then
-        _st_log "$key comment already on #$n (marker); not posted again"
-      elif ! gh_rest_comment "$ST_REPO" "$n" "$bf"; then
-        _st_log "$key comment on #$n failed (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; ST_OUT=skip; return 0
-      fi
+      _st_comment_once "$key" "$n" "$bf" "<!-- sentry-issue: $key -->" || { ST_OUT=skip; return 0; }
       # The link comes from the open-issue list, never built.
       url=$(jq -r --argjson n "$n" '[.[] | select(.number == $n) | .html_url // empty][0] // ""' "$ST_OPEN" 2>/dev/null)
       det=$(jq -c --argjson n "$n" --arg u "$url" '. + {action: "commented", issue: $n, url: (if $u == "" then null else $u end)}' <<<"$det")
@@ -332,23 +400,14 @@ _st_act() {
         printf '\n<!-- sentry-issue: %s -->\n' "$key"
       } | _st_dash > "$bf"
       labels='["ai-build"]'; [ "$c24" -gt "$ST_HOTFIX_24H" ] && labels='["ai-build","hotfix"]'
-      pf="$ST_TMP/payload.json"
-      jq -n --arg t "$tf" --rawfile b "$bf" --argjson l "$labels" '{title: $t, body: $b, labels: $l}' > "$pf"
-      rc=0
-      gh_rest POST "repos/$ST_REPO/issues" --input "$pf" > "$ST_TMP/created" || rc=$?
-      num=$(jq -e '.number | numbers' "$ST_TMP/created" 2>/dev/null) || num=""
-      if [ "$rc" != 0 ] || [ "${GH_REST_STATUS:-}" != 201 ] || [ -z "$num" ]; then
+      if ! _st_create "$tf" "$bf" "$labels"; then
         _st_log "$key create failed (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; ST_OUT=skip; return 0
       fi
-      url=$(jq -r '.html_url // ""' "$ST_TMP/created")
+      num=$ST_NUM; url=$ST_URL
       det=$(jq -c --argjson n "$num" --arg u "$url" --arg at "$now" '. + {action: "filed", issue: $n, url: $u, filed_at: $at}' <<<"$det")
       _st_save "$key" ticketed "$det" \
         || _st_log "ledger put ticketed for $key failed; the body marker heals it next tick"
-      local day
-      if day=$(_st_day); then
-        job_ledger_put sentry-triage-day "$ST_DAY" counted "$(jq -c --arg i "$id" '.filed += [$i]' <<<"$day")" \
-          || _st_log "ledger put sentry-triage-day/$ST_DAY failed"
-      fi
+      _st_day_filed_add "$id" || true
       _st_log "$key filed #$num $url"; ST_OUT=filed
       _st_writeback "$key" "$det" "$url" ;;
     *)
@@ -403,7 +462,7 @@ st_issue() { # st_issue <issue-json>
 
   # The ledger, FIRST. An outage is never "no row".
   key=$id
-  row=$(job_ledger_row sentry-triage "$key") || rc=$?
+  row=$(job_ledger_row "${ST_LANE:-sentry-triage}" "$key") || rc=$?
   [ "$rc" = 0 ] || [ "$rc" = 2 ] || { ST_STOP=ledger; return 75; }
   st=""; [ "$rc" = 0 ] && st=$(jq -r '.status // ""' <<<"$row")
   case "$st" in
@@ -412,7 +471,7 @@ st_issue() { # st_issue <issue-json>
       # The <id> pass already saw this regression: that was its one pass.
       [ "$(jq -r '.regressed' <<<"$(_st_detail "$row")")" = true ] && { ST_OUT=terminal; return 0; }
       key="$id:regressed"; rc=0
-      row=$(job_ledger_row sentry-triage "$key") || rc=$?
+      row=$(job_ledger_row "${ST_LANE:-sentry-triage}" "$key") || rc=$?
       [ "$rc" = 0 ] || [ "$rc" = 2 ] || { ST_STOP=ledger; return 75; }
       st=""; [ "$rc" = 0 ] && st=$(jq -r '.status // ""' <<<"$row") ;;
   esac
@@ -422,7 +481,7 @@ st_issue() { # st_issue <issue-json>
   case "$st" in
     ticketed|noise|failed) ST_OUT=terminal; return 0 ;;
     retry)
-      if [ "$n" -ge 3 ]; then
+      if [ "$n" -ge "${ST_MAX_ATTEMPTS:-3}" ]; then
         _st_put "$key" failed "$det" '{"why":"attempts"}' || { ST_STOP=ledger; return 75; }
         _st_log "$key failed after $n attempts"; ST_OUT=failed; return 0
       fi ;;
@@ -464,9 +523,8 @@ st_issue() { # st_issue <issue-json>
     _st_log "cap SENTRY_TRIAGE_MAX_CALLS_DAY=$ST_MAX_CALLS_DAY reached; $key not triaged"; ST_OUT=capped; return 0
   fi
   prior=$det
-  _st_put "$key" retry "$det" "$(jq -nc --argjson a "$((n + 1))" '{attempts: $a}')" \
+  det=$(_st_attempt_put "$key" "$det" "$n") \
     || { _st_log "ledger put attempt for $key failed; no call"; ST_STOP=ledger; return 75; }
-  det=$(jq -c --argjson a "$((n + 1))" '. + {attempts: $a}' <<<"$det")
 
   pf="$ST_TMP/prompt.md"; raw="$ST_TMP/answer.txt"; : > "$raw"
   _st_prompt "$issue" "$reg" "$pf"
@@ -474,19 +532,7 @@ st_issue() { # st_issue <issue-json>
   root=$(_st_root); arc=0
   AGENT_CALL_LANE=sentry-triage AGENT_CALL_FP="$fp" AGENT_CALL_NO_TOOLS=1 AGENT_CALL_RUNNERS="$ST_RUNNER" AGENT_CALL_BUDGET_USD_SENTRY_TRIAGE="$ST_MAX_USD" "$root/bin/agent-call.sh" sentry-triage fleet "$ST_MODEL" 300 "$raw" "@$pf" >/dev/null 2>&1 || arc=$?
   ST_CALLED=$((ST_CALLED + 1))
-  if [ "$arc" != 0 ]; then
-    if [ "$arc" -ge 74 ] && [ "$arc" -le 79 ]; then
-      _st_put "$key" retry "$prior" "$(jq -nc --argjson a "$n" --argjson r "$arc" '{attempts: $a, last_rc: $r}')" \
-        || _st_log "ledger put restore for $key failed"
-      _st_log "$key agent-call refused (rc $arc), nothing billed; attempts stay $n"; ST_OUT=skip; return 0
-    fi
-    if [ "$((n + 1))" -ge 3 ]; then
-      _st_put "$key" failed "$det" "$(jq -nc --argjson r "$arc" '{last_rc: $r, why: "attempts"}')" || _st_log "ledger put failed for $key failed"
-      _st_log "$key agent-call rc $arc; failed after $((n + 1)) attempts"; ST_OUT=failed; return 0
-    fi
-    _st_put "$key" retry "$det" "$(jq -nc --argjson r "$arc" '{last_rc: $r}')" || _st_log "ledger put retry for $key failed"
-    _st_log "$key agent-call rc $arc; attempt $((n + 1)) of 3"; return 0
-  fi
+  _st_after_call "$key" "$prior" "$det" "$n" "$arc" && return 0
   rc=0; text=$(_st_reply "$raw") || rc=$?
   if [ "$rc" != 0 ]; then
     local why=bad-reply; [ "$rc" = 1 ] && why=empty-reply

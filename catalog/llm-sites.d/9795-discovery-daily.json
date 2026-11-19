@@ -1,0 +1,20 @@
+[
+    {
+        "id": "discovery-daily",
+        "script": "bin/lib/discovery-daily.sh",
+        "marker": "agent-call.sh\" discovery-daily",
+        "kind": "agent-call",
+        "lane": "discovery-daily",
+        "stage": "discovery-daily",
+        "project": "per-project",
+        "runners": [
+            "claude (the stage.discovery-daily route runner, pinned via AGENT_CALL_RUNNERS)"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "ledgers(kind=discovery-daily, key=<project>/<source>/<id>) read before the call: ticketed/noise/failed terminal, diagnosed reused with no call, an open issue with the marker <!-- discovery: <source>/<id> --> heals the row with no call; the run row discovery-daily-run/<project>/<date> is claimed first (a done row makes no read); attempts counted before the call (DISCOVERY_MAX_ATTEMPTS), rc 74-79 restores attempts; the day call cap is counted in discovery-daily-day/<project>/<date> before the call; an unreadable ledger makes no call",
+        "deterministic_candidate": null,
+        "note": "BH-9795: one no-tools call per discovery item of a product project, dd_item in bin/lib/discovery-daily.sh called by bin/discovery-daily.sh <project> once a day on the hub. Capped per call by AGENT_CALL_BUDGET_USD_DISCOVERY_DAILY=DISCOVERY_MAX_USD (lanes.d discovery-daily, default 0.50, 0 = off), per day by DISCOVERY_MAX_CALLS_DAY (default 10), and in new tickets by DISCOVERY_TICKETS_DAY. The model is model_routes stage.discovery-daily."
+    }
+]

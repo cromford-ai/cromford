@@ -1,0 +1,12 @@
+# ── DISCOVERY-DAILY LANE (BH-9795) ──────────────────────────────────────────
+# Daily 07:23 UTC: bin/discovery-daily.sh <project> reads the project's
+# discovery sources (part 1: Sentry), drops known items in code, makes one
+# no-tools model call per remaining item, and a rules table in code files an
+# ai-build ticket, comments on an open candidate ticket, or marks noise. It
+# runs on the hub: SENTRY_API_TOKEN and the Telegram token are hub env. One
+# line per project that has the lane on (settings row
+# lane.discovery-daily.<project>.discovery_sources). The hub lease gates it.
+# Off: flags/lane-off-discovery-daily, or bin/harness-ctl.sh off discovery-daily.
+# Doc: docs/DISCOVERY-DAILY.md.
+# @hub-lanes
+23 7 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/discovery-daily.sh project-6-os >> /root/harness/logs/discovery-daily.log 2>&1

@@ -3111,6 +3111,15 @@ case "$WA_TAG" in
   SKIP) [ "$WA_AGE" = unknown ] && { grep '^wakearmed:' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; } ;;
 esac
 # <<< wake classes armed
+# >>> discovery-daily missed run (BH-9795)
+# A project with the discovery-daily lane on and no done run row for yesterday:
+# ONE alert per project per day (key discovery-missed:<p>:<day>). The lib decides.
+if ! command -v dd_missed_check >/dev/null 2>&1 && [ -r "$H/bin/lib/discovery-missed.sh" ]; then
+  # shellcheck source=bin/lib/discovery-missed.sh
+  . "$H/bin/lib/discovery-missed.sh"
+fi
+command -v dd_missed_check >/dev/null 2>&1 && { HARNESS="$H" dd_missed_check "$NOW" 2>/dev/null || true; }
+# <<< discovery-daily missed run
 fi # not a project run
 
 # ── Retraction epilogue: conditions that cleared since last run ──────────────

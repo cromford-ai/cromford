@@ -1,0 +1,58 @@
+[
+    {
+        "lane": "discovery-daily",
+        "stage": "discovery-daily",
+        "project": "per-project",
+        "runner": null,
+        "job": "One hub call per discovery item of a product project (bin/discovery-daily.sh <project> via dd_item in bin/lib/discovery-daily.sh, once a day): it answers four narrow questions and writes a draft ticket as one JSON object. A rules table in code (bin/lib/discovery/rules.sh) decides ticket, comment or noise.",
+        "target_tokens": 12000,
+        "ceiling_tokens": 30000,
+        "composition": [
+            {
+                "component": "lane SOP",
+                "source": "catalog/prompts/discovery-daily.md",
+                "cap": "static",
+                "purpose": "the answer rules and the STE and De-AI voice rules"
+            },
+            {
+                "component": "questions",
+                "source": "dd_rules_questions in bin/lib/discovery/rules.sh",
+                "cap": "static, 4 questions",
+                "purpose": "the narrow factual questions the rules table reads"
+            },
+            {
+                "component": "item list line",
+                "source": "the source adapter's list line (bin/lib/discovery/<source>.sh dd_src_<source>_list)",
+                "cap": "one JSON line: id, title, url, counts, first and last seen",
+                "purpose": "THE SCOPED DELTA: which item this call is about"
+            },
+            {
+                "component": "item detail",
+                "source": "dd_src_<source>_detail (Sentry: GET /api/0/issues/<id>/events/latest/, cut by st_latest_event)",
+                "cap": "message 4000 chars, the last 30 frames per exception, 12000 bytes in the prompt",
+                "purpose": "the stack trace and tags of the one item"
+            },
+            {
+                "component": "candidate tickets",
+                "source": "open issues of the target repo whose title or body holds the first 60 chars of the item title",
+                "cap": "5 issues, 600 body bytes each",
+                "purpose": "the tickets same_ticket may name"
+            },
+            {
+                "component": "answer contract",
+                "source": "catalog/prompts/discovery-daily.md",
+                "cap": "static",
+                "purpose": "answer ONLY one JSON object"
+            }
+        ],
+        "bounds": [
+            "[lane:no_tools] the call runs with AGENT_CALL_NO_TOOLS=1, so the session cannot read files or the web and grow past its prompt (VERIFIED: tests/discovery-daily.bh-9795-test.sh D8)",
+            "[lane:detail_cut] the item detail is cut to 12000 bytes in the prompt by dd_prompt in bin/lib/discovery-daily.sh (VERIFIED: tests/discovery-daily.bh-9795-test.sh D8)",
+            "[lane:candidates] at most 5 candidate tickets of 600 body bytes each by st_candidates (VERIFIED: tests/sentry-triage.bh-5620-test.sh T14)",
+            "[lane:calls_day] at most DISCOVERY_MAX_CALLS_DAY calls per project per day, counted before each call (VERIFIED: tests/discovery-daily.bh-9795-test.sh D6)"
+        ],
+        "measured_before": null,
+        "measured_before_note": "never measured: the stage is new in BH-9795.",
+        "_unmeasured": "no discovery-daily call has run yet: the stage is new in BH-9795. No context_kill_tokens: BH-2538 arms no lane without measured rows."
+    }
+]

@@ -31,3 +31,4 @@ prebuild-repro	on-demand	no cron line (per build)
 security-audit	on-demand	no cron line
 trap-eval	on-demand	no cron line
 web-task	on-demand	no cron line
+discovery-daily	schedule	a daily per-project run on its clock; a wake has nothing to add

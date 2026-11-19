@@ -1,0 +1,8 @@
+[
+    {
+        "path": "discovery-daily",
+        "class": "box-local",
+        "authority": "the raw fetch snapshots and missed-run markers of the discovery-daily lane (BH-9795)",
+        "note": "state/discovery-daily/<project>/<YYYY-MM-DD>/<source>-list.json and event-<id>.json: the raw answer of each fetch, kept for a later re-read of a decision and never read for one; bin/lib/discovery-daily.sh deletes date dirs older than DISCOVERY_RAW_KEEP_D days (default 14) on each run. state/discovery-daily/missed-*-<project>-<date>: bin/lib/discovery-missed.sh markers (one alert or one done read per project per day), deleted after 30 days. The jobs ledger (kinds discovery-daily, -day, -run, -since) is the record. Hub-only lane, machine-local, never carried"
+    }
+]
