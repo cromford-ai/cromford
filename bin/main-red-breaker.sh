@@ -9,7 +9,8 @@
 # nothing resumes the queue (project-6-os 2026-10-27: hours of stalled merges
 # after #2763 and #2889 + #2897). This lane closes those three gaps. It reads
 # the detector's flag as the only source of truth and never writes or removes
-# it.
+# it. It copies the flag once per repo per tick and files only from that copy,
+# and only while the live flag still carries the copy's since (BH-9762).
 #
 # PER REPO, each tick (the fleet.conf slugs plus $HARNESS_REPO, or the args):
 #   FLAG UP, pause. Mergify repos only (mc_queue_provider): every open PR with
@@ -341,10 +342,14 @@ compose() {
   } >> "$out"
 }
 
-# file_ticket <slug> <flag> — at most one issue per <slug>@<since>.
+# file_ticket <slug> <snap> — at most one issue per <slug>@<since>. <snap> is
+# the loop's private copy of the flag, so every field of one ticket comes from
+# one read. The detector removes or rewrites the live flag at any time (BH-9762:
+# a flag that went away mid-tick filed a ticket with every field blank).
 file_ticket() {
   local slug="$1" flag="$2" since key rc url num w
   since=$(fget "$flag" since); key="$slug@$since"
+  [ -n "$since" ] || { log "$slug: ticket: the flag has no since — nothing filed"; return 0; }
   rc=0; job_ledger_row main_red_hotfix "$key" > /dev/null 2>&1 || rc=$?
   case "$rc" in
     0) return 0 ;;
@@ -367,6 +372,11 @@ file_ticket() {
   jq -n --arg t "HOTFIX: $slug main is red — $(fget "$flag" workflow) / ${TITLE_JOB:-unknown job}" \
         --rawfile b "$TMP/body.md" --arg l "$TLABELS" '{title:$t, body:$b, labels:($l | split(","))}' > "$TMP/issue.json"
   if [ "$EXPLAIN" = 1 ]; then log "$slug: WOULD FILE \"$(jq -r .title "$TMP/issue.json")\""; return 0; fi
+  # The live flag must still carry the snapshot's since: a cleared or new
+  # episode is the next tick's to act on, not this one's.
+  if [ "$(fget "$H/flags/main-red-$(printf '%s' "$slug" | tr '/' '-')" since)" != "$since" ]; then
+    log "$slug: ticket: the flag cleared or changed mid-tick — nothing filed"; return 0
+  fi
   rc=0; TRK_SLUG="$slug" tracker_create "$TMP/issue.json" "$TMP/created.json" || rc=$?
   url=$(jq -r '.html_url // empty' "$TMP/created.json" 2>/dev/null); num=$(jq -r '.number // empty' "$TMP/created.json" 2>/dev/null)
   if [ "$rc" = 0 ] && [ "${GH_REST_STATUS:-}" = 201 ] && [ -n "$url" ]; then
@@ -478,11 +488,15 @@ for SLUG in $REPOS; do
   if command -v gh_default_auth_for_slug >/dev/null 2>&1 && ! gh_default_auth_for_slug "$SLUG"; then
     log "$SLUG: no identity for $SLUG — nothing paused or filed"; continue
   fi
-  SINCE=$(fget "$FLAG" since); SHA=$(fget "$FLAG" sha)
+  # One read of the flag per repo per tick (BH-9762): the loop, file_ticket and
+  # compose all read this snapshot, never the live file the detector rewrites.
+  SNAP="$TMP/flag-$(skey "$SLUG")"
+  cat "$FLAG" > "$SNAP" 2>/dev/null || { log "$SLUG: the flag went away before it was read — skipped"; continue; }
+  SINCE=$(fget "$SNAP" since); SHA=$(fget "$SNAP" sha)
   pause "$SLUG" "${SINCE:-unknown}" || continue
   if [ "$FILE_ON" != 1 ]; then continue; fi
   if [ -z "$SHA" ] || [ -z "$SINCE" ]; then
-    log "$SLUG: ticket: the flag has no judged sha yet ($(fget "$FLAG" reason)) — paused, nothing filed"
+    log "$SLUG: ticket: the flag has no judged sha yet ($(fget "$SNAP" reason)) — paused, nothing filed"
     continue
   fi
   b=$(board_col "$SLUG")
@@ -490,7 +504,7 @@ for SLUG in $REPOS; do
     log "$SLUG: ticket: not filed — $(awk -v s="$SLUG" '$1!~/^#/ && $2==s {print $1; exit}' "$H/fleet.conf" 2>/dev/null) uses an in-app board"
     continue
   fi
-  file_ticket "$SLUG" "$FLAG"
+  file_ticket "$SLUG" "$SNAP"
 done
 log "tick: $SEEN repo(s), $RED red repo(s)$([ "$EXPLAIN" = 1 ] && echo ' (explain: nothing written)')"
 exit 0
