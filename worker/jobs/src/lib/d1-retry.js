@@ -11,6 +11,13 @@
 // lands twice, and a batch is one transaction (all or nothing). Every other
 // error rethrows after one call.
 //
+// BH-9849: D1 also rejects with "D1_ERROR: Your account is generating too much
+// load on D1 DBs" when the whole account is over its load limit (Sentry issue
+// CROMFORD-HARNESS-29). D1 sends this rejection at its front end, before the
+// query runs, so a retry never writes twice and a batch stays all or nothing.
+// isD1Overloaded matches it too, so it gets the same retry, and on give-up the
+// same 503 answer from lib/d1-overload-answer.js. It adds no knob.
+//
 // On give-up the SAME error is rethrown with e.d1Attempts set, and with
 // e.d1Op ("<method> <VERB> <table>", see d1OpOf) when the call names its SQL.
 // lib/sentry.js turns those into tags d1_attempts and d1_op on the one event
@@ -57,9 +64,11 @@ export function retryKnobs(db) {
 const posInt = (v) => (Number.isInteger(v) && v > 0 ? v : null);
 
 const OVERLOADED = "D1 DB is overloaded";
+const ACCOUNT_LOAD = "Your account is generating too much load on D1 DBs"; // BH-9849
 
 export function isD1Overloaded(e) {
-  return Boolean(e) && typeof e.message === "string" && e.message.includes(OVERLOADED);
+  return Boolean(e) && typeof e.message === "string" &&
+    (e.message.includes(OVERLOADED) || e.message.includes(ACCOUNT_LOAD));
 }
 
 const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
