@@ -171,6 +171,13 @@ command -v curl >/dev/null 2>&1 || exit 0
 # Same discovery as the parent close: the SUFFIX is the contract.
 set -a; # shellcheck disable=SC1090
 . "$HENV/$PROJECT.env" 2>/dev/null; set +a
+# >>> release model (BH-9862): for a project whose merges deploy to staging,
+# the deploy fact is read from staging and the comment says "on staging".
+# shellcheck source=bin/lib/release-model.sh
+. "$SELF/lib/release-model.sh" 2>/dev/null || true
+command -v release_model_apply >/dev/null 2>&1 && release_model_apply "$PROJECT"
+STG_BASE=""; command -v release_staging_base >/dev/null 2>&1 && STG_BASE=$(release_staging_base "$PROJECT")
+# <<< release model
 BVAR=$(grep -oE '^[A-Z_]+_(API|APP)_BASE' "$HENV/$PROJECT.env" 2>/dev/null | head -1)
 BASE=""; [ -n "$BVAR" ] && BASE="${!BVAR:-}"
 MA_TOKEN=$("$SELF/internal-token-for.sh" "$PROJECT" 2>/dev/null) || MA_TOKEN=""
@@ -312,6 +319,8 @@ _ma_live_sha() {
   url="${VERSION_URL:-}"; [ -n "$url" ] || { [ -n "$PROD" ] && url="${PROD%/}/api/internal/version"; }
   [ -n "$url" ] || return 0
   hdr="Authorization: Bearer $MA_TOKEN"; [ -n "${VERSION_AUTH:-}" ] && hdr="$VERSION_AUTH"
+  # BH-9862: the production board token is not sent to a staging site.
+  [ -n "$STG_BASE" ] && hdr="X-Release-Model: staging"
   c=$(curl -s -m 20 -o "$TMP/version.json" -w '%{http_code}' -H "$hdr" -H "User-Agent: curl/8" \
         "$url" </dev/null 2>/dev/null) || c=""
   case "$c" in
@@ -524,7 +533,21 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
   else
     body="<p>This is merged and production is serving it (${sha:+commit $sha, }<a href=\"$epr\">$epr</a>). Nobody has clicked through it in production yet.</p>"
   fi
+  # BH-9862: a staging project. Same lead words (`This is merged and`, the
+  # dedupe reads them), the site named is staging, and it never says live.
+  if [ -n "$STG_BASE" ]; then
+    estg=$(_ma_esc "$STG_BASE")
+    if [ "$verdict" = PASS ]; then
+      body="<p>This is merged and on staging: <a href=\"$estg\">$estg</a>. The post-merge check passed there (${sha:+commit $sha, }<a href=\"$epr\">$epr</a>).</p>"
+    elif [ "$verdict" = PEER ] && [ "$DEP" = yes-grace ]; then
+      body="<p>This is merged and in main (commit $sha, <a href=\"$epr\">$epr</a>). Status: merged, staging deploy not confirmed from here.</p>"
+    else
+      body="<p>This is merged and on staging: <a href=\"$estg\">$estg</a> (${sha:+commit $sha, }<a href=\"$epr\">$epr</a>). Nobody has clicked through it on staging yet.</p>"
+    fi
+    body="$body<p>It is not live on production yet. It goes live with the next release.</p>"
+  fi
   if [ "$to" = done ]; then body="$body<p>Moving it to done.</p>"
+  elif [ -n "$STG_BASE" ]; then body="$body<p>Moving it to review so you can check it on staging.</p>"
   else body="$body<p>Moving it to review so you can check it.</p>"; fi
   jq -n --arg b "$body" '{body: $b}' > "$TMP/comment.json" 2>/dev/null || continue
   printf '{"toStatus":"%s","sortOrder":999999}' "$to" > "$TMP/move.json"

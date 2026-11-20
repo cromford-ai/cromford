@@ -92,6 +92,16 @@ set +a
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    migration-autopilot
 if [ -f "$BIN/jobs-client.sh" ]; then # shellcheck source=/dev/null
   . "$BIN/jobs-client.sh"; fi
+# >>> release model (BH-9862): a project whose merges deploy to staging applies
+# its own SQL inside the staging build and again inside the release build. This
+# lane holds the PRODUCTION endpoint and token, so it has nothing to do there:
+# an apply from here would put schema on production ahead of the release.
+# shellcheck source=bin/lib/release-model.sh
+[ -r "$BIN/lib/release-model.sh" ] && . "$BIN/lib/release-model.sh"
+if command -v release_is_staging >/dev/null 2>&1 && release_is_staging "$PROJECT"; then
+  exit 0
+fi
+# <<< release model
 # The project pause, below the client so it reads the paused-<project> row
 # (BH-4153); the file only with no client.
 if command -v flag_active >/dev/null 2>&1; then flag_active "paused-$PROJECT" >/dev/null 2>&1 && exit 0

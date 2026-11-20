@@ -92,6 +92,14 @@ mkdir -p "$H/logs" "$H/state" "$H/locks" 2>/dev/null || true
 say() { echo "$(STAMP) [$P] $*" >> "$LOG"; }
 
 set -a; . "$HENV/global.env" 2>/dev/null; . "$HENV/$P.env" 2>/dev/null; set +a
+# >>> release model (BH-9862): for a project whose merges deploy to staging,
+# the deploy gate reads staging and the drive runs on staging. Production has
+# not changed because of this merge, so there is nothing of it to observe there.
+# shellcheck source=bin/lib/release-model.sh
+[ -r "$SELF/lib/release-model.sh" ] && . "$SELF/lib/release-model.sh"
+command -v release_model_apply >/dev/null 2>&1 && release_model_apply "$P"
+STG_BASE=""; command -v release_staging_base >/dev/null 2>&1 && STG_BASE=$(release_staging_base "$P")
+# <<< release model
 # AND AGAIN, BELOW THE ENV LOAD (BH-1165 review). `set -a; . env/global.env`
 # re-assigns every name it carries, so the call above lost each knob the box's
 # env file also sets — the settings row was gone, the page went on reporting
@@ -142,6 +150,7 @@ screens_for() { # screens_for <build-dir>
 if [ "$DRY" = 1 ]; then
   D_SLUG=$("$SELF/fleet-conf.sh" "$P" repo 2>/dev/null) || D_SLUG=""
   D_PROD=$("$SELF/prod-url.sh" "$P" 2>/dev/null) || D_PROD=""
+  [ -n "$STG_BASE" ] && D_PROD="$STG_BASE"
   D_UID="${POSTMERGE_QA_USER_ID:-${QA_TEST_USER_ID:-}}"
   D_KEY=UNSET; [ -n "${QA_CLERK_SECRET_KEY:-}" ] && D_KEY=set
   D_BUILD="$ONE_BUILD"
@@ -173,6 +182,7 @@ lane_switch postmerge-qa-disabled && { say "kill switch on — nothing driven"; 
 
 SLUG=$("$SELF/fleet-conf.sh" "$P" repo 2>/dev/null) || SLUG=""
 PROD=$("$SELF/prod-url.sh" "$P" 2>/dev/null) || PROD=""
+[ -n "$STG_BASE" ] && PROD="$STG_BASE"
 REPO_DIR="${QA_REPO_DIR:-/root/repos/$P}"
 LOOKBACK_H="${POSTMERGE_QA_LOOKBACK_HOURS:-48}"
 MAX="${POSTMERGE_QA_MAX:-1}"
@@ -332,6 +342,17 @@ for BUILD in $CANDIDATES; do
     say "$BK: $WHY — requeued"
     continue
     # <<< deploy age-out
+  fi
+
+  # BH-9862: a staging project stops here. Staging serves the merge, which is
+  # the fact the merged-ticket lane needs. The signed-in drive is not run:
+  # the QA account, its unban and qa-drive's flags are all wired for the
+  # production site, and a drive that fails for that reason would page as a
+  # product defect and hold the ticket.
+  if [ -n "$STG_BASE" ]; then
+    say "$BK: staging serves the merge — the staging drive is not wired, no authed screen covered"
+    mark_done "$BK" "$MSHA" NOT_COVERED_NO_QA_ENV
+    continue
   fi
 
   # --- the account -----------------------------------------------------------

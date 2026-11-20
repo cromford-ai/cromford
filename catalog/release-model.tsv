@@ -1,0 +1,16 @@
+# catalog/release-model.tsv — BH-9862: where a merge to the default branch deploys.
+#
+# Read by bin/lib/release-model.sh. A project with NO row deploys its default
+# branch to production, which is every project but the ones listed here.
+#
+# Columns, TAB-separated:
+#   project      fleet.conf column 1
+#   model        `staging`: a merge deploys to a staging site, and production
+#                changes only when a person runs the release of that project
+#   base         the staging site, no trailing slash
+#   version_url  answers {"sha": "..."} for the commit staging serves
+#
+# The harness never releases. For a row here it reads staging after a merge,
+# says "On staging" on the ticket, and leaves "Live on production" to the
+# release of that project.
+project-3	staging	https://staging.project-3.life	https://staging.project-3.life/api/internal/version

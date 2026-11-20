@@ -65,6 +65,8 @@ command -v jq >/dev/null 2>&1 || { say "jq required"; exit 1; }
 command -v builder_direct_on >/dev/null 2>&1 || { say "bin/lib/builder-direct.sh missing"; exit 3; }
 # shellcheck source=bin/lib/prod-red-defer.sh
 [ -r "$BIN/lib/prod-red-defer.sh" ] && . "$BIN/lib/prod-red-defer.sh"
+# shellcheck source=bin/lib/release-model.sh
+[ -r "$BIN/lib/release-model.sh" ] && . "$BIN/lib/release-model.sh"
 [ "$(builder_direct_on "$HARNESS")" = 1 ] || { say "builder-direct is off"; exit 3; }
 [ -s "$BUILD/RESULT" ] || { say "no RESULT in $BUILD"; exit 4; }
 
@@ -78,7 +80,20 @@ case "$RLINE" in
   PR_MERGED\ http*)  TO_STATUS=done ;;
   *) say "not a PR close-out ($(printf '%.40s' "$RLINE")) — left for the sweep"; exit 4 ;;
 esac
-if [ "$TO_STATUS" = done ] && command -v prod_red_defers_dir >/dev/null 2>&1 \
+# >>> release model (BH-9862)
+# A project whose merges deploy to STAGING (catalog/release-model.tsv). Two
+# things change for it and nothing else. At PR open the comment is posted and
+# the ticket does NOT move: nothing is on any site yet, and a board that audits
+# `review` against merged code moved every such ticket back with a comment the
+# client saw. At merge the comment says "on staging", links staging, and the
+# ticket goes to `review`, never `done`: production moves only with a release
+# a person runs, and that release is what says "live". The production-red
+# defer below is skipped too: a red production release says nothing about
+# whether staging has the merge.
+STAGING_BASE=""
+command -v release_staging_base >/dev/null 2>&1 && STAGING_BASE=$(release_staging_base "$PROJECT")
+# <<< release model
+if [ "$TO_STATUS" = done ] && [ -z "$STAGING_BASE" ] && command -v prod_red_defers_dir >/dev/null 2>&1 \
    && prod_red_defers_dir "$HARNESS" "$PROJECT" "$BUILD"; then
   IFS=$'\t' read -r PRD_SINCE PRD_SHA _ <<<"$(prod_red_defer_state "$HARNESS" "$PROJECT")"
   say "production red since ${PRD_SINCE:-?} (commit ${PRD_SHA:-?}): the merged close-out waits for a green deploy — left for the sweep"
@@ -88,6 +103,8 @@ PR_URL=$(grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' <<<"$RLINE" | head -1)
 [ -n "$PR_URL" ] || { say "no PR url on the RESULT line"; exit 4; }
 
 PROD=$("$BIN/fleet-conf.sh" "$PROJECT" prod 2>/dev/null) || PROD=""
+# BH-9862: where the links point. The board API stays on $PROD.
+SEE_BASE="$PROD"; [ -n "$STAGING_BASE" ] && SEE_BASE="$STAGING_BASE"
 PREFIX=$("$BIN/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null) || PREFIX=""
 
 # --- what shipped -------------------------------------------------------------
@@ -215,21 +232,37 @@ if [ -n "$SLICE_TOKEN" ]; then
 fi
 
 LINKS_HTML=""
+SEE_LEAD="Where to see it:"
+if [ -n "$STAGING_BASE" ]; then
+  SEE_LEAD="Where to see it on staging:"
+  [ "$TO_STATUS" = review ] && SEE_LEAD="Where to see it on staging after this merges:"
+fi
 if [ -n "$ROUTES" ]; then
-  LINKS_HTML="<p>Where to see it:</p><ul>"
+  LINKS_HTML="<p>$SEE_LEAD</p><ul>"
   while IFS= read -r R; do
     [ -n "$R" ] || continue
-    LINKS_HTML="$LINKS_HTML<li><a href=\"$(esc "$PROD$R")\">$(esc "$PROD$R")</a></li>"
+    LINKS_HTML="$LINKS_HTML<li><a href=\"$(esc "$SEE_BASE$R")\">$(esc "$SEE_BASE$R")</a></li>"
   done <<<"$ROUTES"
   LINKS_HTML="$LINKS_HTML</ul>"
 else
-  LINKS_HTML="<p>Where to see it: <a href=\"$(esc "$PROD")\">$(esc "$PROD")</a></p>"
+  LINKS_HTML="<p>$SEE_LEAD <a href=\"$(esc "$SEE_BASE")\">$(esc "$SEE_BASE")</a></p>"
 fi
 case "$TO_STATUS" in
   done) LEAD="This is merged and on its way to production." ;;
   *)    LEAD="This is built and open for review." ;;
 esac
 [ "$TO_STATUS" = in_progress ] && LEAD="Slice C$SLICE_K of this ticket is merged and on its way to production."
+# >>> release model (BH-9862): the words and the destination for a staging project.
+MOVE=1
+if [ -n "$STAGING_BASE" ]; then
+  NOT_LIVE="It is not live on production yet. It goes live with the next release."
+  case "$TO_STATUS" in
+    done)        LEAD="This is merged and on its way to staging. $NOT_LIVE"; TO_STATUS=review ;;
+    in_progress) LEAD="Slice C$SLICE_K of this ticket is merged and on its way to staging. $NOT_LIVE" ;;
+    *)           MOVE=0 ;;
+  esac
+fi
+# <<< release model
 BODY_HTML="<p>$(esc "$LEAD")</p>${WHAT_HTML}${SLICE_HTML}${LINKS_HTML}<p>Code: <a href=\"$(esc "$PR_URL")\">$(esc "$PR_URL")</a></p><p>$(esc "$VERIFIED")</p>"
 
 RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \
@@ -240,6 +273,10 @@ RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \
 printf '%s' "$RESP" | jq -e '(.comment // .id // .data) != null' >/dev/null 2>&1 \
   || { say "comment POST refused: $(printf '%.200s' "$RESP")"; exit 1; }
 
+if [ "$MOVE" = 0 ]; then
+  echo "POSTED $PROJECT/$KEY (status not moved: merges deploy to staging, the ticket moves at merge)$SLICE_NOTE"
+  exit 0
+fi
 # THE COMMENT FIRST, THE STATUS SECOND, and never the other way round. A ticket
 # moved to `review` with no comment is a client seeing work change state with no
 # explanation; a comment with no move is one status the next tick fixes.

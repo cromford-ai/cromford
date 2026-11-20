@@ -24,6 +24,15 @@ set -a; . "$HENV/global.env" 2>/dev/null; . "$HENV/$PROJECT.env" 2>/dev/null; se
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit deploy-train "$PROJECT"
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    deploy-train "$PROJECT"
+# >>> release model (BH-9862): for a project whose merges deploy to staging,
+# the site this lane checks IS staging, and the automatic revert is off. Below
+# the env load and the settings rows, because both can set VERSION_URL.
+# shellcheck source=bin/lib/release-model.sh
+. "${HARNESS:-/root/harness}/bin/lib/release-model.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/release-model.sh" 2>/dev/null || true
+command -v release_model_apply >/dev/null 2>&1 && release_model_apply "$PROJECT"
+# SITE is the word every line below uses for what this lane checks.
+SITE=production; command -v release_is_staging >/dev/null 2>&1 && release_is_staging "$PROJECT" && SITE=staging
+# <<< release model
 # VERSION_URL is the whole gate. DEPLOY_HOOK_URL is optional since 2026-09-12:
 # a project on Vercel's git integration deploys on the push itself, and firing
 # a hook there only buys a second build of the same sha (project-5).
@@ -334,6 +343,8 @@ deploy_record() {
     '{project:$p, sha:$sha, departure:$dep, prod_url:$url, waited_s:$w, merges:$n,
       shas:($shas|split("\n")|map(select(length>0))[0:20]),
       prs:($prs|split("\n")|map(select(length>0))[0:20])} + $x' 2>/dev/null) || return 0
+  # BH-9862: a staging deploy is marked, so nothing counts it as a production one.
+  [ "$SITE" = staging ] && detail=$(jq -c '. + {target:"staging"}' <<<"$detail" 2>/dev/null)
   job_ledger_put deploy "$SLUG@$TARGET" "$1" "$detail" >/dev/null 2>&1 || true
 }
 
@@ -404,6 +415,9 @@ if [ "$DEPLOYED" = yes ]; then
   # carry new migration files — apply them NOW instead of waiting for the */15
   # cron. Closes the deployed-code-vs-missing-schema window (project-3 TK-18 class).
   # apply-migrations is idempotent + flocked; failures still alert on their own.
+  # BH-9862: not for a staging project. Its builds apply their own SQL, and
+  # this driver holds the production endpoint.
+  [ "$SITE" = staging ] && exit 0
   [ -x "$HARNESS/bin/apply-migrations.sh" ] && "$HARNESS/bin/apply-migrations.sh" "$PROJECT" >> "$LOG" 2>&1 || true
   exit 0
 fi
@@ -413,7 +427,7 @@ fi
 # outcomes, not two: "verified", "failed", and (the silent one this closes)
 # "no row at all", which is a train that never ran. A `failed` row deliberately
 # carries no verified_at — the metrics side must not be able to read one.
-FAIL_REASON="production still not serving ${TARGET:0:8} after ${TRAIN_POLLS:-40} polls (live=${LIVE:-none})"
+FAIL_REASON="$SITE still not serving ${TARGET:0:8} after ${TRAIN_POLLS:-40} polls (live=${LIVE:-none})"
 deploy_record failed "$(jq -nc --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg live "${LIVE:-}" \
   --arg r "$FAIL_REASON" \
   '{failed_at:$at, live:$live, reason:$r}' 2>/dev/null || echo '{}')"
@@ -425,7 +439,7 @@ deploy_record failed "$(jq -nc --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg
 if [ "$DQ_ROWS" = yes ]; then
   while read -r sha; do
     [ -n "$sha" ] || continue
-    deploy_queue_depart "$PROJECT" "$sha" queued "production still not serving ${TARGET:0:8} (live=${LIVE:-none})" >/dev/null \
+    deploy_queue_depart "$PROJECT" "$sha" queued "$SITE still not serving ${TARGET:0:8} (live=${LIVE:-none})" >/dev/null \
       || echo "$(STAMP) [$PROJECT] ${sha:0:8} could not be released back to queued — re-offered after ${STALE}m" >> "$LOG"
   done <<<"$SHAS"
 fi
@@ -444,9 +458,9 @@ if [ "$ROLLBACK" != on ]; then
     FIRST=$(head -1 <<<"$BATCH"); AGE_MIN=$(( ( $(date +%s) - ${FIRST%%-*} ) / 60 ))
   fi
   echo "$(STAMP) [$PROJECT] train FAILED verify (live=${LIVE:-none} target=${TARGET:0:8}; oldest merge queued ${AGE_MIN}m) — DEPLOY_ROLLBACK=off, alerting, batch left queued" >> "$LOG"
-  "$HARNESS/bin/alert-line.sh" "[$PROJECT] DEPLOY TRAIN: production is NOT serving ${TARGET:0:8} ${AGE_MIN}m after the merge (live=${LIVE:-none}) — the Vercel production build is red or the domain is pinned; $N merge(s) waiting: $(tr '\n' ' ' <<<"$SHAS")"
+  "$HARNESS/bin/alert-line.sh" "[$PROJECT] DEPLOY TRAIN: $SITE is NOT serving ${TARGET:0:8} ${AGE_MIN}m after the merge (live=${LIVE:-none}) — the Vercel $SITE build is red or the domain is pinned; $N merge(s) waiting: $(tr '\n' ' ' <<<"$SHAS")"
   "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$PROJECT" --arg akey "deploy-stale:$PROJECT:${TARGET:0:8}" \
-    --arg l "DEPLOY TRAIN: $PROJECT production is NOT serving ${TARGET:0:8} ${AGE_MIN}m after the merge (live=${LIVE:-none}) — Vercel build red or domain pinned; check that project on Vercel" \
+    --arg l "DEPLOY TRAIN: $PROJECT $SITE is NOT serving ${TARGET:0:8} ${AGE_MIN}m after the merge (live=${LIVE:-none}) — Vercel build red or domain pinned; check that project on Vercel" \
     '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1
   exit 0
 fi
