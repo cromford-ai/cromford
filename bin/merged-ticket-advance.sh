@@ -84,13 +84,23 @@
 # merged_at, and the holds, markers and retries are the ones above. Every
 # candidate on this path counts `no-local-build` as well as its outcome.
 #
+# SLICE PLANS (BH-9865). bin/board-closeout.sh (BH-8333) keeps a slice ticket
+# in `in_progress`, and bin/decompose-parent-close.sh closes the master when
+# every child is done. So a ticket whose plan carries a SLICE line for THIS
+# ticket (slice_board_token, bin/lib/slice-board.sh, rc 0) is held: no comment,
+# no move, no turn, counted `slice-plan`. Local path: the newest build dir's
+# plan.md, read after the audit check and before the ticket GET. Peer path: the
+# merged PR's body from the pulls/<n> read the lane already makes; the version
+# route is not read for it. A SLICE line for another ticket does not hold. With
+# no lib on the box (mid-sync) nothing is held, as before.
+#
 # THE TURN. After an echoed move to `review` (either path) the lane gives the
 # turn to the client: POST /tickets/<id>/turn {"to":"client"}. A move does not
 # change the turn. A failed turn is one MERGED_ADVANCE_TURN_FAILED line; the
 # move still counts.
 #
 # One log line per run that read the board:
-#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N
+#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N slice-plan=N
 # plus MERGED_ADVANCE_CAPPED when MERGED_ADVANCE_MAX stopped the loop early.
 #
 # Called from inapp_released_lines (bin/lib/rt/scope.sh) right before the
@@ -206,6 +216,10 @@ declare -F cm_put >/dev/null 2>&1 || cm_put() { mkdir -p "$(dirname "$3")" 2>/de
 [ -r "$SELF/lib/gh-rest.sh" ] && . "$SELF/lib/gh-rest.sh" 2>/dev/null
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$SELF/lib/gh-repo-token.sh" ] && . "$SELF/lib/gh-repo-token.sh" 2>/dev/null
+# The slice test board-closeout uses (BH-9865). No lib: no hold, as before.
+# shellcheck source=bin/lib/slice-board.sh
+[ -r "$SELF/lib/slice-board.sh" ] && . "$SELF/lib/slice-board.sh" 2>/dev/null
+declare -F slice_board_token >/dev/null 2>&1 || slice_board_token() { return 1; }
 SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || SLUG=""
 PROD=$("$SELF/prod-url.sh" "$PROJECT" 2>/dev/null) || PROD=""
 
@@ -388,7 +402,7 @@ if [ -n "$nid" ]; then
 fi
 
 MOVED=0; CONLY=0; S_NOAUDIT=0; S_AUDITFAIL=0; S_NEWER=0; S_SPOKE=0; S_CREVIEW=0; S_BACK=0; S_GAVEUP=0
-S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0
+S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLICE=0
 EXAMINED=0; LEFT=0; IDX=0; STOPAT=""
 NCANDS=$(grep -c . "$TMP/cands.tsv" 2>/dev/null) || NCANDS=0
 
@@ -399,7 +413,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
 
   # 2. the newest build for the key must itself be a PR
   newest=$(_ma_builds "$tkey" | head -1)
-  PEER=0
+  PEER=0; splan=""
   if [ -z "$newest" ]; then
     # 2p. no build dir on this box: the peer path (header, BH-8786). Where it
     # goes first, so a client review ticket costs no request (as step 4).
@@ -425,6 +439,8 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
       1) S_PROPEN=$((S_PROPEN + 1)); continue ;;
       *) S_PEERUNREAD=$((S_PEERUNREAD + 1)); continue ;;
     esac
+    jq -r '.body // ""' "$TMP/pr.json" > "$TMP/prbody.md" 2>/dev/null || : > "$TMP/prbody.md"
+    splan="$TMP/prbody.md"
     sha="${PR_SHA:0:8}"; verdict=PEER; token="pr-$prn-$sha"
     pr="https://github.com/$SLUG/pull/$prn"
     cutoff=$(date -u -d "@$PR_EP" '+%Y-%m-%dT%H:%M:%SZ')
@@ -462,7 +478,12 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     esac
     case "$sha" in ''|*[!0-9a-f]*) sha="" ;; esac
     token="${sha:-$bstamp}"
+    splan="$ndir/plan.md"
   fi
+
+  # 2s. a slice plan for THIS ticket (BH-9865): board-closeout keeps it in
+  # progress and decompose-parent-close closes it. No comment, no move.
+  if slice_board_token "$splan" "$tid" "$tkey" >/dev/null 2>&1; then S_SLICE=$((S_SLICE + 1)); continue; fi
 
   # 3b. this lane's own earlier outcome for this ticket and audit
   #   moved   our move landed (echoed). Finding the ticket open again means a
@@ -602,5 +623,5 @@ if [ "$DRY" = 0 ]; then
   fi
 fi
 [ "$LEFT" -gt 0 ] && MA_LOG "MERGED_ADVANCE_CAPPED $LEFT left for the next run (MERGED_ADVANCE_MAX=$MAX)"
-MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG"
+MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG slice-plan=$S_SLICE"
 exit 0
