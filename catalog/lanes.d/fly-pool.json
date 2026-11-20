@@ -524,7 +524,7 @@
       "default": "",
       "zero_means": null,
       "read_in": "bin/lib/pg-test.sh",
-      "note": "BH-5962: the setup run against the throwaway Postgres before the suite. Empty (the default) = no setup. The only accepted value is `npm run <script>` where <script> is declared in the target repo's own package.json (e.g. `npm run db:apply`); anything else is refused with a HARNESS_PG_SETUP line, because a settable row never carries a command. Per project: lane.fly-pool.<project>.pool_test_setup_cmd.",
+      "note": "BH-5962: the setup run against the throwaway Postgres before the suite. Empty (the default) = no setup. Two accepted values: `npm run <script>` where <script> is declared in the target repo's own package.json (e.g. `npm run db:apply`), or exactly `prisma db push` (BH-9835: the harness runs `npx prisma db push --skip-generate --accept-data-loss` against the throwaway in a repo with a prisma schema); anything else is refused with a HARNESS_PG_SETUP line, because a settable row never carries a command. Per project: lane.fly-pool.<project>.pool_test_setup_cmd.",
       "settable": true
     },
     {

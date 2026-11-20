@@ -15,7 +15,10 @@
 #                             the image does not hold is a could-not-start.
 #   POOL_TEST_SETUP_CMD       empty (default) = no setup. Else exactly
 #                             `npm run <script>` for a script the repo's own
-#                             package.json declares; anything else is refused,
+#                             package.json declares, or exactly `prisma db push`
+#                             (BH-9835: the harness runs `npx prisma db push
+#                             --skip-generate --accept-data-loss` when the repo
+#                             has a prisma schema); anything else is refused,
 #                             because a settable row must never carry a command.
 #   POOL_TEST_POSTGRES_MIN_FREE_MB  the free MB the data root must have (default
 #                             512). The root is the one of /dev/shm and
@@ -54,7 +57,7 @@
 #   HARNESS_PG: could-not-start (locale <l> not installed)  pgt_start rc 3: the
 #                                               suite does not run (could-not-run)
 #   HARNESS_PG: torn down
-#   HARNESS_PG_SETUP: npm run <script> (rc=N) | none (<why>) | refused (<why>)
+#   HARNESS_PG_SETUP: npm run <script> (rc=N) | prisma db push (rc=N) | none (<why>) | refused (<why>)
 # (no HARNESS_PG_SETUP line when the start failed: there is nothing to set up)
 # Only low disk is a stop: else the suite's own exit is still HARNESS_EXIT.
 #
@@ -203,18 +206,29 @@ pgt_start() {
 }
 
 # pgt_setup <outfile> — run the project's setup command against PGT_URL, if one is set.
-# The row POOL_TEST_SETUP_CMD is empty by default (no setup). Its only accepted form is
-# `npm run <script>`, with <script> declared in the repo's own package.json: the row
-# picks which of the repo's scripts runs, and never carries a command of its own.
+# The row POOL_TEST_SETUP_CMD is empty by default (no setup). It accepts two fixed forms:
+# `npm run <script>`, with <script> declared in the repo's own package.json, and the
+# exact value `prisma db push` (BH-9835), which runs the harness's own fixed
+# `npx prisma db push --skip-generate --accept-data-loss` in a repo with a prisma
+# schema. The row picks one of these, and never carries a command of its own.
 # rc is evidence, never a stop.
 pgt_setup() {
   local out="$1" c s rc
   c=$(pgt_knob POOL_TEST_SETUP_CMD)
   [ -n "$c" ] || { echo "HARNESS_PG_SETUP: none (no setup command is set)" >> "$out"; return 0; }
   # A regex tests the whole value only with no newline in it, so a two-line value is refused first.
-  case "$c" in *$'\n'*|*$'\r'*) echo "HARNESS_PG_SETUP: refused (a multi-line value is not \`npm run <script>\`)" >> "$out"; return 0 ;; esac
+  case "$c" in *$'\n'*|*$'\r'*) echo "HARNESS_PG_SETUP: refused (a multi-line value is not \`npm run <script>\` or \`prisma db push\`)" >> "$out"; return 0 ;; esac
+  if [ "$c" = "prisma db push" ]; then
+    [ -f prisma/schema.prisma ] || [ -d prisma/schema ] \
+      || { echo "HARNESS_PG_SETUP: none (no prisma schema)" >> "$out"; return 0; }
+    pgt_env || { echo "HARNESS_PG_SETUP: refused (no local url)" >> "$out"; return 0; }
+    # 300 s: the same timeout the npm form uses (no new limit).
+    "${PGT_ENV[@]}" timeout 300 npx prisma db push --skip-generate --accept-data-loss >> "$out" 2>&1; rc=$?
+    echo "HARNESS_PG_SETUP: prisma db push (rc=$rc)" >> "$out"
+    return 0
+  fi
   [[ "$c" =~ ^npm\ run\ ([A-Za-z0-9][A-Za-z0-9:_.-]{0,63})$ ]] \
-    || { echo "HARNESS_PG_SETUP: refused ('$c' is not \`npm run <script>\`)" >> "$out"; return 0; }
+    || { echo "HARNESS_PG_SETUP: refused ('$c' is not \`npm run <script>\` or \`prisma db push\`)" >> "$out"; return 0; }
   s="${BASH_REMATCH[1]}"
   jq -e --arg s "$s" '.scripts[$s] // empty' package.json > /dev/null 2>&1 \
     || { echo "HARNESS_PG_SETUP: none (package.json declares no '$s' script)" >> "$out"; return 0; }

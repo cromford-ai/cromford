@@ -253,7 +253,9 @@ ls "$DIR"/worker/jobs/schema.d/*bh-5962* >/dev/null 2>&1 && bad "P9: no schema.d
 # A missing schema.sql is a failure, never a pass: grep exits 2 on it, and
 # `grep -q … && bad || ok` read that as ok (lead review lr-6093).
 if [ -r "$DIR/worker/jobs/schema.sql" ]; then
-  grep -q 'pool_test_postgres' "$DIR/worker/jobs/schema.sql" && bad "P9: worker/jobs/schema.sql must carry no pool_test_postgres seed" || ok
+  # BH-9835 seeds project-1 on purpose (its own suite pins that row); project-6-os
+  # stays a settings change after merge, so no project-6-os seed may appear.
+  grep -q 'project-6-os\.pool_test_postgres' "$DIR/worker/jobs/schema.sql" && bad "P9: worker/jobs/schema.sql must carry no project-6-os pool_test_postgres seed" || ok
 else
   bad "P9: worker/jobs/schema.sql is missing, so the no-seed check checked nothing"
 fi
