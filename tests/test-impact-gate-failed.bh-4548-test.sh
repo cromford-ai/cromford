@@ -9,7 +9,8 @@
 #   F2  the green suite alone: rc 0, and the file exists and is empty
 #   F3  a pre-filled file and no selection (rc 2): the file is emptied, never
 #       left stale
-#   F4  rc and stdout are the same with and without --failed
+#   F4  rc and stdout are the same with and without --failed, on the same
+#       durations hint
 #
 # Real git repo under $T, the real gate, selector and runner. No network, one
 # clock read.
@@ -76,7 +77,12 @@ grep -q 'impact-gate: done' "$T/f3b.out" && bad "F3: nothing runs when --failed 
 
 # ── F4. --failed changes neither rc nor stdout ──────────────────────────────
 gitc reset -q --hard HEAD~1
+# Both runs start from the same durations hint (BH-9855). The first run rewrites
+# the file with its own wall times, and a suite that crosses a second boundary
+# reorders the second run's plan; that is the hint doing its job, not --failed.
+{ cat "$TEST_IMPACT_DURATIONS_FILE" 2>/dev/null; :; } > "$T/f4.dur"
 gate --base "$BASE" --runner local > "$T/f4a.out" 2>/dev/null; RA=$?
+cp "$T/f4.dur" "$TEST_IMPACT_DURATIONS_FILE" || exit 1
 gate --base "$BASE" --runner local --failed "$T/f4" > "$T/f4b.out" 2>/dev/null; RB=$?
 [ "$RA" = "$RB" ] && [ "$RA" = 1 ] && ok || bad "F4: the rc is unchanged by --failed (without $RA, with $RB)"
 # Wall times and the gate's mktemp dir differ run to run; mask them, compare the rest.
