@@ -14,6 +14,8 @@ import { createdTablesFrom } from "./created-tables.js";
 import { activeFleetFlags } from "./harness-flags.js";
 import { rawDb } from "./d1-retry.js";
 import { sqlIdent } from "./sql-ident.js";
+import { peekSetting } from "./settings-cache.js";
+import { isolateFlight, flightKnobs } from "./isolate-flight.js";
 
 export const OPEN_STATUS = "running";
 
@@ -1023,8 +1025,11 @@ export async function ensureColumns(env, table) {
   // Keyed on the raw binding, not the BH-6690 retry proxy index.js puts on env.DB.
   let per = addedColumnsReady.get(rawDb(db));
   if (!per) { per = new Map(); addedColumnsReady.set(rawDb(db), per); }
-  if (per.has(table)) return per.get(table);
-  const p = (async () => {
+  // BH-9850: the memo holds a plain slot (lib/isolate-flight.js), never a
+  // Promise, so no request awaits a promise another request made. final: a
+  // success is kept; a failed migration is not "done", so the next request
+  // tries again.
+  return isolateFlight(per, table, async () => {
     // sql-ident-ok: table passed sqlIdent at the top of ensureColumns
     const info = await db.prepare(`PRAGMA table_info(${table})`).all();
     const have = new Set((info.results || []).map((r) => r.name));
@@ -1046,11 +1051,7 @@ export async function ensureColumns(env, table) {
         console.warn(`ensureColumns(${table}): ${sql} failed: ${String(e && e.message || e)}`);
       }
     }
-  })();
-  per.set(table, p);
-  // A failed migration must not be cached as "done": the next request tries again.
-  p.catch(() => per.delete(table));
-  return p;
+  }, { ...flightKnobs(peekSetting, db), final: true });
 }
 
 // ── Additive table creation (BH-658, 2026-09-17) ─────────────────────────────
@@ -1130,18 +1131,15 @@ export async function ensureTable(env, table) {
   // Keyed on the raw binding, as in ensureColumns.
   let per = createdTablesReady.get(rawDb(db));
   if (!per) { per = new Map(); createdTablesReady.set(rawDb(db), per); }
-  if (per.has(table)) return per.get(table);
-  const p = (async () => {
+  // BH-9850: a plain slot, as in ensureColumns. Same rule too: a failed create
+  // is not cached as "done".
+  return isolateFlight(per, table, async () => {
     // BH-9657: one D1 call for the whole create when the binding can batch.
     // The root binding is asked: the retry and stats proxies always expose batch.
     const sqls = CREATED_TABLES[table] || [];
     if (sqls.length > 1 && typeof rawDb(db).batch === "function") await db.batch(sqls.map((sql) => db.prepare(sql)));
     else for (const sql of sqls) await db.prepare(sql).run();
-  })();
-  per.set(table, p);
-  // Same rule as ensureColumns: a failed create is not cached as "done".
-  p.catch(() => per.delete(table));
-  return p;
+  }, { ...flightKnobs(peekSetting, db), final: true });
 }
 
 // ── Lane liveness (2026-08-30) ───────────────────────────────────────────────
