@@ -70,6 +70,8 @@ touch "$STATE"
 # The projects are the four whose app exposes a migration endpoint (the env-var
 # map in applied_files_for below); each one's repo is fleet.conf's column 2
 # (BH-4080). A project with no row is skipped with a log line, never guessed.
+# shellcheck source=bin/lib/release-model.sh
+[ -r "$HARNESS/bin/lib/release-model.sh" ] && . "$HARNESS/bin/lib/release-model.sh"
 declare -A REPOS=()
 for _p in project-1 project-2 project-3 project-4; do
   _r=$("$HARNESS/bin/fleet-conf.sh" "$_p" repo 2>/dev/null || true)
@@ -188,6 +190,16 @@ mig_autopilot_applied_all() { # mig_autopilot_applied_all <project> <comma-list>
 }
 
 for PROJECT in "${!REPOS[@]}"; do
+  # BH-9873: for a staging project (catalog/release-model.tsv) the app build
+  # applies the SQL to staging at merge and to production at the release, so
+  # "applied to prod" right after a merge asks for the wrong thing.
+  # MIG_LOG is the migrations.log wording, MIG_ASK the alert wording; with no
+  # row both are the texts this lane always wrote.
+  MIG_LOG="confirm SQL applied to prod"; MIG_ASK="confirm it is applied to prod"
+  if command -v release_is_staging >/dev/null 2>&1 && release_is_staging "$PROJECT"; then
+    MIG_ASK="it is applied to staging at merge; confirm it on production after the next release"
+    MIG_LOG="$MIG_ASK"
+  fi
   REPO="${REPOS[$PROJECT]}"
   # >>> gh default auth
   command -v gh_default_auth_for_project >/dev/null 2>&1 && { gh_default_auth_for_project "$PROJECT" || true; }
@@ -227,13 +239,13 @@ for PROJECT in "${!REPOS[@]}"; do
         continue
       fi
     fi
-    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] MIGRATION-PR merged: #$NUM ($TITLE) — confirm SQL applied to prod" >> "$HARNESS/logs/migrations.log"
+    echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$PROJECT] MIGRATION-PR merged: #$NUM ($TITLE) — $MIG_LOG" >> "$HARNESS/logs/migrations.log"
     # WRITE AFTER SEND. The dedupe row is stamped once beat.sh has returned, so
     # a run killed mid-send cannot leave "alerted" behind for a page that never
     # went out. The other direction — a beat that landed and a row that did not —
     # re-beats next tick under the same akey, which the hook dedupes for 6h.
     "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$PROJECT" --arg akey "migration:$KEY" \
-      --arg l "PR #$NUM shipped migration SQL — confirm it is applied to prod ($TITLE)" \
+      --arg l "PR #$NUM shipped migration SQL — $MIG_ASK ($TITLE)" \
       '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')"
     mig_record "$KEY" alerted
   done

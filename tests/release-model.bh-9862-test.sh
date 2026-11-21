@@ -116,6 +116,15 @@ closeout ctl "PR_MERGED https://github.com/o/r/pull/9"
 [ "$RC" = 0 ] && [ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = done ] && grep -q 'on its way to production' "$T/c.curl.bodies" && ok \
   || bad "C4 no row + PR_MERGED is unchanged: done (rc $RC; $(cat "$T/c.curl.moves"))"
 
+# BH-9873: a SLICE build at PR open on a staging project also goes to
+# in_progress, with the slice named in the output.
+printf '## QA screens\n- /clients — the list\n\nSLICE: C2 of #TK-9\n\n## Size\n' > "$BB/plan.md"
+closeout stg "PR_CREATED https://github.com/o/r/pull/8"
+[ "$RC" = 0 ] && [ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = in_progress ] && ok \
+  || bad "C5 staging + slice + PR_CREATED must move the ticket to in_progress (rc $RC; got $(cat "$T/c.curl.moves"); $(tail -2 "$T/c.err"))"
+case "$OUT" in "POSTED stg/TK-9 -> in_progress (slice C2"*) ok ;; *) bad "C5 stdout must name the slice and in_progress (got '$OUT')" ;; esac
+printf '## QA screens\n- /clients — the list\n\n## Size\n' > "$BB/plan.md"
+
 # ══ M — the real bin/migration-autopilot.sh ═══════════════════════════════
 MH="$T/m/h"; mkdir -p "$MH/state" "$MH/flags" "$MH/env" "$MH/logs" "$MH/locks" "$MH/catalog"
 scratch_install_closure bin/migration-autopilot.sh "$MH" >/dev/null || bad "M setup: cannot install the autopilot closure"
@@ -155,6 +164,20 @@ N=$(grep -c 'body="<p>This is merged and on staging\|body="<p>This is merged and
 [ "$N" -ge 3 ] && ok || bad "O4 each staging comment of bin/merged-ticket-advance.sh must start with the words its dedupe reads (found $N)"
 grep -q '^\[ -n "\$STG_BASE" \] && PROD="\$STG_BASE"' "$DIR/bin/postmerge-qa.sh" && ok \
   || bad "O2 bin/postmerge-qa.sh must drive the staging site for a staging project"
+
+# BH-9873: the words a staging project must not get, and the guard on the row.
+grep -q 'WHERE=live; \[ "\$SITE" = staging \] && WHERE="on staging"' "$DIR/bin/deploy-train.sh" \
+  && [ "$(grep -c 'VERIFIED \$WHERE at' "$DIR/bin/deploy-train.sh")" = 2 ] && ! grep -q 'VERIFIED live' "$DIR/bin/deploy-train.sh" && ok \
+  || bad "O5 bin/deploy-train.sh must say VERIFIED on staging for a staging project, in the log and in the queue row"
+grep -q 'local _d; _d=\$(jq -c .\. + {target:"staging"}. <<<"\$detail" 2>/dev/null) && \[ -n "\$_d" \] && detail=\$_d' "$DIR/bin/deploy-train.sh" && ok \
+  || bad "O6 a failed jq must not empty the ledger detail of bin/deploy-train.sh"
+grep -q 'SITE_W=staging; QA_W=STAGING; SEEN_W="on staging"' "$DIR/bin/postmerge-qa.sh" \
+  && grep -q 'POST-MERGE \$QA_W QA NOT RUN' "$DIR/bin/postmerge-qa.sh" && ! grep -q 'POST-MERGE PROD QA NOT RUN' "$DIR/bin/postmerge-qa.sh" && ok \
+  || bad "O7 the deploy-timeout alert of bin/postmerge-qa.sh must name staging for a staging project"
+grep -q 'release_is_staging "\$PROJECT"' "$DIR/bin/check-migration-prs.sh" \
+  && grep -q -- '— \$MIG_ASK (\$TITLE)' "$DIR/bin/check-migration-prs.sh" && grep -q -- '— \$MIG_LOG" >>' "$DIR/bin/check-migration-prs.sh" \
+  && grep -q 'MIG_LOG="confirm SQL applied to prod"; MIG_ASK="confirm it is applied to prod"' "$DIR/bin/check-migration-prs.sh" && ok \
+  || bad "O8 bin/check-migration-prs.sh must not ask for a production apply right after a staging merge"
 
 # ══ B — nothing left the stubs ════════════════════════════════════════════
 # Read the stub logs first, then match (BH-1818): a pipe into grep -q can pass

@@ -99,6 +99,10 @@ set -a; . "$HENV/global.env" 2>/dev/null; . "$HENV/$P.env" 2>/dev/null; set +a
 [ -r "$SELF/lib/release-model.sh" ] && . "$SELF/lib/release-model.sh"
 command -v release_model_apply >/dev/null 2>&1 && release_model_apply "$P"
 STG_BASE=""; command -v release_staging_base >/dev/null 2>&1 && STG_BASE=$(release_staging_base "$P")
+# The site words of the deploy-timeout alert (BH-9873): a staging project waits
+# for staging, so the alert must not send an operator to production.
+SITE_W=prod; QA_W=PROD; SEEN_W="in production"
+[ -n "$STG_BASE" ] && { SITE_W=staging; QA_W=STAGING; SEEN_W="on staging"; }
 # <<< release model
 # AND AGAIN, BELOW THE ENV LOAD (BH-1165 review). `set -a; . env/global.env`
 # re-assigns every name it carries, so the call above lost each knob the box's
@@ -323,8 +327,8 @@ for BUILD in $CANDIDATES; do
     # write every merged build of every project terminal in a single tick, and
     # none of them would be driven when the signal came back.
     case "$GATE" in
-      1) WHY="prod not yet serving ${MSHA:0:8}" ;;
-      *) WHY="cannot determine whether prod serves ${MSHA:0:8} (the deploy signal was unreadable)" ;;
+      1) WHY="$SITE_W not yet serving ${MSHA:0:8}" ;;
+      *) WHY="cannot determine whether $SITE_W serves ${MSHA:0:8} (the deploy signal was unreadable)" ;;
     esac
     AGE_S=""
     [ -n "${MERGED_AT:-}" ] && ME=$(date -u -d "$MERGED_AT" +%s 2>/dev/null) && AGE_S=$((NOW - ME))
@@ -332,7 +336,7 @@ for BUILD in $CANDIDATES; do
       # Alert BEFORE the done row: a crash between the two can duplicate an
       # alert, which is noise, but can never leave a build silently terminal.
       say "$BK: $WHY $((AGE_S / 3600))h after merge (limit ${DEPLOY_MAX_H}h) — NOT_COVERED_DEPLOY_TIMEOUT, not re-offered"
-      echo "$(STAMP) [$P] POST-MERGE PROD QA NOT RUN for $BK (${MSHA:0:8}, $PR_URL): $WHY $((AGE_S / 3600))h after merge (limit ${DEPLOY_MAX_H}h). Nothing was driven for this merge, so the shipped screen has NOT been observed in production. Needed: confirm ${MSHA:0:8} reached $PROD (check bin/deploy-train.sh / the project's deploy lane; set VERSION_URL for this project if prod has no version endpoint), then re-run '$SELF/postmerge-qa.sh $P $BUILD' after removing the $BK row from $DONE." >> "$ALERTS"
+      echo "$(STAMP) [$P] POST-MERGE $QA_W QA NOT RUN for $BK (${MSHA:0:8}, $PR_URL): $WHY $((AGE_S / 3600))h after merge (limit ${DEPLOY_MAX_H}h). Nothing was driven for this merge, so the shipped screen has NOT been observed $SEEN_W. Needed: confirm ${MSHA:0:8} reached $PROD (check bin/deploy-train.sh / the project's deploy lane; set VERSION_URL for this project if prod has no version endpoint), then re-run '$SELF/postmerge-qa.sh $P $BUILD' after removing the $BK row from $DONE." >> "$ALERTS"
       "$SELF/beat.sh" "$(jq -nc --arg p "$P" --arg akey "prodqa-deploy:$P:$MSHA" \
         --arg l "Post-merge QA gave up on $BK (${MSHA:0:8}): $WHY $((AGE_S / 3600))h after merge (limit ${DEPLOY_MAX_H}h) — $PROD is not confirmed serving this merge and nothing was driven ($PR_URL)" \
         '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1 || true

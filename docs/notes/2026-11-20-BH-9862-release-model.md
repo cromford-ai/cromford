@@ -77,3 +77,17 @@ TK-787 (project-3 PR #1266, merged 2026-11-21) got no merge comment and no move.
 The close-out now moves the ticket to `in_progress` at PR open for a staging
 project. It is not `review`, because the app audit moves a `review` ticket
 with an open PR back.
+
+## BH-9873: the words for a staging project
+
+- `bin/deploy-train.sh` writes `VERIFIED on staging at <sha>` to the log and to
+  the deploy queue row. Every other project keeps `VERIFIED live at <sha>`.
+- A jq that fails no longer empties the ledger detail of the train.
+- The deploy-timeout alert of `bin/postmerge-qa.sh` names staging.
+- `bin/check-migration-prs.sh` says that the SQL is applied to staging at merge
+  and asks for the production check after the next release.
+
+The train is silent after a merge that a person made by hand. That is correct:
+only merges of this box's sweep are enqueued. With an empty queue the train
+compares the staging site with `origin/main`, and it departs (and pages on a
+failure) only when staging is behind `main` for `SELF_SOURCE_MIN_AGE_MIN`.

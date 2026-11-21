@@ -32,6 +32,9 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    deploy-train "
 command -v release_model_apply >/dev/null 2>&1 && release_model_apply "$PROJECT"
 # SITE is the word every line below uses for what this lane checks.
 SITE=production; command -v release_is_staging >/dev/null 2>&1 && release_is_staging "$PROJECT" && SITE=staging
+# The word after VERIFIED in the log and the queue row: a staging project is
+# never "live" at merge (BH-9873). Every other project keeps "live".
+WHERE=live; [ "$SITE" = staging ] && WHERE="on staging"
 # <<< release model
 # VERSION_URL is the whole gate. DEPLOY_HOOK_URL is optional since 2026-09-12:
 # a project on Vercel's git integration deploys on the push itself, and firing
@@ -344,7 +347,10 @@ deploy_record() {
       shas:($shas|split("\n")|map(select(length>0))[0:20]),
       prs:($prs|split("\n")|map(select(length>0))[0:20])} + $x' 2>/dev/null) || return 0
   # BH-9862: a staging deploy is marked, so nothing counts it as a production one.
-  [ "$SITE" = staging ] && detail=$(jq -c '. + {target:"staging"}' <<<"$detail" 2>/dev/null)
+  # A jq that fails must not empty the row: keep $detail as it was (BH-9873).
+  if [ "$SITE" = staging ]; then
+    local _d; _d=$(jq -c '. + {target:"staging"}' <<<"$detail" 2>/dev/null) && [ -n "$_d" ] && detail=$_d
+  fi
   job_ledger_put deploy "$SLUG@$TARGET" "$1" "$detail" >/dev/null 2>&1 || true
 }
 
@@ -393,7 +399,7 @@ if [ "$DEPLOYED" = yes ]; then
   if [ "$DQ_ROWS" = yes ]; then
     while read -r sha; do
       [ -n "$sha" ] || continue
-      deploy_queue_depart "$PROJECT" "$sha" done "VERIFIED live at ${TARGET:0:8}" >/dev/null \
+      deploy_queue_depart "$PROJECT" "$sha" done "VERIFIED $WHERE at ${TARGET:0:8}" >/dev/null \
         || echo "$(STAMP) [$PROJECT] ${sha:0:8} deployed but its deploy_queue row could not be stamped done — re-offered after ${STALE}m and re-verified then" >> "$LOG"
     done <<<"$SHAS"
     # Matched by CONTENT, not by list position: this batch came from rows, and
@@ -405,7 +411,7 @@ if [ "$DEPLOYED" = yes ]; then
   else
     while read -r f; do rm -f "$DQ/$f"; done <<<"$BATCH"
   fi
-  echo "$(STAMP) [$PROJECT] train VERIFIED live at ${TARGET:0:8} ($N merges)" >> "$LOG"
+  echo "$(STAMP) [$PROJECT] train VERIFIED $WHERE at ${TARGET:0:8} ($N merges)" >> "$LOG"
   # Keyed on the sha production was verified to be SERVING (which may be a
   # descendant of the batch's target — see the ancestry note above), so a
   # re-departure on the same sha upserts one row instead of inventing a second
