@@ -9,6 +9,7 @@ import { AppearanceScreen } from '../Appearance.js';
 import { PromptsScreen } from '../Prompts.js';
 import { FleetMachinesScreen } from './fleet/Machines.js';
 import { ConnectionsScreen } from '../Connections.js';
+import { SignalsScreen } from './project/Signals.js';
 
 // The settings side menu (BH-7938): the registry in lib/settings-menu.js on
 // the left, the active page on the right. Fleet scope lists the fleet pages and
@@ -18,7 +19,7 @@ import { ConnectionsScreen } from '../Connections.js';
 
 // Row id -> the page it mounts. A registry row with no tag and no entry here
 // renders "Not built yet.", never a blank page.
-export const SETTINGS_SCREENS = { lanes: SettingsScreen, appearance: AppearanceScreen, prompts: PromptsScreen, machines: FleetMachinesScreen, connections: ConnectionsScreen };
+export const SETTINGS_SCREENS = { lanes: SettingsScreen, appearance: AppearanceScreen, prompts: PromptsScreen, machines: FleetMachinesScreen, connections: ConnectionsScreen, signals: SignalsScreen };
 
 // One read for the shell: the project list, once per mount, no poll. The page
 // it mounts makes its own reads in the same commit, so the two run in parallel.

@@ -28,6 +28,8 @@ import { formatModeValue, allowInputError, parseAllowInput, modeText, modeRank }
 import { loadFirstRun, showFirstRun } from '../lib/first-run.js';
 import { FirstRun } from './FirstRun.js';
 import { prodMarker } from '../lib/prod-red.js';
+import { pillState, notSetCount } from '../lib/signal-keys.js';
+import { signalKeysList } from '../lib/signal-keys-api.js';
 
 // Same map as Now.js, so LAST RESULT reads in the colours /now uses.
 const TONE_CLASS = { green: 'tag tag--green', dead: 'tag tag--dead', warn: 'tag tag--warn', muted: 'tag tag--idle' };
@@ -70,6 +72,10 @@ export function FleetScreen() {
   // read of its own. A failed read is null data, so its cells read "—".
   const flagsApi = useApi(() => api.coordFlags(), [], { intervalMs: 30000 });
   const routingApi = useApi(() => api.routingAll(), [], { intervalMs: 30000 });
+  // BH-9839: the signal keys of every project (metadata only), once per mount
+  // in the same commit as the reads above, so it runs in parallel. No poll:
+  // keys change by hand. A failed read leaves the SIGNALS cells "—".
+  const signals = useApi(() => signalKeysList(), []);
   const [flagBusy, setFlagBusy] = useState(null);
   const flagLatch = useRef(false);
 
@@ -358,7 +364,7 @@ export function FleetScreen() {
             ? html`<${ErrorBox} error=${projects.error} onRetry=${projects.reload}/>`
             : html`<${ProjectsTable} rows=${rows} recentRuns=${snap.recent_runs || {}} pauses=${pauses}
                 flagCells=${flagCells} onPause=${togglePause} onSaveWip=${saveWip} onSetMode=${setMode}
-                busy=${flagBusy} />`}
+                busy=${flagBusy} signals=${signals.data} signalsLoading=${signals.loading && !signals.data} />`}
         <${Legend} items=${FLEET_FLAGS_LEGEND}/>
         <div class="footnote">
           <${Clock}/>
@@ -527,11 +533,14 @@ function ExternalTile({ lane, snapshotAgeMin }) {
 // what an operator SEES, and the only honest way to check it is to render the
 // real table and read the HTML back.
 export function ProjectsTable({
-  rows, recentRuns, pauses = [], flagCells = null, onPause = null, onSaveWip = null, onSetMode = null, busy = null
+  rows, recentRuns, pauses = [], flagCells = null, onPause = null, onSaveWip = null, onSetMode = null, busy = null,
+  signals = null, signalsLoading = false
 }) {
   // BH-5643: with no flagCells (a caller that reads no flags) every flag cell
   // is null, which renders "—" and offers no button.
   const cellFor = (r) => (flagCells && flagCells[r.project]) || { paused: null, wip: null, route: null, mode: null };
+  const signalsReadable = Boolean(signals && Array.isArray(signals.kinds));
+  const pillsFor = (r) => pillState(signals.kinds, signals.rows, r.project);
   const columns = [
     {
       key: 'project', label: 'PROJECT', sort: (r) => r.project,
@@ -634,6 +643,18 @@ export function ProjectsTable({
         title=${`open the ROUTING panel for ${r.project}`}>${cellText('route', cellFor(r).route)}<//>`
     },
     {
+      // BH-9839: one pill per signal key kind (set, missing, failing), each a
+      // link to the project's Signals page. Sorts on how many kinds are not set.
+      key: 'signals', label: 'SIGNALS', sort: (r) => (signalsReadable ? notSetCount(pillsFor(r)) : null),
+      cell: (r) => {
+        if (signalsLoading && !signalsReadable) return html`<span class="na">…</span>`;
+        if (!signalsReadable) return html`<span class="na" title="signal keys not readable">—</span>`;
+        const to = `/settings/p/${encodeURIComponent(r.project)}/signals`;
+        return html`<span class="signal-pills">${pillsFor(r).map((p) => html`<${Link} key=${p.kind} to=${to}
+          class=${SIGNAL_PILL[p.state]} title=${`${p.label}: ${p.state}${p.rotate ? ', rotate' : ''}`}>${p.kind} ${p.state}<//>`)}</span>`;
+      }
+    },
+    {
       key: 'open_alerts', label: 'ALERTS', sort: (r) => r.open_alerts || 0, align: 'right',
       cell: (r) => r.open_alerts
         ? html`<${Link} to=${`/alerts?project=${encodeURIComponent(r.project)}`} class="num--warn">${r.open_alerts}<//>`
@@ -681,6 +702,7 @@ function WipCell({ project, wip, onSave, busy }) {
     </span>`;
 }
 
+const SIGNAL_PILL = { set: 'tag tag--green', failing: 'tag tag--bad', missing: 'tag tag--idle' };
 const MODE_TAG = { paused: 'tag tag--bad', 'hotfix-only': 'tag tag--warn', normal: 'tag tag--idle' };
 const REPO_SLUG = /^[\w.-]+\/[\w.-]+$/;
 

@@ -25,6 +25,7 @@ export const SETTINGS_MENU = {
       { id: 'builds', label: 'Builds and machines', tag: 'soon' },
       { id: 'deploy', label: 'Deploy and QA', tag: 'soon' },
       { id: 'alerts', label: 'Alerts', tag: 'soon' },
+      { id: 'signals', label: 'Signals' },
       { id: 'prompts', label: 'Prompts' },
       { id: 'pause', label: 'Pause and remove', tag: 'soon' }
     ] }

@@ -1,0 +1,56 @@
+/* The project Signals page and its Set/Replace sheet (BH-9839,
+   src/screens/settings/project/Signals.js, src/ui/SignalKeySheet.js), and the
+   Fleet SIGNALS pills. Theme tokens only. The cards stack in one column below
+   720px; buttons wrap; long values break, so the page never scrolls sideways. */
+.signals__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; }
+.signals__card {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel); color: var(--text);
+}
+.signals__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.signals__title { margin: 0; font-size: var(--fs-md); letter-spacing: 1px; color: var(--bright); font-weight: 700; }
+.signals__fields { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.signals__kv { display: grid; grid-template-columns: minmax(0, 9em) minmax(0, 1fr); gap: 8px; }
+.signals__kv dt { font-size: var(--fs-xs); letter-spacing: 1px; color: var(--soft); }
+.signals__kv dd { margin: 0; font-size: var(--fs-sm); color: var(--text-strong); overflow-wrap: anywhere; min-width: 0; }
+.signals__line, .signals__scope, .signals__msg { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); overflow-wrap: anywhere; }
+.signals__scope { font-size: var(--fs-xs); margin-top: 6px; }
+.signals__msg--ok { color: var(--ok); }
+.signals__msg--bad { color: var(--err); }
+.signals__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.signals__main, .signals__danger { display: flex; flex-wrap: wrap; gap: 8px; }
+.signals__actions .btn { min-height: 44px; }
+.signal-pills { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
+.ksheet__scrim {
+  position: fixed; inset: 0; z-index: 50; background: var(--scrim);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.ksheet {
+  width: 100%; max-width: 520px; max-height: 90dvh; display: flex; flex-direction: column; gap: 14px;
+  padding: 20px; border: 1px solid var(--line-active); border-radius: var(--radius-lg);
+  background: var(--panel); color: var(--text); box-sizing: border-box; overflow: hidden;
+}
+.ksheet__title { margin: 0; font-size: var(--fs-md); letter-spacing: 1px; color: var(--bright); font-weight: 700; overflow-wrap: anywhere; }
+.ksheet__body { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-height: 0; }
+.ksheet__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ksheet__label { font-size: var(--fs-xs); letter-spacing: 1px; color: var(--soft); }
+.ksheet input {
+  width: 100%; box-sizing: border-box; min-height: 40px; padding: 8px 10px;
+  font: inherit; font-size: var(--fs-sm); color: var(--text-strong);
+  background: var(--surface-0); border: 1px solid var(--rule); border-radius: var(--radius-sm);
+}
+.ksheet input[aria-invalid="true"] { border-color: var(--err); }
+.ksheet input:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.ksheet__error { margin: 0; font-size: var(--fs-xs); color: var(--err); overflow-wrap: anywhere; }
+.ksheet__note { margin: 0; font-size: var(--fs-xs); color: var(--text-dim); overflow-wrap: anywhere; }
+.ksheet__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.ksheet__actions .btn { min-height: 44px; }
+
+@media (max-width: 719.98px) {
+  .signals__cards { grid-template-columns: minmax(0, 1fr); }
+  .ksheet__scrim { align-items: flex-end; padding: 0; }
+  .ksheet { max-width: none; border-bottom: none; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+  .ksheet__actions .btn { flex: 1 1 0; }
+}

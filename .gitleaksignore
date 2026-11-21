@@ -19,6 +19,7 @@ console-ui/tests/needs-sweep-count.bh-9420.test.js:generic-api-key:15
 console-ui/tests/needs-sweep.bh-9117.test.js:generic-api-key:11
 console-ui/tests/prompt-history.bh-7972.test.js:generic-api-key:377
 console-ui/tests/qa-read.bh-9263.test.js:generic-api-key:16
+console-ui/tests/signals-config.bh-9839.test.js:generic-api-key:164
 console-ui/tests/tracker-sheets.bh-7936.test.js:generic-api-key:39
 fly/warm-env/project-1.env:generic-api-key:13
 fly/warm-env/project-2.env:generic-api-key:12
@@ -63,7 +64,7 @@ tests/connection-probe.bh-7924-test.sh:generic-api-key:43
 tests/connection-probe.bh-7924-test.sh:generic-api-key:79
 tests/connection-probe.bh-7924-test.sh:generic-api-key:247
 tests/console-pages-deploy.bh-9115-test.sh:generic-api-key:52
-tests/coord-writes-fragments.bh-6487-test.sh:generic-api-key:186
+tests/coord-writes-fragments.bh-6487-test.sh:generic-api-key:189
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:54
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:144
 tests/cost-row-attribution.bh-3986-test.sh:generic-api-key:163

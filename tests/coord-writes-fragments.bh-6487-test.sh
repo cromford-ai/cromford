@@ -26,6 +26,9 @@
 #   D4  cpv_coord_writes when the sha has no console-ui/package.json: rc 1
 #   D5  cpv_coord_writes with a duplicate (method, path) fragment: rc 1
 #
+# The S2 and S5 fixtures use 6-digit prefixes (999001, 999002) so they sort
+# after every real ticket fragment (BH-9839: 9839-signal-keys.js sorts after 9001).
+#
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/coord-writes-fragments.bh-6487-test.sh
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -85,9 +88,9 @@ git -C "$R" add -A; git -C "$R" commit -qm base
 # the two fixtures must follow them, in name order.
 base=$(paths_of "$R/console-ui/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1 | tr '\n' ' ')
 [ "${base#POST steer }" != "$base" ] && ok || bad "S2 the real fragments must start with steer: '$base'"
-git -C "$R" checkout -q -b a; frag "$R/console-ui/functions/_lib/coord-writes.d/9001-fixture-a.js" POST fixture-a
+git -C "$R" checkout -q -b a; frag "$R/console-ui/functions/_lib/coord-writes.d/999001-fixture-a.js" POST fixture-a
 git -C "$R" add -A; git -C "$R" commit -qm a
-git -C "$R" checkout -q main; git -C "$R" checkout -q -b b; frag "$R/console-ui/functions/_lib/coord-writes.d/9002-fixture-b.js" POST fixture-b
+git -C "$R" checkout -q main; git -C "$R" checkout -q -b b; frag "$R/console-ui/functions/_lib/coord-writes.d/999002-fixture-b.js" POST fixture-b
 git -C "$R" add -A; git -C "$R" commit -qm b
 git -C "$R" merge -q a -m m >/dev/null 2>&1; mrc=$?
 [ "$mrc" = 0 ] && [ -z "$(git -C "$R" diff --name-only --diff-filter=U)" ] && ok || bad "S2 two fragments must merge clean (rc=$mrc)"
@@ -129,7 +132,7 @@ rm -f "$S/functions/_lib/coord-writes.d/steer.js"
 
 # ── S5: the round trip ───────────────────────────────────────────────────────
 base5=$(paths_of "$S/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1 | tr '\n' ' ')
-frag "$S/functions/_lib/coord-writes.d/9001-fixture-a.js" PUT fixture-a
+frag "$S/functions/_lib/coord-writes.d/999001-fixture-a.js" PUT fixture-a
 ( cd "$S" && node scripts/coord-writes-build.mjs ) >/dev/null 2>&1 || bad "S5 render"
 g=$(paths_of "$OUTG" FRAGMENT_WRITES 2>&1); l=$(paths_of "$S/tests/lib/coord-writes.node.js" FRAGMENT_WRITES 2>&1)
 [ "$g" = "$l" ] && [ "$(printf '%s\n' "$g" | tr '\n' ' ')" = "${base5}PUT fixture-a " ] && [ "${base5#POST steer }" != "$base5" ] && ok || bad "S5 gen '$g' vs loader '$l'"

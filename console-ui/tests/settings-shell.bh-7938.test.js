@@ -64,7 +64,8 @@ const stubScreens = { lanes: Probe('LANES PAGE'), appearance: Probe('APPEARANCE 
 test('R1: the fleet and project rows of decision 3, in order, with their tags', () => {
   const ids = (scope) => SETTINGS_MENU[scope].flatMap((g) => g.items.map((i) => i.id));
   assert.deepEqual(ids('fleet'), ['ai-vendors', 'github-app', 'machines', 'connections', 'prompts', 'lanes', 'appearance']);
-  assert.deepEqual(ids('project'), ['general', 'tickets', 'ai-accounts', 'builds', 'deploy', 'alerts', 'prompts', 'pause']);
+  // BH-9839 added the project Signals page after Alerts.
+  assert.deepEqual(ids('project'), ['general', 'tickets', 'ai-accounts', 'builds', 'deploy', 'alerts', 'signals', 'prompts', 'pause']);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'lanes').tag, undefined);
   assert.equal(findItem(SETTINGS_MENU, 'fleet', 'appearance').tag, undefined);
   // BH-7973 built the Prompts pages, so both rows lost their 'wave 6b' tag.

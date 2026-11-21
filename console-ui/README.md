@@ -164,6 +164,7 @@ the proxy still wins for `/api/*` and `/login/*`.
 | `/ideas/:project/:slug` | One idea all the way down — PRD, desktop/mobile mockup (anchored at `#mockup`, which the list links straight to), idea chat, client ticket; POST / REVISE / KILL / CHAT buttons that queue the proposal commands (BH-2520) |
 | `/outcomes` | Did the work HOLD? Revert/reopen rate and cost-per-PR per repo, the weekly burn trend, every finding on record, and which repos the review gate has parked for a judged merge. Window and repo filters ride the URL |
 | `/settings/appearance` | APPEARANCE: a live preview of each built-in theme, USE to pick one for this browser, and what the fleet default is |
+| `/settings/p/:project/signals` | SIGNALS (BH-9839): one card per signal key kind (Sentry, PostHog) of one project. Not set, or the stored non-secret fields, who set them and when, the last test and the rotate-by date (a warning pill past it). Set or Replace opens a sheet (labelled fields, a paste is trimmed, the prefix is checked on blur, Save runs Test); Clear asks in the in-app confirm. The key itself is never shown. Reached from SETTINGS → a project → Signals, and from a SIGNALS pill on the Fleet projects table |
 
 ## The rules this UI holds itself to
 
