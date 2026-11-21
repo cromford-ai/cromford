@@ -42,6 +42,14 @@ H="${HARNESS:-/root/harness}"
 # verdict reads unknown — never APPROVE.
 . "${HARNESS:-/root/harness}/bin/lib/verdict-parse.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/verdict-parse.sh" 2>/dev/null || true
+# The tsc heap (BH-9435): the row lane.fly-pool.<project>.tsc_heap_mb, then env
+# TSC_HEAP_MB, then the RAM rule (bin/lib/tsc-heap.sh). It was a fixed 6144 here,
+# and project-6's tsc aborted at it with exit 134. A missing lib is 6144, the
+# documented last fallback.
+. "${HARNESS:-/root/harness}/bin/lib/tsc-heap.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/tsc-heap.sh" 2>/dev/null \
+  || rebase_tsc_heap() { echo "6144 fallback"; }
+train_tsc_heap() { local h; read -r h _ <<<"$(rebase_tsc_heap "$PROJECT")"; echo "${h:-6144}"; }
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit rebase-train "$PROJECT"
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    rebase-train "$PROJECT"
 # For the automerge-disabled read and job_verdict_rebind below. Fail-open like
@@ -320,7 +328,7 @@ MDEOF
       ( cd "$REPO" && git worktree remove --force "$BWT" 2>/dev/null; git worktree add "$BWT" "origin/$BASE" --quiet ) 2>/dev/null || : > "$BASEF"
       if [ -d "$BWT" ]; then
         ( cd "$BWT" && cp -al "$REPO/node_modules" node_modules 2>/dev/null; npx prisma generate >/dev/null 2>&1; \
-          NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit 2>&1 | grep "error TS" | sort -u > "$BASEF" ) || : > "$BASEF"
+          NODE_OPTIONS="--max-old-space-size=$(train_tsc_heap)" npx tsc --noEmit 2>&1 | grep "error TS" | sort -u > "$BASEF" ) || : > "$BASEF"
         git -C "$REPO" worktree remove --force "$BWT" 2>/dev/null || true
       fi
     fi
@@ -332,7 +340,7 @@ MDEOF
     # >>> prisma regenerate (BH-1171)
     { [ -f prisma/schema.prisma ] || [ -d prisma/schema ]; } && npx prisma generate >/dev/null 2>&1
     # <<< prisma regenerate
-    NODE_OPTIONS=--max-old-space-size=6144 npx tsc --noEmit 2>&1 | grep "error TS" | sort -u > /tmp/train-tsc-$$.txt || true
+    NODE_OPTIONS="--max-old-space-size=$(train_tsc_heap)" npx tsc --noEmit 2>&1 | grep "error TS" | sort -u > /tmp/train-tsc-$$.txt || true
     NEWERR=$(comm -13 "$BASEF" /tmp/train-tsc-$$.txt | wc -l); rm -f /tmp/train-tsc-$$.txt
     [ "$NEWERR" -eq 0 ] \
       || { echo "$(STAMP) [$PROJECT] STRIKE $PR" >> "$LOG"; echo "$(STAMP) [$PROJECT] $PR typecheck: $NEWERR NEW error(s) vs baseline — not pushed" >> "$LOG"; exit 0; }

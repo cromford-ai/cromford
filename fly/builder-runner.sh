@@ -883,6 +883,18 @@ pool_worktree_sweep() { # pool_worktree_sweep <key> -> always 0; sets WTSWEEP_LI
   return 0
 }
 
+# pool_toolchain_probe <job key> — bin/pool-toolchain-probe.sh --builder for this
+# project (BH-9435), its output in the runner log. A harness with no probe script
+# (an older sync) is skipped. Always rc 0.
+pool_toolchain_probe() {
+  local s="$HARNESS/bin/pool-toolchain-probe.sh"
+  [ -r "$s" ] || return 0
+  log "pool toolchain probe: --builder $PROJECT (before $1)"
+  HARNESS="$HARNESS" HARNESS_ENV_DIR="$ENVDIR" REPOS_ROOT="${REPO%/*}" PROJECT="$PROJECT" bash "$s" --builder "$PROJECT" 2>&1 \
+    | while IFS= read -r l; do log "pool toolchain probe: $l"; done
+  return 0
+}
+
 _run_job() {
   local ticket key attempt
   ticket=$(jq -r '.ticket_id // ""' "$JOB" 2>/dev/null)
@@ -996,6 +1008,16 @@ _run_job() {
       '{kind:"fleet_alert",project:$p,ticket_key:$k,detail:$d,machine:$m,host:("builder-"+$p)}')"
     stop_heartbeat; return 1
   fi
+
+  # --- the daily pool toolchain probe (BH-9435) -------------------------------
+  # Once per project per UTC day (a claim in the worker ledger), the first pool
+  # job build checks this image's toolchain after warm-up (the clone the
+  # tsc check copies) and before its own work: CREATE EXTENSION vector
+  # on /opt/pgtest and one tsc of a fresh clone at rebase_tsc_heap. It runs in the
+  # foreground (BH-9288: no heavy check beside the job) and never fails the job;
+  # the hub's `--check` raises the one alert. A job whose day is already claimed
+  # pays one ledger call.
+  pool_toolchain_probe "$key"
 
   # --- PR-adopt preflight: retry of a build that already opened its PR ---------
   local branch open_pr

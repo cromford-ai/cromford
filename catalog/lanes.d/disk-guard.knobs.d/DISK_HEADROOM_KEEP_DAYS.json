@@ -1,0 +1,12 @@
+{
+  "env": "DISK_HEADROOM_KEEP_DAYS",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "read_in": "bin/lib/disk-headroom.sh",
+  "note": "BH-9435: on a pool machine (BUILDER_EXEC=1), a settled builds/ dir (RESULT plus COMMENTED, RELAYED or DEFERRED) is a headroom candidate only when nothing in it is newer than this many days. builds-archive/ dirs are settled by bin/builds-retention.sh and do not use it.",
+  "settable": true
+}

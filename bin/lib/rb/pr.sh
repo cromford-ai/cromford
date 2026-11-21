@@ -303,26 +303,16 @@ if [ "$RV_FETCH_OK" = 0 ]; then
 fi
 # <<< rebase fetch (BH-9406)
 # >>> rebase verify
-# BH-575: the heap this verify typecheck runs at. A project whose tsc needs more
-# than Node's default (project-5: 6144, its own CI sets it) aborted here at 134
-# before printing a single diagnostic, and the step called that "red". Order:
-# the operator's per-project knob first (env/<project>.env, sourced at :349),
-# then the largest heap the repo's own CI declares, then 70% of RAM capped at
-# 12288 — the rule bin/edit-feedback-hook.sh:52-54 already uses. Echoes
-# "<MB> <source>" because a command substitution cannot hand a global back.
-rebase_tsc_heap() {
-  local h="" src=""
-  case "${TSC_HEAP_MB:-}" in ''|0|*[!0-9]*) : ;; *) h="$TSC_HEAP_MB"; src=env ;; esac
-  if [ -z "$h" ]; then
-    h=$(grep -rhoE 'max-old-space-size=[0-9]+' .github/workflows/ 2>/dev/null | grep -oE '[0-9]+$' | sort -n | tail -1)
-    [ -n "$h" ] && src=workflow
-  fi
-  if [ -z "$h" ]; then
-    local mem; mem=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null); [ -n "$mem" ] || mem=8192
-    h=$(( mem * 7 / 10 )); [ "$h" -gt 12288 ] && h=12288; src=ram
-  fi
-  echo "$h $src"
-}
+# BH-575 / BH-9435: the heap this verify typecheck runs at. A project whose tsc
+# needs more than Node's default aborted here at 134 before printing a single
+# diagnostic. The resolver lives in bin/lib/tsc-heap.sh (shared with
+# bin/rebase-train.sh): the row lane.fly-pool.<project>.tsc_heap_mb, then the
+# env TSC_HEAP_MB, then 70% of RAM capped at 12288 (a repo workflow's heap only
+# when it is larger), 6144 when RAM is unreadable. A missing lib is that last
+# fallback, so the verify still runs.
+# shellcheck source=bin/lib/tsc-heap.sh
+command -v rebase_tsc_heap >/dev/null 2>&1 || . "$HARNESS/bin/lib/tsc-heap.sh" 2>/dev/null \
+  || rebase_tsc_heap() { echo "6144 fallback"; }
 # rebase_typecheck — the typecheck of the updated HEAD (BH-575 classification).
 # Sets TC_OK (1 green or no TS repo, 0 not), TC_INCONCLUSIVE (why it did not
 # finish, empty for a real answer), RB_HEAP, RB_HEAP_SRC, RB_RC, TSC_FLAGS and
@@ -333,7 +323,7 @@ rebase_typecheck() {
   TC_INCONCLUSIVE=""
   TSC_FLAGS=""; [ -f tsconfig.build.json ] && TSC_FLAGS="-p tsconfig.build.json"
   if [ -f tsconfig.build.json ] || [ -f tsconfig.json ]; then
-    read -r RB_HEAP RB_HEAP_SRC <<<"$(rebase_tsc_heap)"
+    read -r RB_HEAP RB_HEAP_SRC <<<"$(rebase_tsc_heap "$PROJECT")"
     echo "$(STAMP) [$PROJECT/$KEY] rebase typecheck at heap ${RB_HEAP}MB (source: $RB_HEAP_SRC)" >> "$BUILD/pipeline.log"
     # BH-575: append, never clobber — a later --max-old-space-size wins in V8,
     # so whatever the build environment already asked for survives.

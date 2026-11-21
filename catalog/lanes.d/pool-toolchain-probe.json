@@ -1,0 +1,79 @@
+{
+  "id": "pool-toolchain-probe",
+  "name": "Pool toolchain probe (pgvector + one tsc per pool project, daily on a pool builder; hub check)",
+  "scope": "hub",
+  "script": "bin/pool-toolchain-probe.sh",
+  "cadence": "47 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-pool-toolchain-probe",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "POOL_PROBE_NPM_TIMEOUT_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 3600,
+      "unit": "s",
+      "zero_means": null,
+      "read_in": "bin/pool-toolchain-probe.sh",
+      "note": "BH-9435: seconds `npm ci --prefer-offline` may take on the fresh clone before the probe's tsc check. Past it the verdict reads tsc=fail:npm-ci-124. Per project: lane.pool-toolchain-probe.<project>.pool_probe_npm_timeout_s."
+    },
+    {
+      "env": "POOL_PROBE_TSC_TIMEOUT_S",
+      "type": "int",
+      "default": 900,
+      "min": 60,
+      "max": 3600,
+      "unit": "s",
+      "zero_means": null,
+      "read_in": "bin/pool-toolchain-probe.sh",
+      "note": "BH-9435: seconds the probe's `npx tsc --noEmit` may take (the rebase verify's tsc timeout is 900). Past it the verdict reads tsc=fail:124. Per project: lane.pool-toolchain-probe.<project>.pool_probe_tsc_timeout_s."
+    },
+    {
+      "env": "POOL_PROBE_ON_BUILDER",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": null,
+      "zero_means": "off",
+      "read_in": "bin/pool-toolchain-probe.sh",
+      "note": "BH-9435: 1 (the default) = the first pool build of each project per UTC day runs the probe on the pool builder (fly/builder-runner.sh calls --builder after warm-up). 0 = the builder half is off; --check on the hub still reads the ledger. Per project: lane.pool-toolchain-probe.<project>.pool_probe_on_builder."
+    },
+    {
+      "env": "POOL_PROBE_CLAIM_STALE_S",
+      "type": "int",
+      "default": 7200,
+      "min": 600,
+      "max": 86400,
+      "unit": "s",
+      "zero_means": null,
+      "read_in": "bin/pool-toolchain-probe.sh",
+      "note": "BH-9435: seconds after which a `running` claim (ledger kind pool-toolchain-probe, key <project>:<YYYY-MM-DD>) with no verdict is taken again by the next pool build: the machine that claimed it died mid-probe. Per project: lane.pool-toolchain-probe.<project>.pool_probe_claim_stale_s."
+    },
+    {
+      "env": "POOL_PROBE_PG_STOP_TIMEOUT_S",
+      "type": "int",
+      "default": 30,
+      "min": 5,
+      "max": 600,
+      "unit": "s",
+      "zero_means": null,
+      "read_in": "bin/pool-toolchain-probe.sh",
+      "note": "BH-9435: seconds `pg_ctl -m fast -w -t <s> stop` waits for the probe's postmaster to stop before the single-user CREATE EXTENSION vector check. Past it the verdict reads pg=fail:stop-for-single. Per project: lane.pool-toolchain-probe.<project>.pool_probe_pg_stop_timeout_s."
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/pool-toolchain-probe.log"
+  }
+}

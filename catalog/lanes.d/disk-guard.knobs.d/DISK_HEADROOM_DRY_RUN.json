@@ -1,0 +1,12 @@
+{
+  "env": "DISK_HEADROOM_DRY_RUN",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": null,
+  "read_in": "bin/lib/disk-headroom.sh",
+  "note": "BH-9435: 1 (default) = the headroom step only writes its audit line to logs/disk-headroom.log (what it would trim and the MB) and deletes nothing. 0 = it trims: the subdirs of old settled build dirs go, the dir and its top-level files (RESULT, job.json, markers, artifacts) stay, so the build-archive readers still answer. Set 0 after one day of audit lines. Any value other than 0 is a dry run.",
+  "settable": true
+}

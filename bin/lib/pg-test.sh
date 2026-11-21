@@ -211,7 +211,12 @@ pgt_start() {
 # exact value `prisma db push` (BH-9835), which runs the harness's own fixed
 # `npx prisma db push --skip-generate --accept-data-loss` in a repo with a prisma
 # schema. The row picks one of these, and never carries a command of its own.
-# rc is evidence, never a stop.
+# rc 0: no setup was asked for (none, refused), the setup passed, or the setup was a
+# `prisma db push` (its rc is evidence, never a stop: BH-9835, M7). rc 4 (BH-9435):
+# only a red `npm run <script>` setup. The `HARNESS_PG_SETUP: ... (rc=N)` line stays,
+# and a `HARNESS_FAULT: pg-setup (npm run <s> rc=N)` line follows it. The caller must
+# not run the suite: a suite on a half-applied schema is not evidence (project-6 with
+# no pgvector: 967 to 1,325 red files, and builders scoped the suite down by hand).
 pgt_setup() {
   local out="$1" c s rc
   c=$(pgt_knob POOL_TEST_SETUP_CMD)
@@ -235,6 +240,9 @@ pgt_setup() {
   pgt_env || { echo "HARNESS_PG_SETUP: refused (no local url)" >> "$out"; return 0; }
   "${PGT_ENV[@]}" timeout 300 npm run "$s" >> "$out" 2>&1; rc=$?
   echo "HARNESS_PG_SETUP: npm run $s (rc=$rc)" >> "$out"
+  [ "$rc" = 0 ] && return 0
+  echo "HARNESS_FAULT: pg-setup (npm run $s rc=$rc)" >> "$out"
+  return 4
 }
 
 # pgt_stop [outfile] — stop and delete the throwaway. Touches only a dir pgt_start made.
@@ -285,8 +293,8 @@ pgt_failed_files() {
 # pgt_run_files <outfile> <script> <file>... — run `npm run <script> -- <file>` once per
 # file, each on its own fresh cluster (pgt_start, pgt_setup, the run, pgt_stop), and
 # write one HARNESS_PG_FILE line per file. All of it inside the budget knob
-# POOL_TEST_PG_SERIAL_BUDGET_S. A start that fails stops the loop, and every
-# file left is listed as not run. Returns 0 when every file is rc 0 with no ENOSPC in
+# POOL_TEST_PG_SERIAL_BUDGET_S. A start that fails, or a red setup (BH-9435), stops
+# the loop, and every file left is listed as not run. Returns 0 when every file is rc 0 with no ENOSPC in
 # its own lines; else the first red rc (not ENOSPC, not 124 or 125) because a real
 # failing test is evidence; else 125, "could not run" (ENOSPC, a timeout, a file not
 # run), with PGT_RUN_WHY = "<file>: <why>" for the first such file and PGT_RUN_DISK =
@@ -317,7 +325,14 @@ pgt_run_files() {
       cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: $why"
       stop="an earlier start failed"; continue
     fi
-    pgt_setup "$out"
+    # A red setup (rc 4, BH-9435) is a fault: this file and every file after it
+    # are not run, because each would run on a half-applied schema.
+    if ! pgt_setup "$out"; then
+      pgt_stop "$out"
+      echo "HARNESS_PG_FILE: $f (not run: pg-setup failed)" >> "$out"
+      cnr=1; [ -n "$PGT_RUN_WHY" ] || PGT_RUN_WHY="$f: pg-setup failed"
+      stop="an earlier pg-setup failed"; continue
+    fi
     env=(); pgt_env && env=("${PGT_ENV[@]}")
     n0=$(wc -l < "$out")
     ${env[@]+"${env[@]}"} timeout "$rem" npm run "$script" -- "$f" >> "$out" 2>&1; rc=$?

@@ -1,0 +1,12 @@
+{
+  "env": "TSC_HEAP_MB",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 32768,
+  "unit": "MB",
+  "zero_means": "off",
+  "read_in": "bin/lib/tsc-heap.sh",
+  "note": "BH-9435: the Node heap (MB) of a harness typecheck (the post-rebase verify in bin/lib/rb/pr.sh, bin/rebase-train.sh, bin/pool-toolchain-probe.sh) for one project. Per project: lane.fly-pool.<project>.tsc_heap_mb. 0 = no row: rebase_tsc_heap falls through to env TSC_HEAP_MB, then 70% of RAM capped at 12288 (a repo workflow's heap only when larger), then 6144 when RAM is unreadable.",
+  "settable": true
+}

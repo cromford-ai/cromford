@@ -146,6 +146,9 @@ The reasons and knobs for D64 are in docs/notes/2026-10-10-BH-5789-fixture-hygie
 ## Added 2026-10-22 (BH-7945): limits are knobs
 - **D69 Every new limit is a knob.** Every new limit, rate, threshold, price, timeout, cap or `max_tokens` is a knob: a seed row in the project's settings or config table, plus a code fallback with a comment that names the row. Create the row in the same PR. A literal with no row or knob read is `[BLOCK hardcoded-knob]` in review. In one project, interview answers were cut at 1024 output tokens with no prod row, and four other calls had no DB key at all.
 
+## Added 2026-11-11 (BH-9435): a harness fault is reported, never worked around
+- **D70 Never narrow a suite to get past a `HARNESS_FAULT`.** A `HARNESS_FAULT:` line (for example `HARNESS_FAULT: pg-setup (npm run <s> rc=N)`) means the harness could not run the suite. The exit is `could-not-run`. Do not narrow the SQL dir, the migration set or the test file set to get past it (for example `MK_SQL_DIR` without the file that fails). Do not skip the step that failed. Report the fault in the PR body and in the board comment: quote the line and say the suite did not run. A green run on a narrowed set is no evidence. On project-6 a narrowed `MK_SQL_DIR` hid a missing pgvector for two weeks.
+
 <!-- client-questions:begin (BH-9028) -->
 ## Client questions: recommend, give reasons, state the default (the operator, 2026-11-03)
 

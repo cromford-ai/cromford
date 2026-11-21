@@ -322,10 +322,20 @@ HARNESS_SUITE_RUN() {
   elif [ "$pgon" = 1 ]; then
     pgt_start "$BUILD/$outfile"; pgrc=$?
     if [ "$pgrc" = 0 ]; then
-      pgt_setup "$BUILD/$outfile"
-      pgt_env && pgenv=("${PGT_ENV[@]}")
+      # A red setup (pgt_setup rc 4, BH-9435) is a named fault: the suite is not
+      # run on a half-applied schema, and the exit is could-not-run. pgrc 4 keeps
+      # the run below from starting; the teardown further down still runs.
+      if pgt_setup "$BUILD/$outfile"; then
+        pgt_env && pgenv=("${PGT_ENV[@]}")
+      else
+        pgrc=4
+      fi
     fi
     echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase postgres: $(grep '^HARNESS_PG: ' "$BUILD/$outfile" | tail -1)" >> "$BUILD/pipeline.log"
+    if [ "$pgrc" = 4 ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] HARNESS-VERIFY $phase fault: pg-setup ($(sed -n 's/^HARNESS_FAULT: pg-setup (.* \(rc=[0-9]*\))$/\1/p' "$BUILD/$outfile" | tail -1)): the suite is not run" >> "$BUILD/pipeline.log"
+      rc=could-not-run
+    fi
     if [ "$pgrc" = 2 ]; then
       disk=$(sed -n 's/^HARNESS_PG: could-not-start (low disk: \(.*\))$/\1/p' "$BUILD/$outfile" | tail -1)
       echo "HARNESS_DISK: low ($disk)" >> "$BUILD/$outfile"
@@ -341,7 +351,7 @@ HARNESS_SUITE_RUN() {
   # exit code is a claim, and 124 (timeout) and 127 (no npm) must land as the
   # numbers they are.
   n0=$(( $(wc -l < "$BUILD/$outfile") + 1 ))
-  if [ "$pgrc" = 2 ] || [ "$pgrc" = 3 ] || [ "$cerc" != 0 ] || [ "$serial" = 1 ]; then :
+  if [ "$pgrc" = 2 ] || [ "$pgrc" = 3 ] || [ "$pgrc" = 4 ] || [ "$cerc" != 0 ] || [ "$serial" = 1 ]; then :
   elif [ "${#FILES[@]}" -gt 0 ]; then
     ${pgenv[@]+"${pgenv[@]}"} timeout 1500 npm run "$script" -- "${FILES[@]}" >> "$BUILD/$outfile" 2>&1; rc=$?
   else
@@ -1207,6 +1217,7 @@ if hub_no_build_refuse build "$KEY"; then
 fi
 # <<< hub-no-build
 
+. "$RB_GATES_D/disk-headroom.sh"
 . "$RB_GATES_D/disk-gate.sh"
 
 # >>> overlap not-before

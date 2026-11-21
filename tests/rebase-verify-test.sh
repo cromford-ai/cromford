@@ -49,6 +49,12 @@ ok()  { PASS=$((PASS+1)); }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
 mkdir -p "$T/fakebin" "$T/state" "$T/build"
+# BH-9435: the heap resolver the rebase verify sources from $HARNESS, and two
+# meminfo files (TSC_HEAP_MEMINFO is its test seam) so 1h does not depend on the
+# RAM of the box the suite runs on.
+scratch_install_closure bin/lib/tsc-heap.sh "$T" > /dev/null || exit 1
+printf 'MemTotal:        4194304 kB\n' > "$T/meminfo-4g"
+printf 'MemTotal:       16777216 kB\n' > "$T/meminfo-16g"
 
 # ============================================================================
 # 1. bin/run-build.sh — the rebase verify step
@@ -243,7 +249,7 @@ rb_repo moved; arm green; run_stage TSC_HEAP_MB=4321                # 1h-1
 grep -q -- '--max-old-space-size=4321' "$T/npx-env.txt" && ok \
   || bad "1h-1: TSC_HEAP_MB must reach tsc's NODE_OPTIONS (saw: $(cat "$T/npx-env.txt"))"
 
-rb_repo moved ci-workflow; arm green; run_stage                     # 1h-2
+rb_repo moved ci-workflow; arm green; run_stage TSC_HEAP_MEMINFO="$T/meminfo-4g"   # 1h-2
 grep -q -- '--max-old-space-size=6144' "$T/npx-env.txt" && ok \
   || bad "1h-2: the heap the repo's CI workflow declares must be used (saw: $(cat "$T/npx-env.txt"))"
 
@@ -251,9 +257,16 @@ rb_repo moved; arm green; run_stage                                 # 1h-3
 grep -qE -- '--max-old-space-size=[1-9][0-9]*' "$T/npx-env.txt" && ok \
   || bad "1h-3: with no knob and no workflow the fallback heap must still be a positive integer (saw: $(cat "$T/npx-env.txt"))"
 
-rb_repo moved ci-workflow; arm green; run_stage TSC_HEAP_MB=abc     # 1h-4
+rb_repo moved ci-workflow; arm green; run_stage TSC_HEAP_MB=abc TSC_HEAP_MEMINFO="$T/meminfo-4g"   # 1h-4
 grep -q -- '--max-old-space-size=6144' "$T/npx-env.txt" && ok \
   || bad "1h-4: a non-numeric TSC_HEAP_MB must be ignored, not passed through (saw: $(cat "$T/npx-env.txt"))"
+
+# BH-9435 (TK-3772): the workflow's 6144 no longer wins over a 16 GiB machine.
+rb_repo moved ci-workflow; arm green; run_stage TSC_HEAP_MEMINFO="$T/meminfo-16g"   # 1h-5
+grep -q -- '--max-old-space-size=11468' "$T/npx-env.txt" && ok \
+  || bad "1h-5: on 16 GiB the RAM rule (11468) must win over the workflow's 6144 (saw: $(cat "$T/npx-env.txt"))"
+grep -q 'rebase typecheck at heap 11468MB (source: ram)' "$T/build/pipeline.log" && ok \
+  || bad "1h-5: the pipeline line must name the heap and its source (log: $(grep 'rebase typecheck' "$T/build/pipeline.log"))"
 
 # ============================================================================
 # 2. bin/merge-sweep.sh — an INCONCLUSIVE note parks the PR exactly like FAILED

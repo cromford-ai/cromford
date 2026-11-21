@@ -15,7 +15,8 @@
 #         green          rc 0  the run exited 0 inside the budget
 #         red            rc 1  the run exited non-zero (not 124..127)
 #         could-not-run  rc 2  no file, a bad file or budget, no runner, the
-#                              CI locale not installed, Postgres down, no
+#                              CI locale not installed, Postgres down or a
+#                              red `npm run` pg setup (BH-9435), no
 #                              node_modules, a timeout (past the budget is
 #                              never green), or an exit of 124..127
 #       VR_WHY holds the reason for could-not-run (empty otherwise). It is set
@@ -33,7 +34,10 @@
 #     beside this one; rc 2 is could-not-run. No ci-env lib: the run uses the
 #     process locale, as HARNESS_SUITE_RUN does.
 #   Postgres: pgt_enabled (bin/lib/pg-test.sh) starts a throwaway cluster for
-#     the run and stops it after. A start that fails is could-not-run.
+#     the run and stops it after. A start that fails is could-not-run. A red
+#     `npm run <s>` setup (pgt_setup rc 4, BH-9435) is could-not-run too: no
+#     file runs, the cluster is stopped, and VR_WHY is the HARNESS_FAULT line.
+#     A red `prisma db push` setup is evidence and the files still run (BH-9835).
 #
 # Every file goes to the runner as one argv item. No eval, no `bash -c`.
 
@@ -94,7 +98,10 @@ vr_run_files() {
     if command -v pgt_enabled >/dev/null 2>&1 && pgt_enabled; then
       pgt_start "$out" || exit 126
       pg=1
-      pgt_setup "$out"
+      # A red `npm run` setup (pgt_setup rc 4, BH-9435) is a named fault: the
+      # files are not run on a half-applied schema, the cluster is stopped, and
+      # the outer case maps 126 to could-not-run with the fault line as VR_WHY.
+      pgt_setup "$out" || { pgt_stop "$out"; exit 126; }
       pgt_env && run=("${PGT_ENV[@]}")
     fi
     if [ -n "$script" ]; then
@@ -117,7 +124,7 @@ vr_run_files() {
     0) echo green; return 0 ;;
     124) _vr_cnr "timed out past the ${budget}s budget"; return 2 ;;
     126)
-      pgline=$(grep '^HARNESS_PG: could-not-start' "$out" 2>/dev/null | tail -1)
+      pgline=$(grep -E '^HARNESS_PG: could-not-start|^HARNESS_FAULT: pg-setup' "$out" 2>/dev/null | tail -1)
       _vr_cnr "${pgline:-exit 126 (could not execute)}"; return 2 ;;
     125|127) _vr_cnr "exit $rc (the runner could not start)"; return 2 ;;
     *) echo red; return 1 ;;

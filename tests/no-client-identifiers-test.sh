@@ -121,6 +121,9 @@ KNOWN_PUBLIC_CHECKSUMS = {
     # (BH-9209): debian:trixie-slim and ubuntu:24.04.
     'a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2',
     'fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852',
+    # pgvector 0.8.1, the pin in bin/lib/pgtest-pin.sh and fly/Dockerfile —
+    # the GitHub source tarball v0.8.1.tar.gz (BH-9435).
+    'a9094dfb85ccdde3cbb295f1086d4c71a20db1d26bf1d6c39f07a7d164033eb4',
 }
 
 # The second exemption: a credential-shaped literal whose own text says it is a

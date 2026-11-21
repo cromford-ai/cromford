@@ -1,0 +1,13 @@
+-- ── BH-9435: the tsc heap row for project-6-os ──────────────────────────────
+-- Reader: bin/lib/tsc-heap.sh (rebase_tsc_heap), through lane_knob fly-pool
+-- TSC_HEAP_MB project-6-os (knob catalog/lanes.d/fly-pool.knobs.d/TSC_HEAP_MB.json).
+-- No table is created here, so no index, RLS or retention rule applies.
+-- Sizing: project-6's CI declares 6144, and the rebase typecheck died with tsc
+-- exit 134 at 6144 on 13 of 34 runs (TK-3772). A pool machine has 16 GiB, and
+-- 70% of it is 11468 MB. The seed is 11264 (that value rounded down to 1024).
+-- It is NOT a measured peak: the BH-9435 build had no project-6 clone (egress
+-- refused). The daily POOL_PROBE project-6-os tsc=<ok|fail:rc> line
+-- (bin/pool-toolchain-probe.sh) is the proof. Change the row, not this file,
+-- after a measure. INSERT OR IGNORE: a re-apply changes nothing and an
+-- operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('lane.fly-pool.project-6-os.tsc_heap_mb','11264','BH-9435: Node heap MB of the project-6-os rebase/train/probe typecheck; 0 or no row = env TSC_HEAP_MB, then 70% of RAM capped at 12288, then 6144 (bin/lib/tsc-heap.sh)','seed','2026-11-11T00:30:00Z');

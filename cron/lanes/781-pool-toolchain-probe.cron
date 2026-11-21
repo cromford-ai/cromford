@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── POOL TOOLCHAIN PROBE LANE (BH-9435) ─────────────────────────────────────
+# The checks run on a pool builder: the first pool build of each project per
+# UTC day runs `bin/pool-toolchain-probe.sh --builder <p>` after warm-up
+# (fly/builder-runner.sh, a claim in the worker ledger): CREATE EXTENSION vector
+# on /opt/pgtest, then one npx tsc --noEmit of a fresh clone at rebase_tsc_heap.
+# The verdict line `POOL_PROBE <p> pg=.. tsc=.. heap=..` is the ledger row's detail.
+# This hub line reads the newest row per pool project, hourly at :47: a fail is
+# one pool-toolchain-<p> warn alert; a pass resolves it.
+# Off: flags/lane-off-pool-toolchain-probe (bin/harness-ctl.sh off pool-toolchain-probe).
+47 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/pool-toolchain-probe.sh --check >> /root/harness/logs/pool-toolchain-probe-cron.log 2>&1

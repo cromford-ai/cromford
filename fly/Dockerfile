@@ -209,6 +209,37 @@ RUN set -eux; \
     fi
 
 # =============================================================================
+# --- pgvector for the throwaway Postgres (pinned source, BH-9435) ------------
+# The @embedded-postgres tarball bake-pgtest installs has no `vector` extension,
+# and project-6's knowledge_chunk migration needs it. This stage builds the
+# pinned pgvector release against Ubuntu 24.04's PG 16 headers (the same major
+# as /opt/pgtest, so the module ABI matches). OPTFLAGS="" keeps the build
+# portable: pgvector's default -march=native would bake the build host's CPU.
+# The compiler and the dev headers stay in this stage; final copies only the
+# three artifacts (bake-pgvector). The pins are bin/lib/pgtest-pin.sh's, literal
+# here because the build context is fly/ (tests/pool-pgvector-image.bh-9435-test.sh).
+FROM base AS pgvector-build
+# >>> pgvector-build
+ARG PGVECTOR_VERSION=0.8.1
+ARG PGVECTOR_SHA256=a9094dfb85ccdde3cbb295f1086d4c71a20db1d26bf1d6c39f07a7d164033eb4
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends build-essential postgresql-server-dev-16; \
+    curl -fsSL -o /tmp/pgvector.tgz \
+      "https://github.com/pgvector/pgvector/archive/refs/tags/v${PGVECTOR_VERSION}.tar.gz"; \
+    echo "${PGVECTOR_SHA256}  /tmp/pgvector.tgz" | sha256sum -c -; \
+    mkdir -p /tmp/pgvector; \
+    tar -xzf /tmp/pgvector.tgz -C /tmp/pgvector --strip-components=1; \
+    make -C /tmp/pgvector PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config OPTFLAGS=""; \
+    make -C /tmp/pgvector PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config OPTFLAGS="" install DESTDIR=/out; \
+    mkdir -p /out/pgvector/lib /out/pgvector/extension; \
+    cp "/out$(/usr/lib/postgresql/16/bin/pg_config --pkglibdir)/vector.so" /out/pgvector/lib/; \
+    cp "/out$(/usr/lib/postgresql/16/bin/pg_config --sharedir)/extension/vector.control" \
+       "/out$(/usr/lib/postgresql/16/bin/pg_config --sharedir)"/extension/vector--*.sql /out/pgvector/extension/; \
+    rm -rf /tmp/pgvector /tmp/pgvector.tgz /var/lib/apt/lists/*
+# <<< pgvector-build
+
+# =============================================================================
 FROM base AS final
 
 # --- playwright + chromium (pinned; heaviest layer, rarely bumped: first) -----
@@ -371,6 +402,34 @@ RUN set -eux; . /opt/fly-boot/bake-pin.sh; \
     rm -rf /tmp/pgtest.tgz /tmp/pgtest-x; \
     bake_verify postgres "$PGTEST_PG_VERSION" env LD_LIBRARY_PATH=/opt/pgtest/lib /opt/pgtest/bin/postgres --version
 # <<< bake-pgtest
+
+# --- pgvector in the throwaway Postgres (BH-9435) -----------------------------
+# The pgvector-build stage's artifacts go into the dirs /opt/pgtest's postgres
+# resolves: $libdir = /opt/pgtest/lib/postgresql, the extension dir =
+# /opt/pgtest/share/postgresql/extension (the tarball ships no pg_config; this
+# is its layout, the same place plpgsql.so and plpgsql.control live). The RUN
+# proves the load as nobody: initdb, then a single-user backend with
+# exit_on_error=on runs CREATE EXTENSION vector and a vector cast, so an ERROR
+# fails this layer and the image build. /opt/pgtest/PGVECTOR_VERSION marks an
+# image that carries the bake (tests/pool-pgvector-image.bh-9435-test.sh V6).
+# >>> bake-pgvector
+ARG PGVECTOR_VERSION=0.8.1
+COPY --from=pgvector-build /out/pgvector/lib/vector.so /opt/pgtest/lib/postgresql/vector.so
+COPY --from=pgvector-build /out/pgvector/extension/ /opt/pgtest/share/postgresql/extension/
+RUN set -eux; . /opt/fly-boot/bake-pin.sh; \
+    chmod -R a+rX /opt/pgtest; \
+    w="$(mktemp -d)"; chown nobody:nogroup "$w"; \
+    setpriv --reuid=nobody --regid=nogroup --clear-groups env LD_LIBRARY_PATH=/opt/pgtest/lib \
+      /opt/pgtest/bin/initdb -D "$w/data" -U harness --auth=trust -E UTF8 --no-sync > /dev/null; \
+    printf "CREATE EXTENSION vector;\nSELECT '[1,2]'::vector;\nSELECT extversion FROM pg_extension WHERE extname = 'vector';\n" > "$w/check.sql"; \
+    setpriv --reuid=nobody --regid=nogroup --clear-groups env LD_LIBRARY_PATH=/opt/pgtest/lib \
+      /opt/pgtest/bin/postgres --single -D "$w/data" -c exit_on_error=on postgres < "$w/check.sql" > "$w/check.out" 2>&1 \
+      || { cat "$w/check.out" >&2; exit 1; }; \
+    grep -F '[1,2]' "$w/check.out"; \
+    bake_verify pgvector "$PGVECTOR_VERSION" sed -n 's/.*extversion = "\([0-9.]*\)".*/\1/p' "$w/check.out"; \
+    rm -rf "$w"; \
+    echo "$PGVECTOR_VERSION" > /opt/pgtest/PGVECTOR_VERSION
+# <<< bake-pgvector
 
 # >>> project-webkit
 # --- per-project blocks (BH-8319): kept only for a project whose row names them

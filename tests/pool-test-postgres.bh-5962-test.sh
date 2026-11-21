@@ -174,7 +174,12 @@ POOL_TEST_POSTGRES=1 POOL_TEST_SETUP_CMD='npm run db:apply' suite
 grep -qx 'HARNESS_PG_SETUP: npm run db:apply (rc=0)' "$OUT" && ok || bad "P5b: the setup line with rc=0: $(cat "$OUT")"
 SETUP_RC=1 POOL_TEST_POSTGRES=1 POOL_TEST_SETUP_CMD='npm run db:apply' suite
 grep -qx 'HARNESS_PG_SETUP: npm run db:apply (rc=1)' "$OUT" && ok || bad "P5c: a red setup must be recorded as rc=1: $(cat "$OUT")"
-grep -qx 'HARNESS_EXIT: 0' "$OUT" && ok || bad "P5c: the suite still runs and its exit is its own: $(cat "$OUT")"
+# BH-9435 reversed this case's premise: a red setup was "evidence, never a stop",
+# and the suite ran on a half-applied schema. It is now a named fault, the suite
+# is not run, and the exit is could-not-run (tests/pool-pg-setup-fault.bh-9435-test.sh).
+grep -qx 'HARNESS_FAULT: pg-setup (npm run db:apply rc=1)' "$OUT" && ok || bad "P5c: a red setup must be the named fault: $(cat "$OUT")"
+grep -qx 'HARNESS_EXIT: could-not-run' "$OUT" && ok || bad "P5c: after a red setup the suite is not run, could-not-run: $(cat "$OUT")"
+grep -q '^run test' "$T/order.log" && bad "P5c: the suite must not run after a red setup: $(cat "$T/order.log")" || ok
 grep -qx 'HARNESS_PG: torn down' "$OUT" && ok || bad "P6: teardown after a red setup"
 for s in 'rm -rf /' 'npm run a;b' $'npm run db:apply\nx' 'db:apply' 'npm run db:apply --force' 'npx prisma migrate deploy' \
          'npm  run db:apply' "npm run $(printf 'a%.0s' {1..65})"; do

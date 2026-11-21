@@ -1,0 +1,12 @@
+{
+  "env": "DISK_HEADROOM_MIN_FREE_MB",
+  "type": "int",
+  "default": 8192,
+  "min": 0,
+  "max": 1048576,
+  "unit": "MB",
+  "zero_means": null,
+  "read_in": "bin/lib/disk-headroom.sh",
+  "note": "BH-9435: free MB on / at build start under which the headroom step (bin/lib/rb/gates.d/disk-headroom.sh, right above the disk gate) trims old settled build dirs (their subdirs go; the dir and its top-level files stay), oldest first, until free >= this value. 0 turns the step off (the build-start measure line is still written). Per project: lane.disk-guard.<project>.disk_headroom_min_free_mb.",
+  "settable": true
+}
