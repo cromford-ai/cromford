@@ -31,7 +31,7 @@ checkout.
 
 | Lane | Before | Now |
 | --- | --- | --- |
-| `bin/board-closeout.sh`, PR open | comment, move to `review` | comment with staging links, no move |
+| `bin/board-closeout.sh`, PR open | comment, move to `review` | comment with staging links, move to `in_progress` (BH-9870) |
 | `bin/board-closeout.sh`, merged | "on its way to production", `done` | "merged and on its way to staging", "not live on production yet", `review`; the production-red defer does not hold it |
 | `bin/deploy-train.sh` | checks production, reverts on a miss | checks staging, alerts on a miss with the word "staging", no revert, no deploy hook, no production migration driver; its ledger row carries `target: staging` |
 | `bin/merged-ticket-advance.sh` | reads production, "production is serving it" | reads staging, "on staging", "not live on production yet" |
@@ -66,3 +66,14 @@ audit says "Live on production" after a release.
 
 The deploy-train lane for project-3 can go back on:
 `bin/harness-ctl.sh on deploy-train project-3 "BH-9862 landed: the train reads staging"`.
+
+## BH-9870: PR open moves the ticket to `in_progress`
+
+The first version made no move at PR open. On project-3 a ticket stays in `todo`
+during the build, because nothing moves it at build start. The merge lane
+(`bin/merged-ticket-advance.sh`) takes a ticket only in `in_progress` or
+`review`, and the app audit reads only `review`, `done` and `in_progress`. So
+TK-787 (project-3 PR #1266, merged 2026-11-21) got no merge comment and no move.
+The close-out now moves the ticket to `in_progress` at PR open for a staging
+project. It is not `review`, because the app audit moves a `review` ticket
+with an open PR back.

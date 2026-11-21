@@ -5,7 +5,7 @@
 #
 #   L1-L7  bin/lib/release-model.sh: the default, the row, the refusals, apply
 #   C1-C4  the real bin/board-closeout.sh against a stub board:
-#          staging + PR_CREATED  comment, staging link, NO move
+#          staging + PR_CREATED  comment, staging link, move to in_progress
 #          staging + PR_MERGED   "on staging", "not live on production", review
 #          no row  + PR_CREATED  move to review, production link (unchanged)
 #          no row  + PR_MERGED   move to done (unchanged)
@@ -92,11 +92,14 @@ closeout() { # closeout <project> <RESULT line>
 }
 closeout stg "PR_CREATED https://github.com/o/r/pull/8"
 [ "$RC" = 0 ] && grep -q 'tickets/T1/comments' "$T/c.curl" && ok || bad "C1 staging + PR_CREATED must post the comment (rc $RC; $(tail -2 "$T/c.err"))"
-grep -q '/move' "$T/c.curl" && bad "C1 staging + PR_CREATED must NOT move the ticket (got $(cat "$T/c.curl.moves"))" || ok
+# BH-9870: the merge lane (bin/merged-ticket-advance.sh) takes a ticket only in
+# in_progress or review. A ticket left in todo at PR open is never advanced.
+[ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = in_progress ] && ok \
+  || bad "C1 staging + PR_CREATED must move the ticket to in_progress, never review (got $(cat "$T/c.curl.moves"))"
 grep -q 'stg.example.test/clients' "$T/c.curl.bodies" && grep -q 'after this merges' "$T/c.curl.bodies" && ok \
   || bad "C1 the comment must link staging and say the link works after the merge"
 grep -q 'app.example.test/clients' "$T/c.curl.bodies" && bad "C1 the comment must not link production" || ok
-case "$OUT" in "POSTED stg/TK-9 (status not moved"*) ok ;; *) bad "C1 stdout must say the status was not moved (got '$OUT')" ;; esac
+case "$OUT" in "POSTED stg/TK-9 -> in_progress"*) ok ;; *) bad "C1 stdout must name the move to in_progress (got '$OUT')" ;; esac
 
 closeout stg "PR_MERGED https://github.com/o/r/pull/8"
 [ "$RC" = 0 ] && grep -q 'merged and on its way to staging' "$T/c.curl.bodies" && grep -q 'not live on production yet' "$T/c.curl.bodies" && ok \

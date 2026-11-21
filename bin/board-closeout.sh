@@ -83,9 +83,9 @@ esac
 # >>> release model (BH-9862)
 # A project whose merges deploy to STAGING (catalog/release-model.tsv). Two
 # things change for it and nothing else. At PR open the comment is posted and
-# the ticket does NOT move: nothing is on any site yet, and a board that audits
-# `review` against merged code moved every such ticket back with a comment the
-# client saw. At merge the comment says "on staging", links staging, and the
+# the ticket goes to `in_progress`, never `review` (BH-9870): nothing is on any
+# site yet, and a board that audits `review` against merged code moved every
+# such ticket back with a comment the client saw. At merge the comment says "on staging", links staging, and the
 # ticket goes to `review`, never `done`: production moves only with a release
 # a person runs, and that release is what says "live". The production-red
 # defer below is skipped too: a red production release says nothing about
@@ -253,13 +253,17 @@ case "$TO_STATUS" in
 esac
 [ "$TO_STATUS" = in_progress ] && LEAD="Slice C$SLICE_K of this ticket is merged and on its way to production."
 # >>> release model (BH-9862): the words and the destination for a staging project.
-MOVE=1
 if [ -n "$STAGING_BASE" ]; then
   NOT_LIVE="It is not live on production yet. It goes live with the next release."
   case "$TO_STATUS" in
     done)        LEAD="This is merged and on its way to staging. $NOT_LIVE"; TO_STATUS=review ;;
     in_progress) LEAD="Slice C$SLICE_K of this ticket is merged and on its way to staging. $NOT_LIVE" ;;
-    *)           MOVE=0 ;;
+    # PR open (BH-9870): in_progress, never review. The merge lane
+    # (bin/merged-ticket-advance.sh) takes a ticket only in in_progress or
+    # review, and nothing else moves a ticket out of todo, so a ticket left
+    # in todo here got no merge comment and no move (TK-787, 2026-11-21).
+    # Not review: the app audit moves a review ticket with an open PR back.
+    *)           TO_STATUS=in_progress ;;
   esac
 fi
 # <<< release model
@@ -273,10 +277,6 @@ RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \
 printf '%s' "$RESP" | jq -e '(.comment // .id // .data) != null' >/dev/null 2>&1 \
   || { say "comment POST refused: $(printf '%.200s' "$RESP")"; exit 1; }
 
-if [ "$MOVE" = 0 ]; then
-  echo "POSTED $PROJECT/$KEY (status not moved: merges deploy to staging, the ticket moves at merge)$SLICE_NOTE"
-  exit 0
-fi
 # THE COMMENT FIRST, THE STATUS SECOND, and never the other way round. A ticket
 # moved to `review` with no comment is a client seeing work change state with no
 # explanation; a comment with no move is one status the next tick fixes.
