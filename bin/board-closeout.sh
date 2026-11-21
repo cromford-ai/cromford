@@ -85,9 +85,11 @@ esac
 # things change for it and nothing else. At PR open the comment is posted and
 # the ticket goes to `in_progress`, never `review` (BH-9870): nothing is on any
 # site yet, and a board that audits `review` against merged code moved every
-# such ticket back with a comment the client saw. At merge the comment says "on staging", links staging, and the
-# ticket goes to `review`, never `done`: production moves only with a release
-# a person runs, and that release is what says "live". The production-red
+# such ticket back with a comment the client saw. At merge the comment says
+# "on staging", links staging, and the ticket stays `in_progress`, never
+# `review` or `done` (BH-9876): on that board both mean live in production,
+# production moves only with a release a person runs, and the app's own audit
+# moves the ticket when that release is live. The production-red
 # defer below is skipped too: a red production release says nothing about
 # whether staging has the merge.
 STAGING_BASE=""
@@ -256,7 +258,7 @@ esac
 if [ -n "$STAGING_BASE" ]; then
   NOT_LIVE="It is not live on production yet. It goes live with the next release."
   case "$TO_STATUS" in
-    done)        LEAD="This is merged and on its way to staging. $NOT_LIVE"; TO_STATUS=review ;;
+    done)        LEAD="This is merged and on its way to staging. $NOT_LIVE"; TO_STATUS=in_progress ;;
     in_progress) LEAD="Slice C$SLICE_K of this ticket is merged and on its way to staging. $NOT_LIVE" ;;
     # PR open (BH-9870): in_progress, never review. The merge lane
     # (bin/merged-ticket-advance.sh) takes a ticket only in in_progress or

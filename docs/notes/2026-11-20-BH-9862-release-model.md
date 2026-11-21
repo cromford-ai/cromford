@@ -32,9 +32,9 @@ checkout.
 | Lane | Before | Now |
 | --- | --- | --- |
 | `bin/board-closeout.sh`, PR open | comment, move to `review` | comment with staging links, move to `in_progress` (BH-9870) |
-| `bin/board-closeout.sh`, merged | "on its way to production", `done` | "merged and on its way to staging", "not live on production yet", `review`; the production-red defer does not hold it |
+| `bin/board-closeout.sh`, merged | "on its way to production", `done` | "merged and on its way to staging", "not live on production yet", stays `in_progress` (BH-9876); the production-red defer does not hold it |
 | `bin/deploy-train.sh` | checks production, reverts on a miss | checks staging, alerts on a miss with the word "staging", no revert, no deploy hook, no production migration driver; its ledger row carries `target: staging` |
-| `bin/merged-ticket-advance.sh` | reads production, "production is serving it" | reads staging, "on staging", "not live on production yet" |
+| `bin/merged-ticket-advance.sh` | reads production, "production is serving it" | reads staging for the deploy fact, then production (BH-9876): production serves the merge = the production comment and the normal move; not yet = "on staging", "not live on production yet", no move; unreadable = nothing this run |
 | `bin/postmerge-qa.sh` | gates on production, drives production | gates on staging, then records `NOT_COVERED_NO_QA_ENV` with no drive |
 | `bin/migration-autopilot.sh` | applies SQL through the production endpoint | does nothing |
 
@@ -91,3 +91,29 @@ The train is silent after a merge that a person made by hand. That is correct:
 only merges of this box's sweep are enqueued. With an empty queue the train
 compares the staging site with `origin/main`, and it departs (and pages on a
 failure) only when staging is behind `main` for `SELF_SOURCE_MIN_AGE_MIN`.
+
+## BH-9876: the merge step
+
+TK-787 (project-3 PR #1266, 2026-11-21) showed 2 faults in
+`bin/merged-ticket-advance.sh`. The ticket went to `done` on a comment that
+said "not live on production yet", because a system-filed ticket always went to
+`done`. And that comment was posted 51 minutes after production served the
+commit, because the lane read only the staging version.
+
+On the project-3 board `review` and `done` mean live in production. The app audit
+compares each merge with the release that production stands for. Before the
+release it stamps "On staging" and moves nothing. After the release it moves
+an `in_progress` ticket (waiting on the team) and posts the "live" comment.
+
+So for a staging project the harness moves a ticket at merge in one case only:
+
+| Production serves the merge | Comment | Move |
+| --- | --- | --- |
+| yes | "merged and production is serving it" | the normal one: system-filed to `done`, else `review` and the turn to the client |
+| no | "on staging", "not live on production yet", "stays in progress until the release is live" | none; the app audit moves it after the release |
+| unreadable | none | none; the next run reads again |
+
+The production read is `<board base>/api/internal/version` with the board
+token. The compare is `merge commit...production sha` through the GitHub
+compare API (`identical` or `ahead` = serves). `bin/board-closeout.sh` at
+`PR_MERGED` also leaves the ticket in `in_progress`.

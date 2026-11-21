@@ -105,8 +105,9 @@
 #
 # Called from inapp_released_lines (bin/lib/rt/scope.sh) right before the
 # in-app parent close, so a split's last child reaching `done` closes its
-# parent in the same tick. No model call. GitHub reads only on the peer path,
-# REST only:
+# parent in the same tick. No model call. GitHub reads on the peer path, and
+# for a staging project (BH-9876) on the local path too: the PR's merge commit
+# and one compare with what production serves. REST only:
 # gh-rest: no-graphql
 #
 set -uo pipefail
@@ -366,6 +367,47 @@ _ma_deployed() {
   return 0
 }
 
+# --- a staging project: does PRODUCTION serve the merge? (BH-9876) ------------
+# TK-787 (2026-11-21): the lane read only staging, so it said "not live on
+# production yet" 51 minutes after production served the commit, and moved a
+# system-filed ticket to done on a merge that it called not live.
+# _ma_prod_live: ONE read of the production version route per run -> PLIVE_ST
+# sha (PLIVE set) or err. The address is the board's own base, never
+# VERSION_URL: release_model_apply pointed that one at staging. The bearer is
+# the production board token, sent to production only.
+PLIVE_ST=""; PLIVE=""
+_ma_prod_live() {
+  local c
+  [ -n "$PLIVE_ST" ] && return 0
+  PLIVE_ST=err
+  c=$(curl -s -m 20 -o "$TMP/pversion.json" -w '%{http_code}' \
+        -H "Authorization: Bearer $MA_TOKEN" -H "User-Agent: curl/8" \
+        "${BASE%/}/api/internal/version" </dev/null 2>/dev/null) || c=""
+  [ "$c" = 200 ] || return 0
+  PLIVE=$(jq -r '.sha // .commit // empty' "$TMP/pversion.json" 2>/dev/null | tr 'A-F' 'a-f')
+  if [[ "$PLIVE" =~ ^[0-9a-f]{7,40}$ ]]; then PLIVE_ST=sha; else PLIVE=""; fi
+  return 0
+}
+# _ma_prod_serves -> PSERVE: yes | no | unknown, for the merge commit in PR_SHA.
+# Unknown is never yes and never no: the caller posts nothing on it.
+_ma_prod_serves() {
+  local rc=0 st
+  PSERVE=unknown
+  [[ "${PR_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || return 0
+  _ma_prod_live
+  [ "$PLIVE_ST" = sha ] || return 0
+  if [ "${PLIVE:0:7}" = "${PR_SHA:0:7}" ]; then PSERVE=yes; return 0; fi
+  _ma_gh_ready || return 0
+  gh_rest GET "repos/$SLUG/compare/$PR_SHA...$PLIVE" > "$TMP/pcmp.json" || rc=$?
+  [ "$rc" = 0 ] || return 0
+  st=$(jq -r '.status // empty' "$TMP/pcmp.json" 2>/dev/null)
+  case "$st" in
+    identical|ahead) PSERVE=yes ;;
+    behind|diverged) PSERVE=no ;;
+  esac
+  return 0
+}
+
 TMP=$(mktemp -d) || exit 0
 trap 'rm -rf "$TMP"' EXIT
 rc=$(_ma_get "$API/boards" "$TMP/boards.json")
@@ -545,6 +587,44 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     already=1
   fi
 
+  # 6s. a staging project (BH-9876): the words and the move follow what
+  # PRODUCTION serves. yes -> the production comment and the normal move.
+  # no -> the staging comment and NO move: the app's own audit moves the
+  # ticket when the release is live. unknown -> nothing this run.
+  # ikind: the production comment of a staging project has its own
+  # idempotency key, so a board that dedupes on the key does not drop it as a
+  # repeat of the staging comment.
+  stg_hold=0; stg_live=0; ikind=""
+  if [ -n "$STG_BASE" ]; then
+    if [ "$PEER" = 0 ]; then
+      # The merge commit of THIS ticket's PR, never one left by an earlier ticket.
+      PR_SHA=""; lprn="${pr##*/pull/}"; lprn="${lprn%%[!0-9]*}"
+      if [ -n "$lprn" ] && [ -n "$SLUG" ] && _ma_gh_ready; then
+        _ma_gh_pr "$lprn" || PR_SHA=""
+      fi
+    fi
+    _ma_prod_serves
+    case "$PSERVE" in
+      yes) stg_live=1; ikind="live-"
+           # The production comment is "already there" only when the THREAD has
+           # one of this lane's comments for this witness that does not say
+           # "not live". The marker is not asked: it can stand for the staging
+           # comment (a run that stopped before the hold marker), and the
+           # close-out's "on its way to staging ... not live" comment matches
+           # the witness when that is the PR address. Moving on either one
+           # leaves "not live" as the last word on a moved ticket (TK-787).
+           already=0
+           mine=$(jq -r --arg w "$witness" '[(.comments? // .ticket.comments? // .data.comments? // [])[]
+                    | (.body // "" | tostring)
+                    | select(contains("This is merged and") and contains($w))
+                    | select(contains("not live on production yet") | not)] | length' "$TMP/t.json" 2>/dev/null) || mine=""
+           case "$mine" in ''|*[!0-9]*|0) ;; *) already=1 ;; esac ;;
+      no)  if [ "$tst" != in_progress ]; then S_CREVIEW=$((S_CREVIEW + 1)); continue; fi
+           stg_hold=1 ;;
+      *)   S_PEERUNREAD=$((S_PEERUNREAD + 1)); continue ;;
+    esac
+  fi
+
   # 7. the comment
   epr=$(_ma_esc "$pr")
   if [ "$verdict" = PASS ]; then
@@ -556,7 +636,10 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
   fi
   # BH-9862: a staging project. Same lead words (`This is merged and`, the
   # dedupe reads them), the site named is staging, and it never says live.
-  if [ -n "$STG_BASE" ]; then
+  # BH-9876: only while production does not serve the merge (stg_hold).
+  if [ "$stg_live" = 1 ]; then
+    body="<p>This is merged and production is serving it (${sha:+commit $sha, }<a href=\"$epr\">$epr</a>). Nobody has clicked through it in production yet.</p>"
+  elif [ "$stg_hold" = 1 ]; then
     estg=$(_ma_esc "$STG_BASE")
     if [ "$verdict" = PASS ]; then
       body="<p>This is merged and on staging: <a href=\"$estg\">$estg</a>. The post-merge check passed there (${sha:+commit $sha, }<a href=\"$epr\">$epr</a>).</p>"
@@ -567,14 +650,15 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     fi
     body="$body<p>It is not live on production yet. It goes live with the next release.</p>"
   fi
-  if [ "$to" = done ]; then body="$body<p>Moving it to done.</p>"
-  elif [ -n "$STG_BASE" ]; then body="$body<p>Moving it to review so you can check it on staging.</p>"
+  if [ "$stg_hold" = 1 ]; then body="$body<p>The ticket stays in progress until the release is live.</p>"
+  elif [ "$to" = done ]; then body="$body<p>Moving it to done.</p>"
   else body="$body<p>Moving it to review so you can check it.</p>"; fi
   jq -n --arg b "$body" '{body: $b}' > "$TMP/comment.json" 2>/dev/null || continue
   printf '{"toStatus":"%s","sortOrder":999999}' "$to" > "$TMP/move.json"
 
   if [ "$DRY" = 1 ]; then
     [ "$already" = 0 ] && printf 'DRYRUN POST %s\n%s\n' "$API/tickets/$tid/comments" "$body" >&2
+    [ "$stg_hold" = 1 ] && continue
     printf 'DRYRUN POST %s {"toStatus":"%s"}\n' "$API/tickets/$tid/move" "$to" >&2
     [ "$to" = review ] && printf 'DRYRUN POST %s {"to":"client"}\n' "$API/tickets/$tid/turn" >&2
     continue
@@ -583,11 +667,16 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
   # 8. comment, marker, move
   if [ "$already" = 0 ]; then
     c=$(_ma_post "$API/tickets/$tid/comments" "$TMP/comment.json" \
-          "advance-$PROJECT-$tid-$token-comment" "$TMP/resp.json")
+          "advance-$PROJECT-$tid-$token-${ikind}comment" "$TMP/resp.json")
     case "$c" in
       2??) cm_put "$ckey" - "$cmark" ;;
       *) MA_LOG "MERGED_ADVANCE_FAILED $tkey comment HTTP $c"; continue ;;
     esac
+  fi
+  # BH-9876: comment only. The marker ends this lane's work for this token.
+  if [ "$stg_hold" = 1 ]; then
+    cm_put "$mkey" - "$mbase.moved"
+    CONLY=$((CONLY + 1)); continue
   fi
   m=$(_ma_post "$API/tickets/$tid/move" "$TMP/move.json" \
         "advance-$PROJECT-$tid-$token-move" "$TMP/resp.json")

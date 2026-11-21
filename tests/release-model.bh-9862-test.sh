@@ -6,7 +6,7 @@
 #   L1-L7  bin/lib/release-model.sh: the default, the row, the refusals, apply
 #   C1-C4  the real bin/board-closeout.sh against a stub board:
 #          staging + PR_CREATED  comment, staging link, move to in_progress
-#          staging + PR_MERGED   "on staging", "not live on production", review
+#          staging + PR_MERGED   "on staging", "not live on production", in_progress
 #          no row  + PR_CREATED  move to review, production link (unchanged)
 #          no row  + PR_MERGED   move to done (unchanged)
 #   M1-M2  the real bin/migration-autopilot.sh: a staging project stops before
@@ -105,7 +105,8 @@ closeout stg "PR_MERGED https://github.com/o/r/pull/8"
 [ "$RC" = 0 ] && grep -q 'merged and on its way to staging' "$T/c.curl.bodies" && grep -q 'not live on production yet' "$T/c.curl.bodies" && ok \
   || bad "C2 staging + PR_MERGED must say on staging and not live (rc $RC; $(cat "$T/c.curl.bodies"))"
 grep -q 'on its way to production' "$T/c.curl.bodies" && bad "C2 a staging merge must not say it is on its way to production" || ok
-[ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = review ] && ok || bad "C2 a staging merge moves the ticket to review, never done (got $(cat "$T/c.curl.moves"))"
+# BH-9876: review and done mean live in production on a staging project's board.
+[ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = in_progress ] && ok || bad "C2 a staging merge leaves the ticket in in_progress, never review or done (got $(cat "$T/c.curl.moves"))"
 grep -q 'stg.example.test/clients' "$T/c.curl.bodies" && ok || bad "C2 the comment must link staging"
 
 closeout ctl "PR_CREATED https://github.com/o/r/pull/9"
