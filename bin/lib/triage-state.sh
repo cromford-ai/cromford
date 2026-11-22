@@ -322,6 +322,17 @@ ts_hash_of() {
 # decisions.tsv either way, so ts_after_session reads both kinds alike.
 _ts_dec_file() { case "${1:-}" in pr-*) printf 'pr-decisions.tsv' ;; *) printf 'decisions.tsv' ;; esac; }
 
+# _ts_abandon_lifted <key> <label> <gh> — rc 0 when the ticket's cached thread
+# carries a person's lift comment newer than its `abandoned` ledger row
+# (job_abandon_lifted, bin/lib/jobs/jobs.sh). GitHub boards only; a read only.
+_ts_abandon_lifted() {
+  local raw; raw="$(_ts_dir)/$1.raw"
+  [ "$3" = 1 ] && [ -s "$raw" ] || return 1
+  command -v hold_classify >/dev/null 2>&1 && command -v job_abandon_lifted >/dev/null 2>&1 || return 1
+  job_abandon_lifted "$PROJECT" "$2" \
+    "$(hold_classify "$(jq -c '.doc.issue' "$raw" 2>/dev/null)" "$(jq -c '.doc.comments' "$raw" 2>/dev/null)")" >/dev/null 2>&1
+}
+
 # _ts_owned <key> <label> <hash> <triaged_at> <gh> — rc 0 and the reason on
 # stdout when a `buildable` ticket must NOT be launched now; rc 1 when nothing
 # owns it. Every read that cannot answer owns it (fail CLOSED for a launch).
@@ -339,7 +350,10 @@ _ts_owned() {
       && { printf 'owned:build-dir'; return 0; }
   fi
   if command -v job_ledger_get >/dev/null 2>&1; then
-    st=$(job_ledger_get abandoned "$p $label" 2>/dev/null) && [ "$st" = abandoned ] && { printf 'owned:abandoned'; return 0; }
+    # A person's RESUME newer than the row lifts it (project-6 #3720): the
+    # launch goes ahead and run-build's gate releases the row.
+    st=$(job_ledger_get abandoned "$p $label" 2>/dev/null) && [ "$st" = abandoned ] \
+      && ! _ts_abandon_lifted "$key" "$label" "$gh" && { printf 'owned:abandoned'; return 0; }
   fi
   if command -v queue_status >/dev/null 2>&1; then
     st=$(queue_status "$p" "$label" 2>/dev/null); rc=$?

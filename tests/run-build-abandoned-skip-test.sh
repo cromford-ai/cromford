@@ -64,5 +64,43 @@ case "$OUT" in *CONTINUED*) ok ;; *) bad "4: an outage must fail open (rc=$RC)" 
 OUT=$(run_block 2 "" 0 "$(printf 'failed\t-\t-\t-\tdeferred 6 times (BUILD_DEFERRED wip-limit)')"); RC=$?
 case "$OUT" in *CONTINUED*) ok ;; *) bad "5: an ordinary failed row must not read as ABANDONED (rc=$RC)" ;; esac
 
+# ── A PERSON'S RESUME LIFTS A LEDGER ABANDON (example-org/project-6 #3720) ─────
+# AlbinB wrote RESUME on #3720 on 2026-11-10; the ledger row stayed `abandoned`
+# and nothing built for 8 days. A lift comment (hold.sh: `clear<TAB>
+# lifted-by-comment <at>`) NEWER than the row's updated_at releases the row and
+# the build goes on. An older RESUME does not: the ladder ran again after it.
+# run_resume <hold-verdict> <row updated_at>
+run_resume() {
+  : > "$T/result"; : > "$T/puts"
+  HV="$1" LAT="$2" HARNESS="$T/h" BUILD="$T/build" PROJECT=tproj TICKET=1681 KEY=BH-1681 SINK="$T/result" PUTS="$T/puts" \
+  JOBS_LIB="$DIR/bin/lib/jobs/jobs.sh" bash -c '
+    . "$JOBS_LIB"
+    STAMP() { echo 2026-11-10T16:00:00Z; }
+    RESULT() { echo "$*" > "$SINK"; }
+    _jobs_req() { printf "{\"ledger\":{\"kind\":\"abandoned\",\"status\":\"abandoned\",\"updated_at\":\"%s\"}}" "$LAT"; }
+    job_ledger_put() { printf "%s|%s|%s\n" "$1" "$2" "$3" >> "$PUTS"; }
+    queue_row() { return 2; }
+    to_build_hold() { printf "%s\n" "$HV"; return 1; }
+    . "$0"
+    echo CONTINUED' "$T/block.sh" 2>/dev/null
+}
+LIFT=$(printf 'clear\tlifted-by-comment 2026-11-10T15:54:28Z')
+
+OUT=$(run_resume "$LIFT" 2026-11-09T20:00:00Z); RC=$?
+case "$OUT" in *CONTINUED*) ok ;; *) bad "6: a RESUME newer than the abandon must let the build go on (rc=$RC, $(cat "$T/result"))" ;; esac
+grep -qx 'abandoned|tproj BH-1681|released' "$T/puts" && ok || bad "6: the lift must put the ledger row released, got: $(cat "$T/puts")"
+grep -q 'RESUME_LIFTS_ABANDONED BH-1681' "$T/build/pipeline.log" && ok || bad "6: the lift must be logged in pipeline.log"
+
+OUT=$(run_resume "$LIFT" 2026-11-11T09:00:00Z); RC=$?
+[ "$RC" = 3 ] && grep -q '^BUILD_REFUSED SKIP_ABANDONED' "$T/result" && ok \
+  || bad "7: a RESUME older than the abandon must not lift it (rc=$RC, $(cat "$T/result"))"
+[ -s "$T/puts" ] && bad "7: an old RESUME wrote the ledger: $(cat "$T/puts")" || ok
+
+OUT=$(run_resume "$(printf 'clear\tno-hold')" 2026-11-09T20:00:00Z); RC=$?
+[ "$RC" = 3 ] && [ ! -s "$T/puts" ] && ok || bad "8: no RESUME on the ticket keeps the abandon (rc=$RC, puts: $(cat "$T/puts"))"
+
+OUT=$(run_resume "$(printf 'held\thold:comment 2026-11-10T15:54:28Z HOLD')" 2026-11-09T20:00:00Z); RC=$?
+[ "$RC" = 3 ] && [ ! -s "$T/puts" ] && ok || bad "9: a held verdict never lifts an abandon (rc=$RC)"
+
 echo "run-build-abandoned-skip: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

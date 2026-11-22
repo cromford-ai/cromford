@@ -724,8 +724,21 @@ if [ -z "$AB_ST" ] && command -v queue_row >/dev/null 2>&1; then
     "failed|ABANDONED by the blocked-resolver"*) AB_ST=abandoned ;;
   esac
 fi
+# A PERSON'S RESUME LIFTS IT (example-org/project-6 #3720). A lift comment newer
+# than the ledger row releases the row here, the one writer, so every reader
+# (triage-state, orphan-reconcile) sees `released` from now on. The next
+# ABANDONED rewrites the row with a newer time, and this RESUME is then old.
+if [ "$AB_ST" = abandoned ] && command -v job_abandon_lifted >/dev/null 2>&1 \
+   && command -v to_build_hold >/dev/null 2>&1; then
+  AB_HV=$(to_build_hold "$PROJECT" "$TICKET" "$KEY" 2>/dev/null) || true
+  if AB_AT=$(job_abandon_lifted "$PROJECT" "$KEY" "$AB_HV" 2>/dev/null); then
+    job_ledger_put abandoned "$PROJECT $KEY" released "RESUME comment of $AB_AT on the ticket" >/dev/null 2>&1 || true
+    echo "$(STAMP) [$PROJECT/$KEY] RESUME_LIFTS_ABANDONED $KEY — a person's RESUME of $AB_AT is newer than the ABANDONED record; the ledger row is released and the build goes on" >> "$BUILD/pipeline.log"
+    AB_ST=released
+  fi
+fi
 if [ "$AB_ST" = abandoned ]; then
-  AB_LINE="SKIP_ABANDONED $KEY — the blocked-resolver ABANDONED this ticket; nothing enqueued, nothing built. Release: jobs-client.sh ledger-put abandoned \"$PROJECT $KEY\" released"
+  AB_LINE="SKIP_ABANDONED $KEY — the blocked-resolver ABANDONED this ticket; nothing enqueued, nothing built. Release: a new RESUME comment on the ticket, or jobs-client.sh ledger-put abandoned \"$PROJECT $KEY\" released"
   echo "$(STAMP) [$PROJECT/$KEY] $AB_LINE" >> "$BUILD/pipeline.log"
   mkdir -p "$HARNESS/logs" 2>/dev/null
   echo "$(STAMP) [$PROJECT/$KEY] $AB_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true

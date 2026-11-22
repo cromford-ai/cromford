@@ -1167,7 +1167,7 @@ fi
 # rather than writing a row here is deliberate — it is where the build-key
 # flock, the duplicate-work guard and the context gate live, and a second copy
 # of that routing is a second thing to keep in step.
-# refused_by_run_build <KEY> — prints why bin/run-build.sh would REFUSE this
+# refused_by_run_build <KEY> [issue-number] — prints why bin/run-build.sh would REFUSE this
 # ticket as abandoned (or, a deliberate extra, superseded), rc 0; rc 1 when it
 # would not (2026-09-27).
 #
@@ -1198,7 +1198,7 @@ fi
 # ORPHAN, the reads run-build would have made. Either one not answering is
 # run-build's fail-open too: nothing there means launch as today.
 refused_by_run_build() {
-  local key="$1" row="" qst qwhy st rc=2
+  local key="$1" num="${2:-}" row="" qst qwhy st rc=2
   if command -v queue_row >/dev/null 2>&1; then
     row=$(queue_row "$PROJECT" "$key" 2>/dev/null) || row=""
   fi
@@ -1214,7 +1214,14 @@ refused_by_run_build() {
     st=$(job_ledger_get abandoned "$PROJECT $key" 2>/dev/null); rc=$?
   fi
   if [ "$rc" = 0 ]; then
-    [ "$st" = abandoned ] && { printf 'abandoned'; return 0; }
+    # A person's RESUME newer than the row lifts it (project-6 #3720): run-build
+    # releases the row on the same reading, so this launch is not a refusal.
+    if [ "$st" = abandoned ]; then
+      [ -n "$num" ] && command -v job_abandon_lifted >/dev/null 2>&1 \
+        && job_abandon_lifted "$PROJECT" "$key" "$(jq -r '.v // empty' "$TD/extra/hold-$num.json" 2>/dev/null)" >/dev/null 2>&1 \
+        && return 1
+      printf 'abandoned'; return 0
+    fi
     return 1
   fi
   case "$qst|$qwhy" in
@@ -1368,7 +1375,7 @@ ENQ=""; SKIP=""; N_ENQ=0
 while IFS=$'\t' read -r KEY NUM VERDICT WHY; do
   [ "$VERDICT" = ORPHAN ] || continue
   # GUARD RAIL: a ticket run-build refuses is not launched to be refused.
-  if RB_WHY=$(refused_by_run_build "$KEY"); then
+  if RB_WHY=$(refused_by_run_build "$KEY" "$NUM"); then
     SKIP="${SKIP:+$SKIP,}$KEY:$RB_WHY"
     continue
   fi

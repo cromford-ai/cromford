@@ -953,6 +953,39 @@ grep -q 'rows unreadable — tick skipped' "$H/logs/$P.log" && ok || bad "(x) th
   || bad "(x) with no rows every ticket goes to the model: $(decisions | tr '\n' ' ')"
 WORKER_UP=1
 
+# ═══ (RA) — a person's RESUME lifts a ledger abandon (project-6 #3720) ══════
+# The blocked-resolver's `abandoned "<project> <KEY>"` ledger row owned the
+# ticket for ever: a RESUME comment changed the hash, the model said buildable,
+# and the pre-check answered buildable-owned:abandoned on every tick. A lift
+# comment newer than the row's updated_at means the launch is not owned (the
+# run-build gate releases the row). An older RESUME lifts nothing. The real
+# ledger client against the real route, in a subshell so its functions stay here.
+iss 51 "Resumed after abandon" "Build it"
+comment 51 5101 client-carl User "RESUME. Fix the tap target and build again." 2099-01-01T00:00:00Z
+iss 52 "Abandoned after the resume" "Build it"
+comment 52 5201 client-carl User "RESUME" 2020-01-01T00:00:00Z
+world
+(
+  # shellcheck source=/dev/null
+  . "$H/bin/lib/jobs/jobs.sh"
+  JOBS_BOX=test-box
+  job_ledger_put abandoned "$P TK-51" abandoned "rebuilt fresh 3 times" || echo "FAIL: (RA) could not seed the ledger row for TK-51"
+  job_ledger_put abandoned "$P TK-52" abandoned "rebuilt fresh 3 times" || echo "FAIL: (RA) could not seed the ledger row for TK-52"
+  tick_env shadow; ( ts_precheck ) >/dev/null 2>&1
+  for k in 51 52; do
+    jq -n --arg ta "$TRIAGED_AT" --arg k "$k" --arg h "$(hashof $k)" '{project:"project-5",ticket_key:$k,verdict:"buildable",verdict_hash:$h,input_hash:$h,
+      triaged_at:$ta,next_recheck_at:"2099-01-01T00:00:00Z",reason:"test"}' > "$T/r.json"
+    triage_state_put "$T/r.json" >/dev/null || echo "FAIL: (RA) could not seed the buildable row for $k"
+  done
+  tick_env enforce; : > "$T/calls/run-build"
+  ( ts_tick ) >/dev/null 2>&1; settle 1
+) > "$T/ra.out" 2>&1
+! grep -q '^FAIL' "$T/ra.out" && ok || bad "$(grep '^FAIL' "$T/ra.out" | tr '\n' ' ')"
+grep -qx "$P 51 TK-51" "$T/calls/run-build" 2>/dev/null && ok \
+  || bad "(RA) a RESUME newer than the ledger abandon must launch the ticket: [$(cat "$T/calls/run-build" 2>/dev/null)] $(dcol 51 3) $(dcol 51 4)"
+! grep -q ' 52 ' "$T/calls/run-build" 2>/dev/null && [ "$(dcol 52 3) $(dcol 52 4)" = "skip buildable-owned:abandoned" ] && ok \
+  || bad "(RA) a RESUME older than the ledger abandon keeps it owned: [$(dcol 52 3) $(dcol 52 4)]"
+
 # ═══ the wiring ════════════════════════════════════════════════════════════
 awk '/^rt_shards\(\) \{/{f=1} f&&/# >>> triage shards/{exit} f' "$DIR/bin/lib/rt/shards.sh" | grep -q 'ts_tick' && ok \
   || bad "(w) rt_shards must call ts_tick BEFORE the shard units are formed"

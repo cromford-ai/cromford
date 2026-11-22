@@ -100,7 +100,8 @@ case "$URL" in
   */api/ledger*kind=abandoned*)
     k=$(printf '%s' "$URL" | sed -nE 's/.*key=[a-z]+%20([A-Z]+-[0-9]+).*/\1/p')
     if [ -f "$HARNESS/fixture/ledger-$k" ]; then
-      printf '{"ledger":{"kind":"abandoned","status":"%s"}}\n200\n' "$(cat "$HARNESS/fixture/ledger-$k")"
+      printf '{"ledger":{"kind":"abandoned","status":"%s","updated_at":"%s"}}\n200\n' "$(cat "$HARNESS/fixture/ledger-$k")" \
+        "$(cat "$HARNESS/fixture/ledger-$k.at" 2>/dev/null)"
     else printf '{"error":"not found"}\n404\n'; fi ;;
   *)            printf '{"ok":true}\n200\n' ;;
 esac
@@ -215,6 +216,32 @@ was_launched 3001 && ok || bad "8: an ABANDON lifted by RESUME must be launched 
 was_launched 3002 && bad "8: an ABANDON not lifted must not be launched: $(verdict TK-3002)" || ok
 grep -q '^TK-3002	3002	OWNED	abandon:comment' <<<"$OUT" && ok || bad "8: the unlifted ABANDON is hold.sh's verdict, not the row's: $(verdict TK-3002)"
 was_launched 3003 && ok || bad "8: an operator pool abandon is not a run-build refusal, so it launches: $(verdict TK-3003)"
+
+# ---------- 9. a person's RESUME lifts a LEDGER abandon (project-6 #3720) ----
+# The resolver ABANDONED the ticket (ledger row), then a person wrote RESUME.
+# run-build's gate releases the row on that RESUME, so the reconciler must
+# launch the ticket and not skip it as <KEY>:abandoned for ever. A RESUME older
+# than the row (the ladder ran again after it) lifts nothing.
+cat > "$H/fixture/open.json" <<JSON
+[
+ {"number":3720,"title":"TK-3720 resolver abandon, then RESUME","body":"## Scope","comments":1,"updated_at":"$OLD","labels":[{"name":"ai-build"}],"thread":[$HRS]},
+ {"number":3699,"title":"TK-3699 RESUME, then resolver abandon","body":"## Scope","comments":1,"updated_at":"$OLD","labels":[{"name":"ai-build"}],"thread":[$HRS]},
+ {"number":3740,"title":"TK-3740 resolver abandon, no RESUME","body":"## Scope","comments":0,"updated_at":"$OLD","labels":[{"name":"ai-build"}]}
+]
+JSON
+echo '{"queue":[]}' > "$H/fixture/queuerows.json"
+for k in 3720 3699 3740; do echo abandoned > "$H/fixture/ledger-TK-$k"; done
+echo 2026-09-26T08:00:00Z > "$H/fixture/ledger-TK-3720.at"   # before the 12:00 RESUME
+echo 2026-09-26T18:00:00Z > "$H/fixture/ledger-TK-3699.at"   # after it
+echo 2026-09-26T08:00:00Z > "$H/fixture/ledger-TK-3740.at"
+: > "$H/launches.log"; : > "$H/logs/$P.log"
+OUT=$(run)
+was_launched 3720 && ok || bad "9: a RESUME newer than the ledger abandon must launch the ticket: $(verdict TK-3720) summary=$(grep -o 'reconcile: open.*' "$H/logs/$P.log" | tail -1)"
+was_launched 3699 && bad "9: a RESUME older than the ledger abandon must not launch the ticket" || ok
+was_launched 3740 && bad "9: a ledger abandon with no RESUME must not be launched" || ok
+grep -q 'TK-3699:abandoned' "$H/logs/$P.log" && grep -q 'TK-3740:abandoned' "$H/logs/$P.log" && ok \
+  || bad "9: the summary still names the two standing abandons: $(grep -o 'reconcile: open.*' "$H/logs/$P.log" | tail -1)"
+grep -q 'TK-3720:abandoned' "$H/logs/$P.log" && bad "9: the resumed ticket must not be in the skipped list" || ok
 
 echo "orphan-reconcile-refused: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

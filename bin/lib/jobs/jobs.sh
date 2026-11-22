@@ -179,6 +179,29 @@ job_ledger_row() {
   esac
 }
 
+# job_abandon_lifted <project> <KEY> <hold-verdict>
+#   A PERSON'S RESUME LIFTS A RESOLVER ABANDON (example-org/project-6 #3720: a
+#   RESUME of 2026-11-10 sat 8 days behind the `abandoned "<project> <KEY>"`
+#   row, which only an operator's ledger-put could release). <hold-verdict> is
+#   bin/lib/hold.sh's line for the ticket. rc 0, and the comment's time on
+#   stdout, when it reads `clear<TAB>lifted-by-comment <at>` and <at> is LATER
+#   than the row's updated_at: the person spoke after the ladder ended. rc 1
+#   for everything else (no lift, a lift older than the abandon, a row that is
+#   not `abandoned` or did not read), so the abandon stands. Both times are ISO
+#   seconds Z (GitHub created_at, the worker's nowIso), so they compare as text.
+#   A read only: bin/lib/rb/gates.sh is the one writer of `released`.
+job_abandon_lifted() {
+  local p="${1:-}" key="${2:-}" hv="${3:-}" at q resp ab
+  case "$hv" in "clear"$'\t'"lifted-by-comment "*) ;; *) return 1 ;; esac
+  at=${hv#*lifted-by-comment }; at=${at%%[[:space:]]*}
+  [ -n "$p" ] && [ -n "$key" ] && [ -n "$at" ] || return 1
+  q=$(jq -nr --arg v "$p $key" '"kind=abandoned&key="+($v|@uri)') || return 1
+  resp=$(_jobs_req GET "/api/ledger?$q") || return 1
+  ab=$(printf '%s' "$resp" | jq -r '.ledger | select(.status == "abandoned") | .updated_at // empty' 2>/dev/null)
+  [ -n "$ab" ] && [[ "$at" > "$ab" ]] || return 1
+  printf '%s' "$at"
+}
+
 # job_ledger_put <kind> <key> <status> [detail]
 #   Write-through. rc 1 on outage — callers still append the file ledger.
 job_ledger_put() {

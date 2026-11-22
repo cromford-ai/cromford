@@ -1,0 +1,2 @@
+# tests/jobs-client-modules.d/30-RESUME-ABANDON.tsv — a person's RESUME lifts a resolver abandon (example-org/project-6 #3720).
+jobs	job_abandon_lifted
