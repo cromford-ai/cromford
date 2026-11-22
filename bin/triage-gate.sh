@@ -80,6 +80,11 @@ if [ "$MODE" != "--signal" ] && [ "$MODE" != "--thread" ] && [ "$MODE" != "--bui
   RR_JSON_PENDING=1
 fi
 PENDING="$HARNESS/state/$PROJECT.gate.pending"
+# put_pending <fingerprint> / drop_pending — the one write and the one remove of
+# gate.pending on the plain-gate path, shared by step 2's untriaged check
+# (BH-9885) and step 6's board diff.
+put_pending() { printf '%s' "$1" > "$PENDING"; }
+drop_pending() { rm -f "$PENDING"; }
 META="$HARNESS/state/$PROJECT.gate-meta"
 FULL_SWEEP_SECS="${FULL_SWEEP_SECS:-86400}"
 
@@ -1014,6 +1019,12 @@ if command -v co_owed_dirs >/dev/null 2>&1; then
   fi
 fi
 # 2. queued build work
+# BH-9885: the queue-gates brake's untriaged-row check and its hard-recheck
+# knob. No lib = the brake as before (SKIP, 14400 s).
+for _P in "$(dirname "$0")/lib/triage-gate-untriaged.sh" "$HARNESS/bin/lib/triage-gate-untriaged.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # queue-pending COST BRAKE (2026-08-15, the operator): an unchanged queue re-triaged
 # every 10 minutes concludes the same nothing at full session price (project-2 burned
 # ~$2/tick for hours "still waiting on a merge"). Run only when the queue-side
@@ -1064,7 +1075,13 @@ if rq_any "$HARNESS" "$PROJECT"; then
   # or no repo slug -> fail open to RUN exactly as before. Only .state is
   # compared — mergeStateStatus churns (BEHIND/UNKNOWN/CLEAN) without changing
   # what the session would do.
-  if [ "$QFP" = "$OLDQ" ] && [ $(( $(date +%s) - ${LASTQ:-0} )) -lt 14400 ]; then
+  # The hard recheck is a knob (BH-9885): settings row
+  # lib.triage-gate.<project>.queue_gate_hard_recheck_s, code fallback 14400
+  # (bin/lib/triage-gate-untriaged.sh). No lib = the 14400 it always was.
+  QG_HARD=14400
+  command -v tgu_hard_recheck_s >/dev/null 2>&1 && QG_HARD=$(tgu_hard_recheck_s "$PROJECT" 2>/dev/null)
+  case "$QG_HARD" in ''|*[!0-9]*) QG_HARD=14400 ;; esac
+  if [ "$QFP" = "$OLDQ" ] && [ $(( $(date +%s) - ${LASTQ:-0} )) -lt "$QG_HARD" ]; then
     SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null || true)
     PRNUMS=$(rq_lines "$HARNESS" "$PROJECT" 2>/dev/null | grep -oE 'PR ?#[0-9]+' | grep -oE '[0-9]+' | sort -un | head -20)
     PRV=""
@@ -1118,7 +1135,24 @@ if rq_any "$HARNESS" "$PROJECT"; then
     fi
     OLDPRV=$(sed -n 3p "$QFPF" 2>/dev/null)
     if [ -n "$PRV" ] && [ "$PRV" = "$OLDPRV" ]; then
-      echo "SKIP queue-gates-unchanged (${PRNUMS//$'\n'/,} all same state; hard recheck in $(( (14400 - $(date +%s) + ${LASTQ:-0}) / 60 ))m)"; exit 0
+      # THE BRAKE HOLDS THE QUEUE, NOT NEW TICKETS (BH-9885). This SKIP exits
+      # before step 6, so on project-3 2026-11-21 nine new tickets waited for the
+      # hard recheck behind three PR-blocked ones. Ask the live board (the same
+      # free read step 6 makes) for a NEW or moved-and-unverdicted row. One
+      # found: gate.pending gets the live fingerprint, and the board-changed
+      # scope arm (bin/lib/rt/scope.sh) diffs it, so only the moved rows reach
+      # the session. queuefp is NOT written, so the brake keeps its clock. No
+      # gate.json, no lib, a failed fetch or an unreadable answer: today's SKIP,
+      # and gate.pending is removed again, as step 6 does on no-change.
+      if [ -s "$GATE" ] && command -v tgu_untriaged_rows >/dev/null 2>&1 \
+         && FP=$(fetch_fingerprint 2>/dev/null); then
+        put_pending "$FP"
+        if tgu_untriaged_rows "$GATE" "$PENDING" >/dev/null 2>&1; then
+          echo "RUN board-changed"; exit 0
+        fi
+        drop_pending
+      fi
+      echo "SKIP queue-gates-unchanged (${PRNUMS//$'\n'/,} all same state; hard recheck in $(( (QG_HARD - $(date +%s) + ${LASTQ:-0}) / 60 ))m)"; exit 0
     fi
     printf '%s\n%s\n%s\n' "$QFP" "$(date +%s)" "$PRV" > "$QFPF"
     echo "RUN queue-pending"; exit 0
@@ -1223,9 +1257,9 @@ if [ ! -s "$GATE" ]; then
 fi
 # 6. board diff
 FP=$(fetch_fingerprint) || { echo "RUN gate-fetch-failed"; exit 0; }
-printf '%s' "$FP" > "$PENDING"
+put_pending "$FP"
 if [ "$(printf '%s' "$FP" | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$GATE" | cut -d' ' -f1)" ]; then
-  rm -f "$PENDING"
+  drop_pending
   skip_out "no-change ($(jq '[to_entries[] | select(.key != "meta") | .value | length] | add' <<<"$FP" 2>/dev/null || echo '?') tickets)"
 elif [ -n "${GH_ISSUES_REPO:-}" ] \
   && [ "$(jq -cS 'del(.meta)' <<<"$FP" 2>/dev/null | sha256sum | cut -d' ' -f1)" = "$(jq -cS 'del(.meta)' "$GATE" 2>/dev/null | sha256sum | cut -d' ' -f1)" ] \

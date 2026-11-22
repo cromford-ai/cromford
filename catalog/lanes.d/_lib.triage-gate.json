@@ -1,0 +1,23 @@
+{
+  "libs": [
+    {
+      "id": "triage-gate",
+      "file": "bin/triage-gate.sh",
+      "note": "BH-9885: the deterministic triage gate's queue-gates brake (step 2). When the queue bytes and every referenced PR's state are unchanged it answers SKIP queue-gates-unchanged until this hard recheck passes, UNLESS bin/lib/triage-gate-untriaged.sh finds a NEW or moved-and-unverdicted ticket on the live board, which answers RUN board-changed. Applied through lib_env_apply triage-gate <project> in tgu_hard_recheck_s.",
+      "knobs": [
+        {
+          "env": "QUEUE_GATE_HARD_RECHECK_S",
+          "read_in": "bin/lib/triage-gate-untriaged.sh",
+          "type": "int",
+          "default": 14400,
+          "min": 2700,
+          "max": 86400,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the queue-gates brake holds an unchanged PR-gated queue before a forced queue-pending run. Code fallback 14400 (4 h), read as ${QUEUE_GATE_HARD_RECHECK_S:-14400}; a non-integer or a value under 2700 (the 45-minute queue-unchanged window) falls back to 14400."
+        }
+      ]
+    }
+  ]
+}
