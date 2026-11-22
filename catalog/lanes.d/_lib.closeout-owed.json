@@ -1,0 +1,43 @@
+{
+  "libs": [
+    {
+      "id": "closeout-owed",
+      "file": "bin/lib/closeout-owed.sh",
+      "note": "BH-9879: an owed PR close-out wakes the triage gate before the queue step. bin/triage-gate.sh step 1f asks co_owed_dirs for young builds/<p>-*/ and builds/pool-<p>-*/ dirs whose RESULT line 1 is `PR_CREATED http…` or `PR_MERGED http…` with no COMMENTED, no CLOSED-OUT: marker and no prod-red hold; when one exists the gate answers `RUN results-sweep` under step 3's state/<p>.sweepfp brake, else step 2 runs as before. Applied by the lib itself through lib_env_apply closeout-owed <project>.",
+      "knobs": [
+        {
+          "env": "CLOSEOUT_OWED_WAKE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = bin/triage-gate.sh step 1f wakes a results sweep before the queue step when an unmarked PR close-out is owed. 0 = no step 1f, the gate answers exactly as before BH-9879. Code default 1, read as ${CLOSEOUT_OWED_WAKE:-1}; any value but 0 or 1 falls back to 1."
+        },
+        {
+          "env": "CLOSEOUT_OWED_MAX_AGE_S",
+          "type": "int",
+          "default": 21600,
+          "min": 600,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "A RESULT older than this does not wake step 1f, so a stuck dir stops pre-empting the queue; step 3 and the daily sweep still own it. Code default 21600 (6 h, 8 brake windows), read as ${CLOSEOUT_OWED_MAX_AGE_S:-21600}; a non-integer falls back to 21600, the value is clamped to min/max."
+        },
+        {
+          "env": "CLOSEOUT_OWED_BRAKE_S",
+          "type": "int",
+          "default": 2700,
+          "min": 600,
+          "max": 14400,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Step 1f buys the same un-COMMENTED RESULT set at most once per this many seconds (the stamp in state/<p>.sweepfp, shared with step 3). Code default 2700 (45 min, step 3's brake), read as ${CLOSEOUT_OWED_BRAKE_S:-2700}; a non-integer falls back to 2700, the value is clamped to min/max."
+        }
+      ]
+    }
+  ]
+}

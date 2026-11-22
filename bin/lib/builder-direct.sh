@@ -89,6 +89,36 @@ bd_note() { printf ' | %s the builder posted the board close-out on %s' "$(bd_ma
 #   ticket and there is no taking it back.
 bd_closed_out() { case "${1:-}" in *"$(bd_marker)"*) return 0 ;; *) return 1 ;; esac; }
 
+# bd_refusal_marker -> the literal a RESULT line carries when the builder's
+#   close-out ran and did NOT post (BH-9879). It must never contain bd_marker's
+#   text: a refusal read as "closed out" would lose the client's comment.
+bd_refusal_marker() { printf 'CLOSEOUT-NOT-POSTED:'; }
+
+# bd_refusal_note <rc> <stderr-file> -> ` | CLOSEOUT-NOT-POSTED: rc=<rc> <why>`
+#   <why> is the last non-empty line of bin/board-closeout.sh's stderr, with
+#   its say() prefix (`YYYY-MM-DD HH:MM:SSZ [closeout/<p>/<k>] `) stripped,
+#   control characters and `|` removed, CLOSED-OUT spelled CLOSED_OUT, cut to
+#   BUILDER_DIRECT_REASON_MAX characters. BH-9879: a pool machine's
+#   pipeline.log is destroyed at reap, so the reason rides the RESULT line into
+#   the job meta and the `result` artifact. Pure: it writes nothing.
+bd_refusal_note() {
+  local rc="${1:-}" f="${2:-}" why="" max
+  # Fallback 160: settings row lib.builder-direct.BUILDER_DIRECT_REASON_MAX
+  # (catalog/lanes.d/_lib.builder-direct.json).
+  max="${BUILDER_DIRECT_REASON_MAX:-160}"
+  case "$max" in ''|*[!0-9]*) max=160 ;; esac
+  # Clamped to the row's min/max: lib_env_apply clamps only settings rows.
+  max=$((10#$max)); [ "$max" -lt 40 ] && max=40; [ "$max" -gt 400 ] && max=400
+  case "$rc" in ''|*[!0-9]*) rc="?" ;; esac
+  [ -n "$f" ] && [ -r "$f" ] && why=$(tr -d '\r' < "$f" | grep -v '^[[:space:]]*$' | tail -1)
+  why=$(printf '%s' "$why" \
+    | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8}Z \[closeout\/[^]]*\] //' \
+    | tr -d '|' | tr -d '[:cntrl:]' | sed 's/CLOSED-OUT/CLOSED_OUT/g')
+  why="${why:0:$max}"
+  [ -n "$why" ] || why="no reason on stderr"
+  printf ' | %s rc=%s %s' "$(bd_refusal_marker)" "$rc" "$why"
+}
+
 # bd_facts <build-dir> [sha] [settled-tier] -> the terminal result as ONE compact
 #   json object: { result, pr_url, sha, tier, verdict, cost_usd }
 #

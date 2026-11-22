@@ -13,7 +13,7 @@
 # close-out. `rb_settle` ends exactly on its anchor plus the blank line, and the
 # two bodies meet on that boundary with no line in both and no line in neither.
 # Entry functions, pipeline order: rb_settle rb_close_out
-# Reads: ALERTS BASE BASE_MAIN BD_NOTE BD_PR BD_PRNUM BD_RLINE BD_TIER BD_VERDICT BD_WHERE
+# Reads: ALERTS BASE BASE_MAIN BD_ERR BD_NOTE BD_PR BD_PRNUM BD_RC BD_RLINE BD_TIER BD_VERDICT BD_WHERE BD_WHY
 #   BGOUT BGRC BG_HEAD BG_ISSUE BG_NUM BRANCH BUILD BUILDER_DIRECT_META BUILDER_DIRECT_ON
 #   BUILDER_EXEC BUILDER_NO_MERGE CLOSES_LINE CONDUCTOR_OWNS_MERGES DIFF_NOTE E2E_VERDICT EVIDENCE
 #   EVIDENCE_BLOCK EVIDENCE_GATE_ENFORCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C EV_COUNTS
@@ -29,7 +29,7 @@
 #   SIZE_NOTE SLUG STACK_NOTE STACK_ON T1_FACTS T1_HEAD T1_LEAD_CLEARED T1_WHO TICKET
 #   TIER TIER1_INQ TIER1_STATE TO_LEAD_CLEARED TO_PR_HEAD TO_PR_LOGIN T_BD T_SETTLE
 #   VERDICT_PROV VERDICT_WORD VSZ WT _PRM
-# Writes: BD_NOTE BD_PR BD_PRNUM BD_RLINE BD_TIER BD_VERDICT BGOUT BG_HEAD BG_ISSUE BG_NUM
+# Writes: BD_ERR BD_NOTE BD_PR BD_PRNUM BD_RC BD_RLINE BD_TIER BD_VERDICT BD_WHERE BD_WHY BGOUT BG_HEAD BG_ISSUE BG_NUM
 #   BUILDER_DIRECT_META CONDUCTOR_OWNS_MERGES EVIDENCE EVIDENCE_SECTION EV_BAD EV_BASE EV_C
 #   EV_COUNTS EV_I EV_R EV_T EV_WHY HB_NOT HB_OUTCOME HB_PROMPT HB_RETRIED HEADBOUND_N
 #   HEADBOUND_NOW HEADBOUND_SCOPE HEADBOUND_SHA HM_BM HM_HOTFIX HM_RC HM_VERDICT IFS KIND_D KIND_D_MISS
@@ -1230,7 +1230,20 @@ if [ -n "${BUILDER_EXEC:-}" ] && [ "${BUILDER_DIRECT_ON:-0}" = 1 ] && [ -s "$BUI
   # ONLY a posted comment marks the RESULT: the marker is what suppresses the
   # sweep's own close-out, so claiming it on a failed POST would lose the
   # client's comment entirely.
-  if BD_WHERE=$("$HARNESS/bin/board-closeout.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" 2>>"$BUILD/pipeline.log"); then
+  # BH-9879: THE REFUSAL KEEPS ITS REASON. A pool machine's pipeline.log is
+  # destroyed at reap, so the close-out's stderr is also captured here, and a
+  # PR line it did not post gets ` | CLOSEOUT-NOT-POSTED: rc=<n> <why>`
+  # (bin/lib/builder-direct.sh:bd_refusal_note). That line is what the job meta,
+  # the EXIT trap's `result` artifact and the owning box's staged RESULT carry.
+  # The note never contains CLOSED-OUT:, so the sweep still owns the comment.
+  if [ "${LANE_GATE_DISABLE:-0}" != 1 ]; then
+    command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" 2>/dev/null || true
+    command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply builder-direct || true
+  fi
+  BD_ERR=$(mktemp "${TMPDIR:-/tmp}/bd-closeout-err.XXXXXX" 2>/dev/null) || BD_ERR=/dev/null
+  BD_WHERE=$("$HARNESS/bin/board-closeout.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" 2>"$BD_ERR"); BD_RC=$?
+  [ "$BD_ERR" != /dev/null ] && cat "$BD_ERR" >> "$BUILD/pipeline.log" 2>/dev/null
+  if [ "$BD_RC" = 0 ]; then
     BD_NOTE=$(bd_note "${BD_WHERE#POSTED }")
     printf '%s%s\n' "$BD_RLINE" "$BD_NOTE" > "$BUILD/RESULT.bd" \
       && tail -n +2 "$BUILD/RESULT" >> "$BUILD/RESULT.bd" \
@@ -1243,7 +1256,26 @@ if [ -n "${BUILDER_EXEC:-}" ] && [ "${BUILDER_DIRECT_ON:-0}" = 1 ] && [ -s "$BUI
     echo "$(STAMP) [$PROJECT/$KEY] builder-direct: board close-out posted ($BD_WHERE)" >> "$BUILD/pipeline.log"
   else
     echo "$(STAMP) [$PROJECT/$KEY] builder-direct: no board close-out from this machine — the RESULT is unmarked, so the owning box's sweep posts it exactly as today" >> "$BUILD/pipeline.log"
+    # Only the two shapes the close-out words get the note. PLAN_BLOCKED and
+    # the rest are refused by design and read by exact-prefix handlers.
+    case "$BD_RLINE" in
+      PR_CREATED\ http*|PR_MERGED\ http*)
+        if command -v bd_refusal_note >/dev/null 2>&1; then
+          BD_WHY=$(bd_refusal_note "$BD_RC" "$BD_ERR")
+          if printf '%s%s\n' "$BD_RLINE" "$BD_WHY" > "$BUILD/RESULT.bd" \
+             && tail -n +2 "$BUILD/RESULT" >> "$BUILD/RESULT.bd" \
+             && mv "$BUILD/RESULT.bd" "$BUILD/RESULT"; then
+            BUILDER_DIRECT_META=$(bd_facts "$BUILD" "$(git rev-parse HEAD 2>/dev/null)" "${TIER:-}" 2>/dev/null) || true
+            [ -n "${JOB_ID:-}" ] && [ -n "$BUILDER_DIRECT_META" ] && command -v job_result_put >/dev/null 2>&1 \
+              && job_result_put "$JOB_ID" "$BUILDER_DIRECT_META" >/dev/null 2>&1
+            echo "$(STAMP) [$PROJECT/$KEY] builder-direct: close-out refusal recorded on the RESULT line (rc=$BD_RC)" >> "$BUILD/pipeline.log"
+          else
+            rm -f "$BUILD/RESULT.bd"
+          fi
+        fi ;;
+    esac
   fi
+  [ "$BD_ERR" = /dev/null ] || rm -f "$BD_ERR"
 
   # 4) THE DOORBELL. Identifiers only (docs/EVENTS.md section 3) and entirely
   # best-effort: until the worker grows POST /api/wakes this is a fail-open

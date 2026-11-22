@@ -980,6 +980,39 @@ if [ -s "$TS_DK" ] && [ $(( $(date +%s) - $(stat -c %Y "$TS_DK" 2>/dev/null || s
     echo "RUN ts-deferred"; exit 0
   fi
 fi
+# 1f. an owed PR close-out comes before the queue (BH-9879). project-3 TK-747: a
+# staged `PR_CREATED http…` dir with no COMMENTED and no CLOSED-OUT: marker
+# waited 75 minutes, because step 2 always exits on a project with a ready
+# queue and a queue-pending scope carries no result dirs. co_owed_dirs
+# (bin/lib/closeout-owed.sh) names the young unmarked PR dirs; when it names one,
+# this step buys the results sweep under step 3's OWN brake: the same RFP, the
+# same state/<p>.sweepfp, the same answer string, so bin/lib/rt/gate.sh,
+# bin/lib/rt/scope.sh and step 3 read it with no change. A set already bought
+# inside the brake falls through to step 2 exactly as before. No lib, or
+# CLOSEOUT_OWED_WAKE=0, = no step.
+for _P in "$(dirname "$0")/lib/closeout-owed.sh" "$HARNESS/bin/lib/closeout-owed.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
+# sweepfp_mark — record the results-sweep fingerprint ($RFP, now) in $RFPF.
+# Steps 1f and 3 buy the same sweep under the same brake, so they share this one
+# writer of state/<p>.sweepfp (tests/no-state-files.bh-4159-test.sh: no new raw
+# state/ writer).
+sweepfp_mark() { printf '%s\n%s\n' "$RFP" "$(date +%s)" > "$RFPF"; }
+if command -v co_owed_dirs >/dev/null 2>&1; then
+  co_knobs "$PROJECT"
+  if [ "${_CO_WAKE:-0}" = 1 ] && [ -n "$(co_owed_dirs "$HARNESS" "$PROJECT")" ]; then
+    RFP=$(ls -d "$HARNESS/builds/$PROJECT"-*/RESULT "$HARNESS/builds/pool-$PROJECT"-*/RESULT 2>/dev/null | while read -r r; do [ -f "${r%RESULT}COMMENTED" ] || echo "$r"; done | sha256sum | cut -c1-16)
+    RFPF="$HARNESS/state/$PROJECT.sweepfp"
+    LASTR=0; OLDR=""
+    [ -f "$RFPF" ] && { OLDR=$(head -1 "$RFPF"); LASTR=$(sed -n 2p "$RFPF"); }
+    case "$LASTR" in ''|*[!0-9]*) LASTR=0 ;; esac
+    if ! { [ "$RFP" = "$OLDR" ] && [ $(( $(date +%s) - LASTR )) -lt "$_CO_BRAKE" ]; }; then
+      sweepfp_mark
+      echo "RUN results-sweep"; exit 0
+    fi
+  fi
+fi
 # 2. queued build work
 # queue-pending COST BRAKE (2026-08-15, the operator): an unchanged queue re-triaged
 # every 10 minutes concludes the same nothing at full session price (project-2 burned
@@ -1121,7 +1154,7 @@ for d in "$HARNESS/builds/$PROJECT"-*/ "$HARNESS/builds/pool-$PROJECT"-*/; do
     if [ "$RFP" = "$OLDR" ] && [ $(( $(date +%s) - ${LASTR:-0} )) -lt 2700 ]; then
       SWEEP_HELD=1; break
     fi
-    printf '%s\n%s\n' "$RFP" "$(date +%s)" > "$RFPF"
+    sweepfp_mark
     echo "RUN results-sweep"; exit 0
   fi
 done

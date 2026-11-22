@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "builder-direct",
+      "file": "bin/lib/builder-direct.sh",
+      "note": "BH-9879: the builder's own board close-out. When bin/board-closeout.sh does not post a PR_CREATED/PR_MERGED close-out, bin/lib/rb/result.sh appends bd_refusal_note (` | CLOSEOUT-NOT-POSTED: rc=<n> <why>`) to RESULT line 1, so the reason reaches the job meta and the `result` artifact after the pool machine is reaped. Applied in the close-out block through lib_env_apply builder-direct.",
+      "knobs": [
+        {
+          "env": "BUILDER_DIRECT_REASON_MAX",
+          "type": "int",
+          "default": 160,
+          "min": 40,
+          "max": 400,
+          "unit": "chars",
+          "zero_means": null,
+          "required": false,
+          "note": "The longest <why> bd_refusal_note puts on the RESULT line, so the line stays well inside the 1024-char artifact_ref column. Code default 160, read as ${BUILDER_DIRECT_REASON_MAX:-160}; a non-integer falls back to 160."
+        }
+      ]
+    }
+  ]
+}
