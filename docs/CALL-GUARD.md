@@ -173,6 +173,76 @@ What a refusal means to each:
 - `bin/lead-review.sh` (`lead-review`, K=2 = the request plus its one retry,
   whose prompt is identical): rc 74..79 leaves the request for the next tick.
 
+### BH-9818: the first repeat refusal parks the key
+
+The cause (project-6-os, 2026-11-18, read from the jobs worker's D1 rows).
+The 2 paid shard calls per fingerprint did give a result, and the result was
+`skip` (`triage_state` 3814: "PLAN_BLOCKED ... a relaunch would fail at the
+same point"; 3797: "PR #3811 is open and covers the scope"). The harness did
+not act on it. The queue unit of these keys was a `build_queue` row in status
+`queued` (phases `plan_blocked`, `ejected`, `in_queue`), listed as QDIRS by
+`bin/lib/rt/scope.sh`. The pool does not spawn those phases, and the
+session's only release tool, `bin/queue-line-drop.sh`, removes READY lines
+and `ready` rows only. So the unit came back on every tick. The BH-3949 park
+did fire (`triage_state` 3788: `hold`, `call-guard-exhausted`), but
+`ts_unit_skip` stops board-only keys only. The BH-9286 counter never reached
+3 in a row, because the QDIRS text carries `attempt N, queued <stamp>` and
+changes on every watchdog re-queue. The 24 h guard window then let 2 paid
+calls through again each day (`3814:15b7a3da8883acd3 paid=10 refused=13`).
+
+Three fixes, none of which changes the guard limit:
+
+- Park (`bin/lib/triage-repeat-park.sh`). In `bin/triage-shard.sh`, after the
+  BH-9286 note, `trp_on_repeat` handles a `call-guard repeat` refusal (rc 74):
+  1. It writes `state/triage-repeat/<p>/<KEY>.park` first. The line is
+     `<board id>\t<cg fp>\t<epoch>\t<rebase>\ttriage-repeat-refused: <mark>`.
+     The board id is the sha256 (16 hex) of the ticket's own entry in
+     `state/<p>.gate.pending` (`_tsh_fp_pending`).
+  2. It drops the READY line(s) and `ready` row(s) through
+     `bin/queue-line-drop.sh`.
+  3. It records one `lifecycle_note` (`triage-repeat-refused: ...`).
+  4. It posts 1 plain board comment per (KEY, board id) through
+     `bin/lib/tracker.sh`. `.commented` is written only after rc 0. On a
+     failure it writes one warn `bin/alert-line.sh` line
+     (`--id triage-repeat-comment-<p>-<KEY>`).
+  The dispatcher (`bin/lib/rt/shards.sh`, block `repeat park`) calls
+  `trp_parked` before `ts_unit_skip`. A parked key gets no shard, for board,
+  queue and result units alike, and the summary line says
+  `— repeat-parked: <keys>`. A new comment or an edited body moves the board
+  id: the park and `.commented` are deleted (`unparked: board entry changed`)
+  and the next tick starts the shard 1 time. On an in-app board our own
+  comment moves the entry, so the first move after it is absorbed once
+  (`rebase=1`). GitHub boards already hide our App's comment. No gate file,
+  or a corrupt park file, dispatches. Knobs
+  (`catalog/lanes.d/_lib.triage-repeat-park.json`): `TRIAGE_REPEAT_PARK`
+  (1, 0 = off) and `TRIAGE_REPEAT_PARK_KEEP_S` (30 days: older park files
+  are pruned once per tick).
+- Dead-ticket sweep (`bin/lib/queue-dead-sweep.sh`, block
+  `dead-ticket queue sweep`, after the BH-9286 closed-issue drop). `qds_sweep`
+  makes one list read `GET /api/queue?project=<p>&status=queued&limit=200` per
+  tick. For a label that is not in that list it makes one PK read, up to
+  `QUEUE_DEAD_SWEEP_MAX_READS` (10) per tick. It removes the queue units of a
+  label whose phase is `plan_blocked`, `abandoned` or `closed`, or whose
+  newest `builds/<p>-<label>-*` dir carries `SUPERSEDED`. The READY line and
+  `ready` row go through `bin/queue-line-drop.sh`. A `closed` row is also
+  set `failed`. Each removal writes 1 log line
+  (`queue-dead-sweep: removed <label> (<why>)`), and the summary says
+  `— dead: <labels>`. Board and result units stay. A failed read keeps every
+  line. Knobs (`catalog/lanes.d/_lib.queue-dead-sweep.json`):
+  `QUEUE_DEAD_SWEEP` (1, 0 = off) and `QUEUE_DEAD_SWEEP_MAX_READS`.
+- Stuck-queue escalation (`bin/lib/stuckqueue-escalate.sh`, in the
+  `stuck queue` block of `bin/pipeline-health.sh`). A firing is a call 7200 s
+  or more after the last one. When one queue file fires
+  `STUCKQUEUE_ESCALATE_AFTER` (5, 0 = off) times with no change of its
+  mtime or size, one critical `bin/lane-alert.sh` message goes to the
+  operator (`--id ph-stuckqueue-escalate-<p>-<KEY>`). The message carries the
+  park reason of the key. Later firings send nothing until the file changes,
+  and the key stays in FIRED, so the alert row is not retracted.
+
+Verified by `tests/triage-repeat-refused.bh-9818-test.sh`,
+`tests/queue-sweep-dead-tickets.bh-9818-test.sh` and
+`tests/stuckqueue-escalate.bh-9818-test.sh`.
+
 ### Head-bound review stages (BH-3930)
 
 Two more guard stages are on by default, both at K=1: `review-head` and

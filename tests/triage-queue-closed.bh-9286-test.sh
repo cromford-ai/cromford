@@ -224,8 +224,10 @@ fresh() {
   scratch_rm "$FX"; mkdir -p "$FX"; scratch_rm "$S/state/queue-refused"
   printf 'BH-421 waiting on PR #900\nBH-4210 waiting on PR #901\n' > "$SQ"
 }
+# TRIAGE_REPEAT_PARK=0: the BH-9818 park releases the line on the FIRST
+# repeat; off here, the R cases prove the BH-9286 in-a-row counter on its own.
 shard() { # shard <mode> [queue text]
-  ( export HARNESS="$S" FX SHARD_AC="$1" TSH_MODEL=m TSH_RUNNER=claude TSH_GH=1 TSH_QUEUE="${2-BH-421 waiting on PR #900}"
+  ( export HARNESS="$S" FX SHARD_AC="$1" TSH_MODEL=m TSH_RUNNER=claude TSH_GH=1 TSH_QUEUE="${2-BH-421 waiting on PR #900}" TRIAGE_REPEAT_PARK=0
     bash "$S/bin/triage-shard.sh" "$RP" 421 "$S/prompt.txt" >/dev/null 2>&1 )
 }
 nalerts() { local n; n=$(grep -c 'queue-refused' "$FX/alerts" 2>/dev/null); echo "${n:-0}"; }

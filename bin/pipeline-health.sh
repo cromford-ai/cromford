@@ -96,6 +96,11 @@ if [ -f "$H/bin/jobs-client.sh" ]; then # shellcheck source=/dev/null
 # is gone (BH-7582). Absent, that check pages exactly as it did before.
 if [ -r "$H/bin/lib/remote-results-ledger.sh" ]; then # shellcheck source=bin/lib/remote-results-ledger.sh
   . "$H/bin/lib/remote-results-ledger.sh"; fi
+# Check 1's escalation (BH-9818): the 5th unchanged firing of a stuck queue
+# goes to the operator channel once, then the repeat stops. Absent, check 1
+# pages exactly as it did before.
+if [ -r "$H/bin/lib/stuckqueue-escalate.sh" ]; then # shellcheck source=bin/lib/stuckqueue-escalate.sh
+  . "$H/bin/lib/stuckqueue-escalate.sh"; fi
 # ...and, before it pages, the owning box's rr-consumed row (BH-8364). Absent,
 # the check pages exactly as it did before.
 if [ -r "$H/bin/lib/rr-relay.sh" ]; then # shellcheck source=bin/lib/rr-relay.sh
@@ -437,9 +442,19 @@ for P in $PROJECTS; do
     # true of it. bin/fly-dispatch.sh and bin/fleet-status-push.sh skip it too.
     case "$Q" in *.failed.json) continue ;; esac
     AGE=$(( NOW - $(stat -c %Y "$Q") ))
-    [ "$AGE" -gt 2700 ] && alert 7200 "stuckqueue:$P:$(basename "$Q")" \
+    [ "$AGE" -gt 2700 ] || continue
+    # BH-9818: after STUCKQUEUE_ESCALATE_AFTER unchanged firings the operator
+    # got one message (bin/lib/stuckqueue-escalate.sh); `quiet` keeps the key
+    # firing (the epilogue does not retract it) but sends nothing.
+    SQ_W=emit
+    command -v sqe_note >/dev/null 2>&1 && SQ_W=$(sqe_note "$H" "$P" "$Q" 7200)
+    if [ "$SQ_W" = quiet ]; then
+      echo "stuckqueue:$P:$(basename "$Q")" >> "${FIRED:-/dev/null}"; continue
+    fi
+    alert 7200 "stuckqueue:$P:$(basename "$Q")" \
       "$P $(basename "$Q" .json) queued $((AGE/60))m with no spawn — fly-dispatch/pool not picking it up"
   done
+  command -v sqe_prune >/dev/null 2>&1 && sqe_prune "$H" "$P"
 done
 # <<< stuck queue
 fi # ph_proj

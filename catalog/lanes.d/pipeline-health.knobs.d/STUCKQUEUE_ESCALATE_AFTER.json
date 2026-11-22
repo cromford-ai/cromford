@@ -1,0 +1,9 @@
+{
+  "env": "STUCKQUEUE_ESCALATE_AFTER",
+  "type": "int",
+  "default": 5,
+  "min": 0,
+  "max": 100,
+  "zero_means": "off",
+  "note": "BH-9818: firings of one stuck-queue alert (check 1, 'queued Nm with no spawn') on an unchanged queue file before ONE critical operator message (bin/lane-alert.sh, id ph-stuckqueue-escalate-<p>-<KEY>) with the triage-repeat park reason; later firings send nothing until the queue file changes (bin/lib/stuckqueue-escalate.sh). A firing is a call 7200 s or more after the last one. 0 = off: every firing alerts as before. Code default 5, read as ${STUCKQUEUE_ESCALATE_AFTER:-5}."
+}

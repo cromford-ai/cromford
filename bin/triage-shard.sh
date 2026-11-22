@@ -74,6 +74,9 @@ command -v run_beat >/dev/null 2>&1 || run_beat() { "$HARNESS/bin/beat.sh" "$1" 
 # BH-9286: drop a queue line the call-guard keeps refusing (bin/lib/queue-closed.sh).
 # shellcheck source=bin/lib/queue-closed.sh
 . "$HARNESS/bin/lib/queue-closed.sh" 2>/dev/null || :
+# BH-9818: the first repeat refusal parks the key for the dispatcher (bin/lib/triage-repeat-park.sh).
+# shellcheck source=bin/lib/triage-repeat-park.sh
+. "$HARNESS/bin/lib/triage-repeat-park.sh" 2>/dev/null || :
 TSH_GH="${TSH_GH:-0}"
 
 # ── WHICH RUNNER, AND SAYING SO (2026-09-14, the shard storm) ─────────────────
@@ -353,6 +356,10 @@ fi
 # write one alert; any other outcome resets the count. No TSH_QUEUE = no-op.
 command -v qc_refusal_note >/dev/null 2>&1 \
   && qc_refusal_note "$HARNESS" "$PROJECT" "$KEY" "$([ -n "${CG_PARK:-}" ] && echo repeat || echo other)" "${TSH_QUEUE:-}"
+# BH-9818: a repeat refusal parks the key for the dispatcher (every unit
+# class), drops its READY line and posts 1 board comment per board state.
+[ -n "${CG_PARK:-}" ] && command -v trp_on_repeat >/dev/null 2>&1 \
+  && trp_on_repeat "$HARNESS" "$PROJECT" "$KEY" "$CG_FP" "$CG_MARK" "${TSH_QUEUE:-}" "$TSH_GH"
 
 # A FAILED SHARD PUTS ITS TICKET BACK. The dispatcher consumed the board
 # fingerprint when it handed this key out, which is only honest while somebody is

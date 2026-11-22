@@ -1,0 +1,31 @@
+{
+  "libs": [
+    {
+      "id": "queue-dead-sweep",
+      "file": "bin/lib/queue-dead-sweep.sh",
+      "note": "BH-9818: qds_sweep (bin/lib/rt/shards.sh, block `dead-ticket queue sweep`, after the BH-9286 closed-issue drop) takes the queue units of a ticket whose lifecycle phase is plan_blocked, abandoned or closed, or whose newest build dir is SUPERSEDED, out of triage shard scope. One list read GET /api/queue?status=queued&limit=200 per tick plus capped PK reads; the READY line and ready row go through bin/queue-line-drop.sh; one log line per removal. Applied by the lib itself through lib_env_apply queue-dead-sweep <project>. Doc: docs/CALL-GUARD.md.",
+      "knobs": [
+        {
+          "env": "QUEUE_DEAD_SWEEP",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the dispatcher removes the queue units of dead tickets (phase plan_blocked, abandoned, closed, or SUPERSEDED) before any shard is offered. 0 = no read, every queue unit kept. Code default 1, read as ${QUEUE_DEAD_SWEEP:-1}; any value but 0 or 1 falls back to 1."
+        },
+        {
+          "env": "QUEUE_DEAD_SWEEP_MAX_READS",
+          "type": "int",
+          "default": 10,
+          "min": 0,
+          "max": 100,
+          "zero_means": "no per-key read: only the queued-row list read decides",
+          "required": false,
+          "note": "Per-tick cap on the per-key reads (GET /api/queue?key=<label>&limit=1) for queue labels that are not in the queued-row list (READY-line keys). A label past the cap is kept this tick and counted in one log line. Code default 10, read as ${QUEUE_DEAD_SWEEP_MAX_READS:-10}; the code clamps to 100."
+        }
+      ]
+    }
+  ]
+}

@@ -130,6 +130,19 @@ if [ "$SHARD_ON" = 1 ] && [ "${SHARD_GH:-0}" = 1 ] && [ -r "$HARNESS/bin/lib/que
     "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)" "$SHARD_UNITS" "${QLINES:-}")
 fi
 # <<< closed-issue queue drop
+# >>> dead-ticket queue sweep (BH-9818)
+# A queue unit for a ticket whose lifecycle phase is plan_blocked, abandoned
+# or closed, or whose newest build dir is SUPERSEDED, is never work: the pool
+# does not spawn it, so it was re-offered on every tick. One list read plus a
+# capped number of PK reads per tick; its READY line and ready row go
+# (bin/queue-line-drop.sh) and its queue rows leave the units. Board and
+# result rows stay. A failed read keeps every line. bin/lib/queue-dead-sweep.sh.
+SHARD_DEAD=""
+if [ "$SHARD_ON" = 1 ] && [ -r "$HARNESS/bin/lib/queue-dead-sweep.sh" ] \
+   && . "$HARNESS/bin/lib/queue-dead-sweep.sh" 2>/dev/null && command -v qds_sweep >/dev/null 2>&1; then
+  SHARD_DEAD=$(qds_sweep "$HARNESS" "$PROJECT" "$SHARD_UNITS" "${SHARD_GH:-0}")
+fi
+# <<< dead-ticket queue sweep
 if [ "$SHARD_ON" = 1 ]; then
   # CLIENT-COURT GUARD (BH-411): before launching any shard, drop keys whose
   # tickets are waiting on the client, not ready, or whose newest comment is
@@ -213,6 +226,7 @@ if [ "$SHARD_ON" = 1 ]; then
     SHARD_HUSD=$(triage_hour_usd "$HARNESS" "$PROJECT")
   fi
   SHARD_LAUNCHED=""; SHARD_HELD=""; SHARD_LEFT=""; SHARD_SAME=""; SHARD_NOSIG=""; SHARD_TSS=""; SHARD_N=0; SHARD_HELD_N=0
+  SHARD_RPARK=""
   # BH-9113: the running builds, read ONCE per tick (bin/lib/shard-building.sh).
   # A key with a running build gets no shard below: its claim would refuse it.
   # No lib = today; an unreadable census skips nothing.
@@ -222,6 +236,11 @@ if [ "$SHARD_ON" = 1 ]; then
     shard_building_census "$HARNESS" "$PROJECT" "$SHARD_BCENSUS"
     grep -qx '#unreadable' "$SHARD_BCENSUS" 2>/dev/null \
       && echo "$STAMP [$PROJECT] triage shards: running-build census unreadable — no key skipped for a running build this tick (the claim stays the backstop)" >> "$LOG"
+  fi
+  # BH-9818 — the repeat park (bin/lib/triage-repeat-park.sh): local files
+  # only, pruned once per tick. No lib = today.
+  if [ -r "$HARNESS/bin/lib/triage-repeat-park.sh" ] && . "$HARNESS/bin/lib/triage-repeat-park.sh"; then
+    trp_prune "$HARNESS" "$PROJECT"
   fi
   # BH-2542: the no-signal settle (bin/lib/triage-signal.sh). No lib = today.
   [ -r "$HARNESS/bin/lib/triage-signal.sh" ] && . "$HARNESS/bin/lib/triage-signal.sh"
@@ -247,6 +266,15 @@ if [ "$SHARD_ON" = 1 ]; then
     if triage_shard_held "$HARNESS/locks/triage-key-$PROJECT-$K.lock"; then
       SHARD_HELD="$SHARD_HELD $K"; SHARD_HELD_N=$((SHARD_HELD_N+1)); continue
     fi
+    # >>> repeat park (BH-9818)
+    # The call guard refused this key's last shard as a repeat, and its board
+    # entry has not moved since: no shard, for board, queue and result units
+    # alike (ts_unit_skip below stops board-only keys only). Consumed like an
+    # unchanged key, never re-armed. A new comment or an edited body unparks.
+    if command -v trp_parked >/dev/null 2>&1 && trp_parked "$HARNESS" "$PROJECT" "$K" "$SHARD_GH"; then
+      SHARD_RPARK="$SHARD_RPARK $K"; continue
+    fi
+    # <<< repeat park
     # TRIAGE-STATE (enforce only): a key whose inputs have not moved since its
     # verdict, and whose only units are board units, is not bought. Consumed
     # like an unchanged key below, never re-armed: there is nothing to put back.
@@ -434,7 +462,7 @@ $SHARD_SOP"
   # consumes for the same reason: its thread was read and nothing human moved.
   # Order is load-bearing: consume FIRST, re-arm HELD/LEFT after. triage_shard_rearm
   # edits gate.json in place, so a re-arm before the mv below would be overwritten.
-  if [ "$SHARD_N" -gt 0 ] || [ -n "$SHARD_SAME" ] || [ -n "$SHARD_NOSIG" ] || [ -n "$SHARD_TSS" ]; then
+  if [ "$SHARD_N" -gt 0 ] || [ -n "$SHARD_SAME" ] || [ -n "$SHARD_NOSIG" ] || [ -n "$SHARD_TSS" ] || [ -n "$SHARD_RPARK" ]; then
     rt_gate_consume
   fi
   # P2 (#2294 review I3): a tick that dispatched a shard is a PAID tick, and the
@@ -466,7 +494,7 @@ $SHARD_SOP"
     elif [ "$SHARD_MAX" -gt 0 ]; then SHARD_LEFT_TXT=" — left in scope (cap $SHARD_MAX):$SHARD_LEFT"
     else SHARD_LEFT_TXT=" — left in scope:$SHARD_LEFT"; fi
   fi
-  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_BUILD:+ — building:$SHARD_BUILD}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}${SHARD_CLOSED:+ — closed:$SHARD_CLOSED}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
+  echo "$STAMP [$PROJECT] dispatched $SHARD_N shards:${SHARD_LAUNCHED:- (none)} — skipped $SHARD_HELD_N held${SHARD_HELD:+:$SHARD_HELD}${SHARD_SAME:+ — unchanged:$SHARD_SAME}${SHARD_NOSIG:+ — no-signal:$SHARD_NOSIG}${SHARD_BUILD:+ — building:$SHARD_BUILD}${SHARD_TSS:+ — triage-state unchanged:$SHARD_TSS}${SHARD_CLOSED:+ — closed:$SHARD_CLOSED}${SHARD_DEAD:+ — dead:$SHARD_DEAD}${SHARD_RPARK:+ — repeat-parked:$SHARD_RPARK}$SHARD_LEFT_TXT [gate=$GATE_REASON scope=$SCOPE_N runner=$SHARD_RUNNER model=$TRIAGE_MODEL hour=$SHARD_HN/${SHARD_PH:-0} \$$SHARD_HUSD/\$${SHARD_UCAP:-0}]" >> "$LOG"
   # ONE ALERT PER PROJECT PER CLOCK HOUR, and it is an ALERT rather than a log
   # line on purpose (the 08-13 lesson: "stopping is an alert, not a whisper").
   # A lane that has stopped triaging its board because it hit a money ceiling is

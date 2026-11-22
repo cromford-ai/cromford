@@ -1,0 +1,32 @@
+{
+  "libs": [
+    {
+      "id": "triage-repeat-park",
+      "file": "bin/lib/triage-repeat-park.sh",
+      "note": "BH-9818: the first `call-guard repeat` refusal of a triage shard parks its key. trp_on_repeat (bin/triage-shard.sh, after the BH-9286 note) writes state/triage-repeat/<p>/<KEY>.park, drops the READY line and ready row through bin/queue-line-drop.sh, records one lifecycle_note and posts 1 board comment per board state through bin/lib/tracker.sh. trp_parked (bin/lib/rt/shards.sh, block `repeat park`) starts no shard for a parked key until its board entry changes. Applied by the lib itself through lib_env_apply triage-repeat-park <project>. Doc: docs/CALL-GUARD.md.",
+      "knobs": [
+        {
+          "env": "TRIAGE_REPEAT_PARK",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = a `call-guard repeat` refusal parks the key (no shard until its board entry changes), drops its READY line and posts 1 board comment. 0 = off: no park file is written and the dispatcher ignores existing ones. Code default 1, read as ${TRIAGE_REPEAT_PARK:-1}; any value but 0 or 1 falls back to 1."
+        },
+        {
+          "env": "TRIAGE_REPEAT_PARK_KEEP_S",
+          "type": "int",
+          "default": 2592000,
+          "min": 86400,
+          "max": 7776000,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Retention of the park files (state/triage-repeat/<p>/<KEY>.park and .commented): a file older than this is deleted by trp_prune once per dispatcher tick, and the key is offered again. Code default 2592000 (30 days), read as ${TRIAGE_REPEAT_PARK_KEEP_S:-2592000}; a non-integer falls back to it, and the code clamps to min/max."
+        }
+      ]
+    }
+  ]
+}
