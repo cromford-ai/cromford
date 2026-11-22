@@ -1,0 +1,11 @@
+{
+  "env": "OVERLAP_REFRESH_PR_LIMIT",
+  "read_in": "bin/overlap-guard.sh",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 999,
+  "unit": "open PRs",
+  "required": false,
+  "note": "BH-9440. Total open PRs, every author together, that `bin/overlap-guard.sh --refresh <project>` reads into state/overlap-guard/<p>-prs.json. The refresh asks for one row more; if it comes back, the snapshot is cut, state/overlap-guard/<p>-prs.incomplete is written, one warn alert per project per UTC day goes out, and the guard DEFERs every launch on the project until a complete refresh deletes the marker. Capped at 999 (the REST seam stops at 10 pages). OVERLAP_PR_LIMIT stays the guard's own per-author read. Read as sched_num OVERLAP_REFRESH_PR_LIMIT 500 after lib_env_apply sibling-serial."
+}

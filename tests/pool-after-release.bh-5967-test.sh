@@ -22,7 +22,10 @@
 #   C1  a 2-cycle (BH-1016 waits for BH-890, BH-890 for BH-1016): the
 #       byte-smaller key (BH-1016) is released, the other keeps waiting
 #   C2  a 3-cycle (BH-1016 -> BH-890 -> BH-900 -> BH-1016): only BH-1016 goes
-#   C3  a hold older than POOL_AFTER_MAX_MIN (360) is released with ONE alert
+#   C3  a hold older than POOL_AFTER_MAX_MIN (360) on an OPEN blocker PR is
+#       NOT released: no machine, ONE alert that names BH-890 (BH-9440)
+#   C3b a hold older than the ceiling whose blocker PR read does not answer
+#       is released with ONE AFTER CEILING alert, as before
 #   C4  a row released twice for the same blocker keeps its deferral count on
 #       the third release, and its next stand-down at or over
 #       JOBS_QUEUE_DEFER_MAX PARKS (the cap acts, with one alert)
@@ -150,7 +153,7 @@ reset_state() {
   local p
   for p in "$H/state/build-queue/project-5"/*.json \
            "$H/state/fly-pool/project-5"/*.json \
-           "$H/state/pool/project-5"/* "$H/builds"/*; do
+           "$H/state/pool/project-5"/* "$H/state/pool-marks/project-5"/* "$H/builds"/*; do
     [ -e "$p" ] && scratch_rm "$p"
   done
   : > "$H/logs/ALERTS.log"
@@ -248,13 +251,24 @@ run_pool
 grep -q 'RELEASED BH-1016: .*mutual' "$H/logs/fly-pool.log" && ok || bad "C2: BH-1016 is released from the 3-cycle: $(grep RELEASED "$H/logs/fly-pool.log")"
 [ "$(grep -c 'RELEASED' "$H/logs/fly-pool.log")" = 1 ] && ok || bad "C2: exactly one key leaves the cycle: $(grep RELEASED "$H/logs/fly-pool.log")"
 
-# ── C3: past the ceiling, the hold is released with one alert ─────────────
+# ── C3: past the ceiling on an OPEN blocker PR, the hold stays ────────────
+# TEST-CHANGE (BH-9440): this case pinned "a 7-hour hold on an open blocker PR
+# is released at the ceiling". The ticket changes that premise: the ceiling
+# never releases onto a live blocker (6 of 24 such releases on project-6
+# conflicted). The release on an unknown blocker state moved to C3b.
 reset_state; write_fly_stub ""; echo open > "$T/pr-890"; qwait
 printf 'BH-890\t%s\n' "$((NOW - 7 * 3600))" > "$H/state/pool/project-5/BH-1016.after-since"
 run_pool
-grep -q 'RELEASED BH-1016: .*ceiling' "$H/logs/fly-pool.log" && ok || bad "C3: a 7-hour hold is released at the 360-minute ceiling: $(grep BH-1016 "$H/logs/fly-pool.log" | tail -2)"
-[ "$(grep -c 'AFTER CEILING' "$H/logs/ALERTS.log")" = 1 ] && ok || bad "C3: one AFTER CEILING alert: $(grep -c 'AFTER CEILING' "$H/logs/ALERTS.log")"
-[ "$(spawned)" -ge 1 ] && ok || bad "C3: the released row spawns"
+grep -q 'RELEASED BH-1016' "$H/logs/fly-pool.log" && bad "C3: a 7-hour hold on BH-890's open PR must not be released: $(grep BH-1016 "$H/logs/fly-pool.log" | tail -2)" || ok
+[ "$(grep -c 'AFTER STUCK — BH-890 holds BH-1016' "$H/logs/ALERTS.log")" = 1 ] && ok || bad "C3: one alert names BH-890: $(cat "$H/logs/ALERTS.log")"
+[ "$(spawned)" = 0 ] && ok || bad "C3: no machine on top of the open PR ($(spawned))"
+# ── C3b: past the ceiling with the PR read not answering: released ────────
+reset_state; write_fly_stub ""; echo broken > "$T/pr-890"; qwait
+printf 'BH-890\t%s\n' "$((NOW - 7 * 3600))" > "$H/state/pool/project-5/BH-1016.after-since"
+run_pool
+grep -q 'RELEASED BH-1016: .*ceiling' "$H/logs/fly-pool.log" && ok || bad "C3b: a 7-hour hold on an unreadable blocker is released at the 360-minute ceiling: $(grep BH-1016 "$H/logs/fly-pool.log" | tail -2)"
+[ "$(grep -c 'AFTER CEILING' "$H/logs/ALERTS.log")" = 1 ] && ok || bad "C3b: one AFTER CEILING alert: $(grep -c 'AFTER CEILING' "$H/logs/ALERTS.log")"
+grep -q '^put project-5 BH-1016 1016 fly 1 {"deferrals":0}' "$T/q.log" && ok || bad "C3b: the released row is a fresh queue row (q.log: $(tr '\n' '|' < "$T/q.log"))"
 reset_state; write_fly_stub ""; echo open > "$T/pr-890"; qwait
 run_pool
 grep -q 'skipping BH-1016: waits for BH-890' "$H/logs/fly-pool.log" && ok || bad "C3: a fresh hold starts its own clock and waits: $(grep BH-1016 "$H/logs/fly-pool.log" | tail -2)"

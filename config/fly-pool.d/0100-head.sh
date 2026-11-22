@@ -296,6 +296,10 @@ chmod +x "$FLY"
 RQ=""
 trap 'rm -f -- "$FLY"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
 POOL="$HARNESS/state/fly-pool/$P"; PDIR="$HARNESS/state/pool/$P"
+# BH-9440: the box-local throttle markers of pool_cheap_list and
+# pool_after_stuck_alert (catalog/state-paths.d/9440-overlap-guard.json). They
+# are not pool rows, so they do not live under state/pool/.
+PMARKS="$HARNESS/state/pool-marks/$P"
 mkdir -p "$POOL" "$PDIR" "$HARNESS/state/build-queue/$P"
 # SPRAWL GUARD (2026-08-12): the pool must run in its OWN Fly app, never the
 # persistent-builder app — that app auto-recreates machines on destroy, so pool
@@ -2011,25 +2015,30 @@ pool_key_slice_merged() {
 # built. A queue file or a `queued` row then held every sibling until the
 # 360-min ceiling. When pool_key_slice_merged says the key's build PR merged,
 # a queued (not claimed) blocker is judged by its PR reads alone.
+# _PAO_WHY (BH-9440) names why rc 0 held: running (spawned this tick, a pool
+# json, or a claimed row), queued (a queue file or a queued row, nothing
+# built yet) or pr (an open PR). pool_after_gate releases at the ceiling onto
+# a queued-only blocker, never onto a running one or an open PR.
 pool_after_open() {
   local other="$1" st queued=0
-  case "${TICK_KEYS:-}" in *" $other "*) return 0 ;; esac
-  grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && return 0
+  _PAO_WHY=""
+  case "${TICK_KEYS:-}" in *" $other "*) _PAO_WHY=running; return 0 ;; esac
+  grep -lsE "\"key\": *\"$other\"" "$POOL"/*.json >/dev/null 2>&1 && { _PAO_WHY=running; return 0; }
   [ -e "$QDIR/$other.json" ] && queued=1
   # BH-7706: the tick read the queued and claimed rows once (pdc_queue_prime).
   # From a complete listing a key that is absent is neither; any other listing
   # leaves the per-key read below.
   if [ "${_PDC_QOK:-0}" = 1 ]; then
-    case "${_PDC_QSTATE[$other]:-}" in claimed) return 0 ;; queued) queued=1 ;; esac
+    case "${_PDC_QSTATE[$other]:-}" in claimed) _PAO_WHY=running; return 0 ;; queued) queued=1 ;; esac
   elif command -v queue_status >/dev/null 2>&1; then
     st=$(queue_status "$P" "$other" 2>/dev/null) || st=""
-    case "$st" in claimed) return 0 ;; queued) queued=1 ;; esac
+    case "$st" in claimed) _PAO_WHY=running; return 0 ;; queued) queued=1 ;; esac
   fi
-  [ "$queued" = 1 ] && ! pool_key_slice_merged "$other" && return 0
+  [ "$queued" = 1 ] && ! pool_key_slice_merged "$other" && { _PAO_WHY=queued; return 0; }
   pr_exists_for_key_rest "$other"
-  case $? in 0) return 0 ;; 1) ;; *) return 2 ;; esac
+  case $? in 0) _PAO_WHY=pr; return 0 ;; 1) ;; *) return 2 ;; esac
   pr_open_for_key_any_rest "$other"
-  case $? in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+  case $? in 0) _PAO_WHY=pr; return 0 ;; 1) return 1 ;; *) return 2 ;; esac
 }
 # pool_after_cycle <key> — rc 0 and the cycle's byte-smallest key when the
 # `after` chain from <key> through this pool's queue files comes back to <key>
@@ -2049,11 +2058,77 @@ pool_after_cycle() {
   done
   return 1
 }
+# pool_cheap_list <key> <job-file> — BH-9440: a FIRST LIST for a queued row
+# that has none. bin/sibling-serial.sh holds a part "on (no pre-plan list)" when
+# its list or its sibling's is missing, and a plain queued pool row never got
+# one: bin/planned-files-cheap.sh ran only for preplan-candidates rows. So,
+# before the sibling-serial check, a key with no plans-dir list, no build list
+# and no pre-plan index list gets the cheap list on its FREE tiers
+# (PLANNED_FILES_FREE_ONLY=1: ticket body and codegraph, never the model).
+# Once per key per POOL_CHEAP_LIST_TTL_S (fly-pool knob, default 21600 s): the
+# marker state/pool-marks/<p>/<K>.cheap-at is written BEFORE the run, so a run
+# that finds nothing is not retried every tick. Each write deletes the markers
+# older than the TTL: they read as expired, so the directory does not grow. A queue row that carries `.body`
+# hands it over (an in-app board has no issue to read).
+pool_cheap_list() {
+  local k="$1" jf="$2" mf ttl now at b d ev
+  [ -x "$HARNESS/bin/planned-files-cheap.sh" ] || return 0
+  [[ "$k" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || return 0
+  [ -s "$HARNESS/plans/$P-$k/planned-files.txt" ] && return 0
+  for d in "$HARNESS/builds/$P-$k-"* "$HARNESS/builds/pool-$P-$k-"*; do
+    [ -s "$d/planned-files.txt" ] || [ -s "$d/touch-files.txt" ] && return 0
+  done
+  mf="$PMARKS/$k.cheap-at"; now=$(date -u +%s)
+  # POOL_CHEAP_LIST_TTL_S: catalog/lanes.d/fly-pool.knobs.d; 21600 is its fallback.
+  ttl="${POOL_CHEAP_LIST_TTL_S:-21600}"; case "$ttl" in ''|*[!0-9]*) ttl=21600 ;; esac
+  at=$(cat "$mf" 2>/dev/null); case "$at" in ''|*[!0-9]*) at=0 ;; esac
+  [ $(( now - at )) -lt "$ttl" ] && return 0
+  if command -v preplan_planned_files >/dev/null 2>&1 \
+     && [ -n "$(preplan_planned_files "$HARNESS" "$P" "$k" 2>/dev/null)" ]; then
+    return 0
+  fi
+  mkdir -p "$PMARKS" 2>/dev/null
+  find "$PMARKS" -maxdepth 1 -type f -name '*.cheap-at' -mmin "+$(( ttl / 60 + 1 ))" -delete 2>/dev/null
+  printf '%s\n' "$now" > "$mf" 2>/dev/null
+  b=""
+  if [ -n "$(jq -r '.body // empty' "$jf" 2>/dev/null | head -c 1)" ]; then
+    b="$PMARKS/.$k.cheap-body"; jq -r '.body' "$jf" > "$b" 2>/dev/null || b=""
+  fi
+  ev=(GH_TOKEN="${POOL_SLUG_TOK:-${GH_TOKEN:-}}" HARNESS="$HARNESS" PLANNED_FILES_FREE_ONLY=1)
+  [ -n "$b" ] && ev+=(PLANNED_FILES_BODY_FILE="$b")
+  env "${ev[@]}" "$HARNESS/bin/planned-files-cheap.sh" "$P" "$k" >/dev/null 2>&1 || :
+  [ -n "$b" ] && rm -f "$b"
+  if [ -s "$HARNESS/plans/$P-$k/planned-files.txt" ]; then
+    say "$k: cheap first list written ($(head -n 1 "$HARNESS/plans/$P-$k/planned-files.txt"), $(( $(grep -c . "$HARNESS/plans/$P-$k/planned-files.txt") - 1 )) path(s))"
+  else
+    say "$k: cheap first list found no path — next try in ${ttl}s"
+  fi
+  return 0
+}
+# pool_after_stuck_alert <blocker> <key> <min> <max> — BH-9440: one alert line
+# per blocker per UTC day while rows wait on it past POOL_AFTER_MAX_MIN. The
+# day marker state/pool-marks/<p>/<blocker>.after-stuck holds the UTC date of
+# the last line; one overwritten line per blocker, and each write deletes the
+# markers older than 2 days, so it does not grow.
+pool_after_stuck_alert() {
+  local other="$1" key="$2" m="$3" max="$4" day mf
+  day=$(date -u +%F); mf="$PMARKS/$other.after-stuck"
+  [ "$(cat "$mf" 2>/dev/null)" = "$day" ] && return 0
+  mkdir -p "$PMARKS" 2>/dev/null
+  find "$PMARKS" -maxdepth 1 -type f -name '*.after-stuck' -mtime +2 -delete 2>/dev/null
+  printf '%s\n' "$day" > "$mf" 2>/dev/null
+  HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --severity warn --id "pool-after-stuck-$P-$other-$day" --project "$P" \
+    "[pool/$P] AFTER STUCK — $other holds $key past POOL_AFTER_MAX_MIN ($m min, ceiling $max); $other is still in flight or its PR is open, so the hold stays. $other is the thing to move." >/dev/null 2>&1 || true
+}
 # pool_after_gate <job-file> <key> <ticket-id> — rc 0 go on to the other gates,
 # rc 1 skip this tick. A row with no `after` passes untouched. A row is
 # RELEASED here, in this tick, when its blocker is done, when it is the
 # byte-smallest key of a wait cycle, or when it has waited POOL_AFTER_MAX_MIN
-# (default 360, the PLAN_AFTER_MAX_MIN ceiling; one alert). A release is a fresh
+# (default 360, the PLAN_AFTER_MAX_MIN ceiling; one alert) AND its blocker is
+# only queued or its PR read did not answer. A blocker that is live (running,
+# or its PR is open)
+# is never released onto at the ceiling: the hold stays, and
+# pool_after_stuck_alert names the blocker once per UTC day (BH-9440). A release is a fresh
 # queue row with `after` dropped and the deferral count reset to 0, so the
 # ticket is offered on the tick its blocker merges, not after a resolver pass.
 # THE THIRD RELEASE FOR THE SAME BLOCKER IN 24 H KEEPS THE COUNT: a blocker this
@@ -2061,7 +2136,7 @@ pool_after_cycle() {
 # machine would stand down again, and the reset would keep it under
 # JOBS_QUEUE_DEFER_MAX and DEFER_AFTER_LOOP_ALERT for ever (review of 99682a0c6).
 pool_after_gate() {
-  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d v
+  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d v prc
   other=$(jq -r '.after // empty' "$JF" 2>/dev/null)
   [ -n "$other" ] || return 0
   now=$(date -u +%s)
@@ -2085,11 +2160,33 @@ pool_after_gate() {
     pool_after_open "$other"; rc=$?
     case "$rc" in
       1) why="$other is done (no open PR, nothing in flight)" ;;
-      *) if [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
-           why="ceiling: held $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max)"
-           HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: AFTER CEILING — waited $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max), so the hold is released and the ticket is offered again; its machine re-checks the overlap. If $other is stuck, that is the thing to move."
-         elif [ "$rc" = 0 ]; then
+      0) # BH-9440: a LIVE blocker (running, or its PR is open) is never
+         # released onto at the ceiling: 6 of 24 ceiling releases on
+         # project-6 conflicted. Past the ceiling the hold stays and ONE alert
+         # per blocker per UTC day names the blocker as the thing to move. A
+         # blocker that is only queued (no build, no PR) releases as before.
+         if [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
+           # A queued blocker may be a re-run whose PR is still open: read it.
+           if [ "${_PAO_WHY:-}" = queued ]; then
+             pr_exists_for_key_rest "$other"; prc=$?
+             [ "$prc" = 1 ] && { pr_open_for_key_any_rest "$other"; prc=$?; }
+             [ "$prc" = 0 ] && _PAO_WHY=pr
+           fi
+           if [ "${_PAO_WHY:-}" = queued ]; then
+             why="ceiling: held $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max)"
+             HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: AFTER CEILING — waited $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max); $other is only queued (no build, no open PR), so the hold is released and the ticket is offered again; its machine re-checks the overlap. If $other is stuck, that is the thing to move."
+           else
+             pool_after_stuck_alert "$other" "$KEY" "$((age / 60))" "$max"
+             say "skipping $KEY: waits for $other past the ceiling ($((age / 60)) min, POOL_AFTER_MAX_MIN=$max); $other is still in flight or its PR is open — no machine"; return 1
+           fi
+         else
            say "skipping $KEY: waits for $other (still in flight or its PR is open) — no machine"; return 1
+         fi ;;
+      *) if [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
+           # The blocker's state is unknown (its PR read did not answer): the
+           # ceiling releases as before, and the machine re-checks the overlap.
+           why="ceiling: held $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max)"
+           HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: AFTER CEILING — waited $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max), and the PR read of $other did not answer, so the hold is released and the ticket is offered again; its machine re-checks the overlap. If $other is stuck, that is the thing to move."
          else
            say "skipping $KEY: waits for $other, and its PR read did not answer — retried next tick"; return 1
          fi ;;
@@ -2259,6 +2356,7 @@ pool_spawn_decision() {
     say "$SCHED_LINE — sibling-serial not consulted (scheduler.mode=enforce)"
   elif [ -x "$HARNESS/bin/sibling-serial.sh" ]; then
     _psd_sb=$(jq -r '.stack_base // ""' "$JF" 2>/dev/null); case "$_psd_sb" in *[!A-Za-z0-9._/-]*) _psd_sb="" ;; esac
+    pool_cheap_list "$KEY" "$JF"
     _psd_ss=$(HARNESS="$HARNESS" SIBLING_QDIR="$QDIR" SIBLING_STACK_BASE="$_psd_sb" "$HARNESS/bin/sibling-serial.sh" check "$P" "$KEY" 2>>"$LOG"); _psd_ssrc=$?
     if [ "$_psd_ssrc" = 3 ] && [ -n "$_psd_ss" ]; then
       if [ -z "$_psd_sb" ] && [[ "$_psd_ss" =~ \ stackable\ base=([A-Za-z0-9._/-]+)$ ]]; then

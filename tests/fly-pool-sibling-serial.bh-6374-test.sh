@@ -9,8 +9,11 @@
 #   P3  .1's machine gone: .2 spawns and its wait clock is removed
 #   P4  bin/sibling-serial.sh check: a queued .1 older than
 #       SIBLING_QUEUED_MAX_MIN does not hold .2; a fresh one does
-#   P5  a wait older than SIBLING_SERIAL_MAX_MIN releases the key, logs
-#       SIBLING_SERIAL_RELEASED and alerts once over two ticks
+#   P5  a wait older than SIBLING_SERIAL_MAX_MIN behind a LIVE .1 holds the
+#       key, logs SIBLING_SERIAL_HELD and alerts once (naming .1) over two
+#       ticks (BH-9440)
+#   P5b the same wait behind a .1 that is only queued releases the key
+#       (check verb), prints SIBLING_SERIAL_RELEASED, alerts once over two checks
 #   P6  SIBLING_SERIAL=0 spawns .2 on the P1 fixture
 #   P7  the reuse handoff (next_job_or_destroy) runs the same gate
 #
@@ -264,22 +267,44 @@ OUT=$(chk env); RC=$?
 [ "$RC" = 3 ] && [ "$(cut -f2 "$SD/TK-142.2.sibling-since")" = "$NOW" ] && ok \
   || bad "P4f: a new blocker restarts the clock (rc $RC, since '$(cat "$SD/TK-142.2.sibling-since")')"
 
-# ── P5: the ceiling releases once and alerts once over two ticks ───────────
+# ── P5: the ceiling holds behind a live .1, one alert over two ticks ──────
+# TEST-CHANGE (BH-9440): this case pinned "TK-142.2 spawns at the ceiling
+# behind a LIVE TK-142.1". The ticket changes that premise: a live blocker
+# holds past the ceiling and the alert names it. The release moved to P5b, on a
+# blocker that is only queued (not in flight, no PR).
 p1_fixture
 printf 'TK-142.1\t%s\n' "$((NOW-361*60))" > "$SD/TK-142.2.sibling-since"
 run_pool
-[ "$(machine_for TK-142.2)" = 1 ] && ok || bad "P5: TK-142.2 must spawn at the ceiling: $(cat "$H/logs/fly-pool.log")"
-grep -q 'SIBLING_SERIAL_RELEASED TK-142.2 after 361 min behind TK-142.1' "$H/logs/fly-pool.log" && ok \
-  || bad "P5: no SIBLING_SERIAL_RELEASED line: $(cat "$H/logs/fly-pool.log")"
-# tick 2: .2 is queued again behind the same live .1
-for f in "$MD"/*.json; do
-  [ "$(jq -r .key "$f")" = TK-142.2 ] && scratch_rm "$f"
-done
-queue TK-142.2 1422
+[ "$(machine_for TK-142.2)" = 0 ] && ok || bad "P5: TK-142.2 must not spawn behind a live TK-142.1: $(cat "$H/logs/fly-pool.log")"
+grep -q 'SIBLING_SERIAL_HELD TK-142.2 past ceiling behind TK-142.1 (in flight)' "$H/logs/fly-pool.log" && ok \
+  || bad "P5: no SIBLING_SERIAL_HELD line: $(cat "$H/logs/fly-pool.log")"
+[ -f "$QD/TK-142.2.json" ] && ok || bad "P5: TK-142.2's queue file must stay"
 run_pool
-[ "$(machine_for TK-142.2)" = 1 ] && ok || bad "P5: tick 2 must release again: $(cat "$H/logs/fly-pool.log"; cat "$T/alert-calls")"
+[ "$(machine_for TK-142.2)" = 0 ] && ok || bad "P5: tick 2 must still hold: $(cat "$H/logs/fly-pool.log")"
+[ "$(grep -c 'SIBLING STUCK — TK-142.1 holds TK-142.2' "$T/alert-calls" 2>/dev/null)" = 1 ] && ok \
+  || bad "P5: expected exactly 1 alert naming TK-142.1 over two ticks, got: $(cat "$T/alert-calls" 2>/dev/null)"
+grep -q 'SIBLING_SERIAL_RELEASED' "$T/alert-calls" 2>/dev/null && bad "P5: no release alert behind a live blocker" || ok
+
+# ── P5b: behind a queued-only .1, the ceiling releases once, alerts once ──
+p5b_fixture() {
+  reset_state
+  write_fly_stub ""
+  plan_files TK-142.1 src/x/board.tsx src/x/a.ts
+  plan_files TK-142.2 src/x/board.tsx src/x/b.ts
+  queue TK-142.1 1421 "$(date -u -d "@$((NOW-600))" +%Y-%m-%dT%H:%M:%SZ)"
+  queue TK-142.2 1422
+}
+p5b_fixture
+printf 'TK-142.1\t%s\n' "$((NOW-361*60))" > "$SD/TK-142.2.sibling-since"
+# Through the check verb (as P4): in a full pool tick the queued .1 would spawn
+# first and be in flight by the time .2 is judged.
+OUT=$(chk env); RC=$?
+[ "$RC" = 0 ] && [ "$OUT" = "SIBLING_SERIAL_RELEASED TK-142.2 after 361 min behind TK-142.1" ] && ok \
+  || bad "P5b: a queued-only .1 past the ceiling releases .2 (rc $RC, out '$OUT')"
+OUT=$(chk env); RC=$?
+[ "$RC" = 0 ] && ok || bad "P5b: the second check releases again (rc $RC, out '$OUT')"
 [ "$(grep -c 'SIBLING_SERIAL_RELEASED' "$T/alert-calls" 2>/dev/null)" = 1 ] && ok \
-  || bad "P5: expected exactly 1 alert over two ticks, got: $(cat "$T/alert-calls" 2>/dev/null)"
+  || bad "P5b: expected exactly 1 alert over two checks, got: $(cat "$T/alert-calls" 2>/dev/null)"
 
 # ── P6: the kill switch ────────────────────────────────────────────────────
 p1_fixture

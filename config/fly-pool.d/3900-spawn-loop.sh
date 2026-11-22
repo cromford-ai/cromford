@@ -37,6 +37,31 @@ if [ "$BUDGET" -gt 0 ] 2>/dev/null || [ "${HOTFIX_EXTRA:-0}" -gt 0 ] 2>/dev/null
 else
   say "PR bulk read: off (no free slot and no hotfix this tick)"
 fi
+# BH-9440: the hub PR snapshot (state/overlap-guard/<p>-prs.json) that
+# sibling-serial and overlap-guard read. The pool never ran the guard on the
+# hub, so the snapshot was never written and every check noted prs=unread. One
+# `overlap-guard.sh --refresh` per project per tick, only when rows are queued
+# and the snapshot is older than OVERLAP_PR_CACHE_SECS; each REST read is bound
+# by POOL_GH_READ_TIMEOUT_S. A failed read keeps the old snapshot and alerts
+# once per project per UTC day (the refresh does both).
+pool_overlap_refresh() {
+  local cf="$HARNESS/state/overlap-guard/$P-prs.json" ttl=120 age out
+  [ -x "$HARNESS/bin/overlap-guard.sh" ] || return 0
+  compgen -G "$QDIR/*.json" >/dev/null 2>&1 || return 0
+  # shellcheck source=bin/lib/scheduler-conf.sh
+  command -v sched_num >/dev/null 2>&1 || . "$HARNESS/bin/lib/scheduler-conf.sh" 2>/dev/null
+  # OVERLAP_PR_CACHE_SECS: settings row conf.scheduler.overlap_pr_cache_secs; 120 is its fallback.
+  command -v sched_num >/dev/null 2>&1 && ttl=$(sched_num OVERLAP_PR_CACHE_SECS 120 "$HARNESS")
+  if [ -s "$cf" ]; then
+    age=$(( $(date -u +%s) - $(stat -c %Y "$cf" 2>/dev/null || echo 0) ))
+    [ "$age" -ge 0 ] && [ "$age" -lt "$ttl" ] && return 0
+  fi
+  out=$(GH_TOKEN="${POOL_SLUG_TOK:-${GH_TOKEN:-}}" GH_REST_TIMEOUT_S="${POOL_GH_READ_TIMEOUT_S:-20}" \
+        HARNESS="$HARNESS" "$HARNESS/bin/overlap-guard.sh" --refresh "$P" 2>/dev/null | head -n 1)
+  case "$out" in "REFRESH $P ok"*|"REFRESH $P failed"*) say "PR snapshot: $out" ;; esac
+  return 0
+}
+pool_overlap_refresh
 # BH-7706: the reads every row shares, once, before the budget clock starts.
 PDC_ON=0; command -v pdc_prime >/dev/null 2>&1 && { pdc_prime; PDC_ON=1; }
 # pool_walk_spawn <hot> <jf> <key> <ticket> <attempt> <deaths> <stack-base> —

@@ -1663,6 +1663,17 @@ $miss"
   echo "$phase tries=$try verdict=$verdict rules=$ids" >> "$rec"
   return 0
 }
+# >>> claim drift (BH-9440)
+# A diff that changes files outside the list the plan stage claimed re-posts
+# the union to its claim and asks the overlap guard again, BEFORE the PR
+# opens (bin/lib/claim-drift.sh). A DEFER is a note in the body, never a stop.
+# shellcheck source=bin/lib/claim-drift.sh
+[ -r "$HARNESS/bin/lib/claim-drift.sh" ] && . "$HARNESS/bin/lib/claim-drift.sh" 2>/dev/null
+if command -v claim_drift_check >/dev/null 2>&1; then
+  claim_drift_check "$BUILD" "origin/$BASE" || :
+  [ -s "$BUILD/claim-drift.md" ] && _pr_body_insert "$BUILD/pr-body.md" "$BUILD/claim-drift.md"
+fi
+# <<< claim drift
 _pr_self_check_prepush "$BUILD/pr-body.md" open
 # <<< pr body fix round
 # BH-6672: the body carries suite output and evidence; no token shape is sent.

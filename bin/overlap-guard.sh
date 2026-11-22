@@ -21,7 +21,9 @@
 #      (bin/jobs-client.sh, /api/jobs?status=running) — fleet-wide, so a sibling
 #      building on another box or a Fly machine counts.
 #   2. every OPEN harness-authored PR on this project's repo, and the files it
-#      actually changed (bin/lib/gh-pr-list.sh).
+#      actually changed (bin/lib/gh-pr-list.sh). When the snapshot is fresh it
+#      came from `--refresh` (BH-9440, below): every author's open PR, plus
+#      main@<sha12> rows for recent commits on the default branch.
 # (2) is the half nothing had before. bin/conflict-check.sh and
 # bin/plan-overlap.sh both ask (1) in their own way, at PLAN time, inside
 # bin/run-build.sh — but an approved PR that has not merged yet still owns its
@@ -38,6 +40,9 @@
 #      dedupe, never a queue (the operator, 2026-09-13).
 #   rc 1, stdout "DEFER <KEY> gh unknown (HTTP <s>) open-PR list unreadable, no
 #      cache; re-offered next tick"   — the ONE non-fail-open verdict, below.
+#   rc 1, stdout "DEFER <KEY> open-PR snapshot incomplete (<why>); re-offered
+#      next tick"                     — BH-9440: the last --refresh hit
+#      OVERLAP_REFRESH_PR_LIMIT (marker state/overlap-guard/<p>-prs.incomplete).
 #
 # FAIL-OPEN, WITH ONE EXCEPTION. No pre-plan, no ledger, no gh binary, a bad
 # config, an unreadable file: LAUNCH, with a line in logs/overlap-guard.log
@@ -85,6 +90,167 @@ say() { mkdir -p "$HARNESS/logs" 2>/dev/null; echo "$(STAMP) [$PROJECT/$KEY] $*"
 # log, or a conflict that lands anyway is indistinguishable from a gate that
 # quietly stopped running.
 launch() { say "LAUNCH — $1"; printf 'LAUNCH %s %s\n' "$KEY" "$1"; exit 0; }
+
+# --- --refresh <project> (BH-9440) ----------------------------------------------
+# THE HUB PR SNAPSHOT, EVERY AUTHOR. state/overlap-guard/<p>-prs.json was
+# written only when this guard ran a launch check, and the pool path never runs
+# one on the hub. So bin/sibling-serial.sh read no snapshot and noted
+# `prs=unread` on every tick. bin/fly-pool.sh now calls `--refresh <project>`
+# once per project per tick when the file is older than OVERLAP_PR_CACHE_SECS.
+# It writes the same JSON shape the guard writes, for EVERY open PR (a client's
+# or a person's PR owns its files as much as a harness PR does):
+#   {number, url, headRefName, isDraft, author, files:[{path}]}
+# and, when OVERLAP_MAIN_RECENT_MIN > 0 (default 60; settings row
+# lib.sibling-serial.overlap_main_recent_min, or conf.scheduler.*), one row per
+# non-merge commit on the default branch in that window:
+#   {number:0, headRefName:"main@<sha12>", author:"main", files:[...]}
+# The guard judges a main@ row as an owner (`DEFER <K> vs main@<sha12>`). The
+# branch name carries `@`, so the sibling-key and stack-branch readers
+# (sibling-serial, overlap-schedule: ^[A-Za-z0-9._/-]+$) skip it by
+# construction.
+# Every read goes through the REST seam (bin/lib/gh-rest.sh, gh-rest-list.sh).
+# A PR's file list is cached under state/overlap-guard/<p>-files/<n>.<head sha>
+# and a commit's under main.<sha>, so a tick reads only the PR list, the commit
+# list and what changed. The cache is pruned to the PRs and commits of the
+# snapshot just written.
+# A FAILED READ keeps the old snapshot (never written over by a partial one) and
+# writes ONE ALERTS line per project per UTC day (marker
+# state/overlap-guard/<p>.alerted-<YYYY-MM-DD>; markers older than 2 days are
+# deleted here). stdout: one `REFRESH <p> ok prs=<n> main=<m>` or
+# `REFRESH <p> failed ...` line. rc 0 always.
+# EVERY OPEN PR, NOT 30 (BH-9440 review). The list is read up to
+# OVERLAP_REFRESH_PR_LIMIT rows in total (default 500, capped at 999 by the
+# seam's 10-page stop). OVERLAP_PR_LIMIT keeps its per-author meaning for the
+# guard's own list. The refresh asks for one row more than the cap. If that row
+# comes back, the snapshot holds the first <cap> PRs and the marker
+# state/overlap-guard/<p>-prs.incomplete is written; while it exists the launch
+# check DEFERs every ticket (fail closed, never "no overlap"), one ALERTS line
+# per project per UTC day. A complete refresh deletes the marker.
+og_refresh() {
+  local slug lim mainmin cdir cf fdir t rc=0 n sha ref draft who url ff nm=0 np=0 day af cut bucket since got inc=""
+  slug=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
+  case "$slug" in ''|-|*[!A-Za-z0-9._/-]*) echo "REFRESH $PROJECT skipped: no repo slug"; return 0 ;; esac
+  command -v jq >/dev/null 2>&1 || { echo "REFRESH $PROJECT skipped: no jq"; return 0; }
+  # shellcheck source=bin/lib/scheduler-conf.sh
+  . "$(dirname "$0")/lib/scheduler-conf.sh" 2>/dev/null || { echo "REFRESH $PROJECT skipped: no scheduler-conf"; return 0; }
+  # shellcheck source=bin/lib/preplan-lib.sh
+  [ -r "$(dirname "$0")/lib/preplan-lib.sh" ] && . "$(dirname "$0")/lib/preplan-lib.sh" 2>/dev/null
+  command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply sibling-serial "$PROJECT" >/dev/null 2>&1
+  # OVERLAP_REFRESH_PR_LIMIT: knob row
+  # catalog/lanes.d/_lib.sibling-serial.knobs.d/OVERLAP_REFRESH_PR_LIMIT.json;
+  # 500 is its documented fallback. 999 is the seam's 10-page stop minus the
+  # one probe row.
+  lim=$(sched_num OVERLAP_REFRESH_PR_LIMIT 500 "$HARNESS")
+  case "$lim" in ''|*[!0-9]*|0) lim=500 ;; esac
+  [ "$lim" -gt 999 ] && lim=999
+  # OVERLAP_MAIN_RECENT_MIN: the knob row lives in
+  # catalog/lanes.d/_lib.sibling-serial.json; 60 is its documented fallback.
+  mainmin=$(sched_num OVERLAP_MAIN_RECENT_MIN 60 "$HARNESS")
+  # shellcheck source=bin/lib/gh-rest-list.sh
+  . "$(dirname "$0")/lib/gh-rest-list.sh" 2>/dev/null
+  command -v _gh_rest_list >/dev/null 2>&1 || { echo "REFRESH $PROJECT skipped: no gh-rest seam"; return 0; }
+  for _P in "$(dirname "$0")/lib/gh-repo-token.sh" "$HARNESS/bin/lib/gh-repo-token.sh"; do
+    # shellcheck source=bin/lib/gh-repo-token.sh
+    [ -r "$_P" ] && { . "$_P" 2>/dev/null; break; }
+  done
+  command -v gh_repo_use_token >/dev/null 2>&1 && { gh_repo_use_token "$slug" >/dev/null 2>&1 || :; }
+  cdir="$HARNESS/state/overlap-guard"; cf="$cdir/$PROJECT-prs.json"; fdir="$cdir/$PROJECT-files"
+  mkdir -p "$fdir" 2>/dev/null || { echo "REFRESH $PROJECT skipped: $fdir not writable"; return 0; }
+  t=$(mktemp -d "${TMPDIR:-/tmp}/og-refresh-XXXXXX") || return 0
+  : > "$t/rows.jsonl"; : > "$t/keep"
+  gh_rest_pr_list_all "$slug" open "$((lim + 1))" > "$t/list" || rc=$?
+  if [ "$rc" = 0 ]; then
+    got=$(jq 'length' "$t/list" 2>/dev/null) || rc=75
+    case "$got" in ''|*[!0-9]*) rc=75 ;; esac
+  fi
+  if [ "$rc" = 0 ] && [ "$got" -gt "$lim" ]; then
+    inc="more than $lim open PRs on $slug (OVERLAP_REFRESH_PR_LIMIT=$lim)"
+    jq -c ".[:$lim]" "$t/list" > "$t/list.cut" 2>/dev/null && mv -f "$t/list.cut" "$t/list" || rc=75
+  fi
+  if [ "$rc" = 0 ]; then
+    jq -r '.[]? | [(.number|tostring), (.head.sha // ""), (.head.ref // ""), ((.draft // false)|tostring),
+                   (.user.login // ""), (.html_url // "")] | @tsv' "$t/list" > "$t/prs" 2>/dev/null || rc=75
+  fi
+  while [ "$rc" = 0 ] && IFS=$'\t' read -r n sha ref draft who url; do
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    case "$sha" in ''|*[!0-9a-f]*) sha=nosha ;; esac
+    ff="$fdir/$n.$sha"
+    if [ ! -s "$ff" ] || [ "$sha" = nosha ]; then
+      _gh_rest_list "$slug" "pulls/$n/files" 3000 '.filename' > "$t/f" || { rc=$?; break; }
+      jq -c '[.[] | strings]' "$t/f" > "$ff.tmp" 2>/dev/null && mv -f "$ff.tmp" "$ff" || { rm -f "$ff.tmp"; rc=75; break; }
+    fi
+    printf '%s\n' "$(basename "$ff")" >> "$t/keep"
+    jq -c --argjson n "$n" --arg u "$url" --arg r "$ref" --arg d "$draft" --arg a "$who" \
+      '{number:$n, url:$u, headRefName:$r, isDraft:($d == "true"), author:$a, files:map({path:.})}' "$ff" \
+      >> "$t/rows.jsonl" 2>/dev/null || { rc=75; break; }
+    np=$((np + 1))
+  done < <([ "$rc" = 0 ] && cat "$t/prs")
+  # C2: recent non-merge commits on the default branch are owners too. The
+  # commit list's `since` is rounded down to 10 minutes so its ETag repeats
+  # (an unchanged answer is a free 304); the window is cut exactly below.
+  if [ "$rc" = 0 ] && [ "$mainmin" -gt 0 ]; then
+    cut=$(( $(date -u +%s) - mainmin * 60 )); bucket=$(( cut / 600 * 600 ))
+    since=$(date -u -d "@$bucket" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+    gh_rest GET "repos/$slug/commits" -f "since=$since" -F per_page=100 > "$t/commits" || rc=$?
+    if [ "$rc" = 0 ]; then
+      jq -r --arg c "$(date -u -d "@$cut" +%Y-%m-%dT%H:%M:%SZ)" \
+        '.[]? | select(((.parents // []) | length) < 2)
+              | select((.commit.committer.date // .commit.author.date // "") >= $c) | .sha // empty' \
+        "$t/commits" > "$t/shas" 2>/dev/null || rc=75
+    fi
+    while [ "$rc" = 0 ] && IFS= read -r sha; do
+      case "$sha" in ''|*[!0-9a-f]*) continue ;; esac
+      ff="$fdir/main.$sha"
+      if [ ! -s "$ff" ]; then
+        gh_rest GET "repos/$slug/commits/$sha" > "$t/one" || { rc=$?; break; }
+        jq -c '[(.files // [])[] | .filename // empty]' "$t/one" > "$ff.tmp" 2>/dev/null && mv -f "$ff.tmp" "$ff" || { rm -f "$ff.tmp"; rc=75; break; }
+      fi
+      printf '%s\n' "main.$sha" >> "$t/keep"
+      jq -c --arg b "main@${sha:0:12}" \
+        '{number:0, url:"", headRefName:$b, isDraft:false, author:"main", files:map({path:.})}' "$ff" \
+        >> "$t/rows.jsonl" 2>/dev/null || { rc=75; break; }
+      nm=$((nm + 1))
+    done < <([ "$rc" = 0 ] && cat "$t/shas")
+  fi
+  if [ "$rc" = 0 ] && jq -s -c '.' "$t/rows.jsonl" > "$cf.new" 2>/dev/null; then
+    mv -f "$cf.new" "$cf"
+    for ff in "$fdir"/*; do
+      [ -f "$ff" ] || continue
+      grep -qxF "$(basename "$ff")" "$t/keep" || rm -f "$ff"
+    done
+    rm -rf "$t"
+    if [ -z "$inc" ]; then
+      rm -f "$cdir/$PROJECT-prs.incomplete"
+      say "REFRESH ok prs=$np main=$nm (OVERLAP_MAIN_RECENT_MIN=$mainmin)"
+      echo "REFRESH $PROJECT ok prs=$np main=$nm"; return 0
+    fi
+    printf '%s\n' "$inc" > "$cdir/$PROJECT-prs.incomplete"
+    say "REFRESH incomplete prs=$np main=$nm — $inc; launches DEFER until a refresh reads every open PR"
+    day=$(date -u +%F); af="$cdir/$PROJECT.alerted-incomplete-$day"
+    find "$cdir" -maxdepth 1 -name "$PROJECT.alerted-incomplete-*" -mtime +1 -delete 2>/dev/null
+    if [ ! -e "$af" ] && HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --severity warn --id "overlap-refresh-incomplete-$PROJECT-$day" --project "$PROJECT" \
+         "[overlap-guard/$PROJECT] the open-PR snapshot is INCOMPLETE: $inc. Every launch check on $PROJECT DEFERs until a refresh reads every open PR. Needs: raise OVERLAP_REFRESH_PR_LIMIT (max 999), or close open PRs." >/dev/null 2>&1; then
+      : > "$af" 2>/dev/null
+    fi
+    echo "REFRESH $PROJECT incomplete prs=$np main=$nm"; return 0
+  fi
+  rm -f "$cf.new"; rm -rf "$t"
+  [ "$rc" = 0 ] && rc=75
+  say "REFRESH failed rc=$rc HTTP ${GH_REST_STATUS:-000} ${GH_REST_REASON:-} — old snapshot kept"
+  day=$(date -u +%F); af="$cdir/$PROJECT.alerted-$day"
+  find "$cdir" -maxdepth 1 -name "$PROJECT.alerted-*" -mtime +1 -delete 2>/dev/null
+  if [ ! -e "$af" ]; then
+    : > "$af" 2>/dev/null
+    HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --severity warn --id "overlap-refresh-$PROJECT-$day" --project "$PROJECT" \
+      "[overlap-guard/$PROJECT] the open-PR snapshot refresh failed (HTTP ${GH_REST_STATUS:-000}, rc $rc). The old $cf is kept; when it is older than OVERLAP_SNAPSHOT_MAX_AGE, sibling-serial notes prs=unread. Needs: a gh token that can list PRs and commits on $slug." >/dev/null 2>&1 || :
+  fi
+  echo "REFRESH $PROJECT failed rc=$rc (old snapshot kept)"; return 0
+}
+if [ "$PROJECT" = --refresh ]; then
+  PROJECT="${2:-}"; KEY=refresh
+  [[ "$PROJECT" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "usage: overlap-guard.sh --refresh <project>" >&2; exit 0; }
+  og_refresh; exit 0
+fi
 
 [ -n "$PROJECT" ] && [ -n "$KEY" ] || { echo "usage: overlap-guard.sh <project> <KEY>" >&2; exit 0; }
 case "$(printf '%s' "${OVERLAP_GUARD:-1}" | tr '[:upper:]' '[:lower:]')" in
@@ -209,7 +375,15 @@ files_of() {
 }
 
 CAND="$TMP/cand"
-files_of "$KEY" "$CAND" || launch "no files-to-touch list for $KEY — cannot judge, not a reason to hold"
+# OVERLAP_CAND_FILE (BH-9440): the caller hands the candidate list over. A
+# build whose diff left its declared list (bin/lib/claim-drift.sh) is judged on
+# the union it re-claimed, not on the plan it started from.
+if [ -n "${OVERLAP_CAND_FILE:-}" ] && [ -s "$OVERLAP_CAND_FILE" ]; then
+  prune "$OVERLAP_CAND_FILE" "$CAND"
+  [ -s "$CAND" ] || launch "the handed-in list for $KEY is empty after the prune — cannot judge, not a reason to hold"
+else
+  files_of "$KEY" "$CAND" || launch "no files-to-touch list for $KEY — cannot judge, not a reason to hold"
+fi
 # Said in the log, so a launch past a shared path is not mistaken for a guard
 # that missed it. prune() leaves the read-mostly paths it dropped in <dst>.rm.
 RMN=$(sort -u "$CAND.rm" 2>/dev/null | grep -c .)
@@ -548,9 +722,20 @@ if [ -n "$SLUG" ] && command -v gh >/dev/null 2>&1; then
       printf '%s\n' "$FILES" | tr ',' '\n' > "$TMP/prraw"
       prune "$TMP/prraw" "$TMP/other"
       [ -s "$TMP/other" ] || continue
-      OVERLAP_EXACT=1 judge "PR#$NUM" "$TMP/other"
+      # A main@<sha12> row (BH-9440, --refresh) is a recent commit on the
+      # default branch: an owner like an open PR, named by its commit.
+      case "$BR" in main@*) OVERLAP_EXACT=1 judge "$BR" "$TMP/other" ;; *) OVERLAP_EXACT=1 judge "PR#$NUM" "$TMP/other" ;; esac
     done < "$TMP/prs"
   fi
+fi
+# FAIL CLOSED ON A CUT SNAPSHOT (BH-9440 review). The last --refresh hit
+# OVERLAP_REFRESH_PR_LIMIT, so some open PRs were not judged. "No overlap"
+# against a partial list is the #768 lie again, so every launch DEFERs.
+if [ -s "$HARNESS/state/overlap-guard/$PROJECT-prs.incomplete" ]; then
+  INC=$(head -n 1 "$HARNESS/state/overlap-guard/$PROJECT-prs.incomplete" 2>/dev/null)
+  say "DEFER — open-PR snapshot incomplete: $INC"
+  printf 'DEFER %s open-PR snapshot incomplete (%s); re-offered next tick\n' "$KEY" "$INC"
+  exit 1
 fi
 
 # Said out loud, never counted as disjoint: a running key whose file list never

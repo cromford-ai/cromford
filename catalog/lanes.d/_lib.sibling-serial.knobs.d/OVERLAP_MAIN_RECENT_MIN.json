@@ -1,0 +1,11 @@
+{
+  "env": "OVERLAP_MAIN_RECENT_MIN",
+  "read_in": "bin/overlap-guard.sh",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "unit": "minutes",
+  "zero_means": "recent main commits own no file",
+  "required": false,
+  "note": "BH-9440. `bin/overlap-guard.sh --refresh <project>` (called by bin/fly-pool.sh once per project per tick) adds one main@<sha12> row to state/overlap-guard/<p>-prs.json for each non-merge commit on the default branch younger than this many minutes. bin/overlap-guard.sh judges such a row as an owner of its files (DEFER <K> vs main@<sha12>). Read as sched_num OVERLAP_MAIN_RECENT_MIN 60 after lib_env_apply sibling-serial."
+}

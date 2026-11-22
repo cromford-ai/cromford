@@ -1,0 +1,11 @@
+{
+  "env": "POOL_CHEAP_LIST_TTL_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9440: the back-off of pool_cheap_list. A queued row with no file list (no plans-dir list, no build list, no pre-plan index list) gets bin/planned-files-cheap.sh on its free tiers (PLANNED_FILES_FREE_ONLY=1) at most once per key per this many seconds; the marker state/pool-marks/<p>/<K>.cheap-at is written before the run. 0 = every tick. Read as ${POOL_CHEAP_LIST_TTL_S:-21600}; 21600 is the code fallback (planned-files-cheap's own 6 h window).",
+  "read_in": "bin/fly-pool.sh"
+}

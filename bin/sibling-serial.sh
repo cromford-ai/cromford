@@ -58,7 +58,8 @@
 #   lists     plans/<p>-<K>/planned-files.txt, then preplan_planned_files, then
 #             the newest builds/<p>-<K>-* or builds/pool-<p>-<K>-* list: its
 #             touch-files.txt when touch-source=declared, else planned-files.txt
-#             (see files_of); a claim's own list first. Each tick writes one
+#             (see files_of); a claim's own list first. A plans-dir list that
+#             starts `SOURCE:` (bin/planned-files-cheap.sh) is named cheap. Each tick writes one
 #             note line `list sources: <K>=<src> <S>=<src> ...`, where src is
 #             claim, a files_of source, or the cause of no list
 #   in flight state/fly-pool/<p>/*.json, build_queue_active_key, and the
@@ -76,6 +77,12 @@
 # starts the clock again, which only delays a release. At SIBLING_SERIAL_MAX_MIN the key is released: rc 0,
 # stdout `SIBLING_SERIAL_RELEASED <K> after <m> min behind <S>`, and one warn
 # alert per (K, S). A tick that answers go removes the file.
+# A LIVE SIBLING IS NEVER RELEASED ONTO (BH-9440). When S is in flight (a
+# machine, the active key or a job_claims row) or has an open PR in the
+# snapshot, the ceiling keeps the hold: rc 3, stdout
+# `SIBLING_SERIAL_HELD <K> past ceiling behind <S> (in flight|PR #<n>)`, and
+# one warn alert per (K, S, UTC day), id sibling-serial-stuck-<p>-<S>-<date>,
+# that names S as the thing to move. Only a queued S is released onto.
 #
 # KNOBS (lib sibling-serial, catalog/lanes.d/_lib.sibling-serial.json; env, then
 # env/global.env):
@@ -472,7 +479,7 @@ files_of() {
     c="lists/$k"
     src=$(cat "$TICKDIR/$c.src" 2>/dev/null)
     case "$src" in
-      plans-dir|preplan-index|build-touch|build-planned)
+      plans-dir|cheap|preplan-index|build-touch|build-planned)
         if [ -s "$TICKDIR/$c" ] && cat "$TICKDIR/$c" > "$dst" 2>/dev/null; then
           FO_SRC="$src"; [ -n "${FO_LOG:-}" ] && printf '%s\t%s\n' "$k" "$src" >> "$FO_LOG"
           return 0
@@ -484,7 +491,12 @@ files_of() {
     src=""
   fi
   p="$HARNESS/plans/$PROJECT-$k"
-  if [ -s "$p/planned-files.txt" ]; then cat "$p/planned-files.txt" > "$dst"; src=plans-dir; fi
+  if [ -s "$p/planned-files.txt" ]; then
+    cat "$p/planned-files.txt" > "$dst"; src=plans-dir
+    # BH-9440: a list bin/planned-files-cheap.sh wrote (first line `SOURCE:
+    # <tier>`) is named `cheap`, so a hold line is known to rest on it.
+    case "$(head -n 1 "$dst" 2>/dev/null)" in SOURCE:*) src=cheap ;; esac
+  fi
   [ -s "$p/plan.md" ] && had_plan=1
   if [ -z "$src" ] && command -v preplan_planned_files >/dev/null 2>&1; then
     l=$(preplan_planned_files "$HARNESS" "$PROJECT" "$k" 2>/dev/null); rc=$?
@@ -509,12 +521,12 @@ files_of() {
   # The list before its source, so a reader that finds the .src finds the list.
   if [ -n "$c" ] && mkdir -p "$TICKDIR/lists" 2>/dev/null; then
     case "$src" in
-      plans-dir|preplan-index|build-touch|build-planned)
+      plans-dir|cheap|preplan-index|build-touch|build-planned)
         tick_put "$dst" "$c" && printf '%s\n' "$src" | tick_put /dev/stdin "$c.src" ;;
       *) printf '%s\n' "$src" | tick_put /dev/stdin "$c.src" ;;
     esac
   fi
-  case "$src" in plans-dir|preplan-index|build-touch|build-planned) return 0 ;; esac
+  case "$src" in plans-dir|cheap|preplan-index|build-touch|build-planned) return 0 ;; esac
   return 1
 }
 if [ "$VERB" = parts ]; then
@@ -541,7 +553,7 @@ if [ "$VERB" = replay ]; then
   [ -r "$HERE/lib/scheduler-conf.sh" ] && . "$HERE/lib/scheduler-conf.sh" 2>/dev/null
   command -v sched_conf >/dev/null 2>&1 && IGNORE=$(sched_conf OVERLAP_IGNORE 'package.json package-lock.json *.md' "$HARNESS")
   IGNORE="$IGNORE" RM="" CAUSES="$RT/sources" replay_pure "$RT/rows" "$RT/parts"
-  awk -F'\t' '{n[$2 ~ /^(plans-dir|preplan-index|build-touch|build-planned)$/ ? $2 : "none"]++}
+  awk -F'\t' '{s = ($2 == "cheap") ? "plans-dir" : $2; n[s ~ /^(plans-dir|preplan-index|build-touch|build-planned)$/ ? s : "none"]++}
     END {printf "REPLAY_SOURCES plans-dir=%d preplan-index=%d build-touch=%d build-planned=%d none=%d\n",
          n["plans-dir"], n["preplan-index"], n["build-touch"], n["build-planned"], n["none"]}' "$RT/sources"
   exit 0
@@ -743,6 +755,33 @@ if [ "$OS" != "$S" ]; then
   printf '%s\n' "$LINE"; exit 3
 fi
 M=$(( (NOW - OE) / 60 ))
+# BH-9440: the ceiling never releases onto a LIVE sibling. When S is in flight
+# (a machine, the active key or a job_claims row) or has an open PR in the
+# snapshot, the hold stays (rc 3) and one alert per (S, UTC day) names S.
+LIVE=""
+if [ "$WMAX" -gt 0 ] && [ "$M" -ge "$WMAX" ]; then
+  if grep -qxF "$S" "$INFLIGHT" 2>/dev/null; then LIVE="in flight"
+  else
+    PRN=$(awk -F'\t' -v s="$(printf '%s' "$S" | tr '[:upper:]' '[:lower:]')" '
+      { b = tolower($2); i = index(b, s)
+        while (i > 0) {
+          pre = (i == 1) ? "/" : substr(b, i - 1, 1); post = substr(b, i + length(s), 1)
+          if (pre == "/" && (post == "" || post == "-" || post == "/")) { print $1; exit }
+          j = index(substr(b, i + 1), s); i = (j > 0) ? i + j : 0
+        } }' "$PRS" 2>/dev/null)
+    [ -n "$PRN" ] && LIVE="PR #$PRN"
+  fi
+fi
+if [ -n "$LIVE" ]; then
+  DAY=$(date -u -d "@$NOW" +%F 2>/dev/null || date -u +%F)
+  if [ "$OR" != "held-$DAY" ] && [ -x "$HERE/alert-line.sh" ]; then
+    if HARNESS="$HARNESS" "$HERE/alert-line.sh" --severity warn --id "sibling-serial-stuck-$PROJECT-$S-$DAY" --project "$PROJECT" \
+         "[pool/$PROJECT] SIBLING STUCK — $S holds $KEY past SIBLING_SERIAL_MAX_MIN ($M min, ceiling $WMAX); $S is $LIVE, so the hold stays. $S is the thing to move." >/dev/null 2>&1; then
+      printf '%s\t%s\theld-%s\n' "$S" "$OE" "$DAY" > "$SF" 2>/dev/null
+    fi
+  fi
+  printf 'SIBLING_SERIAL_HELD %s past ceiling behind %s (%s)\n' "$KEY" "$S" "$LIVE"; exit 3
+fi
 if [ "$WMAX" -gt 0 ] && [ "$M" -ge "$WMAX" ]; then
   REL="SIBLING_SERIAL_RELEASED $KEY after $M min behind $S"
   if [ "$OR" != released ] && [ -x "$HERE/alert-line.sh" ]; then
