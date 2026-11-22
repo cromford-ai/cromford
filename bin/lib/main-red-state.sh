@@ -68,7 +68,8 @@ mrs_verdict_get() {
 }
 
 # mrs_pr_errors_get <owner/repo> <out-file> <head>... — the rows of those heads
-# as "head<TAB>job<TAB>error<TAB>run_at" lines in <out-file>. A head with no
+# as "head<TAB>job<TAB>error<TAB>run_at<TAB>at" lines in <out-file> (at = when
+# the row was written, BH-9890). A head with no
 # row has no line. Asks 50 heads a request. rc 0 only when every request
 # answered: a part-read is rc 1, never a short list read as "no rows".
 mrs_pr_errors_get() {
@@ -80,19 +81,21 @@ mrs_pr_errors_get() {
     chunk=("${@:1:50}"); shift "${#chunk[@]}"
     heads=$(IFS=,; printf '%s' "${chunk[*]}")
     resp=$(_mrs_req GET "/api/main-red-state/pr-errors?repo=$q&heads=$heads") || { rc=$?; : > "$out"; return "$rc"; }
-    jq -er '.rows | arrays | .[] | [.head, .job, .error, .run_at] | @tsv' <<<"$resp" >> "$out" 2>/dev/null \
+    jq -er '.rows | arrays | .[] | [.head, .job, .error, .run_at, (.at // "")] | @tsv' <<<"$resp" >> "$out" 2>/dev/null \
       || jq -e '.rows | arrays | length == 0' >/dev/null 2>&1 <<<"$resp" \
       || { : > "$out"; return 1; }
   done
   return 0
 }
 
-# mrs_pr_error_put <owner/repo> <head> <job> <error> <run_at> — write-once; a
-# stored error that starts with "##[" is replaced (BH-5988). rc 0 either way.
+# mrs_pr_error_put <owner/repo> <head> <job> <error> <run_at> [replace] —
+# write-once; a stored error that starts with "##[" is replaced (BH-5988). A
+# 6th arg of 1 overwrites the row of that head (BH-9890: a named head read
+# again after a newer run of its failed job). rc 0 either way.
 mrs_pr_error_put() {
   local body out
-  body=$(jq -nc --arg r "$1" --arg h "$2" --arg j "$3" --arg e "$4" --arg t "$5" \
-    '{repo:$r, head:$h, job:$j, error:$e, run_at:$t}') || return 1
+  body=$(jq -nc --arg r "$1" --arg h "$2" --arg j "$3" --arg e "$4" --arg t "$5" --arg x "${6:-}" \
+    '{repo:$r, head:$h, job:$j, error:$e, run_at:$t} + (if $x == "1" then {replace:true} else {} end)') || return 1
   out=$(_mrs_req PUT /api/main-red-state/pr-errors "$body") || return $?
   jq -e '.row.head | strings' >/dev/null 2>&1 <<<"$out" || return 1
 }

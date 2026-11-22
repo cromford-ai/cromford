@@ -1,0 +1,11 @@
+{
+  "env": "MAIN_RED_PAIR_FREEZE_MAX_AGE_S",
+  "read_in": "bin/main-red-pr-pair.sh",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "Read by bin/main-red-pr-pair.sh as ${MAIN_RED_PAIR_FREEZE_MAX_AGE_S:-21600}. BH-9890: when a freeze this lane raised is older than this many seconds and bin/main-red-detector.sh does not say decision=red, every head of a named PR is read again on every tick (no cache), and a warn alert main-red-pair-stale:<owner>-<repo> with the freeze age goes out while the freeze stands. It resolves when the lane clears the freeze. 0 = the age check is off."
+}

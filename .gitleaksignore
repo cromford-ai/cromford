@@ -131,6 +131,7 @@ tests/lib/onboarding-worker.bh-7949.mjs:generic-api-key:32
 tests/lib/otp-worker.bh-7732.mjs:generic-api-key:31
 tests/lib/tracker-jira-stub.sh:generic-api-key:38
 tests/load-project-db.bh-5650-test.sh:curl-auth-header:111
+tests/main-red-pr-pair.bh-9890-test.sh:generic-api-key:373
 tests/main-red-state-rows.bh-4156-test.sh:generic-api-key:59
 tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:53
 tests/mc-batch-prefetch.bh-4156-test.sh:generic-api-key:273
@@ -234,6 +235,7 @@ worker/jobs/test/lane-wakes.bh-9072.test.js:generic-api-key:16
 worker/jobs/test/lead-ticket-verdicts.bh-9154.test.js:generic-api-key:24
 worker/jobs/test/main-red-state-indexes.bh-4156.test.js:generic-api-key:17
 worker/jobs/test/main-red-state.bh-4156.test.js:generic-api-key:20
+worker/jobs/test/main-red-state.bh-9890.test.js:generic-api-key:14
 worker/jobs/test/migration-numbers.bh-7325.test.js:generic-api-key:26
 worker/jobs/test/onboarding-actions.bh-7934.test.js:generic-api-key:28
 worker/jobs/test/onboarding-repo-create.bh-8001.test.js:generic-api-key:24

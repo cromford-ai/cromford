@@ -1,0 +1,9 @@
+{
+  "env": "MAIN_RED_PAIR_OPERATOR_WAIT_JOBS",
+  "read_in": "bin/main-red-pr-pair.sh",
+  "type": "string",
+  "default": "{}",
+  "zero_means": null,
+  "required": false,
+  "note": "Read by bin/main-red-pr-pair.sh as ${MAIN_RED_PAIR_OPERATOR_WAIT_JOBS:-{}}. BH-9890: JSON {\"owner/repo\":\"job[,job...]\"} of operator-wait jobs, jobs that fail until a person does a step (the migration-ledger gate fails until an operator applies the PR's SQL to prod). A failing job named here never forms a PR pair and never raises the suspected freeze; the verdict row still records it. Exact, case-sensitive match per name. {} = no job is excluded; bad JSON is logged and excludes nothing. Seeded {\"example-org/project-6\":\"gate\"} after the 2026-11-20 project-6 freeze."
+}

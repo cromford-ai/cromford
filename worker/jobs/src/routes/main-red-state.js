@@ -129,6 +129,10 @@ export const routes = [
       if (job === undefined || error === undefined || runAt === undefined) {
         return bad("job, error and run_at required: no tab or newline, at most 256/512/64");
       }
+      // BH-9890: replace:true overwrites the row of that head. The PR-pair lane
+      // sends it only for a named head it read again after a newer run of the
+      // failed job; every other PUT stays write-once.
+      if (body.replace !== undefined && typeof body.replace !== "boolean") return bad("replace: true or false");
       return guarded(["main_red_pr_errors"], env, async () => {
         const ins = await env.DB.prepare(
           `INSERT INTO main_red_pr_errors (repo, head, job, error, run_at, at) VALUES (?1,?2,?3,?4,?5,?6)
@@ -136,7 +140,12 @@ export const routes = [
         ).bind(repo, body.head, job, error, runAt, t).run();
         const inserted = Boolean(ins && ins.meta && ins.meta.changes === 1);
         let replaced = false;
-        if (!inserted) {
+        if (!inserted && body.replace === true) {
+          const up = await env.DB.prepare(
+            `UPDATE main_red_pr_errors SET job=?3, error=?4, run_at=?5, at=?6 WHERE repo=?1 AND head=?2`
+          ).bind(repo, body.head, job, error, runAt, t).run();
+          replaced = Boolean(up && up.meta && up.meta.changes === 1);
+        } else if (!inserted) {
           // BH-5988: the old parser could store a log marker line as the error.
           const up = await env.DB.prepare(
             `UPDATE main_red_pr_errors SET job=?3, error=?4, run_at=?5, at=?6

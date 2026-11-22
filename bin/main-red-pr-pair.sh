@@ -53,7 +53,8 @@
 #
 # COST. One PR list per repo per tick. Per head sha: at most one runs read, one
 # jobs read and one job-log read per tick, and NONE AT ALL once that head has a
-# verdict — the verdict is written to
+# verdict (one check-runs read for a named head, the RE-RUN edge below) — the
+# verdict is written to
 # state/main-red/pr-errors/<owner>-<repo>/<head>.tsv and a head sha is immutable,
 # so a row that exists is terminal by construction and is never asked again.
 # A head has a verdict only when EVERY required run on it has completed and the
@@ -71,11 +72,20 @@
 #     be part of no pair, and left as "no verdict" it would block every resolve
 #     in the repo for as long as it stayed open. Quiet for less than a window
 #     it is still asked again: the run may simply not have been scheduled yet.
-#   - a RE-RUN of the same run id (a flake re-run to green) flips a conclusion
-#     on the same head, and this ledger does NOT see it: the failure row stands
-#     for LEDGER_DAYS, and a pair it holds open resolves when its PRs merge or
-#     rebase to a new head, not when somebody re-runs a job. Bounded cost (no
-#     read at all for a head with a row) was chosen over that edge.
+#   - a RE-RUN on the same head (a flake re-run to green, an operator's second
+#     attempt) flips a conclusion the row does not hold. So a failure row of a
+#     NAMED head (a PR of an open pair of this repo, or in the prs= of a freeze
+#     this lane raised) costs one check-runs read per tick, filtered to its
+#     failed job: when that job started again after the row was written, the
+#     head is read again and the fresh verdict replaces the row (BH-9890). A
+#     frozen PR cannot merge and its head never changes, so before this a
+#     green re-run of project-6's "gate" on 2026-11-22 held the freeze it had
+#     raised for 2,240 minutes. A head nobody names is still never asked again.
+#   - a freeze this lane raised that is older than MAIN_RED_PAIR_FREEZE_MAX_AGE_S
+#     while the detector does not say decision=red: every named head with a
+#     failure row is read again on every tick, and a --severity warn alert
+#     main-red-pair-stale:<owner>-<repo> names the age while the freeze stands.
+#     It resolves on the tick the lane clears the freeze.
 #
 # Knobs (env/global.env, documented fallbacks in brackets):
 #   MAIN_RED_PAIR=0 or flags/main-red-pr-pair-off   kill switch (or the `switch.main-red-pr-pair-off` settings row)
@@ -110,6 +120,16 @@
 #                          or paths that are NOT required checks
 #                          (case-insensitive). bin/main-red-detector.sh reads
 #                          this lane's settings row for the same knob (BH-3769)
+#   MAIN_RED_PAIR_OPERATOR_WAIT_JOBS [{}]  JSON {"owner/repo":"job[,job...]"}:
+#                          jobs that fail until a person does a step (the
+#                          migration-ledger "gate" fails until an operator
+#                          applies the PR's SQL). They never form a pair and
+#                          never raise the freeze; the verdict row still
+#                          records them. Exact, case-sensitive names. Bad JSON
+#                          is logged and excludes nothing (BH-9890)
+#   MAIN_RED_PAIR_FREEZE_MAX_AGE_S [21600] the age past which an own freeze with
+#                          main not red forces a re-read and a warn alert (the
+#                          RE-RUN edge above). 0 = off (BH-9890)
 #   HARNESS_REPO           [example-org/cromford]
 #
 #   --explain   print the groups this tick would alert on, and the ledger rows
@@ -137,7 +157,7 @@ EXPLAIN=0; ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --explain) EXPLAIN=1 ;;
-    -h|--help) sed -n '2,110p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -uo pipefail$/p' "$0" | sed '$d'; exit 0 ;;
     -*) echo "main-red-pr-pair.sh: unknown flag $1" >&2; exit 2 ;;
     *) ARGS+=("$1") ;;
   esac
@@ -200,6 +220,12 @@ PAIR_MAX="${MAIN_RED_PAIR_MAX_PRS:-15}";       case "$PAIR_MAX"    in ''|*[!0-9]
 PAIR_WINDOW="${MAIN_RED_PAIR_WINDOW_S:-3600}"; case "$PAIR_WINDOW" in ''|*[!0-9]*) PAIR_WINDOW=3600 ;; esac
 LEDGER_DAYS="${MAIN_RED_PAIR_LEDGER_DAYS:-14}"; case "$LEDGER_DAYS" in ''|*[!0-9]*) LEDGER_DAYS=14 ;; esac
 PAIR_FREEZE="${MAIN_RED_PAIR_FREEZE:-1}"   # only the literal 0 disarms, as MAIN_RED_PAIR
+# BH-9890. The fallbacks below are the documented code defaults of the settings
+# rows lane.main-red-pr-pair.main_red_pair_operator_wait_jobs ({} = no job is
+# excluded) and lane.main-red-pr-pair.main_red_pair_freeze_max_age_s (21600 s =
+# 6 h; 0 = the age check is off).
+OWAIT_JSON="${MAIN_RED_PAIR_OPERATOR_WAIT_JOBS:-{\}}"
+FREEZE_MAX_AGE="${MAIN_RED_PAIR_FREEZE_MAX_AGE_S:-21600}"; case "$FREEZE_MAX_AGE" in ''|*[!0-9]*) FREEZE_MAX_AGE=21600 ;; esac
 # THE WAY OUT NAMES THE REAL LABEL (BH-1985). The alert below tells an operator
 # to land the fix as a PR carrying the main-red label, and the merge lanes
 # exempt whatever bin/lib/main-red-label.sh resolves, so the text reads the same
@@ -327,6 +353,65 @@ first_error_of_job() { # first_error_of_job <owner/repo> <job-id>
 # mrp_row_stale <row-file> — rc 0 when column 2 (the first error) starts "##[".
 mrp_row_stale() { awk -F'\t' 'NR==1 { exit !(index($2, "##[") == 1) } END { if (NR==0) exit 1 }' "$1" 2>/dev/null; }
 
+# mrp_operator_wait_for <owner/repo> — the operator-wait job names of that repo
+# from OWAIT_JSON, as one comma list (BH-9890). An operator-wait job fails until
+# a person does a step (the migration-ledger "gate" fails until an operator
+# applies the PR's SQL to prod), so two PRs that wait at the same time share a
+# failure that says nothing about main. Empty on no entry and on a value that is
+# not a string. Bad JSON is logged once per tick and excludes nothing, which is
+# the behaviour before this knob existed.
+MRP_OWAIT_BAD_LOGGED=0
+mrp_operator_wait_for() {
+  local out rc
+  out=$(python3 -c '
+import json, sys
+try: d = json.loads(sys.argv[1])
+except Exception: sys.exit(3)
+if not isinstance(d, dict): sys.exit(3)
+v = d.get(sys.argv[2])
+if isinstance(v, str): print(v)' "$OWAIT_JSON" "$1" 2>/dev/null); rc=$?
+  if [ "$rc" = 3 ]; then
+    [ "$MRP_OWAIT_BAD_LOGGED" = 1 ] || log "lane.main-red-pr-pair.main_red_pair_operator_wait_jobs is not a JSON object ($(head -c 80 <<<"$OWAIT_JSON")) — no job is treated as operator-wait this tick"
+    MRP_OWAIT_BAD_LOGGED=1; return 0
+  fi
+  printf '%s' "$out"
+}
+
+# mrp_detector_decision <owner/repo> <dashed> — the detector's decision for the
+# repo (the main_red_verdicts row first, then state/main-red/<dashed>.verdict),
+# or nothing when it is unknown. mrp_suspect_freeze keeps its own copy of this
+# read, because its log lines name each fail-open branch.
+mrp_detector_decision() {
+  local vrow vrc=2
+  if mrs_on; then vrow=$(mrs_verdict_get "$1"); vrc=$?; fi
+  case "$vrc" in
+    0) cut -f1 <<<"$vrow" ;;
+    2) sed -n 's/^decision=//p' "$H/state/main-red/$2.verdict" 2>/dev/null | head -1 ;;
+  esac
+  return 0
+}
+
+# mrp_head_rerun_newer <owner/repo> <head> <job> <row-at> — did the failed job
+# of this head run again after its verdict row was written (BH-9890)? One
+# check-runs read, filtered to that job name, every attempt (filter=all). A
+# head's verdict was write-once, so a re-run of "gate" to green on 2026-11-22
+# never reached the row, and the pair it held kept its own freeze up.
+#   rc 0  a check run of <job> started after <row-at>: read the head again
+#   rc 1  no newer start (or <row-at> unknown)
+#   rc 2  the read failed: the old row stands this tick
+# GitHub stamps are UTC ISO with a Z, so a string compare is time order.
+mrp_head_rerun_newer() {
+  local slug="$1" head="$2" job="$3" at="${4:-}" st
+  [ -n "$at" ] || return 1
+  st=$(gh api -X GET "repos/$slug/commits/$head/check-runs" -f check_name="$job" -f filter=all -f per_page=50 \
+    -q '[.check_runs[]? | .started_at // empty] | max // ""' 2>/dev/null) || return 2
+  [ -n "$st" ] || return 1
+  [[ "$st" > "$at" ]]
+}
+
+# mrp_prs_nums <prs> — "#3912, #3913" as "3912 3913".
+mrp_prs_nums() { tr -c '0-9\n' ' ' <<<"$1" | tr -s ' '; }
+
 # What ONE open PR's head failed on, as "job \t first error \t run created_at".
 # "-" in every column means the head's required workflows FINISHED and none of
 # them failed.
@@ -423,6 +508,7 @@ mrp_publish() {
 # Order is FILE -> ROW -> (the caller's) ALERT, so no alert can describe a
 # freeze that was never raised.
 MRP_FROZE=0
+MRP_REREAD=0; MRP_STALE=0; MRP_OLD=0; MRP_STALE_AGE=""; MRP_STALE_SINCE=""
 mrp_suspect_freeze() {
   local slug="$1" dashed="$2" job="$3" err="$4" prs="$5" flag verdict dec vrow vrc
   MRP_FROZE=0
@@ -477,13 +563,37 @@ mrp_resolve_freeze() {
   grep -q '^owner=main-red-pr-pair$' "$flag" 2>/dev/null || return 0
   rm -f "$flag"
   mrp_publish "main-red-$dashed" off "no open PR pair shares a failure any more"
+  [ "$MRP_REREAD" -gt 0 ] && log "$slug: no pair fires after re-reading $MRP_REREAD head(s)"
   log "$slug: FREEZE main-red-$dashed cleared — this lane raised it and no pair fires now"
+  # The age alert (BH-9890) closes with the freeze. It can be open only when
+  # the freeze is older than the limit (MRP_OLD), and the age only grows. The
+  # resolve does not also need "main is not red" on this tick, so a detector
+  # that turned red after the alert went out does not leave it open.
+  [ "$MRP_OLD" = 1 ] && "$H/bin/lane-alert.sh" --resolve --id "main-red-pair-stale:$dashed" main-red \
+    "$slug: the PR-pair freeze main-red-$dashed is cleared." >/dev/null 2>&1
+  return 0
+}
+
+# mrp_stale_alert <slug> <dashed> — the BH-9890 age alert, sent while an own
+# freeze older than FREEZE_MAX_AGE still stands after this tick's re-read.
+# lane-alert.sh holds the id open, so a repeat tick counts, it does not resend.
+mrp_stale_alert() {
+  local slug="$1" dashed="$2" flag="$H/flags/main-red-$2" prs text
+  [ "$MRP_STALE" = 1 ] || return 0
+  grep -q '^owner=main-red-pr-pair$' "$flag" 2>/dev/null || return 0
+  prs=$(sed -n 's/^prs=//p' "$flag" | head -1)
+  text="$slug: the PR-pair freeze main-red-$dashed is $MRP_STALE_AGE old (since $MRP_STALE_SINCE, limit ${FREEZE_MAX_AGE}s), main is not red, and PRs ${prs:-(none named)} still look paired after a re-read — check them or clear the flag."
+  if [ "$EXPLAIN" = 1 ]; then echo "WOULD ALERT main-red-pair-stale:$dashed :: $text"; return 0; fi
+  "$H/bin/lane-alert.sh" --severity warn --id "main-red-pair-stale:$dashed" main-red "$text" >/dev/null 2>&1
+  log "ALERT(stale-freeze) $text"
 }
 
 pr_pair_signal() { # pr_pair_signal <owner/repo>
   local slug="$1" dashed ledger marks wledger list n rows num head upd f rowfile groups grc
   local hash cnt prs job err text id marker seen unknown=0 capped=0 still froze=0
   local rowmode=0 scratch="" krc h j e ra pmode=file ptmp="" prc mprs
+  local named=" " owait="" ownflag at rr rtmp fsince fs_s fage dec
+  MRP_REREAD=0; MRP_STALE=0; MRP_OLD=0; MRP_STALE_AGE=""; MRP_STALE_SINCE=""
   type harness_pr_list >/dev/null 2>&1 || {
     log "$slug: bin/lib/gh-pr-list.sh is not readable — no PR-pair signal this tick"; return 0; }
   if command -v gh_repo_use_token >/dev/null 2>&1; then
@@ -514,9 +624,11 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
       'sort_by(.updatedAt // "") | reverse | .[0:$cap][] | .headRefOid // empty' <<<"$list" 2>/dev/null)
     krc=$?
     case "$krc" in
-      0) rowmode=1; mkdir -p "$scratch/ledger"
-         while IFS=$'\t' read -r h j e ra; do
-           [[ "$h" =~ ^[A-Za-z0-9._-]+$ ]] && printf '%s\t%s\t%s\n' "$j" "$e" "$ra" > "$scratch/ledger/$h.tsv"
+      0) rowmode=1; mkdir -p "$scratch/ledger" "$scratch/at"
+         while IFS=$'\t' read -r h j e ra at; do
+           [[ "$h" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+           printf '%s\t%s\t%s\n' "$j" "$e" "$ra" > "$scratch/ledger/$h.tsv"
+           printf '%s\n' "$at" > "$scratch/at/$h"
          done < "$scratch/known.tsv"
          ledger="$scratch/ledger" ;;
       2) rm -rf "$scratch"; scratch="" ;;
@@ -558,6 +670,46 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
     mkdir -p "$ledger" 2>/dev/null
     find "$ledger" -type f -name '*.tsv' -mtime +"$LEDGER_DAYS" -delete 2>/dev/null
   fi
+  # THE NAMED PRs (BH-9890): the PRs of an open pair of this repo, and the
+  # prs= of a freeze this lane raised. A failure row of a named head is checked
+  # for a newer run of its failed job on every tick, because a frozen PR cannot
+  # merge, its head never changes, and a write-once row would hold the pair
+  # (and the freeze) for LEDGER_DAYS after the job went green.
+  ownflag="$H/flags/main-red-$dashed"
+  grep -q '^owner=main-red-pr-pair$' "$ownflag" 2>/dev/null || ownflag=""
+  [ -n "$ownflag" ] && named="$named$(mrp_prs_nums "$(sed -n 's/^prs=//p' "$ownflag" | head -1)") "
+  for marker in "$marks"/*; do
+    [ -f "$marker" ] && named="$named$(mrp_prs_nums "$(sed -n 's/^prs=//p' "$marker" | head -1)") "
+  done
+  if [ "$rowmode" = 1 ]; then
+    if mrs_pairs_open "$slug" "$scratch/early-open.tsv"; then
+      named="$named$(cut -f4 "$scratch/early-open.tsv" | while IFS= read -r mprs; do mrp_prs_nums "$mprs"; done | tr '\n' ' ') "
+    else
+      log "$slug: the open pair rows are unreadable before the head loop — only the freeze's own PR list is re-checked this tick"
+    fi
+  fi
+  named=$(tr -s ' ' <<<"$named")
+  # A FREEZE OF THIS LANE THAT OUTLIVES ITS LIMIT (BH-9890). Older than
+  # FREEZE_MAX_AGE while the detector does not say red: every named head is read
+  # again on every tick, newer run or not, and the age alert below goes out.
+  if [ -n "$ownflag" ] && [ "$FREEZE_MAX_AGE" -gt 0 ]; then
+    fsince=$(sed -n 's/^since=//p' "$ownflag" | head -1)
+    [ -n "$fsince" ] || fsince=$(sed -n 's/^detected=//p' "$ownflag" | head -1)
+    if [ -n "$fsince" ] && fs_s=$(date -u -d "$fsince" +%s 2>/dev/null); then
+      fage=$(( $(date -u +%s) - fs_s ))
+      if [ "$fage" -gt "$FREEZE_MAX_AGE" ]; then
+        MRP_OLD=1
+        dec=$(mrp_detector_decision "$slug" "$dashed")
+        if [ "$dec" != red ]; then
+          MRP_STALE=1; MRP_STALE_SINCE="$fsince"
+          MRP_STALE_AGE="$(( fage / 3600 ))h$(( fage % 3600 / 60 ))m"
+          log "$slug: freeze main-red-$dashed is $MRP_STALE_AGE old (limit ${FREEZE_MAX_AGE}s) and main is not red — every named head is read again this tick"
+        fi
+      fi
+    else
+      log "$slug: freeze main-red-$dashed has no readable since= (\"$fsince\") — its age is not checked this tick"
+    fi
+  fi
   # ZERO OPEN PRs IS AN ANSWER, not a missing one — the unreadable cases already
   # returned above with a log line. Falling straight through to the resolve
   # sweep with no groups is what closes an alert whose last PR merged; an early
@@ -585,6 +737,40 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
           mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" \
             || log "$slug: the row for head ${head:0:8} was not written — that head is read again next tick"
         fi
+      elif case "$named" in *" $num "*) true ;; *) false ;; esac \
+           && [ "$(cut -f1 "$f" 2>/dev/null)" != "-" ]; then
+        # A FAILURE ROW OF A NAMED HEAD (BH-9890): read the head again when the
+        # freeze is stale, or when its failed job ran again after the row.
+        rr=""
+        if [ "$MRP_STALE" = 1 ]; then rr="freeze older than ${FREEZE_MAX_AGE}s"
+        else
+          IFS=$'\t' read -r j e ra < "$f"
+          if [ "$rowmode" = 1 ]; then at=$(head -1 "$scratch/at/$head" 2>/dev/null)
+          else at=$(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null); fi
+          mrp_head_rerun_newer "$slug" "$head" "$j" "$at"
+          case "$?" in
+            0) rr="newer run attempt" ;;
+            2) log "$slug: the check runs of head ${head:0:8} (#$num) are unreadable — its row stands this tick" ;;
+          esac
+        fi
+        if [ -n "$rr" ]; then
+          rtmp=$(mktemp "${TMPDIR:-/tmp}/main-red-reread.XXXXXX") || rtmp=""
+          if [ -n "$rtmp" ] && pr_head_error "$slug" "$head" "$upd" > "$rtmp" && [ -s "$rtmp" ]; then
+            f="$wledger/$head.tsv"
+            cat "$rtmp" > "$f"
+            MRP_REREAD=$((MRP_REREAD + 1))
+            IFS=$'\t' read -r j e ra < "$f"
+            [ "$EXPLAIN" = 1 ] && echo "WOULD RECORD $slug $head :: $(cat "$f")"
+            if [ "$rowmode" = 1 ] && [ "$EXPLAIN" != 1 ]; then
+              mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" 1 \
+                || log "$slug: the re-read row for head ${head:0:8} was not written — the next tick reads it again"
+            fi
+            log "$slug: head ${head:0:8} of #$num re-read ($rr) — now \"$j\""
+          else
+            log "$slug: head ${head:0:8} of #$num re-read ($rr) has no verdict yet (a run still in flight, or a read failed) — the old row stands this tick"
+          fi
+          [ -n "$rtmp" ] && rm -f "$rtmp"
+        fi
       fi
       # A head with no verdict is not a head with no failure. Count it: the
       # resolve sweep below may not claim "the shared cause is gone" on a look
@@ -593,10 +779,21 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
       else unknown=$((unknown + 1)); fi
     done <<<"$rows"
   fi
-  groups=$(python3 - "$PAIR_WINDOW" "$rowfile" <<'PYEOF' 2>/dev/null
+  # OPERATOR-WAIT JOBS NEVER PAIR (BH-9890). The verdict row still records the
+  # job, so --explain and the ledger read as before; only the grouping skips it.
+  owait=$(mrp_operator_wait_for "$slug")
+  if [ -n "$owait" ]; then
+    awk -F'\t' -v w="$owait" 'BEGIN { n = split(w, a, ","); for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", a[i]); if (a[i] != "") ow[a[i]] = 1 } }
+      ($2 in ow) { c[$2]++ } END { for (j in c) printf "%s\t%d\n", j, c[j] }' "$rowfile" 2>/dev/null | sort |
+    while IFS=$'\t' read -r j cnt; do
+      log "$slug: job \"$j\" is an operator-wait job (lane.main-red-pr-pair.main_red_pair_operator_wait_jobs) — $cnt head(s) not paired on it"
+    done
+  fi
+  groups=$(python3 - "$PAIR_WINDOW" "$rowfile" "$owait" <<'PYEOF' 2>/dev/null
 import hashlib, sys
 from datetime import datetime, timezone
 window = int(sys.argv[1])
+owait = {w.strip() for w in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if w.strip()}
 def epoch(s):
     # GitHub stamps are UTC and the Z says so. strptime alone builds a NAIVE
     # datetime, and .timestamp() then reads it as LOCAL time — on a hub with a
@@ -612,6 +809,8 @@ for line in open(sys.argv[2]):
     # "-" is a finished, green head. "(unavailable)" is a log that held no error
     # line. Neither is an error two PRs can be said to SHARE.
     if job in ("-", "(no failing job)") or err in ("-", "(unavailable)"): continue
+    # An operator-wait job fails until a person acts (BH-9890): no shared cause.
+    if job in owait: continue
     t = epoch(when)
     if t is None: continue
     by.setdefault((job, err), {})[num] = t
@@ -706,7 +905,12 @@ PYEOF
     fi
     log "ALERT(pair) $text"
   done <<<"$groups"
-  [ "$EXPLAIN" = 1 ] && return 0
+  if [ "$EXPLAIN" = 1 ]; then
+    # The lane would clear its freeze on this look (no pair, nothing unknown,
+    # no cap), and then there is nothing old to alert on.
+    { [ "$seen" = " " ] && [ "$unknown" = 0 ] && [ "$capped" != 1 ]; } || mrp_stale_alert "$slug" "$dashed"
+    return 0
+  fi
   # A RESOLVE IS A CLAIM — "the shared cause is gone" — and only a complete look
   # earns it. The unreadable-PR-list case already returned above, but a list that
   # loaded while a head's runs came back 5xx (or while a rebased head's runs are
@@ -716,6 +920,7 @@ PYEOF
   # standing, and a real fix resolves on the next complete tick.
   if [ "$unknown" -gt 0 ]; then
     log "$slug: $unknown open PR head(s) have no verdict this tick (runs still in flight, or a read that failed) — open pairs left alone rather than called fixed"
+    mrp_stale_alert "$slug" "$dashed"
     rm -rf "$ptmp"; return 0
   fi
   # AND THE FREEZE COMES DOWN ON THE SAME EVIDENCE AS A RESOLVE (BH-1451): a
@@ -723,6 +928,7 @@ PYEOF
   # partial by construction — heads past it were never read — so a freeze waits
   # for a tick that saw every open PR, exactly as the marker sweep below does.
   if [ "$seen" = " " ] && [ "$capped" != 1 ]; then mrp_resolve_freeze "$slug" "$dashed"; fi
+  mrp_stale_alert "$slug" "$dashed"
   # One "hash<TAB>job<TAB>prs" line per open pair, from the rows or the files.
   if [ "$pmode" = row ]; then cut -f1,2,4 "$ptmp/open.tsv" > "$ptmp/sweep.tsv"
   else
