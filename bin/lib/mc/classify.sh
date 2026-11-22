@@ -2034,16 +2034,18 @@ mc_nhv_reason() {
 #   worker is its own subshell, so the memo never outlives one row of one tick;
 #   a process that never sets the key (poll-commands, rule-adopt,
 #   batch-resolve) asks fresh on its first call. No la_decide loaded = rc 0
-#   with LA_REASON empty, the "no gate" every caller already had.
+#   with LA_REASON empty, the "no gate" every caller already had. The memo
+#   keeps LA_PROTECTED_PATHS too (MC_LA_MEMO_PATHS, BH-9887), so a memo hit
+#   hands mc_ca_withheld the same paths as the first ask.
 mc_la_decide() {
   local key="$1#$2@$3" rc=0
   if [ -n "${MC_LA_MEMO_KEY:-}" ] && [ "$MC_LA_MEMO_KEY" = "$key" ]; then
-    LA_REASON="${MC_LA_MEMO_REASON:-}"
+    LA_REASON="${MC_LA_MEMO_REASON:-}"; LA_PROTECTED_PATHS="${MC_LA_MEMO_PATHS:-}"
     return "${MC_LA_MEMO_RC:-2}"
   fi
   command -v la_decide >/dev/null 2>&1 || { LA_REASON=""; return 0; }
   la_decide "$1" "$2" "$3" conductor || rc=$?
-  MC_LA_MEMO_KEY="$key"; MC_LA_MEMO_RC="$rc"; MC_LA_MEMO_REASON="$LA_REASON"
+  MC_LA_MEMO_KEY="$key"; MC_LA_MEMO_RC="$rc"; MC_LA_MEMO_REASON="$LA_REASON"; MC_LA_MEMO_PATHS="${LA_PROTECTED_PATHS:-}"
   return "$rc"
 }
 
@@ -2052,6 +2054,9 @@ mc_la_decide() {
 #   beat la_human_needed sends (once per (PR, head) per day). rc 0 and rc 2
 #   leave it empty: rc 2 is the BH-2199 hold mc_enqueue_mergify already makes,
 #   and is never reported as a withheld verdict. No la_decide loaded = no gate.
+#   With actions=1 on rc 1 it also calls mc_ca_withheld when a fragment
+#   defines it (bin/merge-conductor.d/bh-9887-client-approval.sh, BH-9887):
+#   the client-mode head is told to the repo's product board.
 mc_nhv_gate() {
   local slug="$1" num="$2" head="$3" actions="${4:-0}" rc=0
   MC_NEEDS_HV=""
@@ -2061,6 +2066,9 @@ mc_nhv_gate() {
   MC_NEEDS_HV=$(mc_nhv_reason "$slug" "$num" "$head" "$LA_REASON")
   if [ "$actions" = 1 ] && command -v la_human_needed >/dev/null 2>&1; then
     la_human_needed "$slug" "$num" "$head" "$LA_REASON" merge-conductor || true
+  fi
+  if [ "$actions" = 1 ] && command -v mc_ca_withheld >/dev/null 2>&1; then
+    mc_ca_withheld "$slug" "$num" "$head" "${LA_PROTECTED_PATHS:-}" || true
   fi
   return 0
 }

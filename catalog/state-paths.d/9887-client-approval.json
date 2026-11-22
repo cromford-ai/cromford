@@ -1,0 +1,3 @@
+[
+    {"path": "client-approval", "class": "box-local", "authority": "the client approval request markers (BH-9887)", "note": "state/client-approval/<project>/<pr>-<head40>.json: bin/lib/client-approval.sh ca_mark_write (tmp + mv), read by ca_mark_read in the conductor fragment bin/merge-conductor.d/bh-9887-client-approval.sh and bin/client-approval-request.sh. A cache of one board call per (project, PR, head); the board holds the approval record. A lost file costs one repeated POST, which the Idempotency-Key makes safe. Pruned after client_approval_board.marker_keep_d days by ca_prune. Machine-local, never carried"}
+]

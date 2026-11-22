@@ -9,7 +9,8 @@
 # THE AUTHORITY STUB. bin/lib/verdict-status.sh is replaced by one whose
 # la_decide answers the rc and LA_REASON in $T/la-rc / $T/la-reason (or, per
 # call, the next line of $T/la-seq: `<rc>`), and logs every call to
-# $T/la-calls.txt. la_scope answers $T/la-scope (default 0, governed).
+# $T/la-calls.txt, and sets LA_PROTECTED_PATHS from $T/la-paths (BH-9887).
+# la_scope answers $T/la-scope (default 0, governed).
 # $T/nomemo makes the stub define mc_la_decide as a plain pass-through, which
 # overrides the lib's memo (verdict-status.sh is sourced after classify.sh).
 #
@@ -49,6 +50,7 @@ nhvf_setup() {
 la_decide() {
   printf '%s\n' "\$*" >> "$T/la-calls.txt"
   LA_REASON=\$(cat "$T/la-reason" 2>/dev/null)
+  LA_PROTECTED_PATHS=\$(cat "$T/la-paths" 2>/dev/null)
   local rc
   if [ -s "$T/la-seq" ]; then rc=\$(head -1 "$T/la-seq"); sed -i 1d "$T/la-seq"
   else rc=\$(cat "$T/la-rc" 2>/dev/null || echo 0); fi
