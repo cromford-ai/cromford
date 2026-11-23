@@ -4,8 +4,8 @@
 # closed to MERGED/CLOSED, dry-run first, one audit line per row (BH-8310).
 #   W1  a run with no --apply prints one `(dry-run)` line per movable row and
 #       leaves the rows file byte-identical
-#   W2  the negatives are not moved and not printed as moves: QUEUED and
-#       BLOCKED_HUMAN with a merged memo, an `open` memo, an `open 0` memo, a
+#   W2  the negatives are not moved and not printed as moves: QUEUED with a
+#       merged memo (BLOCKED_HUMAN moves since BH-9897), an `open` memo, an `open 0` memo, a
 #       `gone` memo (printed as skipped), a `closed` memo older than the
 #       row's `since` (a reopened PR, printed as skipped), no memo, the same number in another
 #       repo, a repo whose name starts with this repo's name
@@ -44,9 +44,9 @@ row example-org/demo 901 READY;   memo demo 901 merged 1700000000
 row example-org/demo 902 WAIT_CI; memo demo 902 merged 1700000000
 row example-org/demo 903 READY;   memo demo 903 closed 1700000000
 row example-org/demo 904 WAIT_CI; memo demo 904 closed 1700000000
+row example-org/demo 911 BLOCKED_HUMAN; memo demo 911 merged 1700000000   # BH-9897: every live state but QUEUED moves
 # Not movable.
 row example-org/demo 910 QUEUED;        memo demo 910 merged 1700000000
-row example-org/demo 911 BLOCKED_HUMAN; memo demo 911 merged 1700000000
 row example-org/demo 912 READY;         memo demo 912 open 1700000000
 row example-org/demo 913 READY;         memo demo 913 open 0
 row example-org/demo 914 READY;         memo demo 914 gone 1700000000
@@ -54,8 +54,8 @@ row example-org/demo 915 READY
 row example-org/demo 916 READY 1800000000; memo demo 916 closed 1700000000   # reopened after the close probe
 row example-org/other 901 READY                     # demo's #901 is merged; other's #901 has no memo
 row example-org/demox 902 READY                     # a slug that starts with "example-org/demo"
-MOVE="example-org/demo#901 example-org/demo#902 example-org/demo#903 example-org/demo#904"
-KEEP="example-org/demo#910=QUEUED example-org/demo#911=BLOCKED_HUMAN example-org/demo#912=READY example-org/demo#913=READY example-org/demo#914=READY example-org/demo#915=READY example-org/demo#916=READY example-org/other#901=READY example-org/demox#902=READY"
+MOVE="example-org/demo#901 example-org/demo#902 example-org/demo#903 example-org/demo#904 example-org/demo#911"
+KEEP="example-org/demo#910=QUEUED example-org/demo#912=READY example-org/demo#913=READY example-org/demo#914=READY example-org/demo#915=READY example-org/demo#916=READY example-org/other#901=READY example-org/demox#902=READY"
 cp "$ROWS" "$T/rows.before"
 
 # ============================================================================
@@ -65,12 +65,13 @@ sweep
 [ "$(cat "$T/rc")" = 0 ] && ok || bad "W1 a dry run is rc 0 (rc $(cat "$T/rc"); err: $(cat "$T/err"))"
 cmp -s "$T/rows.before" "$ROWS" && ok || bad "W1 a dry run must leave the rows file byte-identical"
 [ -s "$T/h/logs/merge-conductor.log" ] && bad "W1 a dry run must write nothing to the conductor log: $(head -2 "$T/h/logs/merge-conductor.log")" || ok
-[ "$(grep -c '(dry-run)$' "$T/out")" = 4 ] && ok || bad "W1 one dry-run line per movable row (got: $(cat "$T/out"))"
+[ "$(grep -c '(dry-run)$' "$T/out")" = 5 ] && ok || bad "W1 one dry-run line per movable row (got: $(cat "$T/out"))"
 for e in 'example-org/demo#901 READY -> MERGED memo=merged' 'example-org/demo#902 WAIT_CI -> MERGED memo=merged' \
-         'example-org/demo#903 READY -> CLOSED memo=closed' 'example-org/demo#904 WAIT_CI -> CLOSED memo=closed'; do
+         'example-org/demo#903 READY -> CLOSED memo=closed' 'example-org/demo#904 WAIT_CI -> CLOSED memo=closed' \
+         'example-org/demo#911 BLOCKED_HUMAN -> MERGED memo=merged'; do
   grep -qxF "STALE-ROW $e (dry-run)" "$T/out" && ok || bad "W1 missing line: STALE-ROW $e (dry-run) (out: $(cat "$T/out"))"
 done
-grep -qxF 'stale-rows-sweep: 4 rows, 2 merged, 2 closed (dry)' "$T/out" && ok || bad "W1 totals line: $(tail -1 "$T/out")"
+grep -qxF 'stale-rows-sweep: 5 rows, 3 merged, 2 closed (dry)' "$T/out" && ok || bad "W1 totals line: $(tail -1 "$T/out")"
 
 # ============================================================================
 # W2. Negatives: not printed as moves, not changed.
@@ -89,14 +90,14 @@ grep -qxF 'STALE-ROW example-org/demo#916 READY -> - memo=closed (skipped: memo 
 # ============================================================================
 sweep --apply
 [ "$(cat "$T/rc")" = 0 ] && ok || bad "W3 --apply is rc 0 (rc $(cat "$T/rc"); err: $(cat "$T/err"))"
-for k in example-org/demo#901 example-org/demo#902; do [ "$(state_of "$k")" = MERGED ] && ok || bad "W3 $k must be MERGED (row: $(state_of "$k"))"; done
+for k in example-org/demo#901 example-org/demo#902 example-org/demo#911; do [ "$(state_of "$k")" = MERGED ] && ok || bad "W3 $k must be MERGED (row: $(state_of "$k"))"; done
 for k in example-org/demo#903 example-org/demo#904; do [ "$(state_of "$k")" = CLOSED ] && ok || bad "W3 $k must be CLOSED (row: $(state_of "$k"))"; done
 for kv in $KEEP; do
   [ "$(state_of "${kv%%=*}")" = "${kv#*=}" ] && ok || bad "W3 ${kv%%=*} must stay ${kv#*=} (row: $(state_of "${kv%%=*}"))"
 done
-[ "$(grep -c '(applied)$' "$T/out")" = 4 ] && ok || bad "W3 one applied line per moved row (got: $(cat "$T/out"))"
-grep -qxF 'stale-rows-sweep: 4 rows, 2 merged, 2 closed (apply)' "$T/out" && ok || bad "W3 totals line: $(tail -1 "$T/out")"
-[ "$(grep -c 'STALE-ROW .*(applied)' "$T/h/logs/merge-conductor.log")" = 4 ] && ok || bad "W3 each applied row is logged once in merge-conductor.log"
+[ "$(grep -c '(applied)$' "$T/out")" = 5 ] && ok || bad "W3 one applied line per moved row (got: $(cat "$T/out"))"
+grep -qxF 'stale-rows-sweep: 5 rows, 3 merged, 2 closed (apply)' "$T/out" && ok || bad "W3 totals line: $(tail -1 "$T/out")"
+[ "$(grep -c 'STALE-ROW .*(applied)' "$T/h/logs/merge-conductor.log")" = 5 ] && ok || bad "W3 each applied row is logged once in merge-conductor.log"
 grep -q 'example-org/demo#901 READY -> MERGED .*reason=merged outside the conductor (closed-watch)' "$T/h/logs/merge-conductor.log" && ok \
   || bad "W3 the transition carries its reason: $(grep '#901' "$T/h/logs/merge-conductor.log")"
 [ "$(awk -F'\t' '$1=="example-org/demo#901" {print $4}' "$ROWS")" = "$HD" ] && ok || bad "W3 the moved row keeps its head"

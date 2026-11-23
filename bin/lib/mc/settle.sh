@@ -810,9 +810,18 @@ closed_unmerged_rows() {
   return 0
 }
 
-# mc_settle_offlist_rows <slug> <open-nums> <apply|dry> — BH-8310. Moves the
-# READY and WAIT_CI rows of <slug> whose PR is off this tick's open list and
-# memo'd `merged` or `closed` to MERGED or CLOSED. Always rc 0.
+# mc_settle_offlist_rows <slug> <open-nums> <apply|dry> — BH-8310, BH-9897.
+# Moves the rows of <slug> in every live state but QUEUED (MC_STATES minus
+# MERGED, CLOSED, ABANDONED and QUEUED) whose PR is off this tick's open list
+# and memo'd `merged` or `closed` to MERGED or CLOSED. Always rc 0.
+#
+# BH-9897. Until then only READY and WAIT_CI rows were read, so a PR that
+# merged while its row was HEAD_MOVED, BLOCKED_HUMAN, NEEDS_HUMAN_VERDICT, ...
+# kept that state for good: 962 of 1,133 live rows on bh-hub-2, 2026-11-22.
+# classify never runs on an off-list PR, so this settle is the only writer that
+# can move such a row. The `closed` rule below is the same for every state:
+# closed_unmerged_rows already moves a harness PR's row to CLOSED from any
+# state, and no lane in flight owns a closed PR's row.
 #
 # THE DEFECT. closed_unmerged_rows memos a MERGED probe and writes no row, and a
 # `merged` memo takes the PR out of every later candidate list. So the row of a
@@ -823,7 +832,7 @@ closed_unmerged_rows() {
 # A ROW-ONLY TRANSITION. No conductor_settle: these PRs merged outside the
 # conductor, often weeks ago, so an issue close or a deploy request now is
 # wrong (bin/reconcile-prs.sh owns the issue close of merged PRs). QUEUED rows
-# keep the queue settle; other parked states are not touched. A `gone` memo
+# keep the queue settle. A `gone` memo
 # (404) is not moved: a 404 can be a token scope, not a deleted PR.
 #
 # THE PROBE. A keyed tick (MC_ONLY_KEYS) in apply mode reads a key with no
@@ -845,8 +854,10 @@ mc_settle_offlist_rows() {
   [ "$mode" = apply ] || mode=dry
   d=$(closed_watch_dir "$slug")
   local -a CAND=()
-  mapfile -t CAND < <(awk -F'\t' -v p="$slug#" -v open="$open" '
-    index($1, p) == 1 && ($2 == "READY" || $2 == "WAIT_CI") {
+  local live=" " w
+  for w in $MC_STATES; do case "$w" in MERGED|CLOSED|ABANDONED|QUEUED) ;; *) live="$live$w " ;; esac; done
+  mapfile -t CAND < <(awk -F'\t' -v p="$slug#" -v open="$open" -v live="$live" '
+    index($1, p) == 1 && $2 != "" && index(live, " " $2 " ") {
       n = substr($1, length(p) + 1)
       if (n !~ /^[0-9]+$/ || index(open, " " n " ")) next
       print $1 "\t" n "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $8 }' "$MC_ROWS" 2>/dev/null)

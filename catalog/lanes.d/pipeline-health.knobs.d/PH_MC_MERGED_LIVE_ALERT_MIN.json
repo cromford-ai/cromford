@@ -1,0 +1,10 @@
+{
+  "env": "PH_MC_MERGED_LIVE_ALERT_MIN",
+  "type": "int",
+  "default": 60,
+  "min": 0,
+  "max": 10080,
+  "unit": "minutes",
+  "zero_means": null,
+  "note": "BH-9897: how long the count of live merge-conductor rows (not MERGED, CLOSED or ABANDONED) whose closed-watch memo says `merged` may stand above 0 before ONE alert `mcmergedlive:fleet` names the count per repo. 0 alerts on the first tick the count stands above 0 (no wait). The clock is state/mc-merged-live/since (box-local); a count of 0 removes it and the epilogue resolves the page (mcmergedlive is in RETRACT_NS). The fix is bin/mc-stale-rows-sweep.sh, then --apply. A non-number falls back to 60."
+}

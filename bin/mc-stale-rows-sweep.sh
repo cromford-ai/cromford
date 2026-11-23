@@ -1,7 +1,9 @@
 #!/bin/bash
-# bin/mc-stale-rows-sweep.sh — BH-8310: a one-time, hand-run sweep that moves
-# the READY and WAIT_CI rows of PRs already memo'd merged or closed out of
-# state/merge-conductor/pr-state.tsv's live states.
+# bin/mc-stale-rows-sweep.sh — BH-8310, BH-9897: a hand-run sweep that moves
+# the rows of PRs already memo'd merged or closed out of
+# state/merge-conductor/pr-state.tsv's live states. Since BH-9897 it reads the
+# rows in every live state but QUEUED (the queue settle owns QUEUED), the same
+# list as the conductor's off-list settle, because it calls that settle.
 #
 # WHY. Until BH-8310 the conductor's closed probe memo'd a merged PR
 # (state/merge-conductor/closed-watch/<slug>/<num> = `merged`) and wrote no row,

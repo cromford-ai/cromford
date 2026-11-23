@@ -1035,6 +1035,59 @@ for D in "$H"/builds/pool-*-*/ "$H"/builds/*-*/; do
 done
 command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 # <<< sweep should have landed
+
+# >>> merged rows live (BH-9897)
+# LIVE CONDUCTOR ROWS OF MERGED PRs, AND ONE PAGE WHEN THE COUNT STANDS ABOVE 0.
+# On 2026-11-22, 962 of 1,133 live rows in state/merge-conductor/pr-state.tsv
+# belonged to PRs that were merged or closed, and nothing paged. The count is
+# the rows not MERGED, CLOSED or ABANDONED whose closed-watch memo says
+# `merged` (bin/lib/mc-merged-live.sh, one awk pass). The clock is
+# state/mc-merged-live/since (the epoch the count first stood above 0); it
+# goes when the count is 0. Its own first segment, classed box-local in
+# catalog/state-paths.d/9897-merged-live-clock.json (tests/no-state-files). One alert per TTL window while it
+# stands, and the epilogue retracts it when it clears (mcmergedlive is
+# appended to RETRACT_NS here). A rows file it cannot read, or a missing lib,
+# is a skip: no count, the clock stays, the key carries.
+# A FLEET check, so it sits in this ph_fleet group and not beside the
+# no-progress block (that block is per project, in the ph_proj group). A
+# --project run skips it; the --dispatch fleet run and an all run own the key
+# (it is not in PH_PROJ_NS), so the run that counts is the run that retracts.
+# The append is `+=` on purpose: suites read the shared line with
+# grep '^RETRACT_NS=' and a second line of that shape would break them.
+RETRACT_NS+="|mcmergedlive"
+# knob: catalog/lanes.d/pipeline-health.knobs.d/PH_MC_MERGED_LIVE_ALERT_MIN.json
+ML_MIN="${PH_MC_MERGED_LIVE_ALERT_MIN:-60}"
+case "$ML_MIN" in ''|*[!0-9]*) ML_MIN=60 ;; esac
+# knob: catalog/lanes.d/pipeline-health.knobs.d/PH_MC_MERGED_LIVE_ALERT_TTL_S.json
+ML_TTL="${PH_MC_MERGED_LIVE_ALERT_TTL_S:-86400}"
+case "$ML_TTL" in ''|*[!0-9]*) ML_TTL=86400 ;; esac
+ML_CLK="$H/state/mc-merged-live/since"
+ML_OUT=""
+if [ -r "$H/bin/lib/mc-merged-live.sh" ]; then
+  # shellcheck source=bin/lib/mc-merged-live.sh
+  . "$H/bin/lib/mc-merged-live.sh"
+  ML_OUT=$(mc_merged_live_count "$H/state/merge-conductor/pr-state.tsv" "$H/state/merge-conductor/closed-watch") || ML_OUT=""
+fi
+if [ -z "$ML_OUT" ]; then
+  [ -n "${FIRED:-}" ] && echo "+=mcmergedlive:fleet" >> "$FIRED"
+else
+  IFS=$'\t' read -r ML_N ML_PER <<<"$ML_OUT"
+  case "${ML_N:-x}" in *[!0-9]*) ML_N=0 ;; esac
+  if [ "$ML_N" -eq 0 ]; then
+    rm -f "$ML_CLK"
+  else
+    echo "$(STAMP) merged-rows-live: $ML_N ($ML_PER)" >> "$H/logs/pipeline-health.log"
+    mkdir -p "${ML_CLK%/*}" 2>/dev/null
+    [ -s "$ML_CLK" ] || printf '%s\n' "$NOW" > "$ML_CLK"
+    ML_SINCE=$(head -n 1 "$ML_CLK" 2>/dev/null); case "$ML_SINCE" in ''|*[!0-9]*) ML_SINCE="$NOW" ;; esac
+    ML_AGE=$(( NOW - ML_SINCE ))
+    if [ "$ML_AGE" -ge $(( ML_MIN * 60 )) ]; then
+      alert "$ML_TTL" "mcmergedlive:fleet" \
+        "$ML_N conductor row(s) of merged PRs are still live for $((ML_AGE / 60)) min (PH_MC_MERGED_LIVE_ALERT_MIN=$ML_MIN): $ML_PER. Run bin/mc-stale-rows-sweep.sh, then --apply."
+    fi
+  fi
+fi
+# <<< merged rows live
 fi # ph_fleet
 
 if ph_proj; then

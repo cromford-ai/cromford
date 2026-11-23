@@ -1585,6 +1585,7 @@ br_from_conductor() {
     case "$st" in BLOCKED_HUMAN|RED_TWICE) ;; *) continue ;; esac
     [ -n "$key" ] || continue
     br_key_in_only "$key" || continue
+    command -v brmm_merged >/dev/null 2>&1 && brmm_merged "$key" && continue
     case "$st" in RED_TWICE) ttl="$ttlrt" ;; *) ttl="$ttlbh" ;; esac
     breached=1
     case "$since" in
@@ -1671,6 +1672,7 @@ br_from_conductor() {
     [ -n "$key" ] && [ -n "$url" ] || continue
     br_key_in_only "$key" || continue
     command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
+    command -v brmm_merged >/dev/null 2>&1 && brmm_merged "$key" && continue
     rowst=$(mc_row_field "$key" 2)
     case "$rowst" in MERGED|CLOSED|ABANDONED|BLOCKED_HUMAN|RED_TWICE) continue ;; esac
     # A released review-block park is not recovered here (BH-9260, fragment bh-9260).
@@ -1704,6 +1706,7 @@ br_from_conductor() {
     case "$parked" in ''|*[!0-9]*) parked="-" ;; esac
     br_conductor_emit "$key" "$reason" "$url" "$parked" || continue
   done <<<"$hsrc"
+  local _brmm_rc=$?; command -v brmm_say >/dev/null 2>&1 && brmm_say; return "$_brmm_rc"
 }
 
 # br_rank_rows — the 7-column candidate TSV with the PRIORITY RANK prepended as

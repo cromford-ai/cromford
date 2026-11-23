@@ -2494,7 +2494,11 @@ mc_classify() {
         printf 'WAIT_CI\tchecks timeout budget — "%s" dies at its %s-min limit (CI_TIMEOUT_BUDGET; no rerun)' "${MC_CI_TIMEOUT_CHECK:-}" "${MC_CI_TIMEOUT_T:-}"
       elif [ "${MC_CI_FLAKE:-0}" = 1 ]; then printf 'WAIT_CI\tchecks flake — a required context was cancelled/timed_out; re-run once'
       else printf 'WAIT_CI\tmergeState %s (required context not green)' "$ms"; fi ;;
-    UNKNOWN|"") if [ -n "$prev" ] && [ "$prev" != "-" ]; then printf '%s\tmergeState unknown, keeping prior state' "$prev"; else printf 'WAIT_CI\tmergeState unknown'; fi ;;
+    # BH-9897: the prior state is kept only for a PR read off the open list.
+    # Any other pstate is a row whose PR is not open; the off-list settle
+    # (mc_settle_offlist_rows) owns it, so it never keeps a parked state here.
+    UNKNOWN|"") if [ "$ps" != OPEN ]; then printf 'WAIT_CI\tmergeState unknown, PR not on the open list — the off-list settle owns this row'
+                elif [ -n "$prev" ] && [ "$prev" != "-" ]; then printf '%s\tmergeState unknown, keeping prior state' "$prev"; else printf 'WAIT_CI\tmergeState unknown'; fi ;;
     *) printf 'WAIT_CI\tmergeState %s' "$ms" ;;
   esac
 }

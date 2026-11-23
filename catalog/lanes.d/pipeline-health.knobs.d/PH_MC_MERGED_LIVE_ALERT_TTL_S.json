@@ -1,0 +1,10 @@
+{
+  "env": "PH_MC_MERGED_LIVE_ALERT_TTL_S",
+  "type": "int",
+  "default": 86400,
+  "min": 600,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9897: the alert TTL of `mcmergedlive:fleet` (live conductor rows of merged PRs, PH_MC_MERGED_LIVE_ALERT_MIN): one alert per this many seconds while the count stands above 0. A non-number falls back to 86400 (one alert a day, as the no-progress alert)."
+}

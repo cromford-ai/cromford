@@ -1,0 +1,3 @@
+[
+    {"path": "mc-merged-live", "class": "box-local", "authority": "the merged-rows-live alert clock of bin/pipeline-health.sh (BH-9897)", "note": "state/mc-merged-live/since, one line: the epoch the count of live merge-conductor rows whose closed-watch memo says `merged` first stood above 0. Written and read only by the ph_fleet merged-rows-live block of bin/pipeline-health.sh; removed when the count is 0. Losing it restarts the PH_MC_MERGED_LIVE_ALERT_MIN wait once (at most 1 delayed alert). Machine-local, never carried"}
+]
