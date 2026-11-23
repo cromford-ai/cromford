@@ -77,6 +77,8 @@ bin/lib/mc-stale-dequeue.sh
 bin/lib/mc/classify.sh
 bin/lib/mc/queue.sh
 bin/lib/mc/rebase.sh
+# pre-existing on main (gh_rest issues/comments/<id> on the PR itself, then pulls/<n>/reviews/<id>: a PR comment read, not a tracker read); landed by BH-9260 (#9276) with main red on this ratchet since (#9910)
+bin/lib/mc/review-block-park.sh
 bin/lib/mc/settle.sh
 bin/lib/mrb-act.sh
 bin/lib/needs-human/release.sh
