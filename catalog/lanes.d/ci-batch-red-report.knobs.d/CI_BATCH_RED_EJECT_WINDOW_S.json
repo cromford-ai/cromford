@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_EJECT_WINDOW_S",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 7200,
+  "min": 600,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9410: the culprit window of the --causes rule and the tick line's causes= field. A member PR whose merge-conductor eject-cause line (cause batch-red or checks) is at most this many seconds after a red batch was created is that batch's culprit. 7200 covers a slow batch run plus the conductor tick. A value outside 600..86400 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_eject_window_s."
+}

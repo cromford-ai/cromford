@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_MAINRED_WINDOW_S",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 7200,
+  "min": 600,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9410: the main-red window of the --causes rule. A failing suite that the selection-gate baseline cache, prime.tsv or a gate.txt baseline-red: field shows red on main at most this many seconds before a red batch was created makes that batch main-red. The prime lane primes the main tip once an hour, so 7200 holds at least one prime. A value outside 600..86400 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_mainred_window_s."
+}

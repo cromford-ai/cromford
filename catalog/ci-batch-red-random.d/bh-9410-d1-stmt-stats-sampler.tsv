@@ -1,0 +1,9 @@
+# Known random-dependent tests: product code calls Math.random behind a
+# seeded settings row, so the test fails on a sampled draw (BH-9410, comment
+# 6780574176). bin/lib/ci-batch-red-causes.sh calls a red merge-queue batch
+# seeded-random when EVERY failing entry equals the match of a row whose
+# [since, until) holds the batch time. One fragment per ticket. Columns (TAB):
+# match	test_file	settings_row	since_iso	until_iso|-	ref
+# match is a failing entry of a batch record: a suite path, or job:<job name>.
+# until is the merge time of the fix, or - while the test is still exposed.
+job:Jobs worker — routes + schema	worker/jobs/test/d1-overload-giveup.bh-7541.test.js	d1.stmt_stats_sample_pct	2026-11-07T00:00:00Z	2026-11-11T01:58:49Z	BH-9076 sampler; G3 fixed by BH-9430 #9462

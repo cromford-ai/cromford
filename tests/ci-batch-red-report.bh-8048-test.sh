@@ -164,7 +164,7 @@ drive
 [ -z "$(row tests/b-test.sh)" ] && [ -z "$(row tests/z-test.sh)" ] && ok || bad "T-rows: an rc=0 suite has no row: $(cat "$TSV")"
 [ "$(grep -c . "$TSV")" = 3 ] && ok || bad "T-rows: header + 2 rows (no fan-in job row): $(cat "$TSV")"
 [ "$(grep -c . "$LOG" 2>/dev/null)" = 1 ] && ok || bad "T-log: one log line per tick: $(cat "$LOG" 2>/dev/null)"
-lastlog | grep -q "ci-batch-red: repo=$REPO days=7 red=2 green=1 red_rate=66 unread=0 deferred=0 case=C share_a=50 share_b=50 pruned=0 ignored=1$" && ok \
+lastlog | grep -q "ci-batch-red: repo=$REPO days=7 red=2 green=1 red_rate=66 unread=0 deferred=0 case=C share_a=50 share_b=50 pruned=0 ignored=1 causes=main-red:0,seeded-random:0,first-run:0,gate-green-batch-red:1,flake:1,unchanged-requeue:0,unknown:0$" && ok \
   || bad "T-log: the summary line: $(lastlog)"
 [ "$(ncalls 'actions/runs/104/')" = 0 ] && [ "$(ncalls 'actions/runs/105/')" = 0 ] && ok \
   || bad "S1: a cancelled batch and a non-queue run are never read"

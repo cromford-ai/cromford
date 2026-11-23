@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_LEDGER_LIMIT",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 5000,
+  "min": 1,
+  "max": 5000,
+  "unit": "rows",
+  "zero_means": null,
+  "note": "BH-9410: the row cap of the one GET /api/ci-batches that --causes makes for the runner-minutes. The jobs worker refuses more than 5000 (worker/jobs/src/routes/ci-batches.js LIMIT_MAX). An answer with truncated:true gives minutes=unreadable. A value outside 1..5000 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_ledger_limit."
+}

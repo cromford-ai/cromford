@@ -11,10 +11,27 @@
 #   B  the red batch went green on the same tree (no code change): a flake
 #   C  neither explains most red batches
 #
-# usage: ci-batch-red-report.sh [--days N] [--dry-run]
+# usage: ci-batch-red-report.sh [--days N] [--dry-run | --causes]
 #   --days N   the window (default CI_BATCH_RED_DAYS, 7)
 #   --dry-run  read GitHub, print the TSV and the summary line on stdout; write
 #              no record, no TSV and no log line
+#   --causes   (BH-9410) no GitHub read and no write: print one row per red
+#              batch record in the window with its failing suites, culprit PR
+#              and ONE cause, then a summary row per cause with its batches and
+#              runner-minutes. The rule and its data sources are in
+#              bin/lib/ci-batch-red-causes.sh and
+#              docs/notes/2026-11-10-BH-9410-ci-batch-red-causes.md. The minutes
+#              are one GET /api/ci-batches (billed_min per run_id, written by
+#              the ci-batch-ledger lane) through bin/jobs-client.sh, at most
+#              CI_BATCH_RED_LEDGER_LIMIT rows (a truncated answer is unreadable):
+#                ci-batch-red-causes: repo=<r> days=<d> red=<n> minutes=<read|unreadable|not-configured> minutes_missing=<k>
+#                run_id created culprit cause suites minutes   (TSV, oldest first)
+#                cause batches runner_minutes                  (TSV, all 7 causes)
+#              minutes_missing counts red batches with no billed_min row, so a
+#              partial sum is never read as complete. rc 0 on every path.
+#              The seeded-random cause reads the known random-dependent tests
+#              in catalog/ci-batch-red-random.d/*.tsv (next to this script,
+#              else $HARNESS/catalog); a bad row is one stderr line.
 #
 # PER TICK, each step a stop when it fails, rc 0 on every path:
 #   1. bin/lib/gh-budget.sh says the bucket is low: one log line, no gh call,
@@ -68,6 +85,9 @@
 #   8. one log line to logs/ci-batch-red.log:
 #      ci-batch-red: repo=<r> days=<d> red=<n> green=<n> red_rate=<pct> unread=<u>
 #        deferred=<k> case=<A|B|A+B|C> share_a=<pct> share_b=<pct> pruned=<p> ignored=<i>
+#        causes=main-red:<n>,seeded-random:<n>,first-run:<n>,gate-green-batch-red:<n>,flake:<n>,unchanged-requeue:<n>,unknown:<n>
+#      causes= (BH-9410) counts the readable red records of the window by the
+#      --causes rule, from local files only; `causes=-` when the lib is absent.
 #      and one line first on stdout (BH-8267), in both modes (before the TSV in
 #      --dry-run, the only stdout line otherwise):
 #      ci-batch-red: red-batch rate, last <d> days: <pct> percent (<r> red of <n> batches)
@@ -107,23 +127,32 @@
 #   CI_BATCH_RED_KEEP_DAYS 30  (7..90)   record retention
 #   CI_BATCH_RED_TARGET_PCT 15 (1..100)  the weekly red-batch rate target (BH-8062)
 #   CI_BATCH_RED_WEEK_KEEP_DAYS 90 (30..730) week marker retention (BH-8062)
+#   CI_BATCH_RED_EJECT_WINDOW_S 7200 (600..86400) an eject line this long after
+#                              a batch names its culprit PR (BH-9410)
+#   CI_BATCH_RED_MAINRED_WINDOW_S 7200 (600..86400) main red evidence this long
+#                              before a batch makes it main-red (BH-9410)
+#   CI_BATCH_RED_LEDGER_LIMIT 5000 (1..5000) the row cap of the --causes
+#                              ci-batches GET (worker max 5000) (BH-9410)
 #   CI_BATCH_RED_REPO          the repo read (default HARNESS_REPO); not settable
 # Kill switch: bin/harness-ctl.sh off ci-batch-red-report (flags/lane-off-ci-batch-red-report)
 # The lane id is the script name, as every cron lane's is (tests/lanes-registry-test.sh).
-# Tests: tests/ci-batch-red-report.bh-8048-test.sh, tests/ci-batch-red-week.bh-8062-test.sh
+# Tests: tests/ci-batch-red-report.bh-8048-test.sh, tests/ci-batch-red-week.bh-8062-test.sh,
+#   tests/ci-batch-red-causes.bh-9410-test.sh
 set -uo pipefail
-DRY=""; DAYS_ARG=""
-usage() { echo "usage: ci-batch-red-report.sh [--days N] [--dry-run]" >&2; exit 2; }
+DRY=""; DAYS_ARG=""; CAUSES=""
+usage() { echo "usage: ci-batch-red-report.sh [--days N] [--dry-run | --causes]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) [ $# -ge 2 ] || usage; DAYS_ARG="$2"; shift ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,102p' "$0"; exit 0 ;;
+    --causes) CAUSES=1 ;;
+    -h|--help) sed -n '2,137p' "$0"; exit 0 ;;
     *) usage ;;
   esac
   shift
 done
 case "$DAYS_ARG" in ''|[1-9]|[12][0-9]|30) ;; *) usage ;; esac
+[ -n "$DRY" ] && [ -n "$CAUSES" ] && usage
 H="${HARNESS:-/root/harness}"
 export HARNESS="$H"
 BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"; [ -n "$BIN" ] || BIN="$H/bin"
@@ -135,17 +164,20 @@ command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit ci-batch-red-r
 if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
   . "$HENV/global.env"; set +a; fi
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply ci-batch-red-report
-for _L in gh-budget.sh gh-ci-read.sh gh-repo-token.sh; do
+for _L in gh-budget.sh gh-ci-read.sh gh-repo-token.sh ci-batch-red-causes.sh; do
   # shellcheck source=/dev/null
   if [ -r "$BIN/lib/$_L" ]; then . "$BIN/lib/$_L"; elif [ -r "$H/bin/lib/$_L" ]; then . "$H/bin/lib/$_L"; fi
 done
+# The cause order of the --causes summary, when the lib did not load to set it.
+command -v cbr_classify >/dev/null 2>&1 || CBR_CAUSES="main-red seeded-random first-run gate-green-batch-red flake unchanged-requeue unknown"
 NOW="${NOW:-$(date +%s)}"
 case "$NOW" in ''|*[!0-9]*) NOW=$(date +%s) ;; esac
 LOG="$H/logs/ci-batch-red.log"
 STATE="$H/state/ci-batch-red"
-[ -n "$DRY" ] || mkdir -p "$(dirname "$LOG")" 2>/dev/null
+# --causes writes nothing: its few log() lines go to stdout, as a dry run's do.
+[ -n "$DRY$CAUSES" ] || mkdir -p "$(dirname "$LOG")" 2>/dev/null
 STAMP() { date -u -d "@$NOW" '+%Y-%m-%d %H:%M:%SZ'; }
-log() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$LOG" 2>/dev/null; fi; return 0; }
+log() { if [ -n "$DRY$CAUSES" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$LOG" 2>/dev/null; fi; return 0; }
 # The weekly line (step 9) has its own log, so the tick log keeps one line a tick.
 WLOG="$H/logs/ci-batch-red-week.log"
 wlog() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$WLOG" 2>/dev/null; fi; return 0; }
@@ -177,8 +209,61 @@ CUT=$(( NOW - DAYS * 86400 ))
 SINCE=$(date -u -d "@$CUT" '+%Y-%m-%dT%H:%M:%SZ')
 # A gate run comes before its batch: the gate list reaches one day further back.
 GSINCE=$(date -u -d "@$(( CUT - 86400 ))" '+%Y-%m-%dT%H:%M:%SZ')
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_eject_window_s (BH-9410).
+CBR_EJECT_WINDOW_S=$(knob CI_BATCH_RED_EJECT_WINDOW_S 7200 600 86400)
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_mainred_window_s (BH-9410).
+CBR_MAINRED_WINDOW_S=$(knob CI_BATCH_RED_MAINRED_WINDOW_S 7200 600 86400)
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_ledger_limit (BH-9410).
+LEDGER_LIMIT=$(knob CI_BATCH_RED_LEDGER_LIMIT 5000 1 5000)
+CBR_REPO="$REPO"
+# The known random-dependent tests (the seeded-random cause): the repo's
+# catalog next to this script, else the harness's. A caller may point it
+# elsewhere; a missing dir is no rows.
+if [ -z "${CBR_RANDOM_DIR:-}" ]; then
+  CBR_RANDOM_DIR="$BIN/../catalog/ci-batch-red-random.d"
+  [ -d "$CBR_RANDOM_DIR" ] || CBR_RANDOM_DIR="$H/catalog/ci-batch-red-random.d"
+fi
 SHARD='Tests, traced (shard'
 FANIN='Pure-logic gate fixtures|Tests cannot touch a real harness'
+
+# --causes (BH-9410): local records only, no GitHub read and no write; one
+# GET /api/ci-batches for the minutes. rc 0 on every path.
+if [ -n "$CAUSES" ]; then
+  CT=$(mktemp -d "${TMPDIR:-/tmp}/ci-batch-red-causes.XXXXXX") || { echo "ci-batch-red-causes: mktemp failed"; exit 0; }
+  trap 'rm -rf "$CT"' EXIT
+  if command -v cbr_classify >/dev/null 2>&1; then
+    cbr_classify "$STATE/runs" "$CUT" > "$CT/rows" \
+      || { echo "ci-batch-red-causes: the records could not be classified (no harness root or temp dir) — no rows"; : > "$CT/rows"; }
+  else
+    echo "ci-batch-red-causes: bin/lib/ci-batch-red-causes.sh not loaded — no rows"; : > "$CT/rows"
+  fi
+  # shellcheck source=/dev/null
+  . "$BIN/jobs-client.sh" 2>/dev/null || . "$H/bin/jobs-client.sh" 2>/dev/null || true
+  MIN=not-configured; echo '{}' > "$CT/min"
+  if command -v _jobs_req >/dev/null 2>&1 && command -v jobs_configured >/dev/null 2>&1 && jobs_configured; then
+    MIN=unreadable
+    ENC=$(jq -rn --arg r "$REPO" '$r | @uri' 2>/dev/null)
+    if _jobs_req GET "/api/ci-batches?repo=$ENC&since=$SINCE&limit=$LEDGER_LIMIT" > "$CT/ledger" 2>/dev/null \
+       && jq -e '(.rows | type) == "array" and (.truncated != true)' "$CT/ledger" >/dev/null 2>&1 \
+       && jq -c '[.rows[] | select(.billed_min != null) | {key: (.run_id | tostring), value: .billed_min}] | from_entries' "$CT/ledger" > "$CT/min" 2>/dev/null; then
+      MIN=read
+    else
+      echo '{}' > "$CT/min"
+    fi
+  fi
+  jq -r 'to_entries[] | "\(.key)\t\(.value)"' "$CT/min" > "$CT/min.tsv" 2>/dev/null || : > "$CT/min.tsv"
+  awk -F'\t' -v repo="$REPO" -v days="$DAYS" -v min="$MIN" -v order="$CBR_CAUSES" '
+    FILENAME == ARGV[1] { M[$1] = $2; next }
+    { n++; row[n] = $0; m = (($1 in M) ? M[$1] : "-"); MM[n] = m; if (m == "-") miss++; else S[$4] += m; B[$4]++ }
+    END {
+      printf "ci-batch-red-causes: repo=%s days=%s red=%d minutes=%s minutes_missing=%d\n", repo, days, n, min, miss
+      print "run_id\tcreated\tculprit\tcause\tsuites\tminutes"
+      for (i = 1; i <= n; i++) { split(row[i], x, "\t"); printf "%s\t%s\t%s\t%s\t%s\t%s\n", x[1], x[2], x[3], x[4], x[5], MM[i] }
+      print "cause\tbatches\trunner_minutes"
+      k = split(order, o, " "); for (i = 1; i <= k; i++) printf "%s\t%d\t%d\n", o[i], B[o[i]], S[o[i]]
+    }' "$CT/min.tsv" "$CT/rows"
+  exit 0
+fi
 
 # 1. the GitHub budget
 if command -v gh_budget_low >/dev/null 2>&1 && gh_budget_low ci-batch-red-report; then
@@ -460,7 +545,16 @@ fi
 # 8. the TSV and the tick's one line
 RATE_LINE="ci-batch-red: red-batch rate, last $DAYS days: $RATE percent ($NRED red of $(( NRED + NGREEN )) batches)"
 echo "$RATE_LINE"
-LINE="ci-batch-red: repo=$REPO days=$DAYS red=$NRED green=$NGREEN red_rate=$RATE unread=$NUNREAD deferred=$DEFER case=$CASE share_a=$SA share_b=$SB pruned=$PRUNED ignored=${IGNORED:-0}"
+# BH-9410: the cause counts of the same window, from local files only. A
+# classify that fails (no root, no temp dir) or a lib that did not load is `-`.
+CAUSE_COUNTS=-
+if command -v cbr_classify >/dev/null 2>&1; then
+  if cbr_classify "$RUNS_DIR" "$CUT" > "$TMP/causes" 2>/dev/null; then
+    CAUSE_COUNTS=$(cbr_counts < "$TMP/causes")
+    [ -n "$CAUSE_COUNTS" ] || CAUSE_COUNTS=-
+  fi
+fi
+LINE="ci-batch-red: repo=$REPO days=$DAYS red=$NRED green=$NGREEN red_rate=$RATE unread=$NUNREAD deferred=$DEFER case=$CASE share_a=$SA share_b=$SB pruned=$PRUNED ignored=${IGNORED:-0} causes=$CAUSE_COUNTS"
 if [ -n "$DRY" ]; then
   cat "$TMP/latest.tsv"
 elif ! { cp "$TMP/latest.tsv" "$STATE/.latest.tsv.tmp" 2>/dev/null && mv -f "$STATE/.latest.tsv.tmp" "$STATE/latest.tsv" 2>/dev/null; }; then
