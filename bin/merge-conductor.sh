@@ -675,7 +675,8 @@ pr_worker() {
   # read is released first (fragment bh-9368-park-ci-recheck).
   command -v mc_park_ci_recheck >/dev/null 2>&1 && mc_park_ci_recheck
   mc_step handoff-sticky
-  if mc_handoff_sticky "$KEY" "$HEAD"; then
+  # A cleared review-block park (BH-9260, fragment bh-9260) classifies now.
+  if mc_handoff_sticky "$KEY" "$HEAD" && ! { command -v mc_rbp_sticky_release >/dev/null 2>&1 && mc_rbp_sticky_release; }; then
     # A PARK ON OUR OWN RE-REVIEW BLOCK IS RE-CHECKED FOR A NEWER HUMAN MERGE
     # (BH-3814). A lead/human MERGE row on this exact head, newer than the
     # BLOCK, ends the park: the approval is rebound and the resolver's fix round
@@ -1997,6 +1998,8 @@ pr_worker() {
   # here) and the GitHub facts for the log and the STUCK page (fragment
   # bh-8417-repo-truth).
   MC_GH_FACTS=""; command -v mc_repo_truth >/dev/null 2>&1 && mc_repo_truth
+  # A released review-block park stays parked while its BLOCK stands (BH-9260).
+  command -v mc_rbp_ready_hold >/dev/null 2>&1 && mc_rbp_ready_hold && { STATE=BLOCKED_HUMAN; WHY="$MC_RBP_WHY"; }
   SINCE=$(mc_transition "$KEY" "$STATE" "$WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC")
   if [ "$STATE" = READY ]; then MC_STEP_LOG=1; fi
   mc_step ready-checks
@@ -2466,11 +2469,14 @@ pr_worker() {
       # squash-merged 8 minutes after its BLOCK is that nothing between READY and
       # `gh pr merge` had ever read a comment.
       #
-      # It sits before the budget take, so a refusal spends nothing, and it
-      # writes NO row: the PR stays READY, the next tick asks the thread again,
-      # and a block that stands is caught by the ordinary READY TTL alert. A new
-      # state would hand the PR to the blocked-resolver's fix ladder, which is
-      # the opposite of "wait for the human's clear".
+      # It sits before the budget take, so a refusal spends nothing, and a
+      # PERSON's block writes NO row: the PR stays READY, the next tick asks the
+      # thread again, and a block that stands is caught by the ordinary READY
+      # TTL alert. A new state would hand the PR to the blocked-resolver's fix
+      # ladder, which is the opposite of "wait for the human's clear".
+      # A MACHINE review BLOCK bound to this head has no person to wait for
+      # (BH-9260): mc_rbp_park parks it BLOCKED_HUMAN `review-block: <id> …`
+      # for the resolver on this tick (bin/lib/mc/review-block-park.sh).
       if command -v bg_scan >/dev/null 2>&1; then
         BG_ISSUE=""
         [ "$("$H/bin/fleet-conf.sh" "$P" board_prefix 2>/dev/null)" = "-" ] && BG_ISSUE=$(mc_issue_of "$REC" "$BR")
@@ -2482,15 +2488,18 @@ pr_worker() {
           bg_refuse "$SLUG" "$NUM" "$URL" "$HEAD" "$BGOUT" merge-conductor \
             || mc_log "$KEY block gate could not post the refusal comment on $URL — the merge is refused either way and the next tick retries the post"
           # THE CI-BLOCK HOOK (BH-3932): bg_scan's 4th field is the block's id;
-          # its body is not in BGOUT, so the hook gets "" and reads it by id. Its
-          # rc is ignored and the refusal below stands whatever it answers.
+          # its body is not in BGOUT, so the hook gets "" and reads it by id. The
+          # refusal stands whatever it answers; its rc only tells the review-block
+          # park (BH-9260) whether the hook declined the block (2, or no hook).
           IFS=$'\t' read -r _ _ _ BG_ID <<<"$BGOUT"
-          command -v mc_block_ci_step >/dev/null 2>&1 && { mc_block_ci_step "$SLUG" "$NUM" "$HEAD" "$URL" "$BG_ID" "" || true; }
+          BCI_RC=2
+          command -v mc_block_ci_step >/dev/null 2>&1 && { BCI_RC=0; mc_block_ci_step "$SLUG" "$NUM" "$HEAD" "$URL" "$BG_ID" "" || BCI_RC=$?; }
           # A HELD PR STILL CARRIES OUR LABEL (BH-2199), so a lead CR on it must
           # take it out of the Mergify queue too, once (BH-2275).
           if [ "$PROVIDER" = mergify ] && mc_labels_csv_has "${RAWLBL:-}" "$MC_MERGIFY_LABEL"; then
             mc_cr_dequeue "$SLUG" "$KEY" "$URL" "$HEAD" "$MERGES" "$BGOUT" || true
           fi
+          command -v mc_rbp_gate_park >/dev/null 2>&1 && mc_rbp_gate_park "$BCI_RC" && return 0
           mc_ready_why "$KEY" "$HEAD" block-gate "MERGE_REFUSED block-gate: $(bg_why "$BGOUT" "$HEAD") — nothing merges until a newer commit lands or that author clears it" logged
           return 0
         elif [ "$BGRC" = 2 ]; then

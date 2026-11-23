@@ -1,0 +1,11 @@
+{
+  "env": "MC_REVIEW_BLOCK_STUCK_TICKS",
+  "read_in": "bin/lib/mc/review-block-park.sh",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 288,
+  "unit": "ticks",
+  "zero_means": null,
+  "note": "BH-9260. A machine review BLOCK that refuses a READY row and could not be parked (its body unreadable, or the park not written) raises one warn alert, id review-block-unparked:<pr>:<head12>:<comment id>, on the first refusal past this many consecutive ticks."
+}

@@ -1673,6 +1673,8 @@ br_from_conductor() {
     command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
     rowst=$(mc_row_field "$key" 2)
     case "$rowst" in MERGED|CLOSED|ABANDONED|BLOCKED_HUMAN|RED_TWICE) continue ;; esac
+    # A released review-block park is not recovered here (BH-9260, fragment bh-9260).
+    command -v br_rbp_skip >/dev/null 2>&1 && br_rbp_skip "$reason" "$key" && continue
     # ONE REST read for both fields. A 75 leaves both empty, so this hand-off is
     # simply skipped for the tick — never recovered on a state nobody read.
     read -r prst hhead <<<"$(br_pr_field "$url" \
@@ -4833,6 +4835,20 @@ br_findings() {
      || ! jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$authors"; then
     say "$url: the posted findings are UNVERIFIABLE — the verdict-trust set (bin/lib/gh-pr-list.sh) is unavailable on this box, so no comment can be trusted as a brief this tick"
     return 75
+  fi
+  # A REVIEW-BLOCK PARK READS ITS OWN BLOCK FIRST (BH-9260): the conductor
+  # parked the row on one machine review comment, by id, and that comment is
+  # the brief (bin/lib/mc/review-block-park.sh). 75 spends no rung; 1 (not that
+  # park, gone, untrusted) reads the usual head-bound comment below.
+  if command -v mc_rbp_brief >/dev/null 2>&1; then
+    rc=0; rest=$(mc_rbp_brief "$slug" "$num" "$head") || rc=$?
+    case "$rc" in
+      0)  if [ "$use_lead" = 1 ]; then br_findings_join "$lead" "$rest"; else printf '%s\n' "$rest"; fi
+          return 0 ;;
+      75) say "$url: the review BLOCK this park names is UNVERIFIABLE (its comment would not read) — no brief read this tick"
+          return 75 ;;
+    esac
+    rest=""
   fi
   f=$(mktemp) || return 75
   gh_rest GET "repos/$slug/issues/$num/comments" -F per_page=100 > "$f" 2>/dev/null; rc=$?

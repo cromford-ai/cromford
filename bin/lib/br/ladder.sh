@@ -211,6 +211,10 @@ br_reason_of() {
     queue-enqueue-failed-twice*) echo queue-enqueue-failed-twice ;;
     no-verdict*)                 echo no-verdict ;;
     head-not-reapproved*)        echo head-not-reapproved ;;
+    # BH-9260: the conductor parked a machine review BLOCK on a READY head
+    # (bin/lib/mc/review-block-park.sh). Same ladder as our own re-review
+    # BLOCK: review-blocked, fix round first.
+    review-block*)               echo head-not-reapproved ;;
     red-ci-twice*)               echo red-ci-twice ;;
     # RED_TWICE (2026-09-15): the conductor re-ran this head's failed jobs once
     # and CI came back red on the SAME head. Same answer as its cross-head

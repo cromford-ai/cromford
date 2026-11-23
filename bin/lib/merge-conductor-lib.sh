@@ -50,6 +50,8 @@ command -v mnr_fix >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/migration-ren
 command -v prr_write >/dev/null 2>&1 || { [ -r "${BASH_SOURCE[0]%/*}/pr-record-write.sh" ] && . "${BASH_SOURCE[0]%/*}/pr-record-write.sh"; }
 . "$MC_LIB_DIR/load.sh" || { echo "merge-conductor-lib: the mc modules did not load from $MC_LIB_DIR" >&2; exit 1; }
 [ -r "$MC_LIB_DIR/block-ci.sh" ] && . "$MC_LIB_DIR/block-ci.sh"
+# BH-9260: a machine review BLOCK on a READY head parks for the resolver.
+[ -r "$MC_LIB_DIR/review-block-park.sh" ] && . "$MC_LIB_DIR/review-block-park.sh"
 [ -r "$MC_LIB_DIR/spawn-remote.sh" ] && . "$MC_LIB_DIR/spawn-remote.sh"
 command -v gh_auth_for >/dev/null 2>&1 || { [ -r "$MC_H/bin/lib/gh-app-auth.sh" ] && . "$MC_H/bin/lib/gh-app-auth.sh"; }
 [ -r "$MC_H/bin/lib/gh-pr-merge.sh" ] && . "$MC_H/bin/lib/gh-pr-merge.sh"

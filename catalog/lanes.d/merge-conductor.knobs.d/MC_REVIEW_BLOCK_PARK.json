@@ -1,0 +1,11 @@
+{
+  "env": "MC_REVIEW_BLOCK_PARK",
+  "read_in": "bin/lib/mc/review-block-park.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9260. 1 = the block gate parks a READY row whose refusing BLOCK is a machine review comment bound to this head as BLOCKED_HUMAN `review-block: <id> <tag> <url>`, a blocked-resolver hand-off (fix round first). A person's BLOCK is never parked. 0 = off: a machine review BLOCK on a READY head stays READY and refused (BH-762 behaviour), and every review-block park releases on its next recheck."
+}

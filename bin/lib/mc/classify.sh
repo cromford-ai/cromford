@@ -1144,6 +1144,9 @@ mc_resolver_owns() {
     # prequeue-red (BH-4545): the head fails its suites merged onto main; the
     # next move is the resolver's fix round.
     prequeue-red*) return 0 ;;
+    # review-block (BH-9260): a machine review BLOCK on a READY head
+    # (bin/lib/mc/review-block-park.sh); the next move is the fix round.
+    review-block*) return 0 ;;
   esac
   return 1
 }
@@ -1784,6 +1787,9 @@ mc_handoff_owns() {
     # so re-asking each tick only flips the row READY and back. It clears when
     # the resolver's fix round moves the head.
     prequeue-red*) return 0 ;;
+    # review-block (BH-9260): sticky until the head moves; the conductor's own
+    # recheck (mc_rbp_unpark) releases it when that author clears the block.
+    review-block*) return 0 ;;
   esac
   return 1
 }
