@@ -12,10 +12,14 @@
 # THE CACHE. One file per source and scope, at depth 1 of $ST (no record glob
 # reads it), rewritten whole each tick (tmp + mv):
 #   $ST/.disc-cache-<builds|rebuilds>-<project|fleet>.tsv
-#     #bdc1\t<fleet.conf mtime>\t<BR_RECORD_MAX_AGE_DAYS>\t<project list>
+#     #bdc2\t<fleet.conf cksum:size>\t<BR_RECORD_MAX_AGE_DAYS>\t<project list>
 #     <path>\t<signature>\t<skip|retired|wait>\t<epoch noted>
 # A header that does not match discards the whole file (a fleet.conf edit
-# moves project ownership and board prefixes). Only the paths seen this tick
+# moves project ownership and board prefixes). The header holds the CONTENT of
+# fleet.conf (cksum), not its mtime (BH-9941): on the hub the harness sync
+# writes fleet.conf again about every 20 minutes with the same bytes and a new
+# mtime, so an mtime header never matched on the next tick (2026-11-23: 2,256
+# discards in one day, 0 paths ever skipped). Only the paths seen this tick
 # are written, so the file is bounded by the live dirs and records, and a
 # deleted dir leaves it on the next write. Losing the file costs one full read.
 #
@@ -77,10 +81,12 @@ bdc_begin() {
   _BDC_ON=1
   f=$(bdc_file "$src")
   fc="${FLEET_CONF:-$H/fleet.conf}"
-  fm=$(find "$fc" -maxdepth 0 -printf '%T@' 2>/dev/null) || fm=""
+  # cksum prints `<crc> <size>` for stdin; an unreadable file gives "-".
+  fm=$({ cksum < "$fc"; } 2>/dev/null) || fm=""
+  fm="${fm// /:}"
   days="${BR_RECORD_MAX_AGE_DAYS:-14}"
   pl="${pl//$'\n'/,}"
-  hdr=$(printf '#bdc1\t%s\t%s\t%s' "${fm:--}" "$days" "${pl:--}")
+  hdr=$(printf '#bdc2\t%s\t%s\t%s' "${fm:--}" "$days" "${pl:--}")
   _BDC_HDR="$hdr"
   if [ "$src" = builds ]; then
     local -A dm=() rm=()

@@ -15,7 +15,8 @@
 #   I4  200 records whose last attempt is not a rebuild: tick 2 reads 0
 #   I5  a rebuild wait is kept, and read again after BR_DISCOVERY_RECHECK_MIN;
 #       RECHECK_MIN=0 never keeps it
-#   I6  a fleet.conf change discards the cache with one line;
+#   I6  a fleet.conf CONTENT change discards the cache with one line;
+#       I6b (BH-9941) a same-content rewrite with a new mtime keeps it;
 #       BR_DISCOVERY_CACHE=0 writes no file; BR_OPT_OFF gives the same rows;
 #       a garbage cache row is ignored
 #   I7  a one-PR run over 500 dirs and 200 records: builds and queue skipped,
@@ -293,7 +294,18 @@ echo '[]' > "$T/openprs"
 RUN p1
 CON=$(LFIELD candidates)
 [ "$CON" = 3 ] && ok || bad "I6: the fixture has 3 candidates (the conductor row and 2 BUILD_DEAD dirs): $CON"
+# I6b (BH-9941). fleet.conf written again with the SAME bytes and a new mtime
+# (what bin/harness-sync.sh does on the hub every sync): the cache is kept.
+cp "$H/fleet.conf" "$T/fleet.same" && mv "$T/fleet.same" "$H/fleet.conf"
 touch -d "@$((NOW + 5))" "$H/fleet.conf"
+: > "$LOGF"
+RUN p1
+[ "$(NLINES 'the cache header does not match')" = 0 ] && ok \
+  || bad "I6b: THE BUG: a same-content rewrite of fleet.conf discards the cache (log: $(LOG | grep 'discovery cache'))"
+[ "$(CACHELINE builds)" = "discovery cache builds: 102 path(s), 100 unchanged and skipped, 2 read (100 cache rows written)" ] && ok \
+  || bad "I6b: the 100 settled dirs are skipped after a same-content rewrite ($(CACHELINE builds))"
+# I6. A CONTENT change (a comment line: the project list is the same) discards it.
+printf '# a registry edit\n' >> "$H/fleet.conf"
 : > "$LOGF"
 RUN p1
 [ "$(NLINES 'discovery cache builds: the cache header does not match')" = 1 ] && ok \
