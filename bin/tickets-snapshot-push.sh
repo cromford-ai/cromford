@@ -176,12 +176,44 @@ merged_prune() {
 }
 merged_prune
 
+# THE OPEN PR LIST, RECORD FIRST (BH-9926 wave 1, BH-9933). The list of each
+# board repo's open PRs goes through prr_read (bin/lib/prr-shadow.sh), stepped
+# by the settings row lane.tickets-snapshot-push.gh_source (knob GH_SOURCE):
+# off reads GitHub, shadow reads both and acts on GitHub, record reads the PR
+# record (bin/lib/prr-shadow.d/tickets-snapshot-push.sh) and GitHub only on a
+# record miss. No helper or no seam on the box = today's GitHub read.
+# TICKETS_SNAPSHOT_OPEN_PR_LIMIT sizes both sides (row
+# lane.tickets-snapshot-push.tickets_snapshot_open_pr_limit; 100 is the
+# fallback and GitHub's per_page maximum).
+OPEN_LIMIT="${TICKETS_SNAPSHOT_OPEN_PR_LIMIT:-100}"
+case "$OPEN_LIMIT" in ''|*[!0-9]*|0) OPEN_LIMIT=100 ;; esac
+[ "$OPEN_LIMIT" -le 100 ] || OPEN_LIMIT=100
+# tsp_open_github <file> <owner/repo> <limit> — today's read, mapped to the
+# lane's shape. Returns snap_get's rc; the file is empty on any failure.
+tsp_open_github() {
+  local _tg
+  : > "$1"
+  snap_get _tg "repos/$2/pulls?state=open&per_page=$3" || return $?
+  jq -c '[.[]|{n:.number,br:.head.ref,by:.user.login,up:.updated_at,url:.html_url,t:.title}]' <<<"$_tg" > "$1" 2>/dev/null \
+    || { : > "$1"; return 1; }
+}
+# shellcheck source=bin/lib/prr-shadow.sh
+[ -r "$H/bin/lib/prr-shadow.sh" ] && . "$H/bin/lib/prr-shadow.sh"
+PRR_ON=0
+command -v prr_read >/dev/null 2>&1 && prr_seam_load tickets-snapshot-push 2>/dev/null \
+  && command -v tsp_open_record >/dev/null 2>&1 && PRR_ON=1
+OPEN_F=$(mktemp); trap 'rm -f "$OUT" "$OPEN_F"' EXIT
+
 for P in $BOARD_PROJECTS; do
   [ -s "/tmp/snap-$P.json" ] || continue
   R=$("$H/bin/fleet-conf.sh" "$P" repo)
   [ -n "$R" ] || continue
-  snap_get PRS "repos/$R/pulls?state=open&per_page=100" \
-    && PRS=$(jq -c '[.[]|{n:.number,br:.head.ref,by:.user.login,up:.updated_at,url:.html_url,t:.title}]' <<<"$PRS" 2>/dev/null)
+  if [ "$PRR_ON" = 1 ]; then
+    prr_read tickets-snapshot-push "$R#open" "$OPEN_F" tsp_open_record tsp_open_github tsp_open_norm "$R" "$OPEN_LIMIT"
+  else
+    tsp_open_github "$OPEN_F" "$R" "$OPEN_LIMIT"
+  fi
+  PRS=$(cat "$OPEN_F" 2>/dev/null)
   [ -n "$PRS" ] || PRS='[]'
   snap_get REFS "repos/$R/git/matching-refs/heads/" \
     && REFS=$(jq -c '[.[]|{ref:(.ref|sub("refs/heads/";"")),sha:.object.sha}]' <<<"$REFS" 2>/dev/null)

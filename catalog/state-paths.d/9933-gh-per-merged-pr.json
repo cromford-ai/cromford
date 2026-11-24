@@ -1,0 +1,3 @@
+[
+    {"path": "gh-per-merged-pr.json", "class": "box-local", "authority": "the daily GitHub calls per merged PR per repo of bin/lib/gh-per-pr-daily.sh gpd_run (BH-9933)", "note": "state/gh-per-merged-pr.json, one JSON object {generated_at, window_h, source, error, repos}, overwritten once a day (tmp + mv) by gpd_run from bin/pipeline-health.sh and read by section 13 of bin/fleet-status-push.sh (field gh_per_merged_pr). generated_at is the daily stamp: losing the file costs one extra report run. One file, no growth. Machine-local, never carried"}
+]

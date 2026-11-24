@@ -903,6 +903,28 @@ Inert unless armed: `gh_auth_armed` is a file test, so with no `env/github-app.e
 `GH_APP_TOKENS=0`, or `flags/gh-app-tokens-off`) the loop forks nothing and is byte-for-byte
 what it was.
 
+### 8.2 Shadow steps (BH-9926 wave 1)
+
+A lane that moves a GitHub read onto the PR record (`bin/lib/pr-record.sh`) moves in three steps. The helper is `bin/lib/prr-shadow.sh` (`prr_read`). Each lane has one settings row, `lane.<id>.gh_source`, with the knob name `GH_SOURCE`:
+
+| Step | What the lane reads | GitHub calls |
+|---|---|---|
+| `off` | GitHub only, the old read. | as before |
+| `shadow` (default) | Both. The lane acts on the GitHub answer. A record answer that differs writes one `PRR_SHADOW` line. | as before |
+| `record` | The record only. A record miss reads GitHub (fail open) and writes one `PRR_MISS` line. | 0 on a hit |
+
+The log is `logs/prr-shadow.log` under the harness root:
+
+```
+<UTC> PRR_SHADOW lane=<l> key=<k> record=<n> github=<n> only_record=<n> only_github=<n> changed=<n>
+<UTC> PRR_MISS lane=<l> key=<k> why=<word> fallback=<none|github>
+<UTC> PRR_STEP lane=<l> bad=<value>
+```
+
+Count one lane's mismatches: `grep -c 'PRR_SHADOW lane=<l>' logs/prr-shadow.log`. Count its misses: `grep -c 'PRR_MISS lane=<l>' logs/prr-shadow.log`. Set `record` only when the shadow count stays at 0 for 24 h.
+
+Wave 1 moves one read: the open PR list of `tickets-snapshot-push.sh` (seam `bin/lib/prr-shadow.d/tickets-snapshot-push.sh`, row `lane.tickets-snapshot-push.gh_source`). The other files in `bin/lib/prr-shadow.d/` are empty seams for the later waves. Detail: [`notes/2026-11-24-BH-9933-prr-shadow-and-per-repo-metric.md`](notes/2026-11-24-BH-9933-prr-shadow-and-per-repo-metric.md).
+
 ## 9. Arming the wake classes, and the lanes still on a timer (BH-4060)
 
 **No wake class is armed as of BH-4060's first slice.** On 2026-10-03 the hub had

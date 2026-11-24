@@ -1,0 +1,12 @@
+{
+  "env": "PH_GH_PER_PR_EVERY_S",
+  "read_in": "bin/lib/gh-per-pr-daily.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9933: Seconds between two runs of the daily 'gh per merged PR' figure (bin/lib/gh-per-pr-daily.sh gpd_run, called by bin/pipeline-health.sh; the stamp is generated_at in state/gh-per-merged-pr.json). 0 = off. Out of range or not a whole number falls back to 86400 with one log line. A measurement only: it never pages."
+}

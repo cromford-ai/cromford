@@ -1,0 +1,12 @@
+{
+  "env": "PH_GH_PER_PR_WINDOW_H",
+  "read_in": "bin/lib/gh-per-pr-daily.sh",
+  "type": "int",
+  "default": 168,
+  "min": 1,
+  "max": 336,
+  "unit": "hours",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9933: The --last window, in hours, of the daily 'gh per merged PR' figure: bin/gh-ledger-report.sh --fleet --last <N>h --per-merged-pr --by-repo. 168 = the 7-day figure; 336 = the 14-day retention of the fleet gh_ledger table (gh.ledger.retention_days). Out of range or not a whole number falls back to 168 with one log line."
+}

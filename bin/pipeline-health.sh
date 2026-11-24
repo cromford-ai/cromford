@@ -3205,6 +3205,18 @@ if ! command -v dd_missed_check >/dev/null 2>&1 && [ -r "$H/bin/lib/discovery-mi
 fi
 command -v dd_missed_check >/dev/null 2>&1 && { HARNESS="$H" dd_missed_check "$NOW" 2>/dev/null || true; }
 # <<< discovery-daily missed run
+# >>> gh per merged PR daily (BH-9933)
+# Once a day: GitHub calls per merged PR for each registry repo over the last
+# 7 days, from the fleet ledger (bin/gh-ledger-report.sh --fleet --by-repo).
+# One log line per repo here, and state/gh-per-merged-pr.json, which
+# bin/fleet-status-push.sh sends to the console with the fleet status. No
+# alert. The lib decides when it is due and bounds the run with a timeout.
+if ! command -v gpd_run >/dev/null 2>&1 && [ -r "$H/bin/lib/gh-per-pr-daily.sh" ]; then
+  # shellcheck source=bin/lib/gh-per-pr-daily.sh
+  . "$H/bin/lib/gh-per-pr-daily.sh"
+fi
+command -v gpd_run >/dev/null 2>&1 && { HARNESS="$H" gpd_run "$NOW" 2>/dev/null || true; }
+# <<< gh per merged PR daily
 fi # not a project run
 
 # ── Retraction epilogue: conditions that cleared since last run ──────────────

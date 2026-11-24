@@ -1,0 +1,12 @@
+{
+  "env": "PH_GH_PER_PR_TIMEOUT_S",
+  "read_in": "bin/lib/gh-per-pr-daily.sh",
+  "type": "int",
+  "default": 120,
+  "min": 10,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9933: The timeout of one run of the daily 'gh per merged PR' report (about one GitHub search read per registry repo plus two harness-jobs D1 reads). A timed-out run writes error in state/gh-per-merged-pr.json and is tried again the next day. Out of range or not a whole number falls back to 120 with one log line."
+}

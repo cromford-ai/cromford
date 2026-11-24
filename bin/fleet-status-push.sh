@@ -951,6 +951,18 @@ if command -v mca_count_24h >/dev/null 2>&1; then
   SNAP2=$(jq -c --slurpfile a <(printf '%s' "$ADVR") '. + {ci_advisory_red: $a[0]}' <<<"$SNAP" 2>/dev/null) && [ -n "$SNAP2" ] && SNAP="$SNAP2"
 fi
 
+# >>> 13. GH PER MERGED PR (BH-9933)
+# The daily GitHub calls per merged PR per repo, as bin/pipeline-health.sh
+# wrote it (bin/lib/gh-per-pr-daily.sh, state/gh-per-merged-pr.json), so the
+# console gets it with the fleet status. A missing or unparseable file keeps
+# the snapshot as it was. About one row per registry repo, so it is not on
+# the shed list.
+. "$H/bin/lib/gh-per-pr-daily.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/gh-per-pr-daily.sh" 2>/dev/null || true
+if command -v gpd_snap_add >/dev/null 2>&1; then
+  SNAP2=$(gpd_snap_add "$H/state/gh-per-merged-pr.json" "$SNAP") && [ -n "$SNAP2" ] && SNAP="$SNAP2"
+fi
+# <<< 13. GH PER MERGED PR
+
 # SIZE. The worker answers 413 to a body over 64000 bytes and this curl is
 # silent, so an oversized push is indistinguishable from a dead hub — it would
 # fire the dead-man it exists to feed. The 2026-09-14 fields are the growth
