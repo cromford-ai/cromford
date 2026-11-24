@@ -14,6 +14,7 @@
 #   tracker_context <project> [<lane>]  tracker_load + that adapter's TRK_* context
 #   tracker_key_prefix <project>        jira/linear only: the ticket key prefix
 #   trk_gh_issue_number <project> <key> the GitHub issue number of a KEY, or rc 1/3
+#   tracker_board_prefix <project>      fleet.conf column 4 verbatim, or rc 1
 #   tracker_list [--state open|all] [--label <name>] [--since <iso>]
 #                                       JSON array of tickets (no body/comments)
 #   tracker_read <id>                   one normalized ticket (below)
@@ -346,6 +347,22 @@ trk_gh_issue_number() {
   if [[ "$key" =~ ^[0-9]+$ ]]; then printf '%s\n' "$key"; return 0; fi
   if [[ "$key" =~ ^[A-Za-z]+-([0-9]+)$ ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
   return 1
+}
+
+# tracker_board_prefix <project> — fleet.conf column 4 for <project>, verbatim
+# (`-` for a GitHub-issues project). rc 1 and nothing printed for an empty
+# project, no fleet-conf.sh, or a fleet-conf.sh refusal. Read-only: no worker
+# call, no token. $HARNESS/bin/fleet-conf.sh first, the copy beside this lib
+# second (the order bin/lib/client-approval.sh _ca_fcs used, BH-9966).
+tracker_board_prefix() {
+  local p="${1:-}" root="${HARNESS:-${H:-}}" fcs v
+  [ -n "$p" ] || return 1
+  fcs="${root:+$root/bin/fleet-conf.sh}"
+  [ -n "$fcs" ] && [ -x "$fcs" ] || fcs="$(_trk_dir)/../fleet-conf.sh"
+  [ -x "$fcs" ] || return 1
+  v=$("$fcs" "$p" board_prefix 2>/dev/null) || return 1
+  [ -n "$v" ] || return 1
+  printf '%s\n' "$v"
 }
 
 # _TRK_ISO_JQ — the jq def trk_iso every adapter prints updatedAt through: a

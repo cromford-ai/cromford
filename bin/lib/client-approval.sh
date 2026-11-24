@@ -268,7 +268,10 @@ _ca_fcs() {
 }
 
 # ca_ticket_url <project> <ticket-id> — the board ticket page:
-#   <fleet.conf prod><board_prefix minus a leading /api>?ticket=<id, url-encoded>.
+#   <fleet.conf prod><fleet.conf column 4 minus a leading /api>?ticket=<id,
+#   url-encoded>. Column 4 is read through tracker_board_prefix
+#   (bin/lib/tracker.sh, BH-9966), in a subshell, so no tracker function or
+#   variable reaches the caller.
 #   Empty (never a guessed URL) when prod is not https://, the prefix is `-`
 #   or empty, or the id is empty. Always rc 0.
 ca_ticket_url() {
@@ -277,7 +280,14 @@ ca_ticket_url() {
   f=$(_ca_fcs) || return 0
   [ -n "$f" ] || return 0
   prod=$("$f" "$1" prod 2>/dev/null) || return 0
-  pre=$("$f" "$1" board_prefix 2>/dev/null) || return 0
+  pre=$(
+    r=$(_ca_root); [ -n "$r" ] && HARNESS="$r"
+    declare -F tracker_board_prefix >/dev/null 2>&1 \
+      || . "$(dirname "${BASH_SOURCE[0]}")/tracker.sh" 2>/dev/null \
+      || { [ -n "$r" ] && . "$r/bin/lib/tracker.sh" 2>/dev/null; } \
+      || exit 1
+    tracker_board_prefix "$1"
+  ) || return 0
   [[ "$prod" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || return 0
   prod=${prod%/}
   case "$pre" in /api/*) pre=${pre#/api} ;; esac
