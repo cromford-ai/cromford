@@ -38,6 +38,11 @@ The detail is JSON v1: `project`, `key`, `day`, `at` (capture time), `from`,
   with the comments. `pipeline.log` gets one `REOPEN REASON:` line.
 - The triage prompt (`bin/run-triage.sh`). It adds a `REOPENED TICKETS` block
   for the project's rows from the last 14 days.
+- The weekly lookback collector (`bin/lookback-collect.sh`, through
+  `bin/lib/lookback-reopen.sh` `lrd_comment`). Each reopen item of the bundle
+  gets the newest saved comment as `comment` when the row's `day` is the
+  reopen day, and `comment_status`. The clustering prompt and the harness
+  issue evidence show it. The product-board filer does not.
 - The weekly lookback summary (`bin/lookback.sh`). It adds one line:
   `reopens 7d: <project> <n>, ... (<s> of <total> with a saved reason)`.
 

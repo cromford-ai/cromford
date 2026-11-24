@@ -24,6 +24,13 @@
 #                       each fleet repo (the bin/rule-miner.sh query)
 # Item files[]: the newest builds/<p>-<ticket>-*/changed-files.txt, else the
 # PR's GitHub file list (first 100), else [] — never a guessed path.
+# A reopen item also carries pr (the PR GET /api/ticket-status picks for the
+# ticket, bin/lib/lookback-reopen.sh lrd_pr_map), comment ({at, author, text}
+# of the client's newest comment around the reopen, or null) and
+# comment_status (saved | no-comment | unreadable | other-day | none, from the
+# reopen_reason row of bin/lib/reopen-reason.sh, lrd_comment).
+# sources.reopen.detail = {pr_lookup: ok | <why per project>, with_pr,
+# with_comment}. A failed PR lookup leaves pr "" and is not .incomplete.
 #
 # Every source read records {ok, n, truncated, error?} under .sources. A read
 # that fails is ok:false and makes .incomplete true; it is never read as zero.
@@ -50,6 +57,11 @@ command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply lookback
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
 # shellcheck source=lib/gh-app-auth.sh
 [ -r "$HARNESS/bin/lib/gh-app-auth.sh" ] && . "$HARNESS/bin/lib/gh-app-auth.sh"   # App token per repo; unarmed box untouched
+# The reopen item's PR and client comment. Fail-open: absent = today's item.
+# shellcheck source=lib/reopen-reason.sh
+[ -r "$HARNESS/bin/lib/reopen-reason.sh" ] && . "$HARNESS/bin/lib/reopen-reason.sh"
+# shellcheck source=lib/lookback-reopen.sh
+[ -r "$HARNESS/bin/lib/lookback-reopen.sh" ] && . "$HARNESS/bin/lib/lookback-reopen.sh"
 
 usage() { echo "usage: lookback-collect.sh [--since <iso>] [--days N] --out <file>${1:+ ($1)}" >&2; exit 2; }
 SINCE=""; DAYS="${LOOKBACK_DAYS:-7}"; OUT=""
@@ -92,10 +104,13 @@ epoch() { [ -n "$1" ] && date -u -d "$1" +%s 2>/dev/null; }
 JQ_ROW='def row: map(tostring | gsub("[\\n\\r\\t\u001f]"; " ")) | join("\u001f"); '
 in_window() { [ -n "$1" ] && [ "$1" -ge "$FROM_S" ] && [ "$1" -le "$TO_S" ]; }
 
-# source_record <name> <ok> <n> <truncated> [error]
+# source_record <name> <ok> <n> <truncated> [error] [detail-json-object]
 source_record() {
-  jq -nc --arg name "$1" --argjson ok "$2" --argjson n "$3" --argjson tr "$4" --arg e "${5:-}" \
-    '{name:$name, ok:$ok, n:$n, truncated:$tr} + (if $e == "" then {} else {error:$e} end)' >> "$TMP/sources.jsonl"
+  local det="${6:-}"
+  jq -e 'type == "object"' <<<"${det:-null}" >/dev/null 2>&1 || det=null
+  jq -nc --arg name "$1" --argjson ok "$2" --argjson n "$3" --argjson tr "$4" --arg e "${5:-}" --argjson det "$det" \
+    '{name:$name, ok:$ok, n:$n, truncated:$tr} + (if $e == "" then {} else {error:$e} end)
+     + (if $det == null then {} else {detail:$det} end)' >> "$TMP/sources.jsonl"
 }
 
 # item_files <project> <ticket> <pr-url> — a JSON array of paths.
@@ -117,14 +132,16 @@ item_files() {
   echo '[]'
 }
 
-# emit <source> <at-epoch> <project> <ticket> <pr> <lane> <reason>
+# emit <source> <at-epoch> <project> <ticket> <pr> <lane> <reason> [extra-json-object]
+# The extra object is merged into the item; it never changes the id.
 emit() {
-  local id files
+  local id files extra="${8:-}"
+  jq -e 'type == "object"' <<<"${extra:-null}" >/dev/null 2>&1 || extra='{}'
   id=$(printf '%s|%s|%s|%s|%s' "$1" "$3" "$4" "$5" "$7" | sha1sum | cut -c1-12)
   files=$(item_files "$3" "$4" "$5")
   jq -nc --arg id "$id" --arg s "$1" --arg at "$(iso "$2")" --arg p "$3" --arg t "$4" --arg pr "$5" \
-    --argjson files "${files:-[]}" --arg lane "$6" --arg r "$7" \
-    '{id:$id, source:$s, at:$at, project:$p, ticket:$t, pr:$pr, files:$files, lane:$lane, reason:$r}' >> "$TMP/items.jsonl"
+    --argjson files "${files:-[]}" --arg lane "$6" --arg r "$7" --argjson extra "$extra" \
+    '{id:$id, source:$s, at:$at, project:$p, ticket:$t, pr:$pr, files:$files, lane:$lane, reason:$r} + $extra' >> "$TMP/items.jsonl"
 }
 
 # gh_for <owner/repo> — that repo's App token when this box mints them. The
@@ -141,18 +158,46 @@ jobs_ready() { # jobs_ready — rc 0 when the worker can be asked; else prints w
 }
 
 # (a) reopen — logs/reopens.csv, `date` is %Y%m%d, so the window is by day.
+# Pass 1 reads the in-window rows; pass 2 asks ticket-status once per project
+# per chunk for the PRs; pass 3 emits each row with its PR and client comment.
 src_reopen() {
-  local f="$HARNESS/logs/reopens.csv" n=0 fd td d p k from to
+  local f="$HARNESS/logs/reopens.csv" n=0 fd td d p k from to why="" pr extra wp=0 wc=0 detail
   if [ ! -e "$f" ]; then source_record reopen true 0 false; return; fi
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then source_record reopen false 0 false "logs/reopens.csv unreadable"; return; fi
   fd=$(date -u -d "@$FROM_S" +%Y%m%d); td=$(date -u -d "@$TO_S" +%Y%m%d)
+  : > "$TMP/reopen.rows"; : > "$TMP/reopen.pr"
   while IFS=, read -r d p k from to; do
     [[ "$d" =~ ^[0-9]{8}$ ]] || continue
     [ "$d" -ge "$fd" ] && [ "$d" -le "$td" ] || continue
-    emit reopen "$(epoch "${d:0:4}-${d:4:2}-${d:6:2}T00:00:00Z")" "$p" "$k" "" reopen "reopened: $from -> $to"
-    n=$((n + 1))
+    printf "%s$US%s$US%s$US%s$US%s\n" "$d" "$p" "$k" "$from" "$to" >> "$TMP/reopen.rows"
   done < "$f"
-  source_record reopen true "$n" false
+  if [ -s "$TMP/reopen.rows" ]; then
+    if ! declare -F lrd_pr_map >/dev/null; then
+      why="bin/lib/lookback-reopen.sh not loaded"
+    elif ! why=$(jobs_ready); then
+      :
+    else
+      why=""
+      while IFS= read -r p; do
+        awk -F"$US" -v p="$p" '$2 == p { print $3 }' "$TMP/reopen.rows" > "$TMP/reopen.keys"
+        if lrd_pr_map "$p" "$TMP/reopen.keys" "$TMP/reopen.pr1"; then :; else why="${why:+$why; }$p: $LRD_WHY"; fi
+        awk -F'\t' -v p="$p" -v OFS='\t' '{ print p, $1, $2 }' "$TMP/reopen.pr1" >> "$TMP/reopen.pr"
+      done < <(cut -d"$US" -f2 "$TMP/reopen.rows" | sort -u)
+    fi
+  fi
+  while IFS="$US" read -r d p k from to; do
+    pr=$(awk -F'\t' -v p="$p" -v k="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')" '$1 == p && $2 == k { print $3; exit }' "$TMP/reopen.pr")
+    if declare -F lrd_comment >/dev/null; then extra=$(lrd_comment "$p" "$k" "$d"); else extra=""; fi
+    jq -e 'type == "object" and has("comment_status")' <<<"${extra:-null}" >/dev/null 2>&1 \
+      || extra='{"comment":null,"comment_status":"none"}'
+    emit reopen "$(epoch "${d:0:4}-${d:4:2}-${d:6:2}T00:00:00Z")" "$p" "$k" "$pr" reopen "reopened: $from -> $to" "$extra"
+    n=$((n + 1))
+    [ -n "$pr" ] && wp=$((wp + 1))
+    [ "$(jq -r .comment_status <<<"$extra")" = saved ] && wc=$((wc + 1))
+  done < "$TMP/reopen.rows"
+  detail=$(jq -nc --arg why "$why" --argjson wp "$wp" --argjson wc "$wc" \
+    '{pr_lookup: (if $why == "" then "ok" else $why end), with_pr: $wp, with_comment: $wc}')
+  source_record reopen true "$n" false "" "$detail"
 }
 
 # The blocked-resolver records in the window, read once into $TMP/br.rows:

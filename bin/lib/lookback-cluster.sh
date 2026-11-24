@@ -76,7 +76,7 @@ lookback_cluster_run() {
       | map({key_kind: .[0].k, key_value: .[0].v, item_ids: (map(.id) | unique)})
       | map(select((.item_ids | length) >= $min))
       | sort_by(-(.item_ids | length), .key_kind, .key_value) | .[]' "$bundle")
-    items=$(jq -c '.items[] | {id, source, project, lane, files, reason: ((.reason // "") | .[0:300])}' "$bundle")
+    items=$(jq -c '.items[] | {id, source, project, lane, files, pr, reason: ((.reason // "") | .[0:300]), comment: (.comment.text? // null)}' "$bundle")
     prompt="$(cat "$sop")
 
 ## Candidate groups

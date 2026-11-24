@@ -13,9 +13,12 @@
 # bin/lookback-collect.sh --days <n> --out <path>:
 #   {window:{from,to},
 #    items:[{id, source, at, project, ticket, pr, files[], lane, reason}],
-#    sources:{<name>:{ok, n, truncated, error?}},
+#    sources:{<name>:{ok, n, truncated, error?, detail?}},
 #    incomplete:bool}
-#   `at` is the ISO time of the event. The driver requires `.items` to be an
+#   `at` is the ISO time of the event. A reopen item also has comment
+#   ({at, author, text} or null) and comment_status (saved | no-comment |
+#   unreadable | other-day | none); its pr is the ticket's PR when the hub
+#   knows it. sources.reopen.detail = {pr_lookup, with_pr, with_comment}. The driver requires `.items` to be an
 #   array: a missing one is a failed collection, never an empty week.
 #
 # CLUSTERS — state/lookback/<YYYY-MM-DD>/clusters.json, the validated output of

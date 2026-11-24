@@ -43,7 +43,8 @@ _lookback_evidence() {
           (if $x.pr != null then "PR: \($x.pr)" else empty end),
           (if ($x.files // []) != [] then "files: \($x.files | join(", "))" else empty end),
           (if $x.lane != null then "lane: \($x.lane)" else empty end),
-          (if $x.reason != null then "reason: \($x.reason)" else empty end)
+          (if $x.reason != null then "reason: \($x.reason)" else empty end),
+          (if ($x.comment // null) != null then "client comment: \($x.comment.author) (\($x.comment.at)): \($x.comment.text)" else empty end)
         ] | map(select(. != null)) | join(", ")) end'
 }
 
