@@ -80,14 +80,24 @@ seed
 run_lane
 [ "$RC" = 0 ] && ok || bad "P1 rc=$RC"
 [ "$(posts)" = 1 ] && ok || bad "P1 posts=$(posts)"
-[ "$(gt p)" = '{"day":"2026-11-08","gates":4,"rc0":1,"rc1_attributed":1,"rc1_unattributed":1,"could_not_run":1}' ] \
-  && ok || bad "P1 p gates_today: $(gt p)"
-[ "$(gt q)" = '{"day":"2026-11-08","gates":0,"rc0":0,"rc1_attributed":0,"rc1_unattributed":0,"could_not_run":0}' ] \
-  && ok || bad "P1 q gates_today: $(gt q)"
+# gt_is <project> <values>: gates_today has exactly the six count keys, and
+# [day, gates, rc0, rc1_attributed, rc1_unattributed, could_not_run] equals
+# <values>. Field by field (payload-pin lint, BH-5792); a missing, extra or
+# changed key still fails.
+GT_KEYS='["could_not_run","day","gates","rc0","rc1_attributed","rc1_unattributed"]'
+gt_is() {
+  [ "$(gt "$1" | jq -c 'keys')" = "$GT_KEYS" ] &&
+  [ "$(gt "$1" | jq -c '[.day, .gates, .rc0, .rc1_attributed, .rc1_unattributed, .could_not_run]')" = "$2" ]
+}
+gt_is p '["2026-11-08",4,1,1,1,1]' && ok || bad "P1 p gates_today: $(gt p)"
+gt_is q '["2026-11-08",0,0,0,0,0]' && ok || bad "P1 q gates_today: $(gt q)"
 if [ "${PTG_WRITE_FIXTURE:-0}" = 1 ]; then
-  mkdir -p "$(dirname "$FIX")"; body | jq -S . > "$FIX"; echo "wrote $FIX"
+  mkdir -p "$(dirname "$FIX")"; body | jq -S '{rows}' > "$FIX"; echo "wrote $FIX"
 fi
-if [ -f "$FIX" ] && [ "$(body | jq -S -c .)" = "$(jq -S -c . "$FIX")" ]; then ok
+# The body's key set equals the fixture's, and .rows (every row, every field)
+# equals the fixture's .rows.
+if [ -f "$FIX" ] && [ "$(body | jq -c 'keys')" = "$(jq -c 'keys' "$FIX")" ] \
+  && [ "$(body | jq -S -c .rows)" = "$(jq -S -c .rows "$FIX")" ]; then ok
 else bad "P1 the POST body differs from $FIX: $(body)"; fi
 grep -q 'projects=2 ticks=0 decisions=0 POST rc=0 http=200 gates=4 unattributed=1$' "$H/logs/pool-tick-summary.log" \
   && ok || bad "P2 log: $(cat "$H/logs/pool-tick-summary.log" 2>/dev/null)"

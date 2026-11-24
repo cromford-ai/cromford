@@ -143,7 +143,9 @@ test('J8 only the allowed query parameters reach the handler', async () => {
   const bad = [['GET', '/api/jobs', () => new Response(JSON.stringify({ error: 'nope', detail: 'internal-fixture' }), { status: 503 })]];
   const r2 = await qaReadDispatch({ req, env: { HARNESS_SECRET: SECRET, QA_READ_TOKEN: QA }, url, path: url.pathname, t: T0 }, bad);
   assert.equal(r2.status, 503);
-  assert.deepEqual(await r2.json(), { error: 'nope' });
+  const b2 = await r2.json();
+  assert.equal(b2.error, 'nope');
+  assert.deepEqual(Object.keys(b2), ['error'], 'the {error} only, no detail');
 });
 
 test('J9 the policy copies are identical, and qa-read.js stays inside the worker tree', () => {

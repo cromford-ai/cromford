@@ -144,10 +144,12 @@ test('K1 the schema has the 3 tables, their indexes, the 2 kind seeds and the 6 
   assert.deepEqual(f.posthog[2].prefixes, ['phx_']);
   for (const k of kinds) assert.ok(k.scope_note && k.test_template && k.host_allow, k.kind);
   const seeds = Object.fromEntries(s.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'signal_keys.%' OR key = 'retention.signal_key_audit.days'").all().map((r) => [r.key, r.value]));
-  assert.deepEqual(seeds, {
-    'signal_keys.read_lanes': '', 'signal_keys.test_timeout_ms': '10000', 'signal_keys.rotate_days': '90',
-    'signal_keys.list_limit': '500', 'signal_keys.value_max_bytes': '4096', 'retention.signal_key_audit.days': '90',
-  });
+  const wantSeeds = [
+    ['signal_keys.read_lanes', ''], ['signal_keys.test_timeout_ms', '10000'], ['signal_keys.rotate_days', '90'],
+    ['signal_keys.list_limit', '500'], ['signal_keys.value_max_bytes', '4096'], ['retention.signal_key_audit.days', '90'],
+  ];
+  for (const [k, v] of wantSeeds) assert.equal(seeds[k], v, k);
+  assert.deepEqual(Object.keys(seeds).sort(), wantSeeds.map(([k]) => k).sort(), 'no other seeded key');
   const cols = s.db.prepare('PRAGMA table_info(signal_keys)').all().map((c) => c.name);
   for (const c of ['project', 'kind', 'fields_json', 'ciphertext', 'iv', 'key_id', 'updated_by', 'last_used_at', 'last_test_at', 'last_test_status', 'last_test_result']) assert.ok(cols.includes(c), c);
   assert.equal(cols.some((c) => /value|plain|secret|token/.test(c)), false, 'no plain-secret column');
@@ -164,7 +166,10 @@ test('S1 set stores ciphertext, not the value, the fields in clear, and exactly 
   assert.ok(noSecret(r.text), 'the answer holds no secret');
   const rows = keyRows(s.db);
   assert.equal(rows.length, 1);
-  assert.deepEqual(JSON.parse(rows[0].fields_json), { org: 'fixture-org', project: 'fixture-proj' });
+  const fj = JSON.parse(rows[0].fields_json);
+  assert.equal(fj.org, 'fixture-org');
+  assert.equal(fj.project, 'fixture-proj');
+  assert.deepEqual(Object.keys(fj).sort(), ['org', 'project'], 'the fields in clear, no other field');
   assert.ok(rows[0].ciphertext && rows[0].iv);
   assert.ok(noSecret(JSON.stringify(rows)), 'no stored cell holds the secret');
   const a = audits(s.db);

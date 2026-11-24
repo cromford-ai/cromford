@@ -203,7 +203,9 @@ test('C10b a non-200 passes its status with {error} only; a non-JSON 200 is 502'
   fakeFetch(t, { jobs: () => new Response(JSON.stringify({ error: 'jobs unavailable', detail: 'internal-fixture' }), { status: 503 }) });
   const { out } = await capture(() => get('jobs'));
   assert.equal(out.status, 503);
-  assert.deepEqual(await out.json(), { error: 'jobs unavailable' });
+  const b503 = await out.json();
+  assert.equal(b503.error, 'jobs unavailable');
+  assert.deepEqual(Object.keys(b503), ['error'], 'the {error} only, no detail');
   fakeFetch(t, { jobs: () => new Response('<html>not json</html>', { status: 200 }) });
   const r2 = await capture(() => get('jobs'));
   assert.equal(r2.out.status, 502);

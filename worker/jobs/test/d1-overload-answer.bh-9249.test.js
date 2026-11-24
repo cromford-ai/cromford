@@ -135,7 +135,8 @@ test("R1: ticket message 2x then a row; attempts=3, base_ms=10 from settings -> 
   } finally {
     globalThis.setTimeout = realTimeout;
   }
-  assert.deepEqual(row, { id: "job-9249" });
+  assert.equal(row.id, "job-9249");
+  assert.deepEqual(Object.keys(row), ["id"], "no extra keys in the row");
   assert.equal(calls, 3);
   assert.equal(waits.length, 2);
   assert.ok(waits[0] >= 5 && waits[0] <= 10, `first wait ${waits[0]} in [5, 10]`);

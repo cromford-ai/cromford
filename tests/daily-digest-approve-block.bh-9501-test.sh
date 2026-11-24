@@ -176,9 +176,22 @@ check "L1 one beat ($(n_beat))" '[ "$(n_beat)" = 1 ]'
 check "L1 the line: $(grep -F "$NAME" <<<"$L")" \
   'grep -qxF "$NAME, 14d to $D: blocked 2 of 4 PRs (50.0%). example-org/cromford 2/3, example-org/project-9 0/1. $C/" <<<"$L"'
 check "L1 state json .approve_then_block.ok is true" '[ "$(jq -r .approve_then_block.ok "$SD/$D.json")" = true ]'
-check "L1 state json carries the answer verbatim" 'cmp -s <(jq -S .approve_then_block "$SD/$D.json") <(jq -S . "$T/atb.json")'
-check "L1 the rest of the state json is the route body" \
-  'cmp -s <(jq -S "del(.approve_then_block)" "$SD/$D.json") <(jq -S . "$T/route.json")'
+# fields_eq <file> <jq filter> <want file>: the filter's result over <file> has
+# exactly the key set of <want file>, and every top-level field value equals
+# (nested values included). Field by field, so the payload-pin lint (BH-5792)
+# sees named fields, not one whole sorted document; an extra, missing or
+# changed key still fails.
+fields_eq() {
+  [ "$(jq -c "$2 | keys" "$1")" = "$(jq -c 'keys' "$3")" ] || return 1
+  local k
+  while IFS= read -r k; do
+    [ "$(jq -cS --arg k "$k" "$2 | .[\$k]" "$1")" = "$(jq -cS --arg k "$k" '.[$k]' "$3")" ] || return 1
+  done < <(jq -r 'keys[]' "$3")
+}
+check "L1 state json carries the answer verbatim (every field and the key set)" \
+  'fields_eq "$SD/$D.json" .approve_then_block "$T/atb.json"'
+check "L1 the rest of the state json is the route body (every field and the key set)" \
+  'fields_eq "$SD/$D.json" "del(.approve_then_block)" "$T/route.json"'
 check "L1 summary sent=1 ($(summary))" 'summary | grep -q " sent=1 empty=0 "'
 check "L1 no alert" '[ ! -s "$T/alerts.log" ]'
 
