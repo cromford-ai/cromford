@@ -21,7 +21,10 @@
 #        deferred.
 #     6. the newest line naming <KEY> as a whole word in the last
 #        STUCKQUEUE_GATE_LOG_TAIL_KB KB of logs/fly-pool.log, then of
-#        logs/fly-dispatch.log (classified below); then the newest
+#        logs/fly-dispatch.log (classified below; a pool line `phase ejected`
+#        -> phase-ejected, detail `phase ejected, re-planned: ...` when the
+#        same tail of logs/blocked-resolver.log names the key as RE-PLANNED or
+#        `fresh pool build enqueued`, else `phase ejected: ...`, BH-9943); then the newest
 #        `[<p>] ... wip of` line of logs/fly-dispatch.log -> dispatcher-wip.
 #     7. unknown.
 #   Each log tail is read once per process and kept in the shell.
@@ -135,9 +138,20 @@ sqg_gate() {
       *DISPATCH-MODE*)            g=dispatch-mode ;;
       *"tick budget"*)            g=tick-budget ;;
       *execute-empty*)            g=execute-empty ;;
+      *"phase ejected"*)          g=phase-ejected ;;
       *plan-blocked*)             g=plan-blocked ;;
       *)                          g=pool-log ;;
     esac
+    if [ "$g" = phase-ejected ]; then
+      # BH-9943: say `re-planned` only when the resolver log names THIS key as
+      # re-planned or freshly enqueued; an ejected key nobody re-planned is not.
+      if _sqg_tail "$h/logs/blocked-resolver.log" | grep -wF -- "$k" | grep -qE 'RE-PLANNED|fresh pool build enqueued'; then
+        _sqg_out "$g" "phase ejected, re-planned: fly-pool.log: $(_sqg_clean "$m")"
+      else
+        _sqg_out "$g" "phase ejected: fly-pool.log: $(_sqg_clean "$m")"
+      fi
+      return 0
+    fi
     _sqg_out "$g" "fly-pool.log: $(_sqg_clean "$m")"
     return 0
   fi

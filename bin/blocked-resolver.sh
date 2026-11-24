@@ -3742,10 +3742,12 @@ br_enqueue_fresh() {
       BR_JOB_ID="$tkey@${enq}~r$((n+1))$lmark"
       BR_JOB_ENQ="$enq"
       say "$p/$tkey: fresh pool build enqueued (attempt 0, $note) -> queued (job $BR_JOB_ID)"
+      command -v br_phase_uneject >/dev/null 2>&1 && ! br_phase_uneject "$p" "$tkey" "$note" && { BR_ENQUEUE_WHY="$PU_WHY"; return 1; } # BH-9943
       return 0
     fi
     if [ "$rc" = "duplicate" ]; then
       say "$p/$tkey: fresh pool build REFUSED as duplicate — a live build already covers this key (no rung spent, $note)"
+      command -v br_phase_uneject >/dev/null 2>&1 && ! br_phase_uneject "$p" "$tkey" "$note" && { BR_ENQUEUE_WHY="$PU_WHY"; return 1; } # BH-9943
       return 3
     fi
     if [ -z "$rc" ]; then
