@@ -117,6 +117,51 @@
 #   pr_record_list_max_age
 #       BH-8452: the resolved PR_RECORD_LIST_MAX_AGE_S (default 900, 0 = off).
 #
+#   BH-9935 readers. Each makes ONE jobs GET of the row (the GET of
+#   pr_record_peek); a miss writes one logs/pr-record.log line. A value is
+#   printed only from an entry whose sha is the asked head (40 hex, any case).
+#
+#   pr_record_statuses <owner/repo> <number> [head]
+#       The record's commit statuses of <head> (default the row's head_sha):
+#       {<context>: {state, description, sha, at}} on stdout, rc 0. Never a
+#       GitHub call, never a write. rc 1 and one `statuses <repo>#<n>
+#       miss=<unreadable|unknown|no-head|none>` line. rc 2 bad args.
+#
+#   pr_record_mergify <owner/repo> <number>
+#       The newest Mergify queue payload the record holds: {state, code,
+#       draft_pr, failing_checks, left_sha, comment_id, at}, rc 0. Never a
+#       GitHub call, never a write. rc 1 and one `mergify <repo>#<n>
+#       miss=<unreadable|unknown|none>` line. rc 2 bad args.
+#
+#   pr_record_head_commit_time <owner/repo> <number> <head>
+#       The commit time (ISO, UTC) of <head> on stdout, rc 0. From the record
+#       when its head_commit.sha is <head>. Else ONE GitHub read
+#       (repos/<r>/commits/<head>, .commit.committer.date), a PUT of
+#       {"head_commit": {sha, at}} (source github; skipped when the jobs read
+#       failed), then the print. rc 44 GitHub has no such commit; rc 75 GitHub
+#       did not answer (nothing printed, no write); rc 2 bad args. One log line
+#       per GitHub read: head-commit <repo>#<n> reason=<unreadable|unknown|sha>
+#       gh_rc=<rc> put=<ok|failed|skipped>.
+#
+#   pr_record_files <owner/repo> <number> <head> <out-file>
+#       The PR's changed paths, one per line, sorted (LC_ALL=C) and unique, in
+#       <out-file>, rc 0. From the record when its files.sha is <head>: a head
+#       sha never changes, so the list never needs a refresh and its age does
+#       not matter. Else GitHub pulls/<n>/files (100 a page, at most 30 pages,
+#       GitHub's own 3,000-file cap), then a PUT of {"files": {sha, paths}}
+#       (source github; skipped when the jobs read failed). A list that fills
+#       all 30 pages may be cut: it is printed but never stored. rc 75 GitHub
+#       failed (<out-file> empty, no write); rc 2 bad args. One log line per
+#       GitHub read: files <repo>#<n> reason=<unreadable|unknown|none|sha>
+#       gh_rc=<rc> pages=<p> put=<ok|failed|skipped|skipped-cut>.
+#
+#   pr_record_label_list <owner/repo> <label> <out-file> [open|merged|closed]
+#       The PRs in that state (default open) that carry exactly <label> (case
+#       as stored), from the record: pr_record_list with need `labels`, then a
+#       filter. Its trust rule and answers are pr_record_list's: rc 0 and the
+#       rows array in <out-file> (<out-file>.sync holds the stamp), or rc 1 and
+#       the miss word on stdout. rc 2 bad args.
+#
 # The knob PR_RECORD_MAX_AGE_S (catalog/lanes.d/_lib.pr-record.json) is read
 # through lane_knob when the caller has it, else from the environment. So is
 # PR_RECORD_HEAD_FALLBACK_MAX_AGE_S and PR_RECORD_LIST_MAX_AGE_S
@@ -172,8 +217,10 @@ pr_record_put() {
   case "$src" in fleet|webhook|github) ;; *) return 1 ;; esac
   jq -e 'type == "object" and length > 0' <<<"$fields" >/dev/null 2>&1 || return 1
   _prr_client || return 1
-  body=$(jq -nc --arg r "$(_prr_lower "$repo")" --argjson n "$n" --arg s "$src" --argjson f "$fields" --arg at "$at" \
-    '{repo:$r, number:$n, source:$s, fields:$f} + (if $at != "" then {at:$at} else {} end)' 2>/dev/null) || return 1
+  # <fields-json> rides on stdin, never argv: a files list of 3,000 paths is
+  # larger than Linux lets one argv string be (MAX_ARG_STRLEN, 128 KB).
+  body=$(jq -c --arg r "$(_prr_lower "$repo")" --argjson n "$n" --arg s "$src" --arg at "$at" \
+    '{repo:$r, number:$n, source:$s, fields:.} + (if $at != "" then {at:$at} else {} end)' <<<"$fields" 2>/dev/null) || return 1
   out=$(_jobs_req PUT /api/pr-records "$body") || return 1
   jq -e '(.row | objects) and (.applied | arrays) and (.stale | arrays)' <<<"$out" >/dev/null 2>&1 || return 1
   printf '%s\n' "$out"
@@ -307,19 +354,167 @@ pr_record_list_sync_gql() {
   return 0
 }
 
+# _prr_row <lower-repo> <number> — the row plus age_s as one JSON line. ONE
+# jobs GET, no log line. rc 0; rc 1 the read failed; rc 3 the PR has no record.
+_prr_row() {
+  local out
+  _prr_client && out=$(_jobs_req GET "/api/pr-records?repo=$1&number=$2") \
+    && jq -e 'has("row")' <<<"$out" >/dev/null 2>&1 || return 1
+  jq -ce 'select((.row | type) == "object") | .row + {age_s: .age_s}' <<<"$out" 2>/dev/null || return 3
+}
+
+# _prr_why <rc of _prr_row> — its miss word.
+_prr_why() { if [ "$1" = 1 ]; then printf unreadable; else printf unknown; fi; }
+
 pr_record_peek() {
-  local repo="${1:-}" n="${2:-}" lr out
+  local repo="${1:-}" n="${2:-}" lr rc=0
   _prr_args_ok "$repo" "$n" || return 1
   lr=$(_prr_lower "$repo")
-  if ! _prr_client || ! out=$(_jobs_req GET "/api/pr-records?repo=$lr&number=$n") \
-     || ! jq -e 'has("row")' <<<"$out" >/dev/null 2>&1; then
-    _prr_log "peek $lr#$n miss=unreadable"
+  _prr_row "$lr" "$n" || rc=$?
+  [ "$rc" = 0 ] && return 0
+  _prr_log "peek $lr#$n miss=$(_prr_why "$rc")"
+  return 1
+}
+
+_prr_sha_ok() { [[ "${1:-}" =~ ^[0-9a-fA-F]{40}$ ]]; }
+
+pr_record_statuses() {
+  local repo="${1:-}" n="${2:-}" head="${3:-}" lr row out rc=0 why=""
+  _prr_args_ok "$repo" "$n" || return 2
+  [ -z "$head" ] || _prr_sha_ok "$head" || return 2
+  lr=$(_prr_lower "$repo")
+  row=$(_prr_row "$lr" "$n") || rc=$?
+  if [ "$rc" != 0 ]; then
+    why=$(_prr_why "$rc")
+  else
+    [ -n "$head" ] || head=$(jq -r '.head_sha | strings' <<<"$row" 2>/dev/null)
+    if ! _prr_sha_ok "$head"; then
+      why=no-head
+    elif ! out=$(jq -ce --arg h "$(_prr_lower "$head")" '.statuses | objects
+          | with_entries(select((.value | type) == "object" and .value.sha == $h)) | select(length > 0)' <<<"$row" 2>/dev/null); then
+      why=none
+    fi
+  fi
+  if [ -n "$why" ]; then _prr_log "statuses $lr#$n miss=$why"; return 1; fi
+  printf '%s\n' "$out"
+}
+
+pr_record_mergify() {
+  local repo="${1:-}" n="${2:-}" lr row out rc=0 why=""
+  _prr_args_ok "$repo" "$n" || return 2
+  lr=$(_prr_lower "$repo")
+  row=$(_prr_row "$lr" "$n") || rc=$?
+  if [ "$rc" != 0 ]; then why=$(_prr_why "$rc")
+  elif ! out=$(jq -ce '.mergify_queue | objects' <<<"$row" 2>/dev/null); then why=none
+  fi
+  if [ -n "$why" ]; then _prr_log "mergify $lr#$n miss=$why"; return 1; fi
+  printf '%s\n' "$out"
+}
+
+# _prr_gh_load — rc 0 when gh_rest is defined (sourced from bin/lib/gh-rest.sh when not).
+_prr_gh_load() {
+  command -v gh_rest >/dev/null 2>&1 || . "$_PRR_LIBDIR/gh-rest.sh" 2>/dev/null
+  command -v gh_rest >/dev/null 2>&1
+}
+
+pr_record_head_commit_time() {
+  local repo="${1:-}" n="${2:-}" head="${3:-}" lr row at="" rc=0 reason grc=0 put=skipped tmp
+  _prr_args_ok "$repo" "$n" && _prr_sha_ok "$head" || return 2
+  lr=$(_prr_lower "$repo"); head=$(_prr_lower "$head")
+  row=$(_prr_row "$lr" "$n") || rc=$?
+  if [ "$rc" = 0 ]; then
+    at=$(jq -r --arg h "$head" '.head_commit | objects | select(.sha == $h) | .at | strings' <<<"$row" 2>/dev/null)
+    if [ -n "$at" ]; then printf '%s\n' "$at"; return 0; fi
+    reason=sha
+  else
+    reason=$(_prr_why "$rc")
+  fi
+  if ! _prr_gh_load; then
+    _prr_log "head-commit $lr#$n reason=$reason gh_rc=75 put=skipped (gh-rest.sh did not load)"
+    return 75
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/pr-record.XXXXXX") || return 75
+  gh_rest GET "repos/$lr/commits/$head" > "$tmp" || grc=$?
+  if [ "$grc" = 0 ]; then
+    at=$(jq -r '.commit.committer.date | strings | sub("\\.[0-9]+Z$"; "Z")
+                | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' "$tmp" 2>/dev/null)
+    [ -n "$at" ] || grc=75
+  fi
+  rm -f "$tmp"
+  if [ "$grc" != 0 ]; then
+    [ "$grc" = 44 ] || grc=75
+    _prr_log "head-commit $lr#$n reason=$reason gh_rc=$grc put=skipped"
+    return "$grc"
+  fi
+  # A jobs read that failed would fail the write too: skip it.
+  if [ "$reason" != unreadable ]; then
+    if pr_record_put "$lr" "$n" github "$(jq -nc --arg s "$head" --arg a "$at" '{head_commit: {sha: $s, at: $a}}')" >/dev/null; then put=ok; else put=failed; fi
+  fi
+  _prr_log "head-commit $lr#$n reason=$reason gh_rc=0 put=$put"
+  printf '%s\n' "$at"
+}
+
+pr_record_files() {
+  local repo="${1:-}" n="${2:-}" head="${3:-}" outf="${4:-}" lr row rc=0 reason grc=0 put=skipped p=0 c=100 raw page fields
+  _prr_args_ok "$repo" "$n" && _prr_sha_ok "$head" && [ -n "$outf" ] || return 2
+  : > "$outf" || return 2
+  lr=$(_prr_lower "$repo"); head=$(_prr_lower "$head")
+  row=$(_prr_row "$lr" "$n") || rc=$?
+  if [ "$rc" = 0 ]; then
+    if jq -e --arg h "$head" '.files | objects | .sha == $h and ((.paths | type) == "array")' <<<"$row" >/dev/null 2>&1; then
+      jq -r '.files.paths[] | strings' <<<"$row" | LC_ALL=C sort -u > "$outf"
+      return 0
+    fi
+    if jq -e '.files | objects' <<<"$row" >/dev/null 2>&1; then reason=sha; else reason=none; fi
+  else
+    reason=$(_prr_why "$rc")
+  fi
+  if ! _prr_gh_load; then
+    _prr_log "files $lr#$n reason=$reason gh_rc=75 pages=0 put=skipped (gh-rest.sh did not load)"
+    return 75
+  fi
+  raw=$(mktemp "${TMPDIR:-/tmp}/pr-record.XXXXXX") || return 75
+  page=$(mktemp "${TMPDIR:-/tmp}/pr-record.XXXXXX") || { rm -f "$raw"; return 75; }
+  # 30 pages of 100 is GitHub's own 3,000-file cap on pulls/<n>/files.
+  while [ "$grc" = 0 ] && [ "$c" -ge 100 ] && [ "$p" -lt 30 ]; do
+    p=$((p + 1))
+    gh_rest GET "repos/$lr/pulls/$n/files" -F per_page=100 -F "page=$p" > "$page" || grc=$?
+    [ "$grc" = 0 ] || break
+    c=$(jq -r 'if type == "array" then length else error("not a list") end' "$page" 2>/dev/null) || { grc=75; break; }
+    jq -r '.[].filename | strings' "$page" >> "$raw" 2>/dev/null || { grc=75; break; }
+  done
+  if [ "$grc" != 0 ]; then
+    rm -f "$raw" "$page"
+    [ "$grc" = 44 ] || grc=75
+    _prr_log "files $lr#$n reason=$reason gh_rc=$grc pages=$p put=skipped"
+    return "$grc"
+  fi
+  LC_ALL=C sort -u "$raw" > "$outf"
+  rm -f "$raw" "$page"
+  if [ "$c" -ge 100 ]; then
+    put=skipped-cut   # all 30 pages were full: the list may be cut, so it is never stored
+  elif [ "$reason" != unreadable ]; then
+    fields=$(jq -R -s -c --arg s "$head" '{files: {sha: $s, paths: (split("\n") | map(select(. != "")))}}' "$outf")
+    if pr_record_put "$lr" "$n" github "$fields" >/dev/null; then put=ok; else put=failed; fi
+  fi
+  _prr_log "files $lr#$n reason=$reason gh_rc=0 pages=$p put=$put"
+  return 0
+}
+
+pr_record_label_list() {
+  local repo="${1:-}" label="${2:-}" outf="${3:-}" st="${4:-open}" rc=0
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ -n "$label" ] && [ -n "$outf" ] || return 2
+  case "$st" in open|merged|closed) ;; *) return 2 ;; esac
+  pr_record_list "$repo" "$st" "$outf" labels || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  if ! jq -c --arg l "$label" '[ .[] | select((.labels | type) == "array" and any(.labels[]; . == $l)) ]' "$outf" > "$outf.tmp" 2>/dev/null \
+     || ! mv "$outf.tmp" "$outf"; then
+    rm -f "$outf.tmp"; : > "$outf"; : > "$outf.sync"
+    _prr_log "label-list $(_prr_lower "$repo") state=$st miss=malformed"
+    printf 'malformed\n'
     return 1
   fi
-  if ! jq -ce 'select((.row | type) == "object") | .row + {age_s: .age_s}' <<<"$out" 2>/dev/null; then
-    _prr_log "peek $lr#$n miss=unknown"
-    return 1
-  fi
+  return 0
 }
 
 # _prr_map — a GitHub pulls object on stdin -> the record columns it fills,

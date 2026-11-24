@@ -1,0 +1,24 @@
+{
+  "files_put": {
+    "repo": "o/bh9935-rt",
+    "number": 7,
+    "source": "github",
+    "fields": {
+      "files": {
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "paths": ["README.md", "bin/lib/pr-record.sh", "docs/a b.md", "worker/jobs/src/routes/pr-records.js"]
+      }
+    }
+  },
+  "head_commit_put": {
+    "repo": "o/bh9935-rt",
+    "number": 7,
+    "source": "github",
+    "fields": {
+      "head_commit": {
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "at": "2026-11-24T10:00:00Z"
+      }
+    }
+  }
+}

@@ -38,9 +38,14 @@
 //   default and at most the pr_records.list_limit row. `truncated` then means
 //   "more than n exist", which is no miss for a window reader. limit also caps
 //   the default order. A bad order or limit is a 400 that names it.
+//
+// BH-9935: the row also carries statuses, mergify_queue, head_commit and
+// files (JSON, parsed; format in src/lib/pr-record-fields.js). The PUT takes
+// them like any other field. The list read does not return them (LIST_KEYS).
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
+import { fieldValues } from "../lib/pr-record-fields.js";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const WORD_RE = /^[a-z_]{1,32}$/;
@@ -123,8 +128,10 @@ export const VALUE_FIELDS = {
   // BH-8481 (core.d/bh-8481-pr-records-reviews.js).
   merged_at: isoAt,
   reviews: reviewsValue,
+  // BH-9935: statuses, mergify_queue, head_commit, files (lib/pr-record-fields.js).
+  ...fieldValues(CHECKS_MAX),
 };
-const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at"];
+const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at", "statuses", "mergify_queue", "head_commit", "files"];
 // The columns where null is a value: "unknown, ask GitHub on the next read"
 // (case 2 of the read rule in bin/lib/pr-record.sh).
 export const NULLABLE_FIELDS = ["mergeable_state"];

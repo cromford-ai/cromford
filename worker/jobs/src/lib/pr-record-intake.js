@@ -18,6 +18,7 @@
 
 import { ensureColumns, ensureTable } from "./core.js";
 import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX, REVIEWERS_MAX, REVIEWER_RE } from "../routes/pr-records.js";
+import { fieldWritesOf, fieldStmtOf } from "./pr-record-fields.js";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v) => (Number.isSafeInteger(v) && v >= 1 && v <= 1e9 ? v : null);
@@ -104,7 +105,12 @@ const prNumbers = (prs) => (Array.isArray(prs) ? prs.map((p) => (isObj(p) ? num(
 //   {kind:'check', repo, number, at, name, value}        value {status, conclusion, sha, at}
 //   {kind:'base-push', repo, base_ref, at}
 //   {kind:'review', repo, number, at, login, value}      value {state, commit_id, at} (BH-8481)
+//   + the status, mergify and head-push writes of fieldWritesOf (BH-9935, lib/pr-record-fields.js)
 export function prRecordWritesOf(event, payload, t) {
+  return [...baseWritesOf(event, payload, t), ...fieldWritesOf(event, payload, t, CHECKS_MAX)];
+}
+
+function baseWritesOf(event, payload, t) {
   if (!isObj(payload)) return [];
   const repo = str(isObj(payload.repository) ? payload.repository.full_name : "").toLowerCase();
   if (!REPO_RE.test(repo)) return [];
@@ -240,6 +246,8 @@ export const REVIEW_MERGE_SQL = `UPDATE pr_records SET
       AND (json_type(reviews, ?3) IS NOT NULL OR (SELECT count(*) FROM json_each(reviews)) < ${REVIEWERS_MAX})`;
 
 function stmtOf(DB, w) {
+  const f = fieldStmtOf(DB, w, CHECKS_MAX);
+  if (f) return f;
   if (w.kind === "review") {
     return DB.prepare(REVIEW_MERGE_SQL).bind(w.repo, w.number, `$."${w.login}"`, JSON.stringify(w.value), w.at);
   }
