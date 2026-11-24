@@ -1,0 +1,2 @@
+# BH-9901: the client-approval Pages test reads the shared ledger-row fixture.
+tests/fixtures/client-approval/ledger-row.bh-9901.json	spa	console-ui/tests/client-approval.bh-9901.test.js reads tests/fixtures/client-approval/ledger-row.bh-9901.json (BH-9901)

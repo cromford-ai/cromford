@@ -3565,6 +3565,7 @@ tick_project() {
     done
     exec 9>&-
     command -v mc_offlist_settle_tick >/dev/null 2>&1 && mc_offlist_settle_tick "$SLUG" "$OPEN_NUMS"
+    command -v mc_ca_close_tick >/dev/null 2>&1 && mc_ca_close_tick "$SLUG" "$OPEN_NUMS"
     # A memo nothing has touched in 30 days goes (D21); losing one costs a re-probe.
     find "$MC_CLOSED_WATCH_DIR" -type f -mtime +30 -delete 2>/dev/null
   fi

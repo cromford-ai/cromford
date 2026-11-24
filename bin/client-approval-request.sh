@@ -26,6 +26,11 @@
 #      status done. Else comment_attempts+1; at retry_max: comment cap-spent,
 #      status done, ONE ALERTS line.
 #   7. ca_prune: markers older than marker_keep_d days.
+# BH-9901: right after `sent` is saved, the hub ledger row (status waiting) is
+# written through ca_hub_put. A failed write sets hub=pending and never blocks
+# the comment; a later run on a done|sent marker with hub=pending retries the
+# write only (no second POST, no second comment), and at retry_max sets
+# hub=cap-spent. With no jobs client the marker gets no hub field.
 # Log: logs/client-approval.log. `requested` only after a 2xx/409, `commented`
 # only after tracker_comment rc 0. Exit 0 on every path but bad arguments (2).
 set -uo pipefail
@@ -93,6 +98,31 @@ mset() { M=$(printf '%s' "$M" | jq -c "$@") || return 1; }
 save() { ca_mark_write "$MARK" "$M" || ca_log "$KEY marker write failed ($MARK)"; }
 STATUS=$(mget .status)
 PREV_STATUS="$STATUS"
+
+# hub_write — the hub ledger row `waiting` for a request the board took
+#   (BH-9901). Never blocks the comment. Sets .hub on the marker (saved by the
+#   caller): written | pending | cap-spent; no jobs client = no field.
+hub_write() {
+  local rc=0 n
+  ca_hub_put "$PROJ" "$SLUG" "$PR" waiting "$M" || rc=$?
+  case "$rc" in
+    0) mset '.hub = "written" | .hub_attempts = 0' ;;
+    3) ;;
+    *) n=$(( $(mget .hub_attempts | tr -cd '0-9' | sed 's/^$/0/') + 1 ))
+       if [ "$n" -ge "$RETRY_MAX" ]; then
+         mset --argjson n "$n" '.hub = "cap-spent" | .hub_attempts = $n'
+         ca_log "$KEY hub ledger write failed $n time(s): cap spent, the console shows no wait for this head"
+       else
+         mset --argjson n "$n" '.hub = "pending" | .hub_attempts = $n'
+         ca_log "$KEY hub ledger write failed, attempt $n of $RETRY_MAX"
+       fi ;;
+  esac
+}
+# A request the board took whose hub row is still pending: retry the row only.
+if { [ "$STATUS" = done ] || [ "$STATUS" = sent ]; } && [ "$(mget .hub)" = pending ]; then
+  hub_write; save
+  [ "$STATUS" = done ] && finish
+fi
 
 # ── 3. the ticket ────────────────────────────────────────────────────────────
 TID=$(mget .ticket_id)
@@ -167,6 +197,7 @@ if [ "$STATUS" != sent ]; then
       mset --arg h "$CODE" --arg id "$RID" --argjson a "${APPR:-[]}" --argjson c "$(date -u +%s)" \
         '.status = "sent" | .last_http = $h | .checked_at = $c | .request_id = (if $id == "" then null else $id end) | .approvers = $a'
       save
+      hub_write; save
       ca_log "requested $KEY request=${RID:-none} approvers=$(printf '%s' "${APPR:-[]}" | jq 'length') (HTTP $CODE)"
       ;;
     404)

@@ -6,6 +6,7 @@ import { ROUTING_CHANGES_LIMIT } from './lib/routing.js';
 import { FLAKES_LIMIT } from './lib/ci-health.js';
 import { BATCHES_LIMIT } from './lib/ci-batches.js';
 import { HOLD_LEDGER_KIND, holdKey } from './lib/ticket-hold.js';
+import { APPROVAL_LEDGER_KIND, APPROVAL_LIST_LIMIT, approvalKey } from './lib/client-approval.js';
 import { QUEUE_LIMIT } from './lib/queue-panel.js';
 import { ideasApi } from './lib/roadmap-api/ideas.js';
 import { boardApi } from './lib/roadmap-api/board.js';
@@ -592,6 +593,19 @@ export const api = {
         if (e && e.status === 404 && e.body && e.body.error === 'not found') return { ledger: null };
         throw e;
       }),
+  // The client-approval row of one PR (BH-9901), through the coord proxy. An
+  // absent row (404 `{error:'not found'}`) is a real answer, not waiting, so it
+  // resolves to `{ledger:null}` as ticketHold does. Anything else still throws.
+  clientApproval: (repo, n) =>
+    get(coordPath(`/api/ledger?kind=${APPROVAL_LEDGER_KIND}&key=${encodeURIComponent(approvalKey(repo, n))}`))
+      .catch((e) => {
+        if (e && e.status === 404 && e.body && e.body.error === 'not found') return { ledger: null };
+        throw e;
+      }),
+  // Every waiting client-approval row (BH-9901), for the BUILDS table. A list
+  // at the limit is not complete; approvalMap() says so.
+  clientApprovalsWaiting: (limit = APPROVAL_LIST_LIMIT) =>
+    get(coordPath(`/api/ledger?kind=${APPROVAL_LEDGER_KIND}&status=waiting&limit=${limit}`)),
   // Steer notes (BH-5839), through the coord proxy: the Step in composer's
   // send (the proxy stamps the actor) and the ticket's notes for the echo.
   steer: (body) => post(coordPath('/api/steer'), body),

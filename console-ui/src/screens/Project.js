@@ -27,6 +27,8 @@ import MergeTrainsPanel from './MergeTrainsPanel.js';
 import ConflictHotspotsPanel from './ConflictHotspotsPanel.js';
 import { SetupRunLink } from './SetupLine.js';
 import GateCountsPanel from './GateCountsPanel.js';
+import { ClientApprovalTag } from '../ui/ClientApprovalTag.js';
+import { approvalMap, approvalKeyFromPrUrl } from '../lib/client-approval.js';
 
 export function ProjectScreen({ project }) {
   const p = useApi(() => api.project(project), [project], { intervalMs: 30000 });
@@ -39,6 +41,9 @@ export function ProjectScreen({ project }) {
   // The live pause rows, for the why/who/when under the header (BH-2509). The
   // same read as the Fleet page: a failed one is zero rows, never a crash.
   const pausesApi = useApi(() => api.pauses(), [project], { intervalMs: 30000 });
+  // BH-9901: the waiting client-approval rows, for the BUILDS STAGE cell. A
+  // failed read is no map, so the table renders as it did before.
+  const approvalsApi = useApi(() => api.clientApprovalsWaiting(), [project], { intervalMs: 60000 });
   const [which, setWhich] = useState('triage');
   const [busy, setBusy] = useState(null);
   const [actionMsg, setActionMsg] = useState(null);
@@ -115,6 +120,7 @@ export function ProjectScreen({ project }) {
 
   const runs = data.runs || [];
   const builds = data.builds || [];
+  const approvals = approvalsApi.data && !approvalsApi.error ? approvalMap(approvalsApi.data) : null;
   const alerts = (data.alerts || []).filter((a) => !a.resolved);
   const lastRunAge = runs.length ? minutesSince(runs[0].finished_at || runs[0].started_at) : null;
 
@@ -192,10 +198,11 @@ export function ProjectScreen({ project }) {
             <${RunsTable} runs=${runs}/>
           <//>
 
-          <${Section} title="BUILDS" note=${`${fmtNum(builds.length)} most recent`}
+          <${Section} title="BUILDS" note=${`${fmtNum(builds.length)} most recent${
+            approvals && !approvals.complete ? ' · the client-approval list hit its limit, so some waiting tags may be missing' : ''}`}
             right=${html`<${Link} to=${`/history?tab=builds&project=${encodeURIComponent(project)}`}
               style="font-size:var(--fs-xs);letter-spacing:1px">ALL BUILDS ›<//>`}>
-            <${BuildsTable} builds=${builds} project=${project}/>
+            <${BuildsTable} builds=${builds} project=${project} approvals=${approvals ? approvals.map : undefined}/>
           <//>
 
           <${Section} title="THE WHOLE LEDGER"
@@ -281,10 +288,18 @@ export function RunsTable({ runs, nowMs }) {
       note="This project has not beaten a run row to the console yet." />`} />`;
 }
 
-export function BuildsTable({ builds, project }) {
+// `approvals` (BH-9901) is an optional Map from approvalMap(); a row whose PR
+// is waiting for client approval, and not merged, shows the tag in place of
+// the stage text. Absent, the table renders as it always did.
+export function BuildsTable({ builds, project, approvals }) {
   // A browse list, so it is a dense sortable table rather than a card wall:
   // the stage bar survives as a cell because it is the actual signal, and
   // every identity cell links on to the PR or the build.
+  const waitingOf = (b) => {
+    if (!(approvals instanceof Map) || !approvals.size || b.merged || buildLane(b) === 'merged') return null;
+    const k = approvalKeyFromPrUrl(b.pr_url);
+    return k ? approvals.get(k) || null : null;
+  };
   const columns = [
     {
       key: 'ticket_key', label: 'TICKET', sort: (b) => b.ticket_key || b.bkey,
@@ -309,7 +324,9 @@ export function BuildsTable({ builds, project }) {
                 <span key=${st} style=${`width:${100 / STEPS.length}%;background:${
                   prog.done || i < prog.step ? 'var(--green)' : i === prog.step ? 'var(--live)' : 'transparent'}`}></span>`)}
             </span>
-            <span style="color:var(--soft);white-space:nowrap">${b.stage}</span>
+            ${waitingOf(b)
+              ? html`<${ClientApprovalTag} approval=${waitingOf(b)}/>`
+              : html`<span style="color:var(--soft);white-space:nowrap">${b.stage}</span>`}
           </span>`;
       }
     },

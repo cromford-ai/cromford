@@ -153,7 +153,7 @@ parameters only when given.
 | `logs` | read | `GET /api/dash/logs/<project>?lines=` (unconfirmed: the console UI keys this route on a command id, not a project) |
 | `chat` | read | `POST /api/dash/chat` with `{text}`, plus `target` when `project` is given. It posts a message; the reply arrives in the console's chat thread. It spends console-side model time. |
 | `merge_queue` | read | `GET /api/coord/merge-queue/live?project=` (see [Merge-queue tools](#merge-queue-tools)) |
-| `pr_stage` | read | `GET /api/coord/merge-queue/live`, then `GET /api/coord/pr-state-events?repo=&number=&limit=50` and `GET /api/coord/risk-tiers?repo=&pr=&limit=1` |
+| `pr_stage` | read | `GET /api/coord/merge-queue/live`, then `GET /api/coord/pr-state-events?repo=&number=&limit=50` and `GET /api/coord/risk-tiers?repo=&pr=&limit=1` and `GET /api/coord/ledger?kind=client-approval&key=<owner/name lowercased>#<pr>` (BH-9901), all three in parallel |
 | `backlog` | read | `GET /api/coord/merge-queue/live?project=` and `GET /api/coord/jobs?project=&kind=build&status=running&limit=200` |
 | `batch_failure` | read | GitHub REST, GET only, through `mcp/lib/github.mjs`: the batch draft PR, its check runs and failed job logs, and each member and ahead PR with its files, head checks and verdict check. Needs `HARNESS_MCP_GITHUB_TOKEN`. A culprit is a likely culprit: a log line that names a file the PR changed. A match is not proof, and `requeue_candidates` is advice only. A `pending` or `passed` batch has no candidates. |
 | `ticket_status` | read | `GET /api/coord/ticket-status?project=\|repo=&key=...&issue=...` (worker `routes/ticket-status.js`, format `ticket-status v1`): the live state of each named ticket from the hub's D1 rows, never the pipeline snapshot. Then one GitHub `GET /repos/<repo>/commits?sha=<branch>&per_page=1` per ticket branch, for `last_commit_at` and `commit_source`. Exactly one of `repo` / `project` (`project_or_repo_required`); 1 to 50 `tickets`, each `{key}` or `{issue}`. More than the settings row `ticket_status.batch_max` is `http_400: too_many`. |
@@ -201,6 +201,17 @@ only. They never run `gh` and never call a GitHub host.
   `dequeued (…)` with a space works the same). If the queue stage has no detail,
   it is the reason of a `lead_block`, `ci_red` or `approved_not_queued` row
   that is newer than the queue stage. The repo matches case-insensitively.
+  `client_approval` (BH-9901) comes from the hub ledger row of kind
+  `client-approval`, key `<owner/name>#<pr>` in lowercase. When the row's
+  status is `waiting` and its `detail` is v1 JSON with an ISO UTC
+  `requested_at`, it is `{state: 'waiting', label: 'waiting for client
+  approval', ticket_id, ticket_url, since, age_s, head}` (`since` is
+  `requested_at`). Every other status (`closed`, `approved`, `hold`, an
+  unknown one), or a bad `detail`, gives `null`. If `blocked_on` is still null
+  and the PR waits for client approval, `blocked_on` is `waiting for client
+  approval`: a queue detail or a lead/CI reason wins. A 404 (no row) gives
+  `null` and no `partial` entry. Any other failure, or a 200 with no `ledger`
+  object, gives `null` and names `/api/ledger` in `partial`.
 - `backlog({project, since?})` returns `counts` per stage word over the live
   payload's `prs`, `changed` (the PRs whose stage time is after `since`, oldest
   first) and `builds` (the running build jobs, grouped `planning` (stage

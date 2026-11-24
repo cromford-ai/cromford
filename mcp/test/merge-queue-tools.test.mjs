@@ -43,6 +43,11 @@ const LIVE = '/api/coord/merge-queue/live';
 const events = (repo, n) => `/api/coord/pr-state-events?repo=${encodeURIComponent(repo)}&number=${n}&limit=50`;
 const tiers = (repo, n) => `/api/coord/risk-tiers?repo=${encodeURIComponent(repo)}&pr=${n}&limit=1`;
 const JOBS = '/api/coord/jobs?project=widgets&kind=build&status=running&limit=200';
+// BH-9901: pr_stage also reads the client-approval hub ledger row. The stub
+// answers an unrouted path 200 {ok:true}, which is no ledger answer and would
+// name '/api/ledger' in `partial`; these cases have no row, so the hub's 404.
+const ledger = (repo, n) => `/api/coord/ledger?kind=client-approval&key=${encodeURIComponent(`${repo.toLowerCase()}#${n}`)}`;
+const NO_ROW = { status: 404, json: { error: 'not found' } };
 
 // The event log for #101, newest first, as GET /api/pr-state-events answers it.
 const EVENTS_101 = {
@@ -81,6 +86,8 @@ function baseRoutes(live = FIXTURE) {
     [tiers('acme/widgets', 101)]: { json: { rows: [{ repo: 'acme/widgets', pr: 101, tier: 'T2' }], truncated: false } },
     [tiers('acme/widgets', 102)]: { json: { rows: [], truncated: false } },
     [JOBS]: { json: JOBS_BODY },
+    [ledger('acme/widgets', 101)]: NO_ROW,
+    [ledger('acme/widgets', 102)]: NO_ROW,
   };
 }
 

@@ -15,6 +15,8 @@ import { TimelineDot, Dot } from '../ui/icons.js';
 import { repoFromPrUrl, liveHeadOf, standingShaOf, VerdictsView, requestLeadReview, LeadReviewFailedLine } from '../ui/PRVerdicts.js';
 import { liveHeadTier } from '../lib/risk-tiers.js';
 import { IronLawHold } from '../ui/IronLawHold.js';
+import { ClientApprovalTag } from '../ui/ClientApprovalTag.js';
+import { approvalOf } from '../lib/client-approval.js';
 
 // The artifact tabs a PR carries. `context` and `cost` exist in the action
 // vocabulary too but are not part of the review story, so they sit behind MORE.
@@ -67,6 +69,12 @@ export function PRScreen({ project, number }) {
   // BH-5022: the risk tier rows of this PR; PRStats picks the live head's.
   const risk = useApi(
     () => (repo ? api.riskTiers({ repo, pr: number }) : Promise.resolve(null)),
+    [repo, number], { intervalMs: 60000 }
+  );
+  // BH-9901: is the board's approval request for this PR still open? Only
+  // asked with a repo. A failed read is no claim, so it renders nothing.
+  const approvalRead = useApi(
+    () => (repo ? api.clientApproval(repo, number) : Promise.resolve(null)),
     [repo, number], { intervalMs: 60000 }
   );
 
@@ -128,6 +136,10 @@ export function PRScreen({ project, number }) {
   const state = gh ? gh.state : null;
   const mergeable = builds.length && builds[0].pr_url;
   const tabs = showExtra ? [...PRIMARY_TABS, ...EXTRA_TABS] : PRIMARY_TABS;
+  // The tag shows only on a waiting row for this head of an unmerged PR.
+  const approval = approvalRead.error ? null : approvalOf(approvalRead.data);
+  const prMerged = state === 'merged' || builds.some((b) => b && b.merged);
+  const showApproval = Boolean(approval) && !prMerged && (!liveHead || approval.head === liveHead);
 
   return html`
     <div class="page">
@@ -145,6 +157,7 @@ export function PRScreen({ project, number }) {
             <${Dot} color=${state === 'merged' ? 'var(--green-lt)' : state === 'open' ? 'var(--green)' : 'var(--muted)'} size=${7}/>
             ${state.toUpperCase()}${gh.draft ? ' · DRAFT' : ''}
           </span>` : null}
+        ${showApproval ? html`<${ClientApprovalTag} approval=${approval}/>` : null}
         ${!data.enriched ? html`
           <span class="tag tag--warn" title=${data.gh_error || 'GH_READ_TOKEN not provisioned'}>
             live GitHub data unavailable

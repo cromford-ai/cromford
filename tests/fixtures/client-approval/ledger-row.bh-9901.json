@@ -1,0 +1,6 @@
+{
+  "kind": "client-approval",
+  "key": "example-org/project-3#501",
+  "status": "waiting",
+  "detail": "{\"v\":1,\"project\":\"project-3\",\"head\":\"00000000000000000000000000000000000001f5\",\"ticket_id\":\"T-501\",\"ticket_url\":\"https://os.project-3.example/feature-board?ticket=T-501\",\"request_id\":\"r-1\",\"requested_at\":\"2026-11-18T11:06:40Z\",\"closed_at\":null,\"close_reason\":null}"
+}

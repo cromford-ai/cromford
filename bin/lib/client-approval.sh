@@ -23,6 +23,19 @@
 #   status: failed|sent|done|absent-route|cap-spent|no-ticket|not-board
 #   comment: pending|posted|cap-spent
 #   It is a box-local cache of the call. The board holds the approval record.
+#   Additive fields (BH-9901 slice C2, still v1):
+#   hub: written|pending|cap-spent (the hub ledger row; absent = no jobs client)
+#   hub_attempts, close: closed|gone|superseded|no-id|cap-spent (absent = open),
+#   close_attempts, close_last_http, close_reason: merged|closed|gone,
+#   closed_at (epoch). Writers: bin/client-approval-request.sh (hub) and
+#   bin/client-approval-close.sh (close, hub).
+# THE HUB ROW (format client-approval-ledger v1, BH-9901). One `ledgers` row per
+#   PR through job_ledger_put (PUT /api/ledger): kind client-approval, key
+#   <owner/name lowercased>#<pr>, status waiting|closed, detail JSON
+#   {v:1, project, head, ticket_id, ticket_url, request_id, requested_at,
+#    closed_at, close_reason}. One writer: ca_hub_put. Readers:
+#   console-ui/src/lib/client-approval.js and mcp/tools/merge-queue.mjs, which
+#   show "waiting for client approval" for status waiting only.
 
 _ca_root() { printf '%s' "${HARNESS:-${MC_H:-${H:-}}}"; }
 
@@ -75,6 +88,7 @@ CA_PRUNE_MAX_DEFAULT=200      # row client_approval_board.prune_max
 CA_SUMMARY_MAX_CHARS_DEFAULT=500  # row client_approval_board.summary_max_chars
 CA_APPROVER_NAME_MAX_DEFAULT=80   # row client_approval_board.approver_name_max
 CA_APPROVERS_MAX_DEFAULT=10       # row client_approval_board.approvers_max
+CA_CLOSE_MAX_PER_TICK_DEFAULT=10  # row client_approval_board.close_max_per_tick
 
 # ca_mark_file <project> <pr> <head> — the marker path for that head. rc 1 and
 #   no output when the harness root is empty: never a path under `/`.
@@ -95,13 +109,17 @@ ca_mark_read() {
 # ca_mark_settled <file> [<absent_recheck_s>] — rc 0 when the head needs no new
 #   attempt: a terminal status (done, cap-spent, no-ticket, not-board), or
 #   absent-route checked less than <absent_recheck_s> ago. rc 1 otherwise (no
-#   marker, failed, sent with the comment still due, an old absent-route).
+#   marker, failed, sent with the comment still due, an old absent-route, and
+#   done with the hub row still pending: BH-9901).
 ca_mark_settled() {
   local m s c now win="${2:-$CA_ABSENT_RECHECK_S_DEFAULT}"
   m=$(ca_mark_read "${1:-}") || return 1
   s=$(printf '%s' "$m" | jq -r '.status')
   case "$s" in
-    done|cap-spent|no-ticket|not-board) return 0 ;;
+    done)
+      [ "$(printf '%s' "$m" | jq -r '.hub // ""')" = pending ] && return 1
+      return 0 ;;
+    cap-spent|no-ticket|not-board) return 0 ;;
     absent-route)
       c=$(printf '%s' "$m" | jq -r '.checked_at // 0 | floor? // 0' 2>/dev/null)
       case "$c" in ''|*[!0-9]*) return 1 ;; esac
@@ -229,4 +247,87 @@ ca_prune() {
     rm -f "$f" 2>/dev/null && n=$((n + 1))
   done < <(find "$d" -maxdepth 1 -type f -name '*.json' -mtime +"$keep" 2>/dev/null | head -n "$max")
   echo "$n"
+}
+
+# ca_board_close <url> <body-file> <idempotency-key> <timeout-s> <answer-file>
+#   — one POST to the board's close route (BH-9901); prints the HTTP status
+#   (000 when curl got no answer). The board seam for the close route; the
+#   token rides curl's argv only, as in ca_board_post.
+ca_board_close() {
+  ca_board_post "$@"
+}
+
+# _ca_fcs — the fleet-conf.sh this lib reads: the root's, else the one beside
+#   this lib. Empty when neither is executable.
+_ca_fcs() {
+  local r f
+  r=$(_ca_root)
+  f="${r:+$r/bin/fleet-conf.sh}"
+  [ -n "$f" ] && [ -x "$f" ] || f="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../fleet-conf.sh"
+  [ -x "$f" ] && printf '%s' "$f"
+}
+
+# ca_ticket_url <project> <ticket-id> — the board ticket page:
+#   <fleet.conf prod><board_prefix minus a leading /api>?ticket=<id, url-encoded>.
+#   Empty (never a guessed URL) when prod is not https://, the prefix is `-`
+#   or empty, or the id is empty. Always rc 0.
+ca_ticket_url() {
+  local f prod pre
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 0
+  f=$(_ca_fcs) || return 0
+  [ -n "$f" ] || return 0
+  prod=$("$f" "$1" prod 2>/dev/null) || return 0
+  pre=$("$f" "$1" board_prefix 2>/dev/null) || return 0
+  [[ "$prod" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || return 0
+  prod=${prod%/}
+  case "$pre" in /api/*) pre=${pre#/api} ;; esac
+  [[ "$pre" =~ ^/[A-Za-z0-9/_.-]+$ ]] || return 0
+  pre=${pre%/}
+  printf '%s%s?ticket=%s' "$prod" "$pre" "$(jq -rn --arg v "$2" '$v | @uri')"
+}
+
+# ca_hub_detail <project> <marker-json> — the ledger detail (one JSON line,
+#   format client-approval-ledger v1). requested_at is the marker's checked_at
+#   (the time the board took the request), closed_at the marker's closed_at,
+#   both ISO-8601 UTC or null.
+ca_hub_detail() {
+  local tid url
+  tid=$(printf '%s' "${2:-}" | jq -r '.ticket_id // empty | tostring' 2>/dev/null)
+  url=$(ca_ticket_url "${1:-}" "$tid")
+  printf '%s' "${2:-}" | jq -c --arg p "${1:-}" --arg url "$url" '
+    def iso: if type == "number" and . > 0 then (floor | todate) else null end;
+    {v: 1, project: $p, head: (.head // null), ticket_id: (.ticket_id // null),
+     ticket_url: (if $url == "" then null else $url end), request_id: (.request_id // null),
+     requested_at: (.checked_at | iso), closed_at: (.closed_at | iso), close_reason: (.close_reason // null)}' 2>/dev/null
+}
+
+# ca_hub_put <project> <owner/repo> <pr> <waiting|closed> <marker-json> — the
+#   hub ledger row (kind client-approval, key <owner/name lowercased>#<pr>).
+#   rc 0 written, 1 failed (an outage, a bad argument), 3 no jobs client
+#   (job_ledger_put is not defined: the caller records nothing).
+ca_hub_put() {
+  local key detail
+  command -v job_ledger_put >/dev/null 2>&1 || return 3
+  [[ "${2:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "${3:-}" =~ ^[0-9]+$ ]] || return 1
+  case "${4:-}" in waiting|closed) ;; *) return 1 ;; esac
+  key="$(printf '%s' "$2" | tr 'A-Z' 'a-z')#$3"
+  detail=$(ca_hub_detail "$1" "${5:-}") || return 1
+  [ -n "$detail" ] || return 1
+  job_ledger_put client-approval "$key" "$4" "$detail" >/dev/null 2>&1
+}
+
+# ca_close_candidates <project> — each PR number (once) with a request the
+#   board may still hold open: a marker with a string request_id, status
+#   sent|done, and no close yet (or closed|gone with the hub row pending).
+ca_close_candidates() {
+  local d
+  d="$(_ca_root)/state/client-approval/${1:-}"
+  [ -n "${1:-}" ] && [ -d "$d" ] || return 0
+  find "$d" -maxdepth 1 -type f -name '[0-9]*-*.json' 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+    jq -r 'select(type == "object" and .v == 1 and (.request_id | type) == "string"
+                  and (.status == "sent" or .status == "done")
+                  and ((.close == null) or ((.close == "closed" or .close == "gone") and .hub == "pending"))
+                  and (.pr | type) == "number")
+           | .pr' "$f" 2>/dev/null
+  done | sort -un
 }
