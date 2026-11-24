@@ -47,6 +47,10 @@ design, so turning it on early is harmless but also pointless.
 **Escape hatch:** `skip-guardrail` label + `GUARDRAIL_JUSTIFICATION` (see
 `../README.md`). This is the check that will legitimately need it most often —
 pure refactors and typo fixes under `src/app/**` are real.
+On a Mergify batch draft the hatch reads each source PR and exempts only the
+files a hatched source PR changed; the step needs the `GUARDRAIL_HEAD_REF`,
+`GUARDRAIL_PR_AUTHOR`, `GUARDRAIL_DRAFT_BODY` and `GH_TOKEN` env lines (see
+`../README.md`, "On a Mergify batch draft").
 
 ## Adoption per repo
 

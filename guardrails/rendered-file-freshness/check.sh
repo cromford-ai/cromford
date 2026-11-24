@@ -115,6 +115,9 @@ while IFS= read -r ROW; do
     # cron/lanes/x.cron ('*' crosses '/'), so without this a fragment-only diff
     # counted a fragment as a rendered file in the clean message.
     if [ -n "$IN_THIS" ]; then INPUT_HIT="yes"; continue; fi
+    # Rendered side only: on a Mergify batch draft a rendered file only a hatched
+    # source PR changed is exempt (BH-9965). A fragment edit always counts.
+    declare -F guardrail_is_exempt >/dev/null && guardrail_is_exempt "$F" && continue
     # shellcheck disable=SC2254  # $GLOB is a glob on purpose
     case "$F" in $GLOB) HIT="$HIT$F"$'\n' ;; esac
   done <<< "$CHANGED"

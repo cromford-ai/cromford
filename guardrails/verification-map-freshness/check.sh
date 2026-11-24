@@ -59,6 +59,9 @@ MAP_TOUCHED=""
 while IFS= read -r F; do
   [ -n "$F" ] || continue
   case "$F" in "$MAP_PREFIX"*) MAP_TOUCHED="yes"; continue ;; esac
+  # Route side only: on a Mergify batch draft a route file only a hatched source
+  # PR changed is exempt (BH-9965). A map edit always counts.
+  declare -F guardrail_is_exempt >/dev/null && guardrail_is_exempt "$F" && continue
   for G in $ROUTE_GLOBS; do
     # shellcheck disable=SC2254  # $G is a glob on purpose
     case "$F" in $G*) ROUTES_TOUCHED="$ROUTES_TOUCHED$F"$'\n'; break ;; esac

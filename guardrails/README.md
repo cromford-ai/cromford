@@ -84,6 +84,53 @@ Shell checks get this from `lib/escape-hatch.sh` (sourced). Semgrep steps get it
 by wrapping the step in the same condition — see any check's README for the CI
 form.
 
+### On a Mergify batch draft (BH-9965)
+
+Mergify tests a batch on its own draft PR (`mergify/merge-queue/*`), and that
+draft carries neither the source PRs' labels nor their bodies. So on a batch
+draft the hatch reads each **source** PR instead (`lib/batch-hatch.sh`):
+
+- The run is a batch draft only when `GUARDRAIL_HEAD_REF` starts with
+  `mergify/merge-queue/` **and** `GUARDRAIL_PR_AUTHOR` is exactly
+  `mergify[bot]`. A hand-pushed branch with that name is an ordinary PR.
+- The source PR numbers come from the draft body's `Metadata for CI tooling`
+  block (`pull_requests:` / `- number: <n>`; sample in
+  `lib/fixtures/mergify-draft-body.md`). The draft's own label is ignored.
+- Each source PR is judged by the ordinary rule: label **and** a
+  `Guardrail-Justification:` line in that PR's body. A label with no usable
+  line prints the usual refusal under `batch source PR #<n>:`.
+- **The check still runs.** It drops only the files that hatched source PRs
+  changed and no other PR in the batch changed. A hatch on one PR never skips
+  the check for another PR's files.
+- Anything it cannot read (no metadata block, an API error, no
+  `GITHUB_REPOSITORY`, an incomplete file list of a non-hatched PR) prints
+  `could not read source PR(s) (<why>); no file is exempt.` and the check runs
+  on every file.
+
+Add these four lines to each guardrail step's `env:`. With them unset the hatch
+is byte for byte as before. `GUARDRAIL_DRAFT_BODY` is parsed only for PR
+numbers and is never a justification.
+
+```yaml
+          GUARDRAIL_HEAD_REF: ${{ github.head_ref }}
+          GUARDRAIL_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GUARDRAIL_DRAFT_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+```
+
+A semgrep step adds the exempt files as `--exclude` flags and scans from the
+repo root (`.`): semgrep anchors a path exclude at the scan root, so
+`--exclude=src/a.ts` with a target of `src` excludes nothing.
+
+```yaml
+        run: |
+          . guardrails/lib/escape-hatch.sh
+          JUST=$(printf '%s\n' "$PR_BODY" | grep -i -m1 '^[[:space:]]*Guardrail-Justification:' || true)
+          GUARDRAIL_JUSTIFICATION="$JUST" guardrail_escape_hatch <check> && exit 0
+          mapfile -t EX < <(guardrail_semgrep_excludes)
+          semgrep scan --config guardrails/<check>/rule.yml --error "${EX[@]}" .
+```
+
 A guardrail with no way out gets deleted the first time it is wrong. A guardrail
 with a silent way out is decoration. This is the middle.
 

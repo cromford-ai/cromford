@@ -32,3 +32,8 @@ catching new vendors.
 **Escape hatch:** `skip-guardrail` label + `GUARDRAIL_JUSTIFICATION` (see
 `../README.md`). Use it sparingly here: this is the class where the bill is the
 only symptom.
+On a Mergify batch draft the hatch reads each source PR and exempts only the
+files a hatched source PR changed; the step needs the `GUARDRAIL_HEAD_REF`,
+`GUARDRAIL_PR_AUTHOR`, `GUARDRAIL_DRAFT_BODY` and `GH_TOKEN` env lines (see
+`../README.md`, "On a Mergify batch draft"), and the semgrep form
+that scans `.` with `$(guardrail_semgrep_excludes)`).

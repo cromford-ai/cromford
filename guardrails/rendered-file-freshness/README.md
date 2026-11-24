@@ -65,7 +65,10 @@ committed files are generated from fragments adopts it by pointing
 
 **Escape hatch:** the `skip-guardrail` label **and** a
 `Guardrail-Justification: <at least 20 characters>` line in the PR body (see
-`../README.md`). The label alone fails loudly.
+`../README.md`). The label alone fails loudly. On a Mergify batch draft the
+hatch reads each source PR and exempts only the rendered files a hatched source
+PR changed (the four `GUARDRAIL_*`/`GH_TOKEN` env lines below; see
+`../README.md`, "On a Mergify batch draft").
 
 **CI form** — extract the marker line, never wire the raw PR body (a bare body
 would make any PR a justification, which is the shape the catalog refuses):
@@ -76,6 +79,10 @@ would make any PR a justification, which is the shape the catalog refuses):
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          GUARDRAIL_HEAD_REF: ${{ github.head_ref }}
+          GUARDRAIL_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GUARDRAIL_DRAFT_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           GUARDRAIL_JUSTIFICATION=$(printf '%s\n' "$PR_BODY" | grep -i '^guardrail-justification:' || true)
           export GUARDRAIL_JUSTIFICATION

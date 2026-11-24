@@ -36,6 +36,9 @@ fi
 
 FILES=$(find "${TARGETS[@]}" -type f -name '*.sql' 2>/dev/null | sort)
 [ -n "$FILES" ] || { echo "GUARDRAIL rls-on-create-table: no .sql files under ${TARGETS[*]} — nothing to check."; exit 0; }
+# On a Mergify batch draft, files only a hatched source PR changed are exempt
+# (BH-9965). Off a batch draft the exempt list is empty and this is a no-op.
+declare -F guardrail_drop_exempt >/dev/null && FILES=$(printf '%s\n' "$FILES" | guardrail_drop_exempt)
 
 BAD=0
 while IFS= read -r F; do

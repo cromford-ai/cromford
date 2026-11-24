@@ -105,6 +105,9 @@ TOUCHED=$(awk -v mono="$MONO_PAD" '
     if (b != a && index(mono, " " b " ") > 0) print b
   }
 ' "$DIFF" | sort -u)
+# On a Mergify batch draft, a guarded doc only a hatched source PR changed is
+# exempt (BH-9965). Off a batch draft the exempt list is empty and this is a no-op.
+declare -F guardrail_drop_exempt >/dev/null && TOUCHED=$(printf '%s\n' "$TOUCHED" | guardrail_drop_exempt)
 
 if [ -z "$TOUCHED" ]; then
   echo "GUARDRAIL doc-monolith-edit: this diff touches none of the guarded docs. Clean."

@@ -29,3 +29,7 @@ has.
 
 **Escape hatch:** `skip-guardrail` label + `GUARDRAIL_JUSTIFICATION` (see
 `../README.md`).
+On a Mergify batch draft the hatch reads each source PR and exempts only the
+files a hatched source PR changed; the step needs the `GUARDRAIL_HEAD_REF`,
+`GUARDRAIL_PR_AUTHOR`, `GUARDRAIL_DRAFT_BODY` and `GH_TOKEN` env lines (see
+`../README.md`, "On a Mergify batch draft").

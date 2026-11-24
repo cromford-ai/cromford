@@ -89,6 +89,10 @@ a doc that opts itself out by losing three lines.
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GUARDRAIL_HEAD_REF: ${{ github.head_ref }}
+          GUARDRAIL_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GUARDRAIL_DRAFT_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           # The hatch reads ONE line, so hand it ONE line. Wiring the raw body to
@@ -113,3 +117,6 @@ to each guarded doc, or the check fails the next PR to touch one.
 **Escape hatch:** `skip-guardrail` label + `GUARDRAIL_JUSTIFICATION` (see
 `../README.md`). The real case for it here is a revert: restoring a paragraph
 someone removed is an edit to the body that no note should have to describe.
+On a Mergify batch draft the hatch reads each source PR and exempts only the
+guarded docs a hatched source PR changed (the `GUARDRAIL_HEAD_REF` env lines in
+the CI step above; see `../README.md`, "On a Mergify batch draft").
