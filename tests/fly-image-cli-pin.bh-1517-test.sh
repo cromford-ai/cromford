@@ -85,9 +85,13 @@ CURL
 chmod +x "$FB"/*
 
 # claude/codex stubs: written per-test so the version they report varies.
-stub_cli() { # stub_cli <name> <version-or-empty-to-remove>
+stub_cli() { # stub_cli <name> <version-or-empty-for-not-installed>
   local name="$1" v="${2:-}"
-  if [ -z "$v" ]; then rm -f "$FB/$name"; return; fi
+  # Empty version = "not installed": write a stub that prints nothing and
+  # exits 127. Deleting the stub let a real CLI later on the inherited PATH
+  # (/usr/local/bin/claude on every build box) answer instead, so A3 went red
+  # on build boxes only (BH-9985). The stub must shadow it.
+  if [ -z "$v" ]; then printf '#!/bin/bash\nexit 127\n' > "$FB/$name"; chmod +x "$FB/$name"; return; fi
   case "$name" in
     claude) printf '#!/bin/bash\n[ "$1" = --version ] && echo "%s (Claude Code)"\n' "$v" > "$FB/$name" ;;
     codex)  printf '#!/bin/bash\n[ "$1" = --version ] && echo "codex-cli %s"\n' "$v" > "$FB/$name" ;;
