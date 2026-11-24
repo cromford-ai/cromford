@@ -58,6 +58,13 @@
 # is recorded `pending <created> <run_id>` and answers rc 3, with one
 # `PREQUEUE dedup ... -> no-dispatch` line. A failed read dispatches as before
 # (one `-> read-failed, dispatched` line). A named-suites run is never deduped.
+#
+# PARK AFTER REDS (BH-10022, knob MC_PREQUEUE_PARK_AFTER_REDS, default 2, 0 =
+# off). On a miss that no fresh rule answered, a head whose newest verdict is a
+# red, with N reds on the same why (invariant id) on N different mains, answers
+# red from the newest of them and is not dispatched again (pq_park_reds). One
+# `PREQUEUE park` line names the why, the count and the mains. A new head sha
+# has no entries, so a new commit wakes it.
 
 PQ_WF=prequeue-gate.yml
 PQ_VERDICT_RE='^(green|red|no-selection|conflict|could-not-run) main=([0-9a-f]{40}) head=([0-9a-f]{40}) suites=([^ ]*)( why=[^ ]+)?$'
@@ -321,6 +328,54 @@ pq_fresh_ok() {
   return 1
 }
 
+# pq_park_reds <num> <head> <main> <pre> — rc 0 when this head is parked
+#   (BH-10022, knob MC_PREQUEUE_PARK_AFTER_REDS, row
+#   lane.merge-conductor.mc_prequeue_park_after_reds, fallback 2 in
+#   PQ_KNOB_DEFAULTS, 0 = off). Parked: the head's newest settled verdict
+#   (green, red, no-selection or conflict, by dispatch time) is a red, and at
+#   least N of its reds, each on its own main, carry the same non-empty `.why`
+#   sidecar (pq_read_run / pq_group_read write it). Then PQ_SUITES, PQ_MAIN and
+#   PQ_PATH are the newest such red, so the conductor's prequeue-red reason
+#   reads its why (the invariant) and names its main, and one `PREQUEUE park`
+#   line names the why, the count and every main. Nothing is dispatched. The
+#   count is per head: a new commit has no entries, so it starts at 0. The
+#   store is unchanged: the per-(PR, head, main) entries and their .why files.
+pq_park_reds() {
+  local num="$1" head="$2" main="$3" pre="$4" n f m st at rest w
+  local nat=-1 nst="" nw="" ratm=-1 rm="" rsu="" cnt=0 mains=""
+  n=$(pq_knob MC_PREQUEUE_PARK_AFTER_REDS)
+  [ "$n" -gt 0 ] 2>/dev/null || return 1
+  # The newest settled verdict for this head, by dispatch time.
+  for f in "$pre"*; do
+    m="${f#"$pre"}"; [[ "$m" =~ ^[0-9a-f]{40}$ ]] && [ "$m" != "$main" ] || continue
+    read -r st at _ <<<"$(pq_cache_get "$f")"
+    case "$st" in green|red|no-selection|conflict) ;; *) continue ;; esac
+    case "$at" in ''|*[!0-9]*) continue ;; esac
+    # BH-6161: after a queue ejection, a verdict dispatched before it does not count.
+    [ "${PQ_MIN_AT:-0}" -gt 0 ] 2>/dev/null && [ "$at" -lt "$PQ_MIN_AT" ] && continue
+    [ "$at" -gt "$nat" ] && { nat="$at"; nst="$st"; nw=""; [ -r "$f.why" ] && read -r nw < "$f.why"; }
+  done
+  [ "$nst" = red ] && [ -n "$nw" ] || return 1
+  # Its reds with the same why, one per main; the newest names the park.
+  for f in "$pre"*; do
+    m="${f#"$pre"}"; [[ "$m" =~ ^[0-9a-f]{40}$ ]] && [ "$m" != "$main" ] || continue
+    read -r st at _ rest <<<"$(pq_cache_get "$f")"
+    [ "$st" = red ] || continue
+    case "$at" in ''|*[!0-9]*) continue ;; esac
+    [ "${PQ_MIN_AT:-0}" -gt 0 ] 2>/dev/null && [ "$at" -lt "$PQ_MIN_AT" ] && continue
+    w=""; [ -r "$f.why" ] && read -r w < "$f.why"
+    [ "$w" = "$nw" ] || continue
+    rest="${rest#alerted}"; rest="${rest# }"; [ -n "$rest" ] || continue
+    cnt=$((cnt + 1)); mains="${mains:+$mains,}${m:0:12}"
+    [ "$at" -gt "$ratm" ] && { ratm="$at"; rm="$m"; rsu="$rest"; }
+  done
+  [ "$cnt" -ge "$n" ] || return 1
+  PQ_SUITES="$rsu"; PQ_MAIN="$rm"; PQ_PATH="$pre$rm"
+  PQ_WHY="parked: red $cnt times on $nw (mains $mains); not dispatched for main ${main:0:12}; a new commit wakes it"
+  mc_log "PREQUEUE park #$num head=${head:0:12} current-main=${main:0:12} why=$nw reds=$cnt n=$n mains=$mains -> no-dispatch (a new commit wakes it)"
+  return 0
+}
+
 # pq_reuse_log <num> <head> <verdict-main> <main> <age> <verdict> <outcome>
 pq_reuse_log() {
   mc_log "PREQUEUE reuse #$1 head=${2:0:12} verdict-main=${3:0:12} current-main=${4:0:12} age=${5}s verdict=$6 -> $7"
@@ -402,6 +457,9 @@ pq_resolve() {
     [ "$st" = red ] && [ -n "$rest" ] && { PQ_SUITES="$rest"; PQ_MAIN="$bm"; PQ_PATH="$pre$bm"; echo red; return 0; }
     echo proceed; return 0
   fi
+  # BH-10022: a head red N times on the same why, each on its own main, is
+  # parked on its newest red: no new run for a newer main (pq_park_reds).
+  pq_park_reds "$num" "$head" "$main" "$pre" && { echo red; return 0; }
   # BH-6924: a run another worker dispatched for this exact key is read, not
   # paid for again (mc-prequeue.d/adopt.sh).
   declare -F pq_adopt_run >/dev/null && pq_call adopt pq_adopt_run "$slug" "$num" "$url" "$head" "$main" "$path" && { echo "$_pq_word"; return 0; }

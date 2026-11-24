@@ -1,0 +1,11 @@
+{
+  "env": "MC_PREQUEUE_PARK_AFTER_REDS",
+  "type": "int",
+  "default": 2,
+  "min": 0,
+  "max": 1000,
+  "unit": "reds",
+  "zero_means": "off",
+  "read_in": "bin/lib/mc-prequeue.d/dispatch.sh",
+  "note": "BH-10022: a pre-queue head whose newest verdict is red, with this many reds on the same why (invariant id), each on its own main, is parked: the gate answers red from the newest of them and does not dispatch the pre-queue run again for a newer main. One `PREQUEUE park` log line names the why, the count and the mains. A new head sha has no reds, so a new commit wakes it. 0 = off: every new main dispatches again, as before. Rollback: set lane.merge-conductor.mc_prequeue_park_after_reds to 0. Per project: lane.merge-conductor.<project>.mc_prequeue_park_after_reds."
+}

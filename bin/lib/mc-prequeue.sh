@@ -74,6 +74,11 @@
 # MC_PREQUEUE_IMPACT_REUSE (BH-6924) 1 reuses an older main's green verdict when
 # the main move misses the PR's impact set; MC_PREQUEUE_IMPACT_MAX_S bounds the
 # age of that verdict (mc-prequeue.d/impact-reuse.sh).
+# MC_PREQUEUE_PARK_AFTER_REDS (BH-10022, default 2, 0 = off): a head red that
+# many times on the same invariant, each on its own main, answers red from its
+# newest red and is not dispatched again for a newer main; a new head sha
+# starts at 0 (mc-prequeue.d/dispatch.sh pq_park_reds). Rollback: the row
+# lane.merge-conductor.mc_prequeue_park_after_reds to 0.
 #
 # THE CALL BUDGET (BH-7029, knob MC_PREQUEUE_CALL_BUDGET_S, default 150, 0 =
 # off). Each call of the gate (main-tip, restamp, resolve and the resolver's
@@ -94,7 +99,7 @@
 # asks again. A dispatch never waits for its run: pq_dispatch writes `pending`
 # for (PR, head, main) and the gate holds; a later run reads the verdict.
 
-PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5 MC_PREQUEUE_FAST_LINTS=1 MC_PREQUEUE_FAST_LINTS_BUDGET_S=90 MC_PREQUEUE_FAST_LINTS_JOBS=4 MC_PREQUEUE_FAST_LINTS_RESERVE_S=10 MC_PREQUEUE_CARRY=1 MC_PREQUEUE_FALLBACK=1"
+PQ_KNOB_DEFAULTS="MC_PREQUEUE_GATE=1 MC_PREQUEUE_FRESH_S=1800 MC_PREQUEUE_DEADLINE_S=2400 MC_PREQUEUE_REUSE=1 MC_BATCH_SOLO=1 MC_BATCH_SOLO_MAX_MEMBERS=13 MC_PREQUEUE_FRESH_COMMITS=3 MC_PREQUEUE_TRACE=1 MC_PREQUEUE_IMPACT_REUSE=1 MC_PREQUEUE_IMPACT_MAX_S=21600 MC_PREQUEUE_CALL_BUDGET_S=150 MC_PREQUEUE_GIT_LOCK_WAIT_S=5 MC_PREQUEUE_FAST_LINTS=1 MC_PREQUEUE_FAST_LINTS_BUDGET_S=90 MC_PREQUEUE_FAST_LINTS_JOBS=4 MC_PREQUEUE_FAST_LINTS_RESERVE_S=10 MC_PREQUEUE_CARRY=1 MC_PREQUEUE_FALLBACK=1 MC_PREQUEUE_PARK_AFTER_REDS=2"
 
 # pq_knob <NAME> — a merge-conductor lane knob for this project, a non-negative
 #   integer, else its default from PQ_KNOB_DEFAULTS (the _bej_knob pattern).
