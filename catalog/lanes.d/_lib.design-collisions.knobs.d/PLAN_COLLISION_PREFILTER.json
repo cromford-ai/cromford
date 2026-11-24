@@ -1,0 +1,8 @@
+{
+  "env": "PLAN_COLLISION_PREFILTER",
+  "read_in": "bin/lib/plan-collisions.sh",
+  "type": "string",
+  "default": "1",
+  "required": false,
+  "note": "BH-9944. 1 (default): for each open PR the design-collision check reads the PR's patch and the head content of the files it touches one time, and runs the per-symbol git reads only for a symbol whose name is in that text. The COLLISION rows are the same. 0|false|no|off: the old loop, every symbol against every PR (2 to 6 hours at 40 symbols and 51 PRs). Any other value is treated as ON."
+}

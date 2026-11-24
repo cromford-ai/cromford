@@ -29,10 +29,11 @@ if [ -n "${PLAN_COLLISIONS_LIB:-}" ]; then return 0 2>/dev/null; fi
 PLAN_COLLISIONS_LIB=1
 
 PC_ENFORCE=1; PC_MAX_PRS=100; PC_MAX_SYMBOLS=40; PC_CONF_WARN=""; PC_WHY=""; PC_PR_N=0
+PC_PREFILTER=1; PC_PF_CALLS=0; PC_PF_SKIPPED=0
 PC_GLOBS_SH=('*.sh')
 PC_GLOBS_JS=('*.js' '*.mjs' '*.ts')
 
-# pc_conf [project] — PC_ENFORCE, PC_MAX_PRS, PC_MAX_SYMBOLS from the knob rows
+# pc_conf [project] — PC_ENFORCE, PC_MAX_PRS, PC_MAX_SYMBOLS, PC_PREFILTER from the knob rows
 # (lib_env_apply design-collisions), else the env, else the code defaults.
 # PC_CONF_WARN is one line for ALERTS when a value is not one the code reads.
 pc_conf() {
@@ -60,6 +61,12 @@ pc_conf() {
     ''|*[!0-9]*|0) PC_CONF_WARN="${PC_CONF_WARN:+$PC_CONF_WARN; }PLAN_COLLISION_MAX_SYMBOLS='$v' is not a whole number above 0 — using 40"; v=40 ;;
   esac
   PC_MAX_SYMBOLS=$((10#$v))
+  # BH-9944: the per-PR pre-filter of pc_pr_hits. Only an explicit off turns it
+  # off; any other value keeps the default, which gives the same rows faster.
+  case "$(printf '%s' "${PLAN_COLLISION_PREFILTER:-1}" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no|off) PC_PREFILTER=0 ;;
+    *) PC_PREFILTER=1 ;;
+  esac
   return 0
 }
 
@@ -210,11 +217,39 @@ pc_main_hits() {
 # pc_pr_hits <repo> <main> <symbols-tsv> <out> <slug> <self-branch> <self-key>
 #            <stack-base> <max> — appends COLLISION rows for each open PR.
 # rc 0 read (PC_PR_N = PRs checked), 2 unread (PC_WHY), 4 off (max 0).
+# _pc_pr_text <repo> <merge-base> <pr-head> — everything one PR can make
+# pc_hit match, on stdout, read ONE time for the PR (BH-9944):
+#   1. the patch of every commit in merge-base..head, and
+#   2. the content at the head of every file that range touches (each commit's
+#      own file list, plus the net diff, so a merge that edits a file counts).
+# A symbol whose name is in neither text cannot hit in pc_hit: a changed body
+# (branch 1) needs a commit in the range that touches the file of the def at
+# the head, and that file's content is in 2; a removed, renamed or moved def
+# (branches 1 and 2) puts its def line in a patch, which is 1; the text match
+# (branch 3) is a patch line that holds the name, which is 1. So pc_pr_hits
+# skips pc_hit for that symbol and the rows stay the same. rc 1 = the range
+# could not be read: the caller then calls pc_hit for every symbol, as before.
+_pc_pr_text() {
+  local repo="$1" mb="$2" r="$3" f names
+  git -C "$repo" -c core.quotepath=off log -p --no-color --no-ext-diff --format= "$mb..$r" 2>/dev/null || return 1
+  # A name list that cannot be read, or a write that fails (a full disk), is
+  # rc 1 too: a partial text would skip a symbol the PR does touch. A file the
+  # head does not have (deleted in the PR) prints nothing, which is correct.
+  names=$( { git -C "$repo" -c core.quotepath=off log --name-only --no-renames --format= "$mb..$r" \
+             && git -C "$repo" -c core.quotepath=off diff --name-only --no-renames "$mb" "$r"; } 2>/dev/null ) || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$repo" cat-file -p "$r:$f" 2>/dev/null
+    echo || return 1
+  done < <(printf '%s\n' "$names" | LC_ALL=C sort -u)
+  return 0
+}
+
 pc_pr_hits() {
   local repo="$1" main="$2" syms="$3" out="$4" slug="$5" self="$6" key="$7" stack="$8" max="$9"
-  local list lf rc=0 kl ns nums n mb origin kind name rs hit lib r
+  local list lf rc=0 kl ns nums n mb origin kind name rs hit lib r pf grc
   local -a specs=()
-  PC_WHY=""; PC_PR_N=0
+  PC_WHY=""; PC_PR_N=0; PC_PF_CALLS=0; PC_PF_SKIPPED=0
   [ "$max" = 0 ] && return 4
   if ! command -v gh_rest_pr_list_all >/dev/null 2>&1; then
     lib="$(dirname "${BASH_SOURCE[0]}")/gh-rest-list.sh"
@@ -261,11 +296,27 @@ pc_pr_hits() {
     git -C "$repo" rev-parse -q --verify "$r" >/dev/null 2>&1 || continue
     PC_PR_N=$((PC_PR_N + 1))
     mb=$(git -C "$repo" merge-base "$main" "$r" 2>/dev/null) || continue
+    # BH-9944: read the PR one time, then ask pc_hit only about the symbols the
+    # PR can touch. 40 symbols x 51 open PRs was 2,040 pc_hit calls of 2 to 4
+    # whole-tree git greps each: 2 to 6 hours on a pool machine.
+    pf=""
+    if [ "$PC_PREFILTER" = 1 ]; then
+      pf=$(mktemp "${TMPDIR:-/tmp}/pc-prtext.XXXXXX" 2>/dev/null) || pf=""
+      if [ -n "$pf" ] && ! _pc_pr_text "$repo" "$mb" "$r" > "$pf"; then rm -f "$pf"; pf=""; fi
+    fi
     while IFS=$'\t' read -r origin kind name rs; do
       [ -n "$name" ] || continue
+      # Skip on grep rc 1 only (the name is not there). rc 2 is a read error:
+      # the symbol goes to pc_hit, as in the old loop.
+      if [ -n "$pf" ]; then
+        grep -qF -e "$name" "$pf" 2>/dev/null; grc=$?
+        if [ "$grc" = 1 ]; then PC_PF_SKIPPED=$((PC_PF_SKIPPED + 1)); continue; fi
+      fi
+      PC_PF_CALLS=$((PC_PF_CALLS + 1))
       hit=$(pc_hit "$repo" "$mb" "$r" "$kind" "$name" "in the PR")
       [ -z "$hit" ] || printf 'COLLISION\t%s\t%s\t#%s\t%s\n' "$origin" "$name" "$n" "$hit" >> "$out"
     done < "$syms"
+    [ -z "$pf" ] || rm -f "$pf"
   done
   _pc_drop_refs "$repo" "$ns"
   return 0

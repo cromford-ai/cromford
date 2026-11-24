@@ -72,6 +72,8 @@ fi
 
 PR_RC=0
 pc_pr_hits "$REPO" "$MAIN" "$SYMS" "$ROWS" "$SLUG" "$SELF" "$SELFKEY" "$STACK" "$PC_MAX_PRS" || PR_RC=$?
+# BH-9944: one line for the build's pipeline.log (the caller appends stderr).
+echo "plan-collisions: open PRs read=$PC_PR_N prefilter=$PC_PREFILTER pc_hit calls=$PC_PF_CALLS skipped=$PC_PF_SKIPPED" >&2
 case "$PR_RC" in
   0) PR_LINE="checked $PC_PR_N"; PR_STATE="checked:$PC_PR_N" ;;
   4) PR_LINE="off"; PR_STATE=off ;;
