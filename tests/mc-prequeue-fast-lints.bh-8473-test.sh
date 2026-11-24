@@ -34,6 +34,9 @@
 #   G4  a second tick on the same head and main: one PREQUEUE_RED line
 #   A2  a clean head on the same main: enqueued
 #
+# Part 2 seeds a reduced tree (tests/lib/mc-prequeue-seed.sh) and gives the
+# tick long deadlines: it proves park semantics, not timing (BH-9756).
+#
 # Real git, a local origin, no network. As root the hook runs the set as
 # nobody (setpriv); as any other user the snapshot lib's setpriv steps are
 # replaced by a run as this user (the lib refuses without root).
@@ -65,6 +68,7 @@ git config --global init.defaultBranch main
 git config --global commit.gpgsign false
 git config --global advice.detachedHead false
 git config --global protocol.file.allow always
+git config --global pack.window 0
 git config --global "url.$O.insteadOf" "$GHURL"
 export MC_STATE_DIR="$T/state" MC_H="$T/h"
 LOG="$T/log"; ATT="$T/att"; LOCKS="$T/locks"; TIPS="$T/tips"; RESOLVES="$T/resolves"
@@ -284,14 +288,16 @@ done
 # shellcheck source=tests/lib/verdict-fixture.sh
 . "$DIR/tests/lib/verdict-fixture.sh" || exit 1
 vpf_export || exit 1
+# shellcheck source=tests/lib/mc-prequeue-seed.sh
+. "$DIR/tests/lib/mc-prequeue-seed.sh" || exit 1
 CSLUG=example-org/demo-os; U="https://github.com/$CSLUG/pull"; CNUM=41
 git config --global "url.$T/corigin.git.insteadOf" "https://x-access-token@github.com/$CSLUG.git"
 git config --global "url.$T/corigin.git.insteadOf" "https://github.com/$CSLUG.git" --add
-# main M0 = this checkout's files (tracked and new, not ignored); HPROSE adds a
-# knob whose zero_means is prose; HOK adds a note; main M1 = M0 + one file.
+# main M0 = the reduced seed of this checkout (pq_seed_tree,
+# tests/lib/mc-prequeue-seed.sh, BH-9756); HPROSE adds a knob whose zero_means
+# is prose; HOK adds a note; main M1 = M0 + one file.
 S="$T/cseed"; mkdir -p "$S"
-( cd "$DIR" && git ls-files -co --exclude-standard -z | tar --null -T - -cf - 2>/dev/null ) | tar -C "$S" -xf - \
-  || bad "setup: could not copy the tree"
+pq_seed_tree "$DIR" "$S" || bad "setup: could not copy the tree"
 git -C "$S" init -q; git -C "$S" add -A; git -C "$S" commit -qm M0; CM0=$(git -C "$S" rev-parse HEAD)
 git -C "$S" checkout -qb prose
 jq '.zero_means = "only when the queue is empty"' "$S/catalog/lanes.d/merge-conductor.knobs.d/MC_PREQUEUE_TRACE.json" > "$S/k.json" \
@@ -299,7 +305,9 @@ jq '.zero_means = "only when the queue is empty"' "$S/catalog/lanes.d/merge-cond
 git -C "$S" commit -qam prose; HPROSE=$(git -C "$S" rev-parse HEAD)
 git -C "$S" checkout -qb ok "$CM0"; echo fixture > "$S/docs/bh8473-fixture.txt"; git -C "$S" add -A; git -C "$S" commit -qm ok; HOK=$(git -C "$S" rev-parse HEAD)
 git -C "$S" checkout -q main 2>/dev/null || git -C "$S" checkout -q master
-echo main-moved > "$S/docs/bh8473-main.txt"; git -C "$S" add -A; git -C "$S" commit -qm M1; CM1=$(git -C "$S" rev-parse HEAD)
+# docs/ is empty in the seed, so the checkout back to main removed it (BH-9756).
+mkdir -p "$S/docs"; echo main-moved > "$S/docs/bh8473-main.txt"; git -C "$S" add -A; git -C "$S" commit -qm M1; CM1=$(git -C "$S" rev-parse HEAD)
+[ "$CM1" != "$CM0" ] || bad "setup: main M1 must be a new commit over M0"
 git init -q --bare "$T/corigin.git"
 git -C "$S" push -q "$T/corigin.git" "$CM1:refs/heads/main" "$HPROSE:refs/pull/41/head" "$HOK:refs/pull/42/head" || bad "setup: push failed"
 
@@ -399,6 +407,7 @@ ctick() {
   ( cd "$T" && env PATH="$T/cfakebin:$PATH" HARNESS="$T/ch" FLEET_CONF="$T/ch/fleet.conf" HARNESS_SECRET=x JOBS_URL=http://worker.test GH_TOKEN=pat-default-fixture \
     MC_REPOS="$T/repos" MC_MERGE_BUDGET=5 MC_ENQUEUE_SETTLE=0 MC_MERGE_SETTLE=0 MC_MERGIFY_SETTLE=0 MC_MERGIFY_WAIT_S=0 MC_QUEUE_TTL=0 \
     MC_MAIN_RED_DETECT=0 MC_DETACHED_REBASE=0 PR_DEP_GATE_TICKET=0 MC_STEP_TIMEOUT_S=600 \
+    MC_WORKER_DEADLINE_S=900 MC_PREQUEUE_CALL_BUDGET_S=450 MC_PREQUEUE_FAST_LINTS_BUDGET_S=300 \
     MC_PREQUEUE_GATE=0 MC_SCHEMA_RESTAMP=0 MC_MIGRATION_RECHECK=0 MC_PREQUEUE_FAST_LINTS_SET=lanes-registry \
     bash "$T/ch/bin/merge-conductor.sh" >/dev/null 2>"$T/ctick.err" ) || { echo "tick rc=$? stderr:"; tail -5 "$T/ctick.err"; }
   [ -s "$ROWS" ] || { echo "tick wrote no row; stderr:"; tail -5 "$T/ctick.err"; tail -5 "$MCLOG" 2>/dev/null; }
