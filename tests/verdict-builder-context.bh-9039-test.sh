@@ -336,8 +336,13 @@ print("; ".join(bad))
 sys.exit(1 if bad else 0)
 PY
   # ---- M2 a conf without the key renders as before ----
+  # TEST-CHANGE (project-2#630): project-2.conf now HAS status_check_any, so it is no
+  # longer an example of "a conf without the key". M2b keeps two real confs. All three still
+  # render here, because M2c below compares each one with the merge-base renderer.
   for c in project-5 project-3 project-2; do
     "$MT" render "$DIR/config/mergify/repos/$c.conf" > "$M/$c.yml" 2>/dev/null || no "M2 $c renders"
+  done
+  for c in project-5 project-3; do
     ! grep -qE 'check-failure|~=' "$M/$c.yml" || no "M2b $c renders no veto and no regex condition"
   done
   BASE=$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null || true)
