@@ -94,6 +94,25 @@
 # the tripwire that catches the reach-for-the-obvious-command failure, which is
 # the one that actually happens, and files it where somebody reads it in a tick.
 #
+# FAMILY 8 (BH-9912) — KNOB-GATED, guarded lanes only. On only when
+# DENY_GUARDRAILS is the literal `1` (settings rows
+# lib.deny-guardrails.deny_guardrails / lib.deny-guardrails.<project>.deny_guardrails,
+# default 0; bin/agent-call.sh exports it). It judges the authority shapes a
+# `permissions.deny` prefix rule (bin/deny-guardrails-settings.json) cannot see:
+#   dg-api-merge   `gh api` merging a PR: PUT …/pulls/<n>/merge, POST …/merges
+#                  (fields with no -X GET imply POST), graphql mergePullRequest /
+#                  enablePullRequestAutoMerge. Reads of the same paths stay allowed.
+#   dg-d1-remote   `wrangler d1 execute|migrations apply … --remote` that writes:
+#                  migrations apply, a --file, or a write keyword in the SQL. A
+#                  SELECT on --remote and any --local run stay allowed.
+#   runner forms   `pnpm|yarn|bun <prisma|vercel|vc|wrangler|gh|git> …` is judged
+#                  one level down, so `pnpm prisma db push` meets family 3.
+# HONEST LIMITS of family 8 — these get through: `npm run <script>` aliases;
+# wrangler on codex lanes (no wrangler PATH shim); `gh api` with the method or
+# path in a variable; SQL split across `;` inside one --command; `wrangler
+# deploy` (not in the ticket list). With the knob off, every path below is
+# byte-for-byte the pre-BH-9912 behaviour.
+#
 # HONEST LIMITS of family 6 — all of these get through, by construction:
 #   - `xargs rm`, or any rm fed its targets on stdin or from a file
 #   - `$(...)` and backtick targets: a computed path is unresolvable, so allowed
@@ -211,6 +230,9 @@ unset TMOUT
 # only family 6 applies there.
 FULL=0
 case " $GUARDED_LANES " in *" $LANE "*) FULL=1 ;; esac
+# Family 8 switch (BH-9912). Row lib.deny-guardrails[.<project>].deny_guardrails,
+# default 0 (catalog/lanes.d/_lib.deny-guardrails.json); only the literal 1 is on.
+DG=0; [ "${DENY_GUARDRAILS:-0}" = 1 ] && DG=1
 # LIVE_REVIEW=1 -> the review lane on a live harness box, and family 7 is
 # judged too (BH-8103). A box is live when it carries the deploy checkout
 # (the hub and every Orgo box do; Fly pool machines and CI runners do not).
@@ -301,6 +323,7 @@ if [ "$_SUITE_WORD" = 0 ]; then
   case "$CMD" in
     *gh*|*git*|*prisma*|*psql*|*mysql*|*mariadb*|*mongo*|*vercel*|*vc\ *|*merge-*) ;;
     *rm\ *|*rm|*find\ *|*truncate*|*shred*|*rsync*|*">"*) ;;
+    *wrangler*) [ "$DG" = 1 ] || ALLOW ;;   # family 8 only (BH-9912)
     *) ALLOW ;;
   esac
 fi
@@ -879,6 +902,124 @@ review_family() { # review_family <segment> <segcwd> <suite-loop-var>
   return 0
 }
 
+# --- family 8 helpers (BH-9912, knob-gated) ---------------------------------
+# _dg_words <string>: the shell words of <string>, one per line, with '…' and
+# "…" kept as ONE word (quotes removed) and a backslash escaping the next char
+# outside single quotes. `-H "Accept: x"` is two words, not three. No eval.
+_dg_words() {
+  local s="$1" c q="" w="" have=0 i=0 n=${#1}
+  while [ "$i" -lt "$n" ]; do
+    c="${s:i:1}"; i=$((i+1))
+    if [ "$q" = "'" ]; then
+      [ "$c" = "'" ] && q="" || w+="$c"
+    elif [ "$c" = '\' ] && [ "$i" -lt "$n" ]; then
+      w+="${s:i:1}"; i=$((i+1)); have=1
+    elif [ "$q" = '"' ]; then
+      [ "$c" = '"' ] && q="" || w+="$c"
+    else
+      case "$c" in
+        \"|\') q="$c"; have=1 ;;
+        ' ') [ "$have" = 1 ] && printf '%s\n' "$w"; w=""; have=0 ;;
+        *) w+="$c"; have=1 ;;
+      esac
+    fi
+  done
+  [ "$have" = 1 ] && printf '%s\n' "$w"
+  return 0
+}
+# _dg_cmd_end <string>: <string> up to its first `&&`, `||`, `;` or `|` that is
+# not inside quotes — the end of the one command it starts with. An unclosed
+# quote keeps the whole string (judges more, never less).
+_dg_cmd_end() {
+  local s="$1" c q="" i=0 n=${#1}
+  while [ "$i" -lt "$n" ]; do
+    c="${s:i:1}"
+    if [ "$q" = "'" ]; then
+      [ "$c" = "'" ] && q=""
+    elif [ "$c" = '\' ]; then
+      i=$((i+1))
+    elif [ "$q" = '"' ]; then
+      [ "$c" = '"' ] && q=""
+    else
+      case "$c" in
+        \"|\') q="$c" ;;
+        ';'|'|') printf '%s' "${s:0:i}"; return 0 ;;
+        '&') [ "${s:i+1:1}" = '&' ] && { printf '%s' "${s:0:i}"; return 0; } ;;
+      esac
+    fi
+    i=$((i+1))
+  done
+  printf '%s' "$s"
+}
+# dg_gh_api <rest-after-gh> <segment>: deny dg-api-merge on a merging `gh api`.
+dg_gh_api() {
+  local rest="$1" seg="$2" t m="" path="" fields=0 i=0 n
+  local -a a=()
+  mapfile -t a < <(_dg_words "$rest")
+  n=${#a[@]}
+  [ "${a[0]:-}" = api ] || return 0
+  i=1
+  while [ "$i" -lt "$n" ]; do
+    t="${a[i]}"
+    case "$t" in
+      -X|--method) m="${a[i+1]:-}"; i=$((i+2)); continue ;;
+      -X*) m="${t#-X}" ;;
+      --method=*) m="${t#--method=}" ;;
+      -f|-F|--field|--raw-field|--input) fields=1; i=$((i+2)); continue ;;
+      -f*|-F*|--field=*|--raw-field=*|--input=*) fields=1 ;;
+      -H|--header|-q|--jq|-t|--template|--hostname|-p|--preview|--cache) i=$((i+2)); continue ;;
+      -*) ;;
+      *) [ -z "$path" ] && path="$t" ;;
+    esac
+    i=$((i+1))
+  done
+  path="${path//\"/}"; path="${path//\'/}"; path="${path%%\?*}"; path="${path%/}"
+  m="${m//\"/}"; m="${m//\'/}"; m="${m^^}"
+  if [[ "$path" =~ (^|/)pulls/[0-9]+/merge$ ]] && [ "$m" = PUT ]; then
+    deny dg-api-merge "\`gh api\` PUT $path merges a PR — merging is never an agent's call on this box"
+  elif [[ "$path" =~ (^|/)merges$ ]] && { [ "$m" = POST ] || { [ "$fields" = 1 ] && [ -z "$m" ]; }; }; then
+    deny dg-api-merge "\`gh api\` POST $path merges one branch into another — moving a branch by merge is the merge lane's, never a build session's"
+  elif [ "$path" = graphql ]; then
+    case "$seg" in
+      *mergePullRequest*|*enablePullRequestAutoMerge*)
+        deny dg-api-merge "\`gh api graphql\` with a merge mutation (mergePullRequest / enablePullRequestAutoMerge) — merging is never an agent's call on this box" ;;
+    esac
+  fi
+  return 0
+}
+
+# dg_d1 <rest-after-wrangler> <segment>: deny dg-d1-remote on a remote D1 write.
+# Every check reads the command from this wrangler call to its first `&&`,
+# `||`, `;` or `|` outside quotes (_dg_cmd_end), not to the segment end,
+# because the segment split cuts a --command string at `)` or `;`, and a
+# --remote after `(1)` must still count. A write keyword must start a word, so
+# `last_update` is not `update`.
+dg_d1() {
+  local rest="$1" seg="$2" tail kind="" writes=0
+  local -a a=()
+  read -r -a a <<<"$rest"
+  [ "${a[0]:-}" = d1 ] || return 0
+  case "${a[1]:-}" in
+    execute) kind=execute ;;
+    migrations) [ "${a[2]:-}" = apply ] && kind="migrations apply" ;;
+  esac
+  [ -n "$kind" ] || return 0
+  tail="$seg"
+  case "$NORM" in *"$seg"*) tail="$seg${NORM#*"$seg"}" ;; esac
+  tail=$(_dg_cmd_end "$tail")
+  case " $tail " in *" --remote "*|*" --remote="*) ;; *) return 0 ;; esac
+  if [ "$kind" != execute ]; then
+    writes=1
+  else
+    case " $tail " in *" --file "*|*" --file="*) writes=1 ;; esac
+    shopt -s nocasematch
+    [[ "$tail" =~ (^|[^[:alnum:]_])(insert|update|delete|drop|alter|truncate|create|replace)[[:space:]] ]] && writes=1
+    shopt -u nocasematch
+  fi
+  [ "$writes" = 1 ] && deny dg-d1-remote "\`wrangler d1 $kind --remote\` writing a --remote D1 database — the only prod writes this box makes are through an app's own API or the deploy's schema apply"
+  return 0
+}
+
 classify() { # classify <command-string> [segment-cwd]  (sets RULE/WHY on the
              # first match). The cwd is passed IN so the `bash -c` recursion
              # below keeps what an outer `cd` set; unset, not empty, falls back
@@ -936,7 +1077,20 @@ classify() { # classify <command-string> [segment-cwd]  (sets RULE/WHY on the
       gh)
         case " $rest " in
           *" pr merge "*|*" pr merge") deny pr-merge "\`gh pr merge\` — merging is never an agent's call on this box" ;;
-        esac ;;
+        esac
+        [ "$DG" = 1 ] && [ -z "$RULE" ] && dg_gh_api "$rest" "$seg" ;;
+
+      # --- 8. knob-gated shapes a deny prefix cannot express (BH-9912) -----
+      wrangler)
+        [ "$DG" = 1 ] && dg_d1 "$rest" "$seg" ;;
+      pnpm|yarn|bun)
+        # `pnpm prisma db push` runs prisma: judge it one level down, the way
+        # `bash -c` is. `pnpm exec`/`dlx` are already peeled by cmd_word.
+        if [ "$DG" = 1 ]; then
+          case "${rest%% *}" in
+            prisma|vercel|vc|wrangler|gh|git) classify "$rest" "$segcwd" ;;
+          esac
+        fi ;;
       merge-sweep.sh|merge-queue.sh)
         deny pr-merge "\`$cw\` — the merge lanes run from cron with merge authority; a build/triage session invoking one is the same iron law by another route" ;;
 

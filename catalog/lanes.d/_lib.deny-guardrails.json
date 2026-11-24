@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "deny-guardrails",
+      "file": "bin/agent-call.sh",
+      "note": "BH-9912. The knob-gated deny layer for the iron guardrails. When on, bin/agent-call.sh gives the guarded lanes (IRON_LAW_LANES) the permissions.deny list in bin/deny-guardrails-settings.json, as a --settings file and as --disallowedTools, and bin/iron-law-guard.sh judges family 8 (gh api merge calls, wrangler d1 --remote writes, pnpm/yarn/bun <bin> runner forms). Applied by agent-call.sh with lib_env_apply deny-guardrails \"$PROJECT\", so a per-project row turns it on for one project first.",
+      "knobs": [
+        {
+          "env": "DENY_GUARDRAILS",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the deny layer and guard family 8 are on; anything else = off. Read as ${DENY_GUARDRAILS:-0} in bin/agent-call.sh and bin/iron-law-guard.sh; rows lib.deny-guardrails.deny_guardrails (fleet) and lib.deny-guardrails.<project>.deny_guardrails (one project). Default 0 (ticket BH-9912: on for cromford lanes first)."
+        }
+      ]
+    }
+  ]
+}

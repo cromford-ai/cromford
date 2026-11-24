@@ -555,6 +555,11 @@ command -v advisor_for_call       >/dev/null 2>&1 || advisor_for_call()       { 
 command -v advisor_launch_refused >/dev/null 2>&1 || advisor_launch_refused() { return 1; }
 command -v advisor_refused_flag   >/dev/null 2>&1 || advisor_refused_flag()   { return 1; }
 [ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply advisor; } || true
+# THE DENY LAYER (BH-9912): DENY_GUARDRAILS=1 (row lib.deny-guardrails.<project>.
+# deny_guardrails, else lib.deny-guardrails.deny_guardrails; default 0) adds
+# bin/deny-guardrails-settings.json to the guarded lanes below and turns on
+# family 8 in bin/iron-law-guard.sh, which inherits the exported value.
+[ "${LANE_GATE_DISABLE:-0}" = 1 ] || { command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply deny-guardrails "$PROJECT"; } || true
 # ADV_DROPPED: this call's launch refused --advisor once, so no later attempt
 # carries it. ADV_ATTEMPT: the advisor the last claude attempt ran with.
 ADV_DROPPED=""; ADV_ATTEMPT=""
@@ -3025,7 +3030,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         #   2. PER-CALL TOOL POLICY (2026-08-25, tier-2 remediator): AGENT_SETTINGS
         #      is a caller-owned policy file; this lane only carries it.
         #   3. ACT-TIME IRON-LAW GUARD (2026-08-29) — see below.
-        local _sets=() _settings="" _eph="" _ephto=""
+        local _sets=() _settings="" _eph="" _ephto="" _dg="" _al=""
         [ "${EDIT_FEEDBACK:-}" = "1" ] && [ "$STAGE" = "execute" ] && [ -f "$HARNESS/bin/edit-feedback-settings.json" ] \
           && _sets+=("$HARNESS/bin/edit-feedback-settings.json")
         [ -n "${AGENT_SETTINGS:-}" ] && [ -f "${AGENT_SETTINGS:-}" ] && _sets+=("$AGENT_SETTINGS")
@@ -3088,6 +3093,20 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         # that fails closed takes every build lane down with it.
         case " ${IRON_LAW_LANES:-plan execute review fix qa triage} " in
           *" $STAGE "*)
+            # THE DENY LAYER (BH-9912), knob-gated: permissions.deny for the
+            # prefix shapes, added BEFORE the guard so the guard stays last for
+            # the merge-failure fallback. The same specs go to --disallowedTools
+            # below. A missing or empty fragment is an ALERT and the call runs on
+            # the hook guard alone — the same doctrine as a missing guard.
+            if [ "${DENY_GUARDRAILS:-0}" = 1 ]; then
+              _dg=$(jq -r '.permissions.deny[]?' "$HARNESS/bin/deny-guardrails-settings.json" 2>/dev/null) || _dg=""
+              if [ -n "$_dg" ]; then
+                _sets+=("$HARNESS/bin/deny-guardrails-settings.json")
+              else
+                _al="$(dirname "$0")/alert-line.sh"; [ -x "$_al" ] || _al="$HARNESS/bin/alert-line.sh"
+                HARNESS="$HARNESS" "$_al" --project "$PROJECT" "[$PROJECT] $STAGE: DENY_GUARDRAILS=1 but the deny layer MISSING or empty at $HARNESS/bin/deny-guardrails-settings.json — running with the hook guard only. Deploy the harness: bin/harness-sync.sh." >/dev/null 2>&1
+              fi
+            fi
             if [ -x "$HARNESS/bin/iron-law-guard.sh" ]; then
               export HARNESS HARNESS_LANE="$STAGE" HARNESS_LANE_PROJECT="$PROJECT" HARNESS_LANE_WT="$PWD"
               mkdir -p "$HARNESS/state" 2>/dev/null
@@ -3143,9 +3162,14 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
         # would silently deny `Bash(gh` and permit the rest. Passed as ONE
         # variadic flag (repeating a variadic flag replaces rather than
         # accumulates) and LAST, so the variadic cannot swallow another flag.
-        if [ -n "${AGENT_DISALLOWED_TOOLS:-}" ]; then
-          local _dt=() _spec
-          while IFS= read -r _spec; do [ -n "$_spec" ] && _dt+=("$_spec"); done <<<"$AGENT_DISALLOWED_TOOLS"
+        # BH-9912: the deny layer's specs (_dg, guarded lanes with the knob on)
+        # join the same list, deduped, still one flag.
+        if [ -n "${AGENT_DISALLOWED_TOOLS:-}" ] || [ -n "$_dg" ]; then
+          local _dt=() _spec; local -A _dts=()
+          while IFS= read -r _spec; do
+            [ -n "$_spec" ] && [ -z "${_dts[$_spec]:-}" ] || continue
+            _dts[$_spec]=1; _dt+=("$_spec")
+          done <<<"${AGENT_DISALLOWED_TOOLS:-}${AGENT_DISALLOWED_TOOLS:+${_dg:+$'\n'}}$_dg"
           [ "${#_dt[@]}" -gt 0 ] && ARGS+=(--disallowedTools "${_dt[@]}")
         fi
         # Prompt rides STDIN: a >128KB prompt as an argv element fails execve

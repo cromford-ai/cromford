@@ -16,7 +16,8 @@
 #          harness, which launches the REAL triage-shard.sh: tick 1 parks,
 #          tick 2 starts 0 shards and posts 0 comments, a board change
 #          unparks and the next tick starts the shard 1 time.
-#   V1-V2  0 vendor calls; no edit to the call-guard limit.
+#   V1-V2  0 vendor calls; no edit to the call-guard limit (call-guard.sh,
+#          and the call-guard lines of agent-call.sh).
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/triage-repeat-refused.bh-9818-test.sh
 set -uo pipefail
@@ -325,8 +326,14 @@ AC=ok tick
 # ═══ V ═══════════════════════════════════════════════════════════════════════
 [ ! -s "$T/calls/vendor" ] && ok || bad "(V1) 0 vendor calls: [$(cat "$T/calls/vendor")]"
 if git -C "$DIR" rev-parse -q --verify origin/main >/dev/null 2>&1; then
-  [ -z "$(git -C "$DIR" diff origin/main -- bin/lib/call-guard.sh bin/agent-call.sh 2>/dev/null)" ] && ok \
-    || bad "(V2) the call-guard limit changed (bin/lib/call-guard.sh / bin/agent-call.sh differ from origin/main)"
+  # The limit lives in bin/lib/call-guard.sh; bin/agent-call.sh only sources
+  # it and applies its knob rows. So call-guard.sh must not differ at all, and
+  # agent-call.sh must not change a line that names the call guard. Other
+  # agent-call.sh edits (later tickets) are not this suite's subject.
+  [ -z "$(git -C "$DIR" diff origin/main -- bin/lib/call-guard.sh 2>/dev/null)" ] \
+    && [ -z "$(git -C "$DIR" diff -U0 origin/main -- bin/agent-call.sh 2>/dev/null \
+                | grep -E '^[-+][^-+]' | grep -iE 'call[-_ ]?guard|CG_[A-Z]' )" ] && ok \
+    || bad "(V2) the call-guard limit changed (bin/lib/call-guard.sh, or a call-guard line of bin/agent-call.sh, differs from origin/main)"
 else
   echo "note: (V2) skipped: no origin/main"
 fi

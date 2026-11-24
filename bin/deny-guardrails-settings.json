@@ -1,0 +1,39 @@
+{
+  "_comment": "BH-9912 deny layer for the iron guardrails. bin/agent-call.sh composes this into the guarded lanes (IRON_LAW_LANES) only when DENY_GUARDRAILS=1 (rows lib.deny-guardrails[.<project>].deny_guardrails, default 0), and passes the same specs to --disallowedTools. Every prefix has an rtk twin because the fleet rtk hook rewrites the command. Shapes a prefix cannot express (gh api merge calls, wrangler d1 --remote writes, pnpm/yarn/bun runner forms) are bin/iron-law-guard.sh family 8. tests/deny-guardrails.bh-9912-test.sh section D proves every spec here is also denied by the guard.",
+  "permissions": {
+    "deny": [
+      "Bash(git push origin main:*)",
+      "Bash(rtk git push origin main:*)",
+      "Bash(git push origin master:*)",
+      "Bash(rtk git push origin master:*)",
+      "Bash(git push origin HEAD:main:*)",
+      "Bash(rtk git push origin HEAD:main:*)",
+      "Bash(git push origin HEAD:master:*)",
+      "Bash(rtk git push origin HEAD:master:*)",
+      "Bash(git push -f origin main:*)",
+      "Bash(rtk git push -f origin main:*)",
+      "Bash(git push --force origin main:*)",
+      "Bash(rtk git push --force origin main:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(rtk gh pr merge:*)",
+      "Bash(prisma db push:*)",
+      "Bash(rtk prisma db push:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(rtk npx prisma db push:*)",
+      "Bash(prisma migrate deploy:*)",
+      "Bash(rtk prisma migrate deploy:*)",
+      "Bash(npx prisma migrate deploy:*)",
+      "Bash(rtk npx prisma migrate deploy:*)",
+      "Bash(vercel deploy --prod:*)",
+      "Bash(rtk vercel deploy --prod:*)",
+      "Bash(vercel --prod:*)",
+      "Bash(rtk vercel --prod:*)",
+      "Bash(npx vercel deploy --prod:*)",
+      "Bash(rtk npx vercel deploy --prod:*)",
+      "Bash(npx vercel --prod:*)",
+      "Bash(rtk npx vercel --prod:*)",
+      "Bash(vercel promote:*)",
+      "Bash(rtk vercel promote:*)"
+    ]
+  }
+}

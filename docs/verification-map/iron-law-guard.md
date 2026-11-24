@@ -93,6 +93,27 @@ codex/gemini/grok lane only the shimmed `git`/`gh` reach the guard. The
 re-review agent also starts in a private scratch dir (`MC_RR_SCRATCH_ROOT`,
 docs/notes/2026-10-23-BH-8103-review-lane-live-box.md).
 
+**Family 8 and the deny layer, knob-gated (BH-9912).** Off unless
+`DENY_GUARDRAILS` is the literal `1` (rows `lib.deny-guardrails.deny_guardrails`
+and `lib.deny-guardrails.<project>.deny_guardrails`, default 0). With it on, a
+guarded-lane call through `bin/agent-call.sh` gets two more things:
+
+- `bin/deny-guardrails-settings.json` merged into its `--settings` (before the
+  guard, so the guard stays last) and the same specs as `--disallowedTools`.
+  These prefix rules work with no hook process, so they hold when the CLI
+  abandons a slow hook.
+- Family 8 in the guard (guarded lanes only): `dg-api-merge` (`gh api` PUT
+  `…/pulls/<n>/merge`, POST `…/merges`, graphql `mergePullRequest` /
+  `enablePullRequestAutoMerge`), `dg-d1-remote` (`wrangler d1 execute` with a
+  write, a `--file`, or `migrations apply`, on `--remote`), and `pnpm|yarn|bun
+  <prisma|vercel|vc|wrangler|gh|git>` judged one level down.
+
+A missing or empty fragment with the knob on is one `deny layer MISSING` line in
+`logs/ALERTS.log` per call, and the call runs on the hook guard alone. Drive it
+with `tests/deny-guardrails.bh-9912-test.sh`. The exit-code audit of every hook
+is `docs/notes/2026-11-23-BH-9912-deny-guardrails.md`, pinned by
+`tests/hook-exit-audit.bh-9912-test.sh`.
+
 **How to drive it:**
 
 | what | how |
