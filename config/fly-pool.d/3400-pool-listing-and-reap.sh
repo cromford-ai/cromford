@@ -92,6 +92,11 @@ command -v pur_prime >/dev/null 2>&1 && { pur_prime || PUR_FILE=""; }
 POOL_RECORD_READ=$( { command -v lane_knob && command -v pool_record_get; } >/dev/null 2>&1 \
   && lane_knob fly-pool POOL_RECORD_READ "$P")
 [ "$POOL_RECORD_READ" = 1 ] || POOL_RECORD_READ=0
+# BH-9075: the two park lines in this loop also note the park in the D1 parks
+# table (pw_queue_park, bin/lib/parks-write.sh). A box without the lib defines
+# nothing, and each call line is `command -v` guarded: the pool runs as before.
+# shellcheck source=bin/lib/parks-write.sh
+[ -r "$HARNESS/bin/lib/parks-write.sh" ] && . "$HARNESS/bin/lib/parks-write.sh"
 REAPED_IDS=" "   # machines this tick's REAP owns; the sweep below never touches one
 for MF in "$POOL"/*.json; do
   [ -f "$MF" ] || continue
@@ -911,6 +916,7 @@ for MF in "$POOL"/*.json; do
       # like any other, with its one alert.
       elif [ "$DNEXT" -ge "$DEFER_MAX" ] && { [ -z "$DAFTER" ] || pool_after_churned "$KEY" "$DAFTER"; }; then
         QROW failed "$KEY" "deferred $DNEXT times ($DWHY) — parked for the blocked-resolver"
+        command -v pw_queue_park >/dev/null 2>&1 && pw_queue_park "$P" "$KEY" "deferred $DNEXT times ($DWHY)" "$MHF"
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool build DEFERRED ($DWHY) — deferred $DNEXT times now, so the queue row is FAILED. This pool will not re-offer it; bin/blocked-resolver.sh picks the row up on its next tick and rebuilds the ticket fresh against current main (3 tries, then an ABANDONED outcome record). Evidence: $LOCAL"
         say "DEFERRED $KEY x$DNEXT — parked for the blocked-resolver"
       else
@@ -1445,6 +1451,7 @@ for MF in "$POOL"/*.json; do
     esac
     if [ "$DNEXT" -ge 2 ]; then
       QROW failed "$KEY" "died $DNEXT times (state=${MSTATE:-gone}) — parked for the blocked-resolver"
+      command -v pw_queue_park >/dev/null 2>&1 && pw_queue_park "$P" "$KEY" "died $DNEXT times" "$MHF"
       # THE ROW ON THE LINE ABOVE IS THE PARK (BH-1026.3). Under the flag $QDIR
       # is this tick's scratch directory, so a sidecar written here would vanish
       # with it — and it is not needed: br_from_queue reads the `died N times`

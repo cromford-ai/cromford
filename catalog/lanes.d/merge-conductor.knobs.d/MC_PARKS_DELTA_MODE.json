@@ -1,0 +1,11 @@
+{
+  "env": "MC_PARKS_DELTA_MODE",
+  "read_in": "bin/lib/mc/parks-delta.sh",
+  "type": "string",
+  "default": "off",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9075 (BH-9067.3): the conductor parks delta. off = every tick walks (no request). shadow = the reads run and a quiet project logs would skip (decision=parks-quiet-shadow), the walk still runs. on = a project with no changed parks row and no pr/checks wake since its last walk skips the per-PR walk (decision=parks-quiet). Any other word is off. Settings row: lane.merge-conductor.mc_parks_delta_mode; code fallback off."
+}

@@ -1810,6 +1810,33 @@ Not yet exercised against a real repo: `mc_rebase` and `mc_rereview` (phase B co
 off). Their first live run is phase B's exit criterion, not a claim this branch makes.
 
 
+### Parks delta (BH-9075, BH-9067.3)
+
+The conductor can skip the per-PR walk of a quiet project. The code is
+`bin/lib/mc/parks-delta.sh`, loaded by `bin/merge-conductor.d/bh-9075-parks.sh`.
+The mode knob is `MC_PARKS_DELTA_MODE` (settings row
+`lane.merge-conductor.mc_parks_delta_mode`). The default is `off`.
+
+- `tick_project` calls `mc_parks_delta_skip <p>` after the cadence hold and
+  before `pause_active`, `use_token` and any GitHub read. On a skip the tick
+  returns 0 and writes no metrics line, as the cadence hold does.
+- The tick walks when any of these is true: the mode is off, the tick is
+  keyed, there is no walk stamp, the stamp is `MC_PARKS_DELTA_MAX_SKIP_S`
+  (1800) old, a pre-queue verdict file of the repo is newer than the stamp,
+  `GET /api/parks/changed` has a row since the stamp minus
+  `MC_PARKS_DELTA_LAG_S` (120), or the wake take
+  (`POST /api/lane-wakes/take`, lane `mc-parks-delta`, kinds `pr` and
+  `checks`) shows a webhook id above the watermark. A read failure walks.
+- Mode `on` logs `TICK <p> held: no parks change and no pr/checks wake since
+  <iso> ... (decision=parks-quiet)`. Mode `shadow` logs `TICK <p> would skip:
+  ... (decision=parks-quiet-shadow)` and walks.
+- At the end of a tick, `mc_parks_tick_end <p> <slug> <T0>` runs
+  `pw_conductor_sync` (the BLOCKED_HUMAN / RED_TWICE rows as `parks` rows) and,
+  on a full tick, writes the walk stamp.
+- The prequeue D1 read is owed. Issue #9061 holds none.
+
+Seam and flip steps: `docs/events-bh-9067/3-parks.md`.
+
 ## 12. The blocked-resolver: no work waits on a human review (2026-09-13)
 
 > the operator, 2026-09-13 22:54Z: *"Can we change all these definitions that require a human / the

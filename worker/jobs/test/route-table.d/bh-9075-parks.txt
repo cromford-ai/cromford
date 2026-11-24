@@ -1,0 +1,6 @@
+# PARKS (BH-9075, BH-9067.3): one D1 row per blocked-resolver candidate;
+# writers bin/lib/parks-write.sh, reader bin/lib/br/opt/parks.sh.
+PUT /api/parks
+GET /api/parks/changed
+GET /api/parks/prune
+POST /api/parks/prune

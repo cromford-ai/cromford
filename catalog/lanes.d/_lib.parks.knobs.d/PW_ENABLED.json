@@ -1,0 +1,12 @@
+{
+  "env": "PW_ENABLED",
+  "read_in": "bin/lib/parks-write.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9075: 1 = the park sites write parks notes (fly-pool, br_set_outcome, the conductor tick end). 0 = no note and no request. Settings row lib.parks.pw_enabled; code fallback 1."
+}

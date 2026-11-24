@@ -1,0 +1,11 @@
+{
+  "env": "MC_PARKS_DELTA_LAG_S",
+  "read_in": "bin/lib/mc/parks-delta.sh",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9075: the parks read asks for rows since the last walk minus this, so a writer clock skew never hides a change. Settings row lane.merge-conductor.mc_parks_delta_lag_s; code fallback 120."
+}

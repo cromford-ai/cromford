@@ -46,6 +46,8 @@ discovery	br_rebuild_artifact	mod
 discovery	br_from_rebuilds	mod
 discovery	br_candidates	mod
 discovery	_bdcn	mod
+discovery	_br_sources	mod
+discovery	_br_parks_mode_set	mod
 cap	br_env_for_project	mod
 cap	br_floor_stands	mod
 cap	br_cap_notes	mod

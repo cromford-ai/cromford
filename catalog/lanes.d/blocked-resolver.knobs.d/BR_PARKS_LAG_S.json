@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_LAG_S",
+  "read_in": "bin/lib/br/opt/parks.sh",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9075: the parks cursor is held back to now minus this, so a writer clock skew or a same-second write is read again (idempotently) and never lost. Settings row lane.blocked-resolver.br_parks_lag_s; code fallback 120."
+}

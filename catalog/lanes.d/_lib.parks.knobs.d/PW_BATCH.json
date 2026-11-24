@@ -1,0 +1,12 @@
+{
+  "env": "PW_BATCH",
+  "read_in": "bin/lib/parks-write.sh",
+  "type": "int",
+  "default": 100,
+  "min": 1,
+  "max": 100,
+  "unit": "rows",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9075: the rows of one PUT /api/parks from the outbox (and of one backfill PUT). The route refuses more than parks.put_max_rows (100). Settings row lib.parks.pw_batch; code fallback 100."
+}

@@ -1,0 +1,12 @@
+{
+  "env": "PW_OUTBOX_MAX",
+  "read_in": "bin/lib/parks-write.sh",
+  "type": "int",
+  "default": 10000,
+  "min": 1,
+  "max": 1000000,
+  "unit": "files",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9075: the most notes state/parks-outbox/ keeps while the worker does not answer. Over it the oldest go and the resolver cursors are deleted, so the next resolver tick backfills from the file sources. Settings row lib.parks.pw_outbox_max; code fallback 10000."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_MODE",
+  "read_in": "bin/lib/br/discovery.sh",
+  "type": "string",
+  "default": "shadow",
+  "min": null,
+  "max": null,
+  "unit": null,
+  "zero_means": null,
+  "note": "BH-9075 (BH-9067.3): how br_candidates reads the queue parks. off = the file sources only, no parks request. shadow = the file sources are used, then one parks-shadow: line compares them with the D1 parks mirror (0 ALERTS). on = the queue source reads the parks mirror; any read failure uses br_from_queue for the tick. Any other word reads as shadow and is logged. Settings row: lane.blocked-resolver.br_parks_mode; code fallback shadow in _br_parks_mode_set."
+}

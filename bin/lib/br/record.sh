@@ -276,7 +276,10 @@ br_row_closed() {
 br_set_outcome() {
   local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null
   cur=$(br_load "$1" "$2" | jq -c --arg o "$3" --arg t "$(STAMP)" '.outcome=$o | .updated=$t' 2>/dev/null) || return 1
-  br_save "$1" "$2" "$cur"
+  br_save "$1" "$2" "$cur" || return
+  # BH-9075: an ABANDONED or RESOLVED_MERGED outcome marks the parks row done (bin/lib/parks-write.sh); never changes this rc.
+  { command -v pw_note_outcome >/dev/null 2>&1 || { [ -n "${H:-}" ] && . "$H/bin/lib/parks-write.sh"; }; } 2>/dev/null && pw_note_outcome "$1" "$2" "$3" >/dev/null 2>&1
+  return 0
 }
 br_set_flag() { # br_set_flag <project> <rkey> <field> — sets .<field>=true on the record
   local f cur; f=$(br_file "$1" "$2"); mkdir -p "$(dirname "$f")" 2>/dev/null

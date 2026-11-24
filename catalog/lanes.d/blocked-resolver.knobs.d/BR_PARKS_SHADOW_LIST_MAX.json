@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_SHADOW_LIST_MAX",
+  "read_in": "bin/lib/br/opt/parks.sh",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 200,
+  "unit": "cks",
+  "zero_means": null,
+  "note": "BH-9075: how many missing= and extra= cks one parks-shadow: line names before it says [+k]. Settings row lane.blocked-resolver.br_parks_shadow_list_max; code fallback 20."
+}

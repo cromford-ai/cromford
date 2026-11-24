@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_MAX_PAGES",
+  "read_in": "bin/lib/br/opt/parks.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 200,
+  "unit": "pages",
+  "zero_means": null,
+  "note": "BH-9075: the most changed pages one project reads in one tick. At the cap the progress is saved and the tick is incomplete: mode on uses the file sources for that tick. Settings row lane.blocked-resolver.br_parks_max_pages; code fallback 20."
+}

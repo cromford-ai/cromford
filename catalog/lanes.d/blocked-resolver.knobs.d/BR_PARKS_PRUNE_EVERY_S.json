@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_PRUNE_EVERY_S",
+  "read_in": "bin/lib/br/opt/parks.sh",
+  "type": "int",
+  "default": 86400,
+  "min": 0,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-9075: how often the resolver calls POST /api/parks/prune (the parks retention: done rows older than parks.retention_days, dry run while parks.prune_dry_run=1). 0 = off (no prune call). Settings row lane.blocked-resolver.br_parks_prune_every_s; code fallback 86400."
+}

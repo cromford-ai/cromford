@@ -2808,6 +2808,8 @@ tick_project() {
       return 0
     fi
   fi
+  # THE PARKS DELTA (BH-9075; bin/lib/mc/parks-delta.sh, MC_PARKS_DELTA_MODE, default off): no changed parks row and no pr/checks wake since the last walk skips this walk, before any GitHub read, with no metrics line (the cadence hold's rule).
+  if command -v mc_parks_delta_skip >/dev/null 2>&1 && mc_parks_delta_skip "$P"; then return 0; fi
   # A PROJECT MERGES PAUSE (BH-1672): MERGES=0 for this project only (a fleet
   # row matches here as well, so the fleet case is enforced twice). This
   # function runs in the project's own backgrounded subshell, so the change
@@ -3569,6 +3571,7 @@ tick_project() {
     # A memo nothing has touched in 30 days goes (D21); losing one costs a re-probe.
     find "$MC_CLOSED_WATCH_DIR" -type f -mtime +30 -delete 2>/dev/null
   fi
+  command -v mc_parks_tick_end >/dev/null 2>&1 && mc_parks_tick_end "$P" "$SLUG" "$T0"
   reset_token
   mc_tick_metrics "$P" "$T0"
   return 0

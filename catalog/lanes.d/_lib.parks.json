@@ -1,0 +1,10 @@
+{
+  "libs": [
+    {
+      "id": "parks",
+      "file": "bin/lib/parks-write.sh",
+      "note": "BH-9075 (BH-9067.3). The D1 parks table: bin/lib/jobs/parks.sh is the client (parks_put, parks_changed, parks_prune) and bin/lib/parks-write.sh the writers (pw_note, pw_flush, pw_queue_park, pw_note_outcome, pw_conductor_sync). The knobs are one file each in _lib.parks.knobs.d/; settings rows lib.parks.<env lowercased>.",
+      "knobs": []
+    }
+  ]
+}

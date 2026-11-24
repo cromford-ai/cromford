@@ -626,7 +626,10 @@ br_from_rebuilds() {
   return 0
 }
 
-br_candidates() {
+# _br_sources <files|parks> — every source in order (BH-9029 timing). With
+# `parks` (BH-9075, mode on) the queue source is the parks mirror, and any
+# failure there prints nothing and runs br_from_queue: the files fallback.
+_br_sources() {
   # BH-9029: each source's whole seconds go to the prof line through
   # bdi_src_secs (the bh-9029-discovery-index fragment; SECONDS deltas, no
   # fork). Without the fragment the sources run exactly as before.
@@ -636,12 +639,59 @@ br_candidates() {
   _s0=$SECONDS; br_from_conductor; $_t conductor "$_s0"
   # BH-9467: a one-PR run skips the two sources whose rows carry no PR url.
   local _one=""; command -v bdc_one_pr >/dev/null 2>&1 && bdc_one_pr && _one=1
-  _s0=$SECONDS; [ -n "$_one" ] || br_from_queue;  $_t queue "$_s0"
+  _s0=$SECONDS
+  if [ -z "$_one" ]; then
+    if [ "${1:-files}" = parks ]; then br_opt_parks_candidates || br_from_queue; else br_from_queue; fi
+  fi
+  $_t queue "$_s0"
   _s0=$SECONDS; [ -n "$_one" ] || br_from_builds; $_t builds "$_s0"
   _s0=$SECONDS; br_from_reviews;   $_t reviews "$_s0"
   # BH-4664: an external PR source, when bin/lib/br/opt/external.sh is installed.
   _s0=$SECONDS
   ! command -v br_opt_external_candidates >/dev/null 2>&1 || br_opt_external_candidates
   $_t external "$_s0"
+}
+
+# _br_parks_mode_set — _BRPM = off | shadow | on (BH-9075). The lane knob
+# BR_PARKS_MODE (settings row lane.blocked-resolver.br_parks_mode; code
+# fallback shadow, the registry default). Any other word reads as shadow and is
+# named in the log. Not off: bin/lib/br/opt/parks.sh is sourced here, lazily;
+# missing or not parsing, the mode reads as off for the tick. BR_OPT_OFF=parks
+# is off too.
+_br_parks_mode_set() {
+  local f
+  _BRPM=${BR_PARKS_MODE:-shadow}
+  case "$_BRPM" in
+    off|shadow|on) ;;
+    *) declare -F say >/dev/null 2>&1 && say "parks: BR_PARKS_MODE=$_BRPM is not off, shadow or on — read as shadow"; _BRPM=shadow ;;
+  esac
+  case ",${BR_OPT_OFF:-}," in *,parks,*) _BRPM=off ;; esac
+  [ "$_BRPM" = off ] && return 0
+  command -v br_opt_parks_candidates >/dev/null 2>&1 && return 0
+  f="${BR_LIB_DIR:-$H/bin/lib/br}/opt/parks.sh"
+  # shellcheck source=opt/parks.sh
+  if [ -r "$f" ] && bash -n "$f" 2>/dev/null && . "$f" 2>/dev/null \
+     && command -v br_opt_parks_candidates >/dev/null 2>&1; then return 0; fi
+  declare -F say >/dev/null 2>&1 && say "parks: bin/lib/br/opt/parks.sh is missing or does not parse — BR_PARKS_MODE read as off this tick"
+  _BRPM=off
+}
+
+# br_candidates — the sources (above), by BR_PARKS_MODE (BH-9075):
+#   off     the file sources; no parks request.
+#   shadow  the file sources are the output; br_opt_parks_shadow then
+#           compares them with the parks mirror (one parks-shadow: line).
+#   on      the queue source reads the parks mirror (files fallback on failure).
+# Shadow and on also run the daily parks prune. Nothing but rows goes to stdout.
+br_candidates() {
+  local _bpo=""
+  _br_parks_mode_set
+  [ "$_BRPM" = off ] || _bpo=$(mktemp "${TMPDIR:-/tmp}/br-cand.XXXXXX" 2>/dev/null) || _bpo=""
+  if [ -z "$_bpo" ]; then _br_sources files; return 0; fi
+  if [ "$_BRPM" = on ]; then _br_sources parks > "$_bpo"; else _br_sources files > "$_bpo"; fi
+  cat "$_bpo"
+  if [ "$_BRPM" = on ]; then br_opt_parks_on_end "$_bpo"; else br_opt_parks_shadow "$_bpo"; fi >/dev/null 2>&1
+  br_opt_parks_prune >/dev/null 2>&1
+  rm -f "$_bpo"
+  return 0
 }
 

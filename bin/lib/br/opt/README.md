@@ -23,6 +23,7 @@ Shipped by BH-1468. The modules themselves are:
 | `readmemo.sh` | BH-5946 | a per-run memo of `gh_rest` GETs of a PR, an issue, its comment pages and the merged-PR search; a rung reads live |
 | `unchanged.sh` | BH-5946 | skips a row that ended on a quiet exit while its local fingerprint is unchanged, for up to `BR_UNCHANGED_RECHECK_S` (default 1800) |
 | `untouched.sh` | BH-5913 | writes ONE ALERTS line per project when its oldest untouched park passes `BR_UNTOUCHED_ALERT_MIN` (default 120) |
+| `parks.sh` | BH-9075 | NOT a `BR_OPT_MODULES` word: `br_candidates` (discovery.sh) sources it lazily when `BR_PARKS_MODE` is not `off`. The queue parks as a delta of the D1 `parks` table: a per-project mirror, one `parks-shadow:` line in shadow (the default), the parks mirror as the queue source in `on`, and the daily `POST /api/parks/prune` (`docs/events-bh-9067/3-parks.md`) |
 
 `BR_OPT_MODULES` in the lane is the whole list. Adding a name there is the only
 way a file in this directory is ever sourced; a file nobody named is ignored.

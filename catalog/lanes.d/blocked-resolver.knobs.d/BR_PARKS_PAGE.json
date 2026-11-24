@@ -1,0 +1,11 @@
+{
+  "env": "BR_PARKS_PAGE",
+  "read_in": "bin/lib/br/opt/parks.sh",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 1000,
+  "unit": "rows",
+  "zero_means": null,
+  "note": "BH-9075: the limit of one GET /api/parks/changed page in _brp_sync. Settings row lane.blocked-resolver.br_parks_page; code fallback 500."
+}

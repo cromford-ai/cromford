@@ -1,0 +1,12 @@
+{
+  "env": "PARKS_TIMEOUT_S",
+  "read_in": "bin/lib/jobs/parks.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 30,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9075: the request timeout of one parks call (PUT /api/parks, GET /api/parks/changed, POST /api/parks/prune). A call that does not answer inside it is a failure: no output, rc 1, never an empty 'no changes'. Settings row lib.parks.parks_timeout_s; code fallback 5 in _pk_req."
+}

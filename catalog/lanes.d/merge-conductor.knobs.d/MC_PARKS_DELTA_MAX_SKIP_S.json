@@ -1,0 +1,11 @@
+{
+  "env": "MC_PARKS_DELTA_MAX_SKIP_S",
+  "read_in": "bin/lib/mc/parks-delta.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 60,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9075: the parks delta never skips a project whose last full walk is this old, so a TTL escalation still runs (the NEEDS_REBASE TTL). Settings row lane.merge-conductor.mc_parks_delta_max_skip_s; code fallback 1800."
+}
