@@ -160,7 +160,14 @@ for a in "$@"; do
 done
 PROJ="$HOME/.claude/projects/-work"; mkdir -p "$PROJ"
 printf '{"type":"assistant","uuid":"u-1","timestamp":"2026-09-17T18:00:00Z","message":{"id":"msg_1","model":"claude-fable-5-1","usage":{"input_tokens":5000,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' >> "$PROJ/$sid.jsonl"
-sleep "${STUB_NAP:-0}"
+if [ -n "${STUB_LIVE_WAIT_S:-}" ]; then # BH-9971: wait for the first live POST, bounded, not a fixed nap
+  n=$(( STUB_LIVE_WAIT_S * 10 ))
+  while [ "$n" -gt 0 ] && ! grep -q ' http://jobs.invalid/api/cost/live ' "$T_DIR/curl.log" 2>/dev/null; do
+    sleep 0.1; n=$(( n - 1 ))
+  done
+else
+  sleep "${STUB_NAP:-0}"
+fi
 date +%s.%N > "$T_DIR/stub.end" # determinism: ok the test compares two wall-clock stamps it takes itself
 printf '{"result":"CLEAN DONE","usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"session_id":"%s","total_cost_usd":0.01}\n' "$sid"
 EOF
@@ -237,7 +244,8 @@ wait_until 50 test -s "$T/spawns.log" && ok || bad "C5 control: a direct call wi
 # =============================================================================
 mk_tree "$T/t6" "echo x >> \"$T/tc6.calls\"; exit 3"
 rm -f "$T/logs/cost-live.log" "$T/posts.log" "$T/tc6.calls"
-sleep 4 & P6=$!
+# BH-9971: the session pid lives until the reader was polled 3 times (bounded 30 s), not a fixed 4 s
+( n=300; while [ "$n" -gt 0 ]; do c=$(grep -c . "$T/tc6.calls" 2>/dev/null); [ "${c:-0}" -ge 3 ] && break; sleep 0.1; n=$(( n - 1 )); done ) & P6=$!
 ( unset HARNESS_TEST_SANDBOX; export HARNESS_SECRET=x JOBS_URL=http://jobs.invalid COST_LIVE_POLL_S=1 COST_LIVE_PUSH_S=1
   . "$T/t6/bin/lib/cost-live.sh"; cost_live_meter "$P6" s-missing "$T" ) & M6=$!
 wait_until 100 eval '! kill -0 "$M6" 2>/dev/null' && ok || { bad "C6 the meter did not return after its pid died"; kill "$M6" 2>/dev/null; }
@@ -253,13 +261,13 @@ N6=$(grep -c . "$T/tc6.calls" 2>/dev/null); [ "${N6:-0}" -ge 3 ] && ok || bad "C
 # real and its curl is the shim.
 mkdir -p "$T/bin/lib/jobs"
 cp "$DIR/bin/jobs-client.sh" "$T/bin/"; cp "$DIR/bin/lib/jobs/"*.sh "$T/bin/lib/jobs/"; cp "$DIR/bin/lib/env-path.sh" "$T/bin/lib/"
-c7() { # c7 <agent-call> <build> -> rc
+c7() { # c7 <agent-call> <build> [stub-wait-s] -> rc; the stub ends at the first live POST or the bound
   rm -f "$T/curl.log" "$T/stub.end"; rm -rf "${T:?}/builds/$2"; mkdir -p "$T/builds/$2"
   ( unset HARNESS_TEST_SANDBOX
     ac "$1" "$T/builds/$2/execute.out" HARNESS_SECRET=x JOBS_URL=http://jobs.invalid \
-       COST_ROWS_PUSH_AT_BOUNDARY=0 COST_LIVE_PUSH_S=1 COST_LIVE_POLL_S=1 STUB_NAP=6 )
+       COST_ROWS_PUSH_AT_BOUNDARY=0 COST_LIVE_PUSH_S=1 COST_LIVE_POLL_S=1 STUB_LIVE_WAIT_S="${3:-60}" )
 }
-R7=$(c7 "$DIR/bin/agent-call.sh" freeproj-BH-1-1)
+R7=$(c7 "$DIR/bin/agent-call.sh" freeproj-BH-1-1 60)
 O7="$T/builds/freeproj-BH-1-1/execute.out"
 [ "$R7" = 0 ] && [ "$(cat "$O7" 2>/dev/null)" = "CLEAN DONE" ] && ok || bad "C7 rc=$R7 out='$(cat "$O7" 2>/dev/null)': $(head -c 400 "$T/ac.err")"
 END7=$(cat "$T/stub.end" 2>/dev/null)
@@ -281,7 +289,7 @@ sed -i '/row=$(cost_live_row "$box" "$sid" "$line") && cost_live_push "$row"/d' 
 if cmp -s "$LIB" "$T/c7m/bin/lib/cost-live.sh"; then
   bad "C7-mut the push line was not found in the meter (the mutation proves nothing)"
 else
-  R7M=$(c7 "$T/c7m/bin/agent-call.sh" freeproj-BH-1-2)
+  R7M=$(c7 "$T/c7m/bin/agent-call.sh" freeproj-BH-1-2 3) # the bound exit: no live POST comes
   [ "$R7M" = 0 ] && ok || bad "C7-mut rc=$R7M"
   grep -q ' http://jobs.invalid/api/cost/live ' "$T/curl.log" 2>/dev/null \
     && bad "C7-mut a live row was POSTed with the meter's push deleted" || ok
