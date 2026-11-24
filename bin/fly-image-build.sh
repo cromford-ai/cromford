@@ -40,6 +40,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [ -r "$HERE/jobs-client.sh" ] && . "$HERE/jobs-client.sh" 2>/dev/null
 # shellcheck source=bin/lib/cli-version.sh
 [ -r "$HERE/lib/cli-version.sh" ] && . "$HERE/lib/cli-version.sh"
+# BH-9911: the fleet's claude pin (claude_cli.pin.enabled / pinned_version).
+# shellcheck source=bin/lib/claude-cli-pin.sh
+[ -r "$HERE/lib/claude-cli-pin.sh" ] && . "$HERE/lib/claude-cli-pin.sh"
 # BH-1528: the manifest of every other baked dependency + its resolver.
 # shellcheck source=bin/lib/bake-deps.sh
 [ -r "$HERE/lib/bake-deps.sh" ] && . "$HERE/lib/bake-deps.sh"
@@ -217,7 +220,18 @@ _resolve_cli_version() { # _resolve_cli_version <setting-key> <binary>
   fi
   printf '%s' "$v"
 }
-CLAUDE_CODE_VERSION=$(_resolve_cli_version cli.claude_code.version claude)
+# BH-9911: with the claude pin on, the image bakes exactly the pin
+# (claude_cli.pinned_version, its documented fallback included), never the
+# hub's own version: the pool is not the canary. Pin state unknown (the knob
+# is unreadable and its last read was on): no image change tonight.
+_ccp_rc=1
+if declare -F ccp_enabled >/dev/null 2>&1; then ccp_enabled; _ccp_rc=$?; fi
+case "$_ccp_rc" in
+  0) CLAUDE_CODE_VERSION=$(ccp_pinned_version)
+     echo "== claude: pin on — baking claude_cli.pinned_version $CLAUDE_CODE_VERSION ==" ;;
+  2) echo "FATAL: claude CLI pin state unknown (claude_cli.pin.enabled unreadable, last known on) — refusing to bake an unpinned CLI"; exit 1 ;;
+  *) CLAUDE_CODE_VERSION=$(_resolve_cli_version cli.claude_code.version claude) ;;
+esac
 CODEX_VERSION=$(_resolve_cli_version cli.codex.version codex)
 [ -n "$CLAUDE_CODE_VERSION" ] || { echo "FATAL: no CLAUDE_CODE_VERSION available (no cli.claude_code.version setting row and no claude installed on this host) — refusing to build with an unpinned CLI"; exit 1; }
 [ -n "$CODEX_VERSION" ] || { echo "FATAL: no CODEX_VERSION available (no cli.codex.version setting row and no codex installed on this host) — refusing to build with an unpinned CLI"; exit 1; }

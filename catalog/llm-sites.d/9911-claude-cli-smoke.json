@@ -1,0 +1,20 @@
+[
+    {
+        "id": "claude-cli-smoke",
+        "script": "bin/claude-cli-smoke.sh",
+        "marker": "\"$AC\" claude-cli-smoke fleet",
+        "kind": "agent-call",
+        "lane": "claude-cli-smoke",
+        "stage": "claude-cli-smoke",
+        "project": "fleet",
+        "runners": [
+            "claude (pinned via AGENT_CALL_RUNNERS: the smoke tests the claude CLI itself)"
+        ],
+        "through_agent_call": true,
+        "priced": "yes",
+        "gated": "agent-call",
+        "dedup": "claude_cli_smoke rows of (box, canary version) are read before any call: a failed read, an unsent pending file, a red model-step row (red is terminal) or a run younger than claude_cli.smoke_interval_h makes no call; only the canary box with the canary version installed and claude_cli.pin.enabled=1 gets that far",
+        "deterministic_candidate": null,
+        "note": "BH-9911: four agent-call steps per canary smoke run (stdin, late_stdin through a PATH wrapper that holds stdin back, tool_call with AGENT_CALL_TOOLS=Bash, haiku with AGENT_CALL_NO_TOOLS=1) plus one bin/lane-probe.sh claude run (the lane-probe site). Model: model_routes claude-cli.smoke (a copy of bootstrap.smoke rung 0). Capped by LLM_USD_CAP_DAY (seed row lane.claude-cli-smoke.llm_usd_cap_day = 1)."
+    }
+]

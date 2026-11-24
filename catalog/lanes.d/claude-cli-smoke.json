@@ -1,0 +1,97 @@
+{
+  "id": "claude-cli-smoke",
+  "name": "Claude CLI canary smoke (the canary box tests a new CLI release)",
+  "scope": "box",
+  "script": "bin/claude-cli-smoke.sh",
+  "cadence": "47 * * * *",
+  "boxes": [
+    "project-4",
+    "project-6",
+    "project-6-os",
+    "project-1",
+    "project-3",
+    "project-10",
+    "project-9",
+    "small",
+    "project-2",
+    "project-5"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-claude-cli-smoke",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "LLM_LANE_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "0 makes this lane call no model at all. bin/lib/llm-gate.sh refuses BEFORE the vendor call and writes a zero-cost row_source=refused row, so the stop is visible in the ledger rather than being a lane that went quiet.",
+      "settable": true
+    },
+    {
+      "env": "LLM_RUNNER_ALLOWED",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "Comma/space list of the ONLY ladder rungs this lane may reach. Empty is every rung. The smoke also pins AGENT_CALL_RUNNERS=claude on every step, so no other rung answers for the canary CLI.",
+      "settable": true
+    },
+    {
+      "env": "LLM_USD_CAP_DAY",
+      "type": "float",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "unit": "usd",
+      "zero_means": "unlimited",
+      "read_in": "bin/lib/llm-gate.sh",
+      "note": "BH-9911: dollars the canary smoke may spend in the current UTC day, summed from D1 cost_rows through GET /api/metrics/llm-spend. Seeded row lane.claude-cli-smoke.llm_usd_cap_day = 1 (about 4 runs x 4 Haiku-class calls).",
+      "settable": true
+    },
+    {
+      "env": "CCP_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/claude-cli-smoke.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "CCP_AGENT_CALL",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the path bin/claude-cli-smoke.sh runs instead of bin/agent-call.sh, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane runs.",
+      "settable": false
+    },
+    {
+      "env": "CCP_LANE_PROBE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the path bin/claude-cli-smoke.sh runs instead of bin/lane-probe.sh, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane runs.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/claude-cli-smoke.sh honours CCP_NOW, CCP_AGENT_CALL and CCP_LANE_PROBE only when this is 1. Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": "claude-cli-smoke",
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/claude-cli-smoke.log"
+  }
+}

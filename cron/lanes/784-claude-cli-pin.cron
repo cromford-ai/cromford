@@ -1,0 +1,12 @@
+# ── CLAUDE CLI PIN LANE (BH-9911) ───────────────────────────────────────────
+# The hub owns the fleet's pinned Claude Code CLI version. 04:37 watch: a new
+# npm release becomes claude_cli.canary_version. 04:47 promote: after a green
+# canary soak, claude_cli.pinned_version = the canary version. 05:52 drift: one
+# warn per box or pool image off the pin (after the 05:17 cli-update pushes).
+# Each verb does nothing while claude_cli.pin.enabled is 0. The hub lease gates
+# it. Off: flags/lane-off-claude-cli-pin (bin/harness-ctl.sh off claude-cli-pin).
+# @hub-lanes
+37 4 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/claude-cli-pin.sh watch >> /root/harness/logs/claude-cli-pin-cron.log 2>&1
+47 4 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/claude-cli-pin.sh promote >> /root/harness/logs/claude-cli-pin-cron.log 2>&1
+52 5 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/claude-cli-pin.sh drift >> /root/harness/logs/claude-cli-pin-cron.log 2>&1
+# @hub-lanes

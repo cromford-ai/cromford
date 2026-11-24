@@ -1,0 +1,14 @@
+[
+    {
+        "path": "claude-cli-pin",
+        "class": "box-local",
+        "authority": "the claude CLI pin caches (BH-9911)",
+        "note": "state/claude-cli-pin/pin-enabled: bin/lib/claude-cli-pin.sh ccp_enabled writes the last read of settings row claude_cli.pin.enabled (0|1, tmp + mv); read only when the worker cannot answer, so an outage after an on read holds claude instead of going to latest. state/claude-cli-pin/drift-sent.tsv (hub): <akey> TAB <at> of each drift warn sent by bin/claude-cli-pin.sh drift, rewritten each run to the keys still off the pin. A lost file repeats a warn once. Machine-local, never carried"
+    },
+    {
+        "path": "claude-cli-smoke",
+        "class": "box-local",
+        "authority": "the canary smoke pending rows (BH-9911)",
+        "note": "state/claude-cli-smoke/pending-<run_id>.json: bin/claude-cli-smoke.sh writes a run's rows here before the POST to /api/claude-cli/smoke and deletes the file after it; the next run resends it first (the table's primary key makes a resend safe). A pending file the worker refuses with a 4xx is renamed state/claude-cli-smoke/dead-<run_id>.json (one ALERTS line, never resent, kept for an operator to read and delete; at most one per smoke run). The D1 table claude_cli_smoke is the record. Machine-local, never carried"
+    }
+]

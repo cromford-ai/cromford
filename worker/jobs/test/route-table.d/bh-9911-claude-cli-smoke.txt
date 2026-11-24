@@ -1,0 +1,5 @@
+# CLAUDE CLI SMOKE (BH-9911): the canary smoke rows of a new Claude Code CLI
+# version. bin/claude-cli-smoke.sh writes them; it and bin/claude-cli-pin.sh
+# promote read them back per (box, version). Bearer-gated.
+POST /api/claude-cli/smoke
+GET /api/claude-cli/smoke

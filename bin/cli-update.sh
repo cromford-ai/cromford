@@ -89,6 +89,20 @@
 # CLI_UPDATE_HOME set) names them; a box without apt-get skips gh, a box
 # without flyctl skips flyctl (no row).
 #
+# THE CLAUDE PIN (BH-9911). When settings row claude_cli.pin.enabled is 1, claude
+# is not moved to latest: this box installs exactly its target version,
+# bin/lib/claude-cli-pin.sh ccp_target_version (claude_cli.pinned_version; the
+# canary box claude_cli.canary_box runs claude_cli.canary_version instead).
+# Native: `claude install <V>`; npm: `npm install -g @anthropic-ai/claude-code@<V>`.
+# Then every SYMLINK whose version is not <V> is repointed at the install that
+# is <V> (newer ones too), and ok=1 means "ended on <V>", so a planned move from
+# 2.1.340 to 2.1.330 is not WORSE. A run that ends off <V> is ok=0, rc 1, note
+# `off-pin <after> want <V>`. When the knob cannot be read and its last read
+# (state/claude-cli-pin/pin-enabled) was on, claude is not touched that day:
+# method=none, note pin-unknown. Pin off: everything below is unchanged.
+# bin/bootstrap-machine.sh runs this script with CLI_UPDATE_CLIS=claude and
+# CLI_UPDATE_SYS_TOOLS= (empty) when the pin is on.
+#
 # Overrides (tests only; production never sets them): HARNESS, CLI_UPDATE_HOME,
 # CLI_UPDATE_NPM_PREFIX, CLI_UPDATE_NPM_PREFIXES, CLI_UPDATE_LINK_DIRS,
 # CLI_UPDATE_CLIS, CLI_UPDATE_GROK_INSTALLER, CLI_UPDATE_JOBS_CLIENT,
@@ -178,6 +192,23 @@ set -a +u; . "$HENV/global.env" 2>/dev/null; set +a -u
 JOBS_CLIENT="${CLI_UPDATE_JOBS_CLIENT:-$H/bin/jobs-client.sh}"
 # shellcheck source=/dev/null
 [ -f "$JOBS_CLIENT" ] && . "$JOBS_CLIENT" 2>/dev/null
+# shellcheck source=bin/lib/claude-cli-pin.sh
+[ -r "$HERE/lib/claude-cli-pin.sh" ] && . "$HERE/lib/claude-cli-pin.sh" 2>/dev/null
+
+# BH-9911: the claude pin. PIN_MODE off | on | unknown; PIN_T the target.
+PIN_MODE=off; PIN_T=""
+case " $CLIS " in
+  *" claude "*)
+    if declare -F ccp_enabled >/dev/null 2>&1; then
+      ccp_enabled 2>>"$LOG"
+      case $? in
+        0) PIN_T=$(ccp_target_version "$BOX" 2>>"$LOG")
+           if [ -n "$PIN_T" ]; then PIN_MODE=on; log "claude: pin on, target $PIN_T"
+           else PIN_MODE=unknown; log "claude: pin on but no target version resolved"; fi ;;
+        2) PIN_MODE=unknown; log "claude: claude_cli.pin.enabled unreadable and last known on — claude is not updated this run" ;;
+      esac
+    fi ;;
+esac
 
 [ -s "$CSV" ] || echo "at,box,cli,version_before,version_after,method,ok,path,note" > "$CSV"
 
@@ -222,36 +253,48 @@ best_of() {
   done
   [ -n "$best" ] && echo "$best"
 }
+# best_of_pinned <version> <candidate lines on stdin> -> the first candidate
+# whose version is exactly <version> (BH-9911); nothing when none is.
+best_of_pinned() {
+  local want="$1" line
+  while read -r line; do
+    [ -n "$line" ] && [ "${line%% *}" = "$want" ] && { echo "$line"; return 0; }
+  done
+  return 1
+}
 
 # npm_update <pkg> -> rc; sets METHOD_NOTE. --force ONLY after an EEXIST /
 # ENOTEMPTY, which are npm's words for "something not mine is at the path I
 # link" (the hand-made /usr/bin/codex on project-9) — a network or registry
 # failure is retried by tomorrow's tick, never forced.
-npm_update() {
-  local pkg="$1" rc
-  run_logged "npm install -g $pkg@latest" npm install -g "$pkg@latest"; rc=$?
+npm_update() { # npm_update <pkg> [version, default latest]
+  local pkg="$1" ver="${2:-latest}" rc
+  run_logged "npm install -g $pkg@$ver" npm install -g "$pkg@$ver"; rc=$?
   if [ $rc -ne 0 ] && grep -qE 'EEXIST|ENOTEMPTY' <<<"$RUN_OUT"; then
     log "npm $pkg: EEXIST/ENOTEMPTY — retrying with --force"
-    run_logged "npm install -g --force $pkg@latest" npm install -g --force "$pkg@latest"; rc=$?
+    run_logged "npm install -g --force $pkg@$ver" npm install -g --force "$pkg@$ver"; rc=$?
     [ $rc -eq 0 ] && METHOD_NOTE="${METHOD_NOTE}npm-forced;"
   fi
   return $rc
 }
 
-# relink <cli> <best-version> <best-launcher> <best-resolved>
+# relink <cli> <best-version> <best-launcher> <best-resolved> [pin]
 #   Every SYMLINK in LINK_DIRS that resolves to something older than the best
 #   install is repointed at the best launcher, old link saved beside it. A
 #   regular file is reported, never replaced — that is someone's deliberate
-#   install and overwriting it is how the next incident starts.
+#   install and overwriting it is how the next incident starts. With `pin`
+#   (BH-9911) the best install IS the pinned version, and a link whose version
+#   is not exactly it — newer included — is repointed.
 relink() {
-  local cli="$1" bv="$2" bl="$3" br="$4" d p v r
+  local cli="$1" bv="$2" bl="$3" br="$4" mode="${5:-}" d p v r
   for d in $LINK_DIRS; do
     p="$d/$cli"
     [ -e "$p" ] || [ -L "$p" ] || continue
     r=$(readlink -f "$p" 2>/dev/null || echo "")
     [ "$r" = "$br" ] && continue
     v=$(cli_version_of "$p")
-    if cli_version_ge "$v" "$bv"; then continue; fi
+    if [ "$mode" = pin ]; then [ "$v" = "$bv" ] && continue
+    elif cli_version_ge "$v" "$bv"; then continue; fi
     if [ -L "$p" ]; then
       cp -P "$p" "$p.bak-$(date -u +%Y%m%d%H%M)" 2>/dev/null
       if ln -sfn "$bl" "$p" 2>>"$LOG"; then
@@ -262,7 +305,7 @@ relink() {
         METHOD_NOTE="${METHOD_NOTE}relink-failed $p;"
       fi
     else
-      log "$cli: $p is a regular file at $v, older than $bv at $bl — NOT touched (replace it by hand)"
+      log "$cli: $p is a regular file at $v, $([ "$mode" = pin ] && echo "not the pin" || echo "older than") $bv at $bl — NOT touched (replace it by hand)"
       METHOD_NOTE="${METHOD_NOTE}stale-file $p=$v;"
     fi
   done
@@ -292,7 +335,11 @@ for CLI in $CLIS; do
   esac
 
   # --- update each install ---------------------------------------------------
-  if [ "$CLI" = grok ]; then
+  # BH-9911: CTARGET is what claude installs: latest, or the pinned version.
+  CTARGET=latest; [ "$CLI" = claude ] && [ "$PIN_MODE" = on ] && CTARGET="$PIN_T"
+  if [ "$CLI" = claude ] && [ "$PIN_MODE" = unknown ]; then
+    METHOD_NOTE="${METHOD_NOTE}pin-unknown;"
+  elif [ "$CLI" = grok ]; then
     # One mechanism whether or not anything is installed: re-running the
     # installer IS the update, and on a box with no grok at all it is the
     # bootstrap (small, 2026-09-22). PKG is empty for grok, so the npm branch
@@ -302,16 +349,18 @@ for CLI in $CLIS; do
   elif [ "$HAS_NATIVE" = 1 ]; then
     METHOD="${METHOD}native+"
     if [ -x "$NATIVE" ]; then NB="$NATIVE"; else NB="$BEFORE_PATH"; fi
-    if run_logged "$NB install latest" "$NB" install latest; then :; else
-      log "$CLI: native install latest FAILED (rc=$?) — see above"; METHOD_NOTE="${METHOD_NOTE}native-failed;"
+    if run_logged "$NB install $CTARGET" "$NB" install "$CTARGET"; then :; else
+      log "$CLI: native install $CTARGET FAILED (rc=$?) — see above"; METHOD_NOTE="${METHOD_NOTE}native-failed;"
     fi
   fi
-  if [ "$HAS_NPM" = 1 ] || { [ "$HAS_NATIVE" = 0 ] && [ -n "$PKG" ]; }; then
+  if [ "$CLI" = claude ] && [ "$PIN_MODE" = unknown ]; then
+    :
+  elif [ "$HAS_NPM" = 1 ] || { [ "$HAS_NATIVE" = 0 ] && [ -n "$PKG" ]; }; then
     # No install of any kind found: npm is the bootstrap path, so try it.
     [ "$HAS_NPM" = 1 ] || log "$CLI: no install found — bootstrapping through npm"
     METHOD="${METHOD}npm+"
     if [ -n "$PKG" ] && command -v npm >/dev/null 2>&1; then
-      npm_update "$PKG" || { log "$CLI: npm update FAILED — keeping what is installed"; METHOD_NOTE="${METHOD_NOTE}npm-failed;"; }
+      npm_update "$PKG" "$CTARGET" || { log "$CLI: npm update FAILED — keeping what is installed"; METHOD_NOTE="${METHOD_NOTE}npm-failed;"; }
     else
       log "$CLI: npm not available — cannot update the npm install"; METHOD_NOTE="${METHOD_NOTE}no-npm;"
     fi
@@ -321,11 +370,21 @@ for CLI in $CLIS; do
   # --- reconcile the links so every PATH sees the newest -------------------
   hash -r 2>/dev/null
   CANDS=$(candidates "$CLI" "$PKG")
-  BEST=$(best_of <<<"$CANDS")
+  BEST=""; RLMODE=""
+  if [ "$CLI" = claude ] && [ "$PIN_MODE" = on ]; then
+    # BH-9911: the links follow the install that IS the pin. No install at the
+    # pin: no relink (the run ends off-pin below), only the no-PATH link.
+    BEST=$(best_of_pinned "$CTARGET" <<<"$CANDS"); RLMODE=pin
+    [ -n "$BEST" ] || { log "$CLI: no install is at the pin $CTARGET — links left as they are"; BEST=$(best_of <<<"$CANDS"); RLMODE=none; }
+  elif [ "$CLI" = claude ] && [ "$PIN_MODE" = unknown ]; then
+    RLMODE=none
+  else
+    BEST=$(best_of <<<"$CANDS")
+  fi
   if [ -n "$BEST" ]; then
     read -r BV BL BR <<<"$BEST"
     log "$CLI: installs:$(printf '\n%s' "$CANDS" | sed 's/^/ /' | tr '\n' ' ')"
-    relink "$CLI" "$BV" "$BL" "$BR"
+    [ "$RLMODE" = none ] || relink "$CLI" "$BV" "$BL" "$BR" "$RLMODE"
     # Nothing on PATH at all, but an install exists: give PATH one link, in the
     # first managed dir PATH actually contains, so the lanes can find it.
     hash -r 2>/dev/null
@@ -358,11 +417,16 @@ for CLI in $CLIS; do
   fi
   OK=1
   if [ "$AFTER" = missing ]; then OK=0; RC=1; log "$CLI: MISSING after update"
+  elif [ "$CLI" = claude ] && [ "$PIN_MODE" = on ]; then
+    # BH-9911: success is "ended on the pin", whichever way it moved.
+    if [ "$AFTER" != "$CTARGET" ]; then
+      OK=0; RC=1; METHOD_NOTE="${METHOD_NOTE}off-pin $AFTER want $CTARGET;"; log "$CLI: OFF the pin after update ($AFTER, want $CTARGET)"
+    fi
   elif ! cli_version_ge "$AFTER" "$BEFORE"; then OK=0; RC=1; log "$CLI: WORSE after update ($BEFORE -> $AFTER)"
   fi
   # A newer install that PATH still does not resolve is worth a word even when
   # nothing got worse: it is exactly the split the check script alerts on.
-  if [ -n "${BV:-}" ] && [ "$AFTER" != missing ] && cli_version_gt "$BV" "$AFTER"; then
+  if [ "$RLMODE" != pin ] && [ "$RLMODE" != none ] && [ -n "${BV:-}" ] && [ "$AFTER" != missing ] && cli_version_gt "$BV" "$AFTER"; then
     METHOD_NOTE="${METHOD_NOTE}path-behind-best $BV@$BL;"
   fi
   NOTE=$(printf '%s' "$METHOD_NOTE" | tr -d ',\n' | sed 's/;$//')
@@ -385,7 +449,7 @@ for CLI in $CLIS; do
         || log "$CLI: setting $SKEY not written (worker unreachable or refused) — CSV is the record"
     fi
   fi
-  unset BV BL BR SKEY
+  unset BV BL BR SKEY RLMODE
 done
 
 # --- system tools: flyctl and gh (BH-6742) -----------------------------------

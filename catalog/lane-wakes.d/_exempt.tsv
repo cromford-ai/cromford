@@ -32,3 +32,4 @@ security-audit	on-demand	no cron line
 trap-eval	on-demand	no cron line
 web-task	on-demand	no cron line
 discovery-daily	schedule	a daily per-project run on its clock; a wake has nothing to add
+claude-cli-smoke	schedule	an hourly run on its clock (BH-9911): it exits before any spend unless this box is the canary box, and the D1 rows of the canary version stop a repeat run inside claude_cli.smoke_interval_h; a wake has nothing to add

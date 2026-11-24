@@ -1,0 +1,9 @@
+# ── CLAUDE CLI CANARY SMOKE LANE (BH-9911) ──────────────────────────────────
+# Hourly at :47 on every box except the hub (the hub is never the canary).
+# bin/claude-cli-smoke.sh exits at once with no row and no spend unless this
+# box is claude_cli.canary_box, claude_cli.pin.enabled=1, a canary version is
+# set and the claude on PATH reports it; then at most once per
+# claude_cli.smoke_interval_h it runs five agent-call steps and one log check
+# and writes the rows to claude_cli_smoke. A red step is one ALERTS line.
+# Off: flags/lane-off-claude-cli-smoke (bin/harness-ctl.sh off claude-cli-smoke).
+47 * * * * /root/harness/bin/claude-cli-smoke.sh >> /root/harness/logs/claude-cli-smoke-cron.log 2>&1

@@ -217,6 +217,21 @@ else
   echo "WARN: bin/lib/bootstrap-tool-pins.sh not found; bun, playwright and codegraph not installed"
 fi
 # <<< tool pins
+# Claude Code on the fleet's pinned version (BH-9911): when the settings row
+# claude_cli.pin.enabled is 1, bin/cli-update.sh moves claude to this box's
+# target (bin/lib/claude-cli-pin.sh: claude_cli.pinned_version, or the canary
+# version on the canary box). Not on the pin afterwards is FATAL. Pin off or
+# unreadable: this block does nothing and prints nothing.
+# tests/bootstrap-cli-pin.bh-9911-test.sh runs this block as shipped.
+# >>> claude cli pin (BH-9911)
+_ccp_rc=0
+( set +eu; . "$HERE/jobs-client.sh" >/dev/null 2>&1; . "$HERE/lib/claude-cli-pin.sh" >/dev/null 2>&1 || exit 3; ccp_enabled 2>/dev/null ) || _ccp_rc=$?
+if [ "$_ccp_rc" = 0 ]; then
+  echo "== claude cli pin =="
+  CLI_UPDATE_CLIS=claude CLI_UPDATE_SYS_TOOLS="" "$HERE/cli-update.sh" \
+    || { echo "FATAL: claude CLI not on the pin (bin/cli-update.sh rc $?) — see logs/cli-update.log"; exit 1; }
+fi
+# <<< claude cli pin
 # Security tooling (2026-07-27): semgrep feeds the review stage and fails open
 # in run-build.sh.
 # Debian pip is externally-managed — semgrep goes in its own venv (whisper pattern).

@@ -36,10 +36,12 @@
 #   flyctl deploy . -c fly/lane-run.toml --build-only --push --image-label latest \
 #     --build-arg HARNESS_COMMIT=$(git rev-parse HEAD) \
 #     --build-arg NODE_VERSION=$($JC setting-get bake.node.version) \
-#     --build-arg CLAUDE_CODE_VERSION=$($JC setting-get cli.claude_code.version) \
+#     --build-arg CLAUDE_CODE_VERSION=$($JC setting-get claude_cli.pinned_version) \
 #     --build-arg CODEX_VERSION=$($JC setting-get cli.codex.version) \
 #     --build-arg PLAYWRIGHT_VERSION=$($JC setting-get bake.playwright.version) \
 #     --build-arg FLYCTL_VERSION=$($JC setting-get bake.flyctl.version)
+#   CLAUDE_CODE_VERSION is the fleet pin (BH-9911) while the settings row
+#   claude_cli.pin.enabled is 1; while it is 0, use cli.claude_code.version.
 #   The build FATALs when a version arg is empty (fly/bake-pin.sh and the
 #   cli-pin-verify block): never "latest". Set the bake.flyctl.version row
 #   (BH-7516) before the first build that has the bake-flyctl block.

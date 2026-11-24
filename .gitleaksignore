@@ -40,6 +40,7 @@ tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:287
+tests/bootstrap-cli-pin.bh-9911-test.sh:generic-api-key:39
 tests/box-launch.bh-5748-test.sh:generic-api-key:220
 tests/box-launch.bh-5748-test.sh:generic-api-key:400
 tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:104
@@ -50,8 +51,13 @@ tests/br-pool-fixround-fetch.bh-8458-test.sh:github-pat:137
 tests/builds-retention-settled.bh-7931-test.sh:generic-api-key:286
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68
 tests/ci-local.bh-6897-test.sh:generic-api-key:156
+tests/claude-cli-pin.bh-9911-test.sh:generic-api-key:49
+tests/claude-cli-smoke.bh-9911-test.sh:generic-api-key:82
+tests/claude-cli-smoke.bh-9911-test.sh:generic-api-key:110
+tests/claude-cli-smoke.bh-9911-test.sh:generic-api-key:146
 tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
 tests/claude-cost-stdin-fp.bh-9064-test.sh:generic-api-key:66
+tests/cli-update-pin.bh-9911-test.sh:generic-api-key:43
 tests/client-questions.bh-9028-test.sh:generic-api-key:37
 tests/component-watch.bh-6972-test.sh:generic-api-key:186
 tests/conductor-enqueue-only.bh-6495-test.sh:curl-auth-header:141
@@ -86,6 +92,7 @@ tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:137
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:157
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:197
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:217
+tests/fly-image-cli-pin.bh-9911-test.sh:generic-api-key:54
 tests/fly-pool-machine-pull.bh-7430-test.sh:generic-api-key:440
 tests/fly-sha-flags.bh-7191-test.sh:curl-auth-header:382
 tests/gate-trk-selfwrite.bh-8449-test.sh:generic-api-key:40
@@ -218,6 +225,7 @@ worker/jobs/test/box-health-collector.bh-8553.test.js:generic-api-key:17
 worker/jobs/test/box-ssh.bh-7710.test.js:generic-api-key:14
 worker/jobs/test/br-attempts-indexes.bh-7801.test.js:generic-api-key:12
 worker/jobs/test/br-attempts.bh-7801.test.js:generic-api-key:17
+worker/jobs/test/claude-cli-smoke.bh-9911.test.js:generic-api-key:23
 worker/jobs/test/conductor-state.bh-4156.test.js:generic-api-key:16
 worker/jobs/test/cross-request-promise.bh-9850.test.js:generic-api-key:41
 worker/jobs/test/d1-load.bh-9657.test.js:generic-api-key:35

@@ -1,0 +1,48 @@
+{
+  "id": "claude-cli-pin",
+  "name": "Claude CLI pin (watch a new release, promote the canary, report drift)",
+  "scope": "hub",
+  "script": "bin/claude-cli-pin.sh",
+  "cadence": "37 4 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-claude-cli-pin",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "CCP_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: epoch seconds bin/claude-cli-pin.sh uses as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "CCP_NPM_VIEW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the text bin/claude-cli-pin.sh watch uses instead of npm view, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/claude-cli-pin.sh honours CCP_NOW and CCP_NPM_VIEW only when this is 1. Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/claude-cli-pin.log"
+  }
+}
