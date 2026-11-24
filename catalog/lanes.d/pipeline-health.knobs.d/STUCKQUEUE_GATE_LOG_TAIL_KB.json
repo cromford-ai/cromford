@@ -1,0 +1,11 @@
+{
+  "env": "STUCKQUEUE_GATE_LOG_TAIL_KB",
+  "type": "int",
+  "default": 2048,
+  "min": 64,
+  "max": 16384,
+  "unit": "KB",
+  "zero_means": null,
+  "read_in": "bin/lib/stuckqueue-gate.sh",
+  "note": "BH-9863: how many KB at the end of logs/fly-pool.log and logs/fly-dispatch.log bin/lib/stuckqueue-gate.sh reads (once per pipeline-health run) to name the gate in the 'queued Nm with no spawn' alert. Out of range clamps; not a whole number falls back to 2048."
+}

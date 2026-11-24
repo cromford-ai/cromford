@@ -101,6 +101,10 @@ if [ -r "$H/bin/lib/remote-results-ledger.sh" ]; then # shellcheck source=bin/li
 # pages exactly as it did before.
 if [ -r "$H/bin/lib/stuckqueue-escalate.sh" ]; then # shellcheck source=bin/lib/stuckqueue-escalate.sh
   . "$H/bin/lib/stuckqueue-escalate.sh"; fi
+# ...and names the gate that holds the key (BH-9863). Absent, check 1 pages
+# with its old tail.
+if [ -r "$H/bin/lib/stuckqueue-gate.sh" ]; then # shellcheck source=bin/lib/stuckqueue-gate.sh
+  . "$H/bin/lib/stuckqueue-gate.sh"; fi
 # ...and, before it pages, the owning box's rr-consumed row (BH-8364). Absent,
 # the check pages exactly as it did before.
 if [ -r "$H/bin/lib/rr-relay.sh" ]; then # shellcheck source=bin/lib/rr-relay.sh
@@ -451,8 +455,18 @@ for P in $PROJECTS; do
     if [ "$SQ_W" = quiet ]; then
       echo "stuckqueue:$P:$(basename "$Q")" >> "${FIRED:-/dev/null}"; continue
     fi
+    # BH-9863: the gate that holds the key, from local records (sqg_gate).
+    # The prefix up to "with no spawn" is parsed by
+    # bin/lib/unblock/collectors/infra.sh and stays as it is.
+    SQ_TAIL="fly-dispatch/pool not picking it up"
+    if command -v sqg_gate >/dev/null 2>&1; then
+      SQ_G=$(sqg_gate "$H" "$P" "$(basename "$Q" .json)")
+      SQ_GN="${SQ_G%%$'\t'*}"; SQ_GD="${SQ_G#*$'\t'}"
+      if [ -n "$SQ_GN" ] && [ "$SQ_GN" != unknown ]; then SQ_TAIL="held by $SQ_GN: $SQ_GD"
+      else SQ_TAIL="$SQ_TAIL (gate unknown: $SQ_GD)"; fi
+    fi
     alert 7200 "stuckqueue:$P:$(basename "$Q")" \
-      "$P $(basename "$Q" .json) queued $((AGE/60))m with no spawn — fly-dispatch/pool not picking it up"
+      "$P $(basename "$Q" .json) queued $((AGE/60))m with no spawn — $SQ_TAIL"
   done
   command -v sqe_prune >/dev/null 2>&1 && sqe_prune "$H" "$P"
 done

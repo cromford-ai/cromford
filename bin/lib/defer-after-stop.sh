@@ -52,6 +52,19 @@
 #     and the pool_holds row, so the fleet page counts it as held. A release
 #     removes only a marker whose why starts `defer-after:`.
 #   The clock is ${DFS_NOW:-now} (tests set DFS_NOW).
+#
+# BH-9863 (project-3, 2026-11-20: 6 ready tickets queued 02:00-13:50Z with no
+# spawn; a blocker that merged between two checks stayed unseen up to 240 min):
+#   - The wait line has an optional 7th field, <blocker sig>: ws_blocker_sig
+#     (bin/lib/wait-sig.sh), a hash of what this box knows about the blocker
+#     (its newest record and RESULT, COMMENTED, its PR URL in
+#     state/merge-sweep-done.txt, the conductor's closed-watch memo, prstates,
+#     its queue file). A line without it is read as before.
+#   - A tick that is not due on the clock is due NOW when the stored sig is
+#     set and differs from the current one ("re-check now: <blk> changed
+#     since the last check"). A line with no sig stores the current one and
+#     reads nothing. The open-PR list stays the only release truth: a changed
+#     sig only makes the one cached list read happen this tick.
 # The root is ${HARNESS:-${H:-}}; with none, the gate passes.
 
 _dfs_say() { declare -F say >/dev/null 2>&1 && say "$*"; return 0; }
@@ -97,29 +110,36 @@ _dfs_wait_get() {
   [ -s "$f" ] || return 1
   head -n 1 "$f" 2>/dev/null
 }
-# _dfs_wait_put <p> <key> <blk> <kind> <since> <checks> <next_at> <alerted_at>
+# _dfs_wait_put <p> <key> <blk> <kind> <since> <checks> <next_at> <alerted_at> [sig]
+#   Field 7 (sig) is written only when the 9th argument is non-empty.
 _dfs_wait_put() {
-  local d f; d="$(_dfs_pdir "$1")" || return 0; f="$d/$2.dfs-wait"
+  local d f l; d="$(_dfs_pdir "$1")" || return 0; f="$d/$2.dfs-wait"
   mkdir -p "$d" 2>/dev/null
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$5" "$6" "$7" "${8:-}" > "$f.$$" 2>/dev/null \
+  l=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$3" "$4" "$5" "$6" "$7" "${8:-}")
+  [ -n "${9:-}" ] && l="$l"$'\t'"$9"
+  printf '%s\n' "$l" > "$f.$$" 2>/dev/null \
     && mv -f "$f.$$" "$f" 2>/dev/null || rm -f "$f.$$" 2>/dev/null
   return 0
 }
 _dfs_wait_del() { local d; d="$(_dfs_pdir "$1")" || return 0; rm -f "$d/$2.dfs-wait" 2>/dev/null; return 0; }
 # _dfs_wait_load <p> <key> <blk> <kind> <now> — sets _DFS_W_SINCE, _CHECKS,
-# _NEXT, _ALERTED and _NEW (1 = no line for this blocker: the clock starts now).
+# _NEXT, _ALERTED, _SIG (field 7, BH-9863; empty on an old line) and _NEW
+# (1 = no line for this blocker: the clock starts now).
 _dfs_wait_load() {
-  local v ob ok os oc on oa
-  _DFS_W_SINCE="$5"; _DFS_W_CHECKS=0; _DFS_W_NEXT=0; _DFS_W_ALERTED=""; _DFS_W_NEW=1
+  local v ob ok os oc on oa os7=""
+  _DFS_W_SINCE="$5"; _DFS_W_CHECKS=0; _DFS_W_NEXT=0; _DFS_W_ALERTED=""; _DFS_W_NEW=1; _DFS_W_SIG=""
   v=$(_dfs_wait_get "$1" "$2") || return 0
   # Fields split by hand: tab is IFS white space, so `read` folds empty fields.
   ob="${v%%$'\t'*}"; v="${v#*$'\t'}"; ok="${v%%$'\t'*}"; v="${v#*$'\t'}"
   os="${v%%$'\t'*}"; v="${v#*$'\t'}"; oc="${v%%$'\t'*}"; v="${v#*$'\t'}"
   on="${v%%$'\t'*}"; oa=""; case "$v" in *$'\t'*) oa="${v#*$'\t'}" ;; esac
+  case "$oa" in *$'\t'*) os7="${oa#*$'\t'}"; oa="${oa%%$'\t'*}" ;; esac
   [ "$ob" = "$3" ] || return 0
   case "$os" in ''|*[!0-9]*) return 0 ;; esac
   _DFS_W_SINCE="$os"; _DFS_W_CHECKS=$(_dfs_num "$oc" 0); _DFS_W_NEXT=$(_dfs_num "$on" 0)
   _DFS_W_ALERTED=$(_dfs_num "$oa" ""); _DFS_W_NEW=0
+  [[ "$os7" =~ ^[0-9a-f]{16}$ ]] && _DFS_W_SIG="$os7"
+  return 0
 }
 
 # _dfs_gap <checks> -> minutes to the next re-check after check <checks>.
@@ -213,12 +233,15 @@ _dfs_released() {
 
 dfs_stop_check() { # dfs_stop_check <project> <key> <ticket>
   local p="${1:-}" key="${2:-}" ticket="${3:-}" r on rec l1 bl blk n kind prt brec bl2 rc=0
-  local now lim lsec lknob waited due why nxt
+  local now lim lsec lknob waited due why nxt cur=""
   r="${HARNESS:-${H:-}}"; [ -n "$r" ] && [ -n "$p" ] && [ -n "$key" ] || return 0
   on="${POOL_DEFER_AFTER_STOP:-1}" # knob POOL_DEFER_AFTER_STOP (catalog/lanes.d/fly-pool.knobs.d)
   [ "$on" = 0 ] && return 0
   [[ "$key" =~ $_DFS_KEY_RE ]] || return 0
   command -v defer_wait_key >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/deferral-after.sh" 2>/dev/null
+  # BH-9863: ws_blocker_sig. Missing, the row waits on the clock as before.
+  # shellcheck source=bin/lib/wait-sig.sh
+  command -v ws_blocker_sig >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/wait-sig.sh" 2>/dev/null
   rec=$(_dfs_newest "$r" "$p" "$key"); [ -n "$rec" ] || return 0
   l1=$(head -1 "$rec/RESULT" 2>/dev/null)
   bl=$(_dfs_blocker "$key" "$l1") || return 0
@@ -245,12 +268,23 @@ dfs_stop_check() { # dfs_stop_check <project> <key> <ticket>
       [ -x "$r/bin/alert-line.sh" ] && HARNESS="$r" "$r/bin/alert-line.sh" "[pool/$p] $key: WAIT LIMIT — waited $waited min for $blk ($prt, kind $kind, $lknob); the hold is released and the ticket is offered again. If $blk is stuck, that is the thing to move." >/dev/null 2>&1
       _DFS_W_ALERTED="$now"
     fi
-    _dfs_wait_put "$p" "$key" "$blk" "$kind" "$now" 0 0 "$_DFS_W_ALERTED"
+    _dfs_wait_put "$p" "$key" "$blk" "$kind" "$now" 0 0 "$_DFS_W_ALERTED" "$_DFS_W_SIG"
     _dfs_held_clear "$p" "$key"
     _dfs_say "RELEASED $key: wait limit — waited $waited min for $blk ($prt, kind $kind, $lknob); offered again"
     return 0
   fi
   due=1; [ "$_DFS_W_NEW" = 0 ] && [ "$now" -lt "$_DFS_W_NEXT" ] && due=0
+  # BH-9863: a blocker that changed in local state makes the check due now.
+  command -v ws_blocker_sig >/dev/null 2>&1 && cur=$(ws_blocker_sig "$r" "$p" "$blk" 2>/dev/null) || cur=""
+  if [ "$due" = 0 ] && [ -n "$cur" ]; then
+    if [ -z "$_DFS_W_SIG" ]; then
+      # A line from before BH-9863: store the sig, read nothing this tick.
+      _dfs_wait_put "$p" "$key" "$blk" "$kind" "$_DFS_W_SINCE" "$_DFS_W_CHECKS" "$_DFS_W_NEXT" "$_DFS_W_ALERTED" "$cur"
+    elif [ "$_DFS_W_SIG" != "$cur" ]; then
+      due=1
+      _dfs_say "$key: re-check now: $blk changed since the last check"
+    fi
+  fi
   if [ "$due" = 1 ]; then
     pr_open_for_key_any_rest "$blk" || rc=$?
     case "$rc" in
@@ -263,7 +297,7 @@ dfs_stop_check() { # dfs_stop_check <project> <key> <ticket>
     esac
     _DFS_W_CHECKS=$((_DFS_W_CHECKS + 1))
     _DFS_W_NEXT=$((now + $(_dfs_gap "$_DFS_W_CHECKS") * 60))
-    _dfs_wait_put "$p" "$key" "$blk" "$kind" "$_DFS_W_SINCE" "$_DFS_W_CHECKS" "$_DFS_W_NEXT" "$_DFS_W_ALERTED"
+    _dfs_wait_put "$p" "$key" "$blk" "$kind" "$_DFS_W_SINCE" "$_DFS_W_CHECKS" "$_DFS_W_NEXT" "$_DFS_W_ALERTED" "$cur"
   fi
   if _dfs_released "$p" "$key" "$ticket" "$rec" "$blk" "$prt"; then
     _dfs_held_clear "$p" "$key"

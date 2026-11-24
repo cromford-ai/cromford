@@ -195,9 +195,12 @@ Three fixes, none of which changes the guard limit:
 - Park (`bin/lib/triage-repeat-park.sh`). In `bin/triage-shard.sh`, after the
   BH-9286 note, `trp_on_repeat` handles a `call-guard repeat` refusal (rc 74):
   1. It writes `state/triage-repeat/<p>/<KEY>.park` first. The line is
-     `<board id>\t<cg fp>\t<epoch>\t<rebase>\ttriage-repeat-refused: <mark>`.
+     `<board id>\t<cg fp>\t<epoch>\t<rebase>\ttriage-repeat-refused: <mark>\t<qsig>`.
      The board id is the sha256 (16 hex) of the ticket's own entry in
-     `state/<p>.gate.pending` (`_tsh_fp_pending`).
+     `state/<p>.gate.pending` (`_tsh_fp_pending`). The qsig (BH-9863) is
+     `triage_shard_qsig`: the key's build records and the state of what it
+     waits on (`bin/lib/wait-sig.sh`). A park from before BH-9863 has 5
+     columns.
   2. It drops the READY line(s) and `ready` row(s) through
      `bin/queue-line-drop.sh`.
   3. It records one `lifecycle_note` (`triage-repeat-refused: ...`).
@@ -212,7 +215,13 @@ Three fixes, none of which changes the guard limit:
   id: the park and `.commented` are deleted (`unparked: board entry changed`)
   and the next tick starts the shard 1 time. On an in-app board our own
   comment moves the entry, so the first move after it is absorbed once
-  (`rebase=1`). GitHub boards already hide our App's comment. No gate file,
+  (`rebase=1`). GitHub boards already hide our App's comment. The park also
+  lifts when the board id is unchanged and the qsig moved (BH-9863): the
+  blocker's build ended, its PR merged or closed, or the key got a new
+  record. Then only the `.park` is deleted (`unparked: queue state changed
+  (blocker or build record moved)`) and `.commented` stays, so the same
+  board state gets no second comment. A queue-line reword, a queue-row
+  rewrite or another key's record does not move the qsig. No gate file,
   or a corrupt park file, dispatches. Knobs
   (`catalog/lanes.d/_lib.triage-repeat-park.json`): `TRIAGE_REPEAT_PARK`
   (1, 0 = off) and `TRIAGE_REPEAT_PARK_KEEP_S` (30 days: older park files
@@ -236,12 +245,17 @@ Three fixes, none of which changes the guard limit:
   `STUCKQUEUE_ESCALATE_AFTER` (5, 0 = off) times with no change of its
   mtime or size, one critical `bin/lane-alert.sh` message goes to the
   operator (`--id ph-stuckqueue-escalate-<p>-<KEY>`). The message carries the
-  park reason of the key. Later firings send nothing until the file changes,
+  park reason of the key, and (BH-9863) ends `Gate: <gate>: <detail>.` from
+  `sqg_gate` (`bin/lib/stuckqueue-gate.sh`). The alert itself says
+  `held by <gate>: <detail>`; `bin/stuckqueue-why.sh <project> <KEY>...`
+  prints the same gate for an operator. Later firings send nothing until the file changes,
   and the key stays in FIRED, so the alert row is not retracted.
 
 Verified by `tests/triage-repeat-refused.bh-9818-test.sh`,
 `tests/queue-sweep-dead-tickets.bh-9818-test.sh` and
-`tests/stuckqueue-escalate.bh-9818-test.sh`.
+`tests/stuckqueue-escalate.bh-9818-test.sh`; the BH-9863 parts by
+`tests/triage-repeat-requeue.bh-9863-test.sh` and
+`tests/stuckqueue-gate.bh-9863-test.sh`.
 
 ### Head-bound review stages (BH-3930)
 

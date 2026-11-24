@@ -409,6 +409,14 @@ MODEL_REAL=$(tail -n +$((CLINES + 1)) "$COST" 2>/dev/null \
   | awk -F, -v p="$PROJECT" -v r="$RUNNER_REAL" '$3==p && $4=="triage" && $5==r {m=$6} END{print m}')
 [ -n "$MODEL_REAL" ] || MODEL_REAL="$SHARD_MODEL"
 SUMMARY="$(grep -oE 'tickets=[^"]*' "$OUT" 2>/dev/null | tail -1 | cut -c1-160)"
+# BH-9863: the newest DECISION line, whole (one line by contract). This KEY's
+# own line first, else the last DECISION line of the session. The 160-char cut
+# above stays on the tickets= part only, so the reason is never cut off.
+DEC="$(grep -E "^DECISION: $KEY ::" "$OUT" 2>/dev/null | tail -1 | tr -d '\r\n')"
+[ -n "$DEC" ] || DEC="$(grep -E '^DECISION:' "$OUT" 2>/dev/null | tail -1 | tr -d '\r\n')"
+if [ -n "$DEC" ]; then
+  if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY :: $DEC"; else SUMMARY="$DEC"; fi
+fi
 [ -n "$SUMMARY" ] || SUMMARY="$(tail -3 "$OUT" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
 SECS=$(( $(date +%s) - START ))
 # `rc=<n> :: <summary>` deliberately, in that order: bin/pipeline-health.sh's

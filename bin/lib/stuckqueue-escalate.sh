@@ -20,6 +20,8 @@
 #     only after rc 0, print `escalate` (a failed send prints `emit` and tries
 #     again on the next firing). Escalated: `quiet`. A counter that cannot be
 #     written prints `emit` (the behaviour before this lib).
+#     BH-9863: when sqg_gate (bin/lib/stuckqueue-gate.sh) is loaded and names
+#     a gate, the message ends ` Gate: <gate>: <detail>.`
 #   sqe_prune <harness> <project>
 #     Deletes the counters whose queue file is gone.
 #
@@ -59,7 +61,7 @@ _sqe_put() {
 }
 
 sqe_note() {
-  local h="${1:-}" p="${2:-}" q="${3:-}" ttl="${4:-7200}" after now base f sig n s last esc age msg
+  local h="${1:-}" p="${2:-}" q="${3:-}" ttl="${4:-7200}" after now base f sig n s last esc age msg g
   after=$(_sqe_after)
   [ "$after" -gt 0 ] && [ -n "$h" ] && [ -n "$p" ] && [ -f "$q" ] || { echo emit; return 0; }
   case "$ttl" in ''|*[!0-9]*) ttl=7200 ;; esac
@@ -92,6 +94,11 @@ sqe_note() {
   [ "$n" -ge "$after" ] || { echo emit; return 0; }
   age=$(( (now - $(stat -c %Y "$q" 2>/dev/null || echo "$now")) / 60 ))
   msg="[pipeline-health] $p $base queued ${age}m with no spawn: fired $n times with no change. Cause: $(_sqe_cause "$h" "$p" "$base"). The repeat alert stops until the queue file changes."
+  # BH-9863: the gate that holds the key (bin/lib/stuckqueue-gate.sh), when known.
+  if command -v sqg_gate >/dev/null 2>&1; then
+    g=$(sqg_gate "$h" "$p" "$base")
+    case "${g%%$'\t'*}" in ''|unknown) ;; *) msg="$msg Gate: ${g%%$'\t'*}: ${g#*$'\t'}." ;; esac
+  fi
   if "$h/bin/lane-alert.sh" --severity critical --id "ph-stuckqueue-escalate-$p-$base" pipeline-health "$msg" >/dev/null 2>&1 </dev/null; then
     _sqe_put "$f" "$n" "$sig" "$now" 1 || :
     echo escalate

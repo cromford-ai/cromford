@@ -26,13 +26,20 @@
 #     files only (0 network reads). The board identity moved: with rebase=1
 #     (our own comment on an in-app board) the move is absorbed once; else the
 #     park and `.commented` are deleted and the key dispatches.
+#     BH-9863: the board identity is unchanged but the queue-state signature
+#     (column 6, triage_shard_qsig) moved: the blocker's build ended, its PR
+#     merged or closed, or this key got a new record. The park is deleted,
+#     `.commented` stays (the same board state gets no second comment), and
+#     the key dispatches. An equal, `-` or missing column 6 stays parked.
 #   trp_prune <harness> <project>
 #     Deletes park and commented files older than TRIAGE_REPEAT_PARK_KEEP_S.
 #   trp_reason <harness> <project> <KEY>
 #     The park's reason column, or rc 1 (bin/lib/stuckqueue-escalate.sh).
 #
 # FILE state/triage-repeat/<p>/<KEY>.park, one TSV line:
-#   <bid>\t<cg_fp>\t<epoch>\t<rebase 0|1>\ttriage-repeat-refused: <mark>
+#   <bid>\t<cg_fp>\t<epoch>\t<rebase 0|1>\ttriage-repeat-refused: <mark>\t<qsig>
+# <qsig> (BH-9863) is triage_shard_qsig (bin/lib/triage-shards-lib.sh) at the
+# park, or `-`; a park written before BH-9863 has 5 columns.
 # <bid> is the first 16 hex of the sha256 of this ticket's own entry in the
 # live board fingerprint (_tsh_fp_pending, bin/lib/triage-shards-lib.sh), or
 # `unknown`. Not the call-guard fp: that one also hashes the queue line, which
@@ -93,6 +100,19 @@ _trp_bid() {
   printf '%s' "$pend" | sha256sum 2>/dev/null | cut -c1-16
 }
 
+# _trp_qsig <harness> <project> <KEY> <gh> -> 16 hex (triage_shard_qsig), or rc 1.
+_trp_qsig() {
+  local q
+  if ! command -v triage_shard_qsig >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/triage-shards-lib.sh
+    [ -r "$1/bin/lib/triage-shards-lib.sh" ] && . "$1/bin/lib/triage-shards-lib.sh" 2>/dev/null
+  fi
+  command -v triage_shard_qsig >/dev/null 2>&1 || return 1
+  q=$(triage_shard_qsig "$1" "$2" "$3" "${4:-0}" 2>/dev/null) || return 1
+  [[ "$q" =~ ^[0-9a-f]{16}$ ]] || return 1
+  printf '%s' "$q"
+}
+
 # _trp_write <file> <line> — tmp + mv; rc 1 when it could not be written.
 _trp_write() {
   mkdir -p "${1%/*}" 2>/dev/null || return 1
@@ -115,7 +135,7 @@ _trp_tracker_id() {
 
 trp_on_repeat() {
   local h="${1:-}" p="${2:-}" k="${3:-}" cgfp="${4:-}" mark="${5:-}" qtext="${6-}" gh="${7:-0}"
-  local d bid why now old keys label drop cm cmf id paid max tag ln rc
+  local d bid why now old keys label drop cm cmf id paid max tag ln rc qsig
   [ -n "$h" ] && [ -n "$p" ] && _trp_key_ok "$k" || return 0
   _trp_knobs "$p"
   [ "$_TRP_ON" = 1 ] || return 0
@@ -124,12 +144,13 @@ trp_on_repeat() {
   case "$bid" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) bid=unknown ;; esac
   case "$cgfp" in ''|*[!A-Za-z0-9]*) cgfp=- ;; esac
   why="triage-repeat-refused: $(printf '%s' "$mark" | tr -d '\t\r\n' | cut -c1-160)"
+  qsig=$(_trp_qsig "$h" "$p" "$k" "$gh") || qsig=-
   # 1. THE PARK, WRITTEN FIRST. A park already on this board identity is kept
   # as it is (its rebase flag and epoch too): a second refusal is not a change.
   now=$(date +%s)
   old=$(cut -f1 "$d/$k.park" 2>/dev/null | head -1)
   if [ "$old" != "$bid" ] || [ ! -s "$d/$k.park" ]; then
-    _trp_write "$d/$k.park" "$(printf '%s\t%s\t%s\t0\t%s' "$bid" "$cgfp" "$now" "$why")" \
+    _trp_write "$d/$k.park" "$(printf '%s\t%s\t%s\t0\t%s\t%s' "$bid" "$cgfp" "$now" "$why" "$qsig")" \
       || { _trp_log "$h" "$p" "triage-repeat: $k NOT parked: could not write state/triage-repeat/$p/$k.park"; return 0; }
   fi
   # 2. THE QUEUE LINE. The raw line keys of this shard's queue text (the BH-38
@@ -206,7 +227,7 @@ BODY
 }
 
 trp_parked() {
-  local h="${1:-}" p="${2:-}" k="${3:-}" gh="${4:-0}" d f ln pb rb cur
+  local h="${1:-}" p="${2:-}" k="${3:-}" gh="${4:-0}" d f ln pb rb cur pq cq
   [ -n "$h" ] && [ -n "$p" ] && _trp_key_ok "$k" || return 1
   _trp_knobs "$p"
   [ "$_TRP_ON" = 1 ] || return 1
@@ -225,7 +246,18 @@ trp_parked() {
   # compare must never read as "unchanged".
   cur=$(_trp_bid "$h" "$p" "$k" "$gh") || return 1
   [ -n "$cur" ] || return 1
-  [ "$cur" = "$pb" ] && return 0
+  if [ "$cur" = "$pb" ]; then
+    # BH-9863: the same board entry, but the queue state moved (column 6).
+    pq=$(printf '%s' "$ln" | cut -f6)
+    if [[ "$pq" =~ ^[0-9a-f]{16}$ ]] && cq=$(_trp_qsig "$h" "$p" "$k" "$gh") && [ "$cq" != "$pq" ]; then
+      rm -f "$f" 2>/dev/null
+      if [ ! -e "$f" ]; then
+        _trp_log "$h" "$p" "triage-repeat: $k unparked: queue state changed (blocker or build record moved)"
+        return 1
+      fi
+    fi
+    return 0
+  fi
   if [ "$rb" = 1 ]; then
     # Our own comment moved the entry: absorb this one move, keep the park.
     _trp_write "$f" "$(printf '%s' "$ln" | awk -F'\t' -v b="$cur" 'BEGIN{OFS="\t"} {$1=b; $4=0; print}')" || :

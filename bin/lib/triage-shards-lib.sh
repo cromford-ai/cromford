@@ -588,6 +588,52 @@ _tsh_fp_builds() {
   done | LC_ALL=C sort
 }
 
+# _tsh_fp_blocker <harness> <project> <key> <gh> -> `blocker <BLK> <sig>` and,
+#   when the blocker's newest record has a PR, `blocker-pr <n>` (BH-9863).
+#   Only for a key whose NEWEST record (of the dirs _tsh_fp_builds matched) is
+#   a BUILD_DEFERRED that names another key (_dfs_blocker,
+#   bin/lib/defer-after-stop.sh). Otherwise it prints nothing, so a key with
+#   no deferral keeps a byte-identical fingerprint. <sig> is ws_blocker_sig
+#   (bin/lib/wait-sig.sh): the blocker's build ending, its PR merging or
+#   closing, moves it, and so moves this key's fingerprint.
+_tsh_fp_blocker() {
+  local h="${1:-}" p="${2:-}" k="${3:-}" gh="${4:-0}" lib b mt nt=-1 newest="" fk l1 bl blk sig n
+  lib="$(dirname "${BASH_SOURCE[0]}")"
+  command -v ws_blocker_sig >/dev/null 2>&1 || . "$lib/wait-sig.sh" 2>/dev/null
+  command -v defer_wait_key >/dev/null 2>&1 || . "$lib/deferral-after.sh" 2>/dev/null
+  command -v _dfs_blocker >/dev/null 2>&1 || . "$lib/defer-after-stop.sh" 2>/dev/null
+  command -v ws_blocker_sig >/dev/null 2>&1 && command -v _dfs_blocker >/dev/null 2>&1 || return 0
+  while read -r b _; do
+    [ -n "$b" ] && [ -f "$h/builds/$b/RESULT" ] || continue
+    mt=$(stat -c %Y "$h/builds/$b/RESULT" 2>/dev/null) || continue
+    [ "$mt" -ge "$nt" ] && { nt=$mt; newest="$b"; }
+  done < <(_tsh_fp_builds "$h" "$p" "$k" "$gh")
+  [ -n "$newest" ] || return 0
+  fk=$(ws_rec_key "$p" "$newest") || return 0
+  l1=$(head -1 "$h/builds/$newest/RESULT" 2>/dev/null | tr -d '\r')
+  bl=$(_dfs_blocker "$fk" "$l1" 2>/dev/null) || return 0
+  blk="${bl%%$'\t'*}"
+  sig=$(ws_blocker_sig "$h" "$p" "$blk" 2>/dev/null) || sig=""
+  printf 'blocker %s %s\n' "$blk" "${sig:--}"
+  n=$(ws_blocker_pr "$h" "$p" "$blk" 2>/dev/null) && printf 'blocker-pr %s\n' "$n"
+  return 0
+}
+
+# triage_shard_qsig <harness> <project> <key> <gh> -> 16 hex (BH-9863)
+#   The queue-state signature the call-guard repeat park
+#   (bin/lib/triage-repeat-park.sh) stores: this key's build records and the
+#   state of what it waits on. No queue text and no board entry, so a
+#   watchdog requeue, a reworded queue line or our own comment does not move
+#   it. rc 1 with no sha256sum.
+triage_shard_qsig() {
+  local h="${1:-}" p="${2:-}" k="${3:-}" gh="${4:-0}" out
+  [ -n "$h" ] && [ -n "$p" ] && [ -n "$k" ] || return 1
+  command -v sha256sum >/dev/null 2>&1 || return 1
+  out=$( { _tsh_fp_builds "$h" "$p" "$k" "$gh"; _tsh_fp_blocker "$h" "$p" "$k" "$gh"; } | sha256sum | cut -c1-16)
+  case "$out" in ''|*[!0-9a-f]*) return 1 ;; esac
+  printf '%s\n' "$out"
+}
+
 # ── THE CARRIED-FORWARD PR-STATE LEDGER (BH-1015 review, block 1) ────────────
 # The fingerprint needs "what state is PR #12 in", and the obvious source —
 # line 3 of state/<project>.queuefp, where bin/triage-gate.sh parks its own
@@ -765,7 +811,7 @@ _tsh_gh_budget_low() {
 #   pure spend. A reopen still reaches the ledger — through the gate's own
 #   vector, which triage_prstates_ingest folds in above whenever it is newer.
 triage_prstates_refresh() {
-  local h="${1:-}" p="${2:-}" u="${3:-}" slug ttl now n st ts rc armed=0 want stamp old age
+  local h="${1:-}" p="${2:-}" u="${3:-}" slug ttl now n st ts rc armed=0 want stamp old age k bgh
   [ -n "$h" ] && [ -n "$p" ] && [ -s "$u" ] || return 0
   slug=$("$h/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || slug=""
   [ -n "$slug" ] || return 0
@@ -785,8 +831,15 @@ triage_prstates_refresh() {
   # (BH-1079). Built first so a tick with nothing to look up — the common
   # one — reads neither GitHub nor the budget cache and stays free.
   want=""
-  for n in $(awk -F'\t' '$2=="queue"{print $3}' "$u" 2>/dev/null \
-             | grep -oE 'PR ?#[0-9]+' | grep -oE '[0-9]+' | LC_ALL=C sort -un | head -20); do
+  # BH-9863: the blocker PR of each unit key whose newest record is a
+  # deferral joins the same list, inside the same bound.
+  bgh=$(triage_shard_gh "$h" "$p" 2>/dev/null) || bgh=0
+  for n in $( { awk -F'\t' '$2=="queue"{print $3}' "$u" 2>/dev/null \
+                  | grep -oE 'PR ?#[0-9]+' | grep -oE '[0-9]+'
+                for k in $(cut -f1 "$u" 2>/dev/null | awk '!s[$0]++'); do
+                  _tsh_fp_blocker "$h" "$p" "$k" "$bgh" 2>/dev/null \
+                    | awk '$1=="blocker-pr"{print $2}'
+                done; } | LC_ALL=C sort -un | head -20); do
     case "$(triage_prstates_get "$h" "$p" "$n")" in MERGED|CLOSED) continue ;; esac
     ts=$(_tsh_prstates_ts "$h" "$p" "$n"); [ -n "$ts" ] || ts=0
     [ $(( now - ts )) -lt "$ttl" ] && continue
@@ -992,6 +1045,8 @@ triage_shard_fp() {
         printf 'pr %s=%s\n' "$n" "$(triage_prstates_get "$h" "$p" "$n")"
       done
       _tsh_fp_builds "$h" "$p" "$k" "$gh"
+      # BH-9863: what a deferred key waits on (nothing for any other key).
+      _tsh_fp_blocker "$h" "$p" "$k" "$gh"
     } | sha256sum | cut -c1-16
   )
   case "$out" in ''|*[!0-9a-f]*) return 1 ;; esac
