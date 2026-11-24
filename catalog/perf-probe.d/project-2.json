@@ -1,0 +1,10 @@
+{
+  "project": "project-2",
+  "enabled": false,
+  "base_url": "https://os.project-2.example",
+  "session_path": "/api/internal/e2e/session",
+  "signin_path": "/sign-in",
+  "roles": [],
+  "routes": ["/"],
+  "budgets": {}
+}

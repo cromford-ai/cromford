@@ -1,0 +1,103 @@
+{
+  "id": "perf-probe",
+  "name": "Perf probe (daily)",
+  "scope": "hub",
+  "script": "bin/perf-probe.sh",
+  "cadence": "17 6 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-perf-probe",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PERF_PROBE_BUDGET_MS",
+      "type": "int",
+      "default": 1000,
+      "min": 1,
+      "max": 60000,
+      "unit": "ms",
+      "zero_means": null,
+      "note": "BH-9786: the time budget of one route load. A load whose ttfb_ms or total_ms is above it is over budget (bin/lib/perf-probe/budget.sh, pp_route_verdict). Code fallback ${PERF_PROBE_BUDGET_MS:-1000}.",
+      "read_in": "bin/lib/perf-probe/budget.sh"
+    },
+    {
+      "env": "PERF_PROBE_BUDGET_BYTES",
+      "type": "int",
+      "default": 512000,
+      "min": 1,
+      "max": 104857600,
+      "unit": "bytes",
+      "zero_means": null,
+      "note": "BH-9786: the size budget of one route load (the HTML document curl downloads). Above it the route is over budget (bin/lib/perf-probe/budget.sh). Code fallback ${PERF_PROBE_BUDGET_BYTES:-512000}.",
+      "read_in": "bin/lib/perf-probe/budget.sh"
+    },
+    {
+      "env": "PERF_PROBE_PAUSE_MS",
+      "type": "int",
+      "default": 500,
+      "min": 0,
+      "max": 60000,
+      "unit": "ms",
+      "zero_means": "off",
+      "note": "BH-9786: the gap after each route load, so the probe adds no load spike to the client's app (ppio_load in bin/lib/perf-probe-io.sh). 0 = no pause. Code fallback ${PERF_PROBE_PAUSE_MS:-500}.",
+      "read_in": "bin/lib/perf-probe-io.sh"
+    },
+    {
+      "env": "PERF_PROBE_TIMEOUT_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9786: curl --max-time of the session POST and of each route load. A slow route is still measured; a hung one answers 000 and the lane goes on. Code fallback ${PERF_PROBE_TIMEOUT_S:-30}.",
+      "read_in": "bin/lib/perf-probe-io.sh"
+    },
+    {
+      "env": "PERF_PROBE_LOCK_WAIT_S",
+      "type": "int",
+      "default": 600,
+      "min": 0,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9786: how long the lane waits for locks/perf-probe-<project>.lock before it logs skip: lock busy and goes to the next project. A bound, not a queue; 0 = do not wait. Code fallback ${PERF_PROBE_LOCK_WAIT_S:-600}."
+    },
+    {
+      "env": "PERF_PROBE_NOW",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the ISO time bin/perf-probe.sh and bin/lib/perf-probe-io.sh use as now (the result day and the session expiry check). Unset on a box. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "PERF_PROBE_JOBS_CLIENT",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: the jobs client path bin/perf-probe.sh calls for results-put (tests/perf-probe.bh-9786-test.sh points it at a stub). Unset on a box: $HARNESS/bin/jobs-client.sh. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "PERF_PROBE_ALLOW_LOOPBACK",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: 1 lets pp_row_valid (bin/lib/perf-probe.sh) accept a base_url of http://127.0.0.1[:port], the test fake. Unset on a box: only https:// rows are valid. NOT settable from the control plane.",
+      "settable": false,
+      "read_in": "bin/lib/perf-probe.sh"
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/perf-probe.log"
+  }
+}

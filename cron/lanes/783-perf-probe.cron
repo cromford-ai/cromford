@@ -1,0 +1,9 @@
+# ── PERF-PROBE LANE (BH-9786) ──────────────────────────────────────────────
+# Daily 06:17 UTC: bin/perf-probe.sh loads each route of every enabled row in
+# catalog/perf-probe.d/ (one session POST, one GET per route), upserts one
+# perf_probe_results row per route per day through the jobs worker and writes
+# one line per project to logs/perf-probe.log. 0 LLM calls. The hub lease
+# gates it. Off: flags/lane-off-perf-probe, or bin/harness-ctl.sh off perf-probe.
+# Note: docs/notes/2026-11-17-BH-9786-perf-probe.md.
+# @hub-lanes
+17 6 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/perf-probe.sh >> /root/harness/logs/perf-probe.log 2>&1

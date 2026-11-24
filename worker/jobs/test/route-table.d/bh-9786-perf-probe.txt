@@ -1,0 +1,3 @@
+# PERF PROBE (BH-9786): the daily hub lane bin/perf-probe.sh writes one row per
+# route per day (upsert on project, route, day, kind, run_key).
+POST /api/perf-probe/results

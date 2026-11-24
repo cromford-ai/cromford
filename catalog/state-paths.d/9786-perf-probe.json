@@ -1,0 +1,3 @@
+[
+    {"path": "perf-probe", "class": "box-local", "authority": "the perf-probe lane's session jar and run state (BH-9786)", "note": "state/perf-probe/<project>/: session.jar (the app's session cookie, mode 0600), session.json (minted_at, expires_at), keepwarm.json ({\"fails\":0}) and run/ (one <n>.loads file per route, cleared at the start of each run): bin/lib/perf-probe-io.sh and bin/perf-probe.sh. The jar is a secret: it is never synced, carried or logged. Each file is overwritten tmp+mv or by curl, and run/ is reused, so the dir does not grow. Losing it costs one more session mint. Machine-local, never carried"}
+]
