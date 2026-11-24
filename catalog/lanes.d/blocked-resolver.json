@@ -345,7 +345,7 @@
       "max": 21600,
       "unit": "seconds",
       "zero_means": null,
-      "note": "Wall clock for one fix-agent call."
+      "note": "Wall clock for one fix-agent call, and nothing else since BH-9906: the verification after it has its own budget, BR_FIX_VERIFY_TIMEOUT. bin/fix-round-claim.sh bounds a round at BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN."
     },
     {
       "env": "BR_FIX_LANE_TIMEOUT",
@@ -355,7 +355,7 @@
       "max": 21600,
       "unit": "seconds",
       "zero_means": null,
-      "note": "Wall clock for the whole fix lane."
+      "note": "Wall clock for the whole fix lane, and the hub tick rhythm. Since BH-9906 the box bounds a fix round at BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN; this knob (+ BR_FIX_HOP_MARGIN) is only the fallback when the agent or verify knob is not a number."
     },
     {
       "env": "BR_FIX_HOP_MARGIN",
@@ -366,7 +366,7 @@
       "max": 3600,
       "unit": "seconds",
       "zero_means": null,
-      "note": "The stale-claim margin bin/fix-round-claim.sh adds to BR_FIX_LANE_TIMEOUT before a claimed fix_round_jobs row is re-offered to a box: stale_min = ceil((BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN) / 60) (BH-2672, BH-2674). The box bounds its own round at BR_FIX_LANE_TIMEOUT with timeout -k 60, so this must exceed 60 or a round that was about to answer is re-offered. The hub no longer hops to the box; it reads this only to page a claimed row older than BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN (a dead box's claim is re-offered to no other box)."
+      "note": "The margin in a fix round's bound (BH-9906): bin/fix-round-claim.sh kills a round at T = BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN (the setup, merge and push around the agent and the verification), and a claimed fix_round_jobs row is re-offered to its box after ceil(T / 60) minutes. The hub pages a claimed row older than T (br_fix_stale_claim) and a queued row older than T on a box with no live claim (br_fix_unclaimed). Fallback when the agent or verify knob is not a number: BR_FIX_LANE_TIMEOUT for the round, BR_FIX_LANE_TIMEOUT + this for the cutoff."
     },
     {
       "env": "BR_ADJ_TIMEOUT",

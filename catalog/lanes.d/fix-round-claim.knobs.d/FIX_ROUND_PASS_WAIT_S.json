@@ -1,0 +1,11 @@
+{
+  "env": "FIX_ROUND_PASS_WAIT_S",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/fix-round-claim.sh",
+  "note": "BH-9906: how long the claim pass a runner makes when it ends (--drain) waits for another live claim pass (locks/frc-claim-pass.lock). Past it the drain claims nothing, and the 2-minute cron tick claims the row. 0 = the wait is off: a busy claim pass ends the drain at once."
+}

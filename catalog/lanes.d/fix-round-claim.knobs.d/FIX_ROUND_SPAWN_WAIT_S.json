@@ -1,0 +1,11 @@
+{
+  "env": "FIX_ROUND_SPAWN_WAIT_S",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/fix-round-claim.sh",
+  "note": "BH-9906: how long the tick waits for a runner it started to hold its key lock (or to exit) before it counts the live runners again and makes the next claim."
+}

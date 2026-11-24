@@ -1,0 +1,11 @@
+{
+  "env": "FIX_ROUND_TIMEOUT_RETRIES",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 5,
+  "unit": "rounds",
+  "zero_means": null,
+  "read_in": "bin/fix-round-claim.sh",
+  "note": "BH-9906: timed-out fix rounds per (PR, head) on a box. A round that ends verify-timeout, or is killed at its bound (rc 124, no FIX_RESULT), is put back as queued by the runner at once while it is under this count. The Nth timed-out round is finished (verify-timeout, or setup-blocked when no agent record exists) with one alert that names every attempt."
+}

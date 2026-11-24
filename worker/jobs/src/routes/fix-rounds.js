@@ -18,6 +18,7 @@
 //            CLAIM_WALK candidates, oldest id first.
 //   finish   CAS claimed → done, only by the box that holds the claim.
 //   adopt    CAS done → adopted, so exactly one adopter wins.
+// The helpers below are exported for routes/fix-round-requeue.js (BH-9906).
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureTable, isoPlusSeconds, laneName } from "../lib/core.js";
 
@@ -25,7 +26,8 @@ import { ensureTable, isoPlusSeconds, laneName } from "../lib/core.js";
 const RECORD_MAX = 256 * 1024; // bytes of UTF-8; over it is a 413, never sliced
 const LIST_MAX = 500;
 const CLAIM_WALK = 5;
-const RESULT_RE = /^(done|terminal|rebuild-fresh|setup-blocked \S+|box-paused \S+)$/;
+// verify-timeout (BH-9906): the round's verify stage hit its time cap.
+const RESULT_RE = /^(done|terminal|rebuild-fresh|setup-blocked \S+|box-paused \S+|verify-timeout( \S+)?)$/;
 // cap_key is built by the resolver (br_rkey), so it is checked, not normalised.
 const CAP_KEY_RE = /^[^\x00-\x1f\x7f]{1,200}$/;
 const STATUSES = new Set(["queued", "claimed", "done", "adopted"]);
@@ -33,7 +35,7 @@ const STATUSES = new Set(["queued", "claimed", "done", "adopted"]);
 const bytes = (s) => new TextEncoder().encode(s).length;
 
 // args is stored as JSON text; the answer hands back the array that was sent.
-function rowOut(r) {
+export function rowOut(r) {
   if (!r) return r;
   let args = r.args;
   try { args = JSON.parse(r.args); } catch { /* a row not written here: answer it raw */ }
@@ -42,13 +44,13 @@ function rowOut(r) {
 
 // A body that is not a JSON object (null, an array, junk) reads as {}: every
 // POST then answers 400 before touching the table.
-const obj = (b) => (b && typeof b === "object" && !Array.isArray(b) ? b : {});
+export const obj = (b) => (b && typeof b === "object" && !Array.isArray(b) ? b : {});
 
-const posId = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+export const posId = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
 
 // null/absent → { ok, value: null }; a string within the cap → { ok, value };
 // a non-string → 400; over the cap → 413. Never truncated.
-function record(v, name) {
+export function record(v, name) {
   if (v === undefined || v === null) return { value: null };
   if (typeof v !== "string") return { res: json(400, { error: `${name} must be a string or null` }) };
   const n = bytes(v);
@@ -56,7 +58,7 @@ function record(v, name) {
   return { value: v };
 }
 
-const readRow = (env, id) =>
+export const readRow = (env, id) =>
   env.DB.prepare("SELECT * FROM fix_round_jobs WHERE id=?1").bind(id).first();
 
 export const routes = [
@@ -195,7 +197,7 @@ export const routes = [
       if (!id) return json(400, { error: "id must be a positive integer" });
       if (!box) return json(400, { error: "box is required and must match [A-Za-z0-9._-]{1,64}" });
       if (typeof b.result !== "string" || !RESULT_RE.test(b.result)) {
-        return json(400, { error: "result must be done, terminal, rebuild-fresh, setup-blocked <token> or box-paused <token>" });
+        return json(400, { error: "result must be done, terminal, rebuild-fresh, setup-blocked <token>, box-paused <token>, verify-timeout or verify-timeout <token>" });
       }
       const rec = record(b.record_out, "record_out");
       if (rec.res) return rec.res;

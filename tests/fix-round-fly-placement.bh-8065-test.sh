@@ -257,9 +257,12 @@ tick
 [ "$(puts)" = 1 ] && [ "$(stubs)" = 0 ] && ok || bad "F1b ' FLY ' places the round on the pool: puts=$(puts) stubs=$(stubs)"
 
 # ── F2: re-offered while the pool row is queued, then claimed: nothing ───────
+# TEST-CHANGE (BH-9906): the claims are 120 minutes old, not 100. The stale
+# cutoff is now ceil((3600 + 2700 + 300) / 60) = 110 minutes (it was 95), and a
+# re-offer still needs a claim past it.
 for st in queued claimed; do
   fresh; fly_on
-  row 12 b1 claimed 1 null 100
+  row 12 b1 claimed 1 null 120
   qrow "$KEY" "$st"
   tick
   [ "$(rowf 12 .attempt)" = 2 ] && ok || bad "F2 ($st) the row was re-offered: attempt $(rowf 12 .attempt)"
@@ -270,7 +273,7 @@ for st in queued claimed; do
 done
 # attempt 3 with the pool row queued: still nothing.
 fresh; fly_on
-row 12 b1 claimed 2 null 100
+row 12 b1 claimed 2 null 120
 qrow "$KEY" queued
 tick
 [ "$(puts)" = 0 ] && [ "$(stubs)" = 0 ] && [ "$(finishes)" = 0 ] && ok || bad "F2 attempt 3: nothing runs"
@@ -278,7 +281,7 @@ tick
 # ── F3: re-offered while the pool row is done, then failed: one finish ───────
 for st in done failed; do
   fresh; fly_on
-  row 12 b1 claimed 1 null 100
+  row 12 b1 claimed 1 null 120
   qrow "$KEY" "$st" "FIX_ROUND_SKIPPED the row is not claimed by b1"
   tick
   [ "$(puts)" = 0 ] && [ "$(stubs)" = 0 ] && ok || bad "F3 ($st) no put, no round: puts=$(puts) stubs=$(stubs)"

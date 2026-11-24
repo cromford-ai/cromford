@@ -1,0 +1,11 @@
+{
+  "env": "FIX_ROUND_KILL_GRACE_S",
+  "type": "int",
+  "default": 60,
+  "min": 5,
+  "max": 600,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/fix-round-claim.sh",
+  "note": "BH-9906: seconds from TERM to KILL when a fix round ends: the outer timeout -k, the sweep of every process in the round session, and the timeout -k of each verify step (exported to the round as FRC_KILL_GRACE)."
+}

@@ -238,14 +238,25 @@ grep -q 'EVENT resolver_rung' "$LOGF" && bad "N3: no rung" || ok
 # BR_FIX_HOP_MARGIN the claim now pages once; it is still not an UNCLAIMED page.
 [ "$(grep -c -- "--id fix-round-stale-claim-tproj-$CK blocked-resolver" "$T/lane-alert.txt")" = 1 ] && ok \
   || bad "N3: a claim older than BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN pages once through lane-alert --id (alerts: $(cat "$T/lane-alert.txt"))"
-grep -q 'claimed by box-tproj since .* (over 5700s' "$T/lane-alert.txt" && ok || bad "N3: the page names the box, the stamp and the bound ($(cat "$T/lane-alert.txt"))"
+# TEST-CHANGE (BH-9906): the bound is the box's round bound, BR_FIX_AGENT_TIMEOUT
+# + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN (3600 + 2700 + 300 = 6600 s);
+# BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN is its fallback (the cases below).
+grep -q 'claimed by box-tproj since .* (over 6600s' "$T/lane-alert.txt" && ok || bad "N3: the page names the box, the stamp and the bound ($(cat "$T/lane-alert.txt"))"
 grep -q -- '--id fix-round-unclaimed-' "$T/lane-alert.txt" && bad "N3: a claimed row is never an unclaimed page ($(cat "$T/lane-alert.txt"))" || ok
-# the bound is BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN, both knobs
-RESET; PARK91; SEEDREC; BRENV=(BR_FIX_LANE_TIMEOUT=600 BR_FIX_HOP_MARGIN=300)
+# the bound is A + V + M, all three knobs; the fallback LANE + M when A is not a number
+RESET; PARK91; SEEDREC; BRENV=(BR_FIX_AGENT_TIMEOUT=300 BR_FIX_VERIFY_TIMEOUT=300 BR_FIX_HOP_MARGIN=300)
+SEEDROW claimed "$CK" "" "" "$(date -u -d '-20 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+RUN
+grep -q -- "--id fix-round-stale-claim-tproj-$CK " "$T/lane-alert.txt" && ok || bad "N3: 1200s > 300+300+300 pages (alerts: $(cat "$T/lane-alert.txt"))"
+RESET; PARK91; SEEDREC; BRENV=(BR_FIX_AGENT_TIMEOUT=300 BR_FIX_VERIFY_TIMEOUT=600 BR_FIX_HOP_MARGIN=600)
+SEEDROW claimed "$CK" "" "" "$(date -u -d '-20 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+RUN
+[ -s "$T/lane-alert.txt" ] && bad "N3: 1200s < 300+600+600 does not page yet ($(cat "$T/lane-alert.txt"))" || ok
+RESET; PARK91; SEEDREC; BRENV=(BR_FIX_AGENT_TIMEOUT=junk BR_FIX_LANE_TIMEOUT=600 BR_FIX_HOP_MARGIN=300)
 SEEDROW claimed "$CK" "" "" "$(date -u -d '-20 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
 RUN
 grep -q -- "--id fix-round-stale-claim-tproj-$CK " "$T/lane-alert.txt" && ok || bad "N3: 1200s > 600+300 pages (alerts: $(cat "$T/lane-alert.txt"))"
-RESET; PARK91; SEEDREC; BRENV=(BR_FIX_LANE_TIMEOUT=600 BR_FIX_HOP_MARGIN=900)
+RESET; PARK91; SEEDREC; BRENV=(BR_FIX_AGENT_TIMEOUT=junk BR_FIX_LANE_TIMEOUT=600 BR_FIX_HOP_MARGIN=900)
 SEEDROW claimed "$CK" "" "" "$(date -u -d '-20 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
 RUN
 [ -s "$T/lane-alert.txt" ] && bad "N3: 1200s < 600+900 does not page yet ($(cat "$T/lane-alert.txt"))" || ok

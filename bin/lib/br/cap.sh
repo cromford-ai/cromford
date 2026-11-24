@@ -4,7 +4,10 @@
 # bin/lib/br/cap.sh — BH-7123 wave B: the review fix-round CAP layer of the
 # blocked-resolver: the per-project registry knobs (br_env_for_project), the
 # ALWAYS-BLOCK floor read over the standing reviews (br_floor_stands) and the
-# at-cap terminal that merges with notes instead of abandoning (br_cap_notes).
+# at-cap terminal that merges with notes instead of abandoning (br_cap_notes),
+# and the fix round's clock, the two hub pages that read it and the
+# verify-timeout result (br_fix_bound, br_fix_unclaimed, br_fix_stale_claim,
+# br_fix_verify_timeout, BH-9906).
 # Sourced by bin/blocked-resolver.sh after record.sh, never run. Reads $H, $ST
 # and the say/br_* helpers at CALL time; nothing at source time. Moved here
 # from the driver so tests/br/driver-ceiling.tsv keeps falling (BH-5241).
@@ -70,11 +73,101 @@ br_env_for_project() {
   FIX_LANE_TIMEOUT="${BR_FIX_LANE_TIMEOUT:-5400}"
   FIX_HOP_MARGIN="${BR_FIX_HOP_MARGIN:-300}"
   FIX_AGENT_TIMEOUT="${BR_FIX_AGENT_TIMEOUT:-3600}"
+  FIX_VERIFY_TIMEOUT="${BR_FIX_VERIFY_TIMEOUT:-2700}"
   ADJ_TIMEOUT="${BR_ADJ_TIMEOUT:-1200}"
   # The review cap memo (bin/lib/br/record.sh br_review_fix_cap) is keyed on
   # the project, so nothing to clear here.
   _BR_ENV_LAST="$p"
   [ -n "$p" ] && say "$p: lane env applied for the project (registry rows lane.blocked-resolver.$p.*; tick budgets stay fleet-wide)"
+  return 0
+}
+
+# br_fix_bound — prints the longest a box runs one fix round, in seconds
+#   (BH-9906): BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN,
+#   the bound bin/fix-round-claim.sh uses and its claim's stale cutoff. Either
+#   of the first two not a number: the fallback BR_FIX_LANE_TIMEOUT +
+#   BR_FIX_HOP_MARGIN. rc 1 (nothing printed) when no bound reads as a number.
+br_fix_bound() {
+  case "$FIX_HOP_MARGIN" in ''|*[!0-9]*) return 1 ;; esac
+  if [[ "${FIX_AGENT_TIMEOUT:-}" =~ ^[0-9]+$ ]] && [[ "${FIX_VERIFY_TIMEOUT:-}" =~ ^[0-9]+$ ]]; then
+    echo $((FIX_AGENT_TIMEOUT + FIX_VERIFY_TIMEOUT + FIX_HOP_MARGIN)); return 0
+  fi
+  [[ "${FIX_LANE_TIMEOUT:-}" =~ ^[0-9]+$ ]] || return 1
+  echo $((FIX_LANE_TIMEOUT + FIX_HOP_MARGIN))
+}
+
+# br_fix_verify_timeout <p> <ck> <rkey> <reason> <url> <why> — THE VERIFY
+#   TIMEOUT'S RESULT (BH-9906). On the hub: one line; no rung was spent, so
+#   the park is offered again on a later tick and brvb_agent_done makes that a
+#   verify-only round. The --fix-here entry overrides it with the protocol
+#   line FIX_RESULT verify-timeout <b64 why>.
+br_fix_verify_timeout() {
+  say "$1/$3 [$4]: the agent is done, verification owed — $6 (re-offered on a later tick, no rung spent)"
+}
+
+# br_fix_unclaimed <project> <rkey> <cap-key> <row-json> — NOTHING WAITS
+#   SILENTLY (BH-2674). A queued row older than br_fix_bound means the owning
+#   box's claimer is not taking its work: one page, keyed on the park, so the
+#   --id alert-state (bin/lib/alert-state.sh) sends it once however many ticks
+#   see it. An enqueued_at that does not parse is said and never read as age 0
+#   (D11). A BOX THAT IS DRAINING IS NOT PAGED (BH-9906): FIX_ROUND_RUN_MAX
+#   holds a row queued behind the rounds that run, so before the page one read
+#   of the box's claimed rows (fix_round_box_claims) — a claim updated within
+#   the bound is one line, no page. A read that fails, or a list of 500 rows
+#   (the read's bound: truncated, so unknown), pages as before.
+br_fix_unclaimed() {
+  local p="$1" rkey="$2" ck="$3" row="$4" box id enq at now bound claims live
+  bound=$(br_fix_bound) || return 0
+  box=$(printf '%s' "$row" | jq -r '.box // "?"' 2>/dev/null)
+  id=$(printf '%s' "$row" | jq -r '.id // "?"' 2>/dev/null)
+  enq=$(printf '%s' "$row" | jq -r '.enqueued_at // ""' 2>/dev/null)
+  at=""
+  [ -n "$enq" ] && { at=$(date -u -d "$enq" +%s 2>/dev/null) || at=""; }
+  if [ -z "$at" ]; then
+    say "$p/$rkey: fix-round row $id's enqueued_at '$enq' does not parse — its age is unknown, no unclaimed page"
+    return 0
+  fi
+  now=$(date -u +%s)
+  [ $((now - at)) -gt "$bound" ] || return 0
+  if command -v fix_round_box_claims >/dev/null 2>&1 && claims=$(fix_round_box_claims "$box" 2>>"$LOG"); then
+    live=$(printf '%s' "$claims" | jq --argjson now "$now" --argjson b "$bound" \
+      'if length >= 500 then -1 else [.[] | select((.updated_at // "") | (try fromdateiso8601 catch 0) | ($now - .) <= $b)] | length end' 2>/dev/null)
+    if [ "${live:--1}" -gt 0 ] 2>/dev/null; then
+      say "$p/$rkey: fix-round row $id is held behind $live running round(s) on $box (FIX_ROUND_RUN_MAX) — the box is draining, no unclaimed page"
+      return 0
+    fi
+  fi
+  "$H/bin/lane-alert.sh" --id "fix-round-unclaimed-$p-$ck" blocked-resolver \
+    "$p/$rkey: fix-round row $id for $box has sat queued since $enq (over ${bound}s) — bin/fix-round-claim.sh on $box has not claimed it and runs no round; the park is held until it does" \
+    >/dev/null 2>&1 || true
+  return 0
+}
+
+# br_fix_stale_claim <project> <rkey> <cap-key> <row-json> — A DEAD BOX'S CLAIM
+#   IS PAGED, NOT WAITED ON FOREVER (review F1 on #2872). The claim route
+#   re-offers a stale `claimed` row only to the box that holds it, so a box
+#   that died, was drained or was replaced mid-round leaves the row claimed
+#   for good and br_one holds the park every tick. Past br_fix_bound (the
+#   claimer's own stale bound and the box's round bound, BH-9906) that is one
+#   page, keyed on the park so alert-state sends it once. An updated_at that
+#   does not parse is said, never read as age 0.
+br_fix_stale_claim() {
+  local p="$1" rkey="$2" ck="$3" row="$4" box id up at now bound
+  bound=$(br_fix_bound) || return 0
+  box=$(printf '%s' "$row" | jq -r '.claimed_by // .box // "?"' 2>/dev/null)
+  id=$(printf '%s' "$row" | jq -r '.id // "?"' 2>/dev/null)
+  up=$(printf '%s' "$row" | jq -r '.updated_at // ""' 2>/dev/null)
+  at=""
+  [ -n "$up" ] && { at=$(date -u -d "$up" +%s 2>/dev/null) || at=""; }
+  if [ -z "$at" ]; then
+    say "$p/$rkey: fix-round row $id's updated_at '$up' does not parse — its claim age is unknown, no stale-claim page"
+    return 0
+  fi
+  now=$(date -u +%s)
+  [ $((now - at)) -gt "$bound" ] || return 0
+  "$H/bin/lane-alert.sh" --id "fix-round-stale-claim-$p-$ck" blocked-resolver \
+    "$p/$rkey: fix-round row $id claimed by $box since $up (over ${bound}s = BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN) with no result — the claim is re-offered only to $box, so if $box is gone the park is held until the row is released" \
+    >/dev/null 2>&1 || true
   return 0
 }
 

@@ -39,7 +39,7 @@
       "max": 10,
       "unit": "rounds",
       "zero_means": "off",
-      "note": "Claim requests one tick may make, lost races included. Each claimed row starts one detached fix round, which holds this box for up to BR_FIX_LANE_TIMEOUT. The stale cutoff sent with each claim is ceil((BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN) / 60) minutes, read from the blocked-resolver knobs."
+      "note": "Claim requests one claim pass (the cron tick, or a runner's exit drain) may make, lost races included. The pass also stops at FIX_ROUND_RUN_MAX live runners (BH-9906). Each claimed row starts one detached fix round, which holds this box for up to T = BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN. The stale cutoff sent with each claim is ceil(T / 60) minutes, read from the blocked-resolver knobs."
     },
     {
       "env": "FIX_ROUND_CLAIM_FOREGROUND",

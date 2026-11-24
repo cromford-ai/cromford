@@ -90,6 +90,10 @@ brlad_vb_rescore() {
   on=$(brlad_knob BR_VERIFY_ON_MAIN "${BR_VERIFY_ON_MAIN:-1}" 1 0 1)
   [ "$on" = 1 ] || return 1
   [ -r "$out" ] || return 1
+  # A STEP THAT TIMED OUT IS NOT A RED STEP (BH-9906). A 124 or a spent verify
+  # budget says nothing about the branch, and a baseline run of main inside the
+  # same budget only repeats the timeout. The round answers verify-timeout.
+  grep -qE '^(TYPECHECK|UNIT)_EXIT: 124$|^VERIFY_TIMEOUT: ' "$out" && return 1
   # The other checks already read the diff against origin/main: their red is this branch's.
   grep -qE '^CLOSURE_LINT_EXIT: [1-9]|SELECTION_GATE_EXIT: 1|^CI_LOCAL_EXIT: 1|^UNRESOLVED_PATHS|^AUTHOR_' "$out" && return 1
   grep -qE '^TYPECHECK_EXIT: [1-9]' "$out" && steps="typecheck"

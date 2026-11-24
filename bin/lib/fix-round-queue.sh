@@ -192,3 +192,40 @@ fix_round_open_count() {
   done
   printf '%s\n' "$total"
 }
+
+# fix_round_requeue <id> <box> <record-json> — POST /api/fix-rounds/requeue
+#   (BH-9906): the runner puts a timed-out round back as queued for its own box
+#   at once (status claimed by <box> -> queued, record_in replaced, enqueued_at
+#   now; the next claim adds 1 to attempt). The record goes to jq on stdin,
+#   never argv. rc 0 on 2xx, 9 on 409 (the row is no longer claimed by <box>),
+#   2 on 404, 1 on bad input, an outage or a bad answer.
+fix_round_requeue() {
+  local id="${1:-}" box="${2:-}" rec="${3:-}" body rc
+  case "$id" in ''|*[!0-9]*) _frq_bad "fix_round_requeue: id must be numeric, got '$id'"; return 1 ;; esac
+  [ -n "$box" ] || _frq_bad "fix_round_requeue needs <box>" || return 1
+  _frq_ready || return 1
+  body=$(printf '%s' "$rec" | jq -Rsc --arg id "$id" --arg box "$box" \
+    '{id:($id|tonumber), box:$box, record_in:(if . == "" then null else . end)}') || return 1
+  _jobs_req POST /api/fix-rounds/requeue "$body" >/dev/null; rc=$?
+  case "$rc" in
+    0) printf '%s' "${JOBS_BODY:-}" | jq -e '.job | objects' >/dev/null 2>&1 || return 1; return 0 ;;
+    2) return 2 ;;
+    9) return 9 ;;
+    *) [ "${JOBS_HTTP:-}" = 413 ] && _jobs_log "fix_round_requeue $id: 413 record_in over the worker's 256 KB cap, not re-offered"
+       return 1 ;;
+  esac
+}
+
+# fix_round_box_claims <box> — prints the list of rows claimed by <box>
+#   (GET /api/fix-rounds?box=<box>&status=claimed&limit=500, the index
+#   fix_round_jobs_box). rc 1 on an outage or an answer that is not a list:
+#   never "0 claims".
+fix_round_box_claims() {
+  local box="${1:-}" q resp rc
+  [ -n "$box" ] || _frq_bad "fix_round_box_claims needs <box>" || return 1
+  _frq_ready || return 1
+  q=$(jq -nr --arg b "$box" '"box=\($b|@uri)&status=claimed&limit=500"') || return 1
+  resp=$(_jobs_req GET "/api/fix-rounds?$q"); rc=$?
+  [ "$rc" = 0 ] || return 1
+  printf '%s' "$resp" | jq -ce '.fix_round_jobs | arrays' 2>/dev/null || return 1
+}

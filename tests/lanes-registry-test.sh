@@ -196,6 +196,14 @@ PLUMBING="$PLUMBING HC_STATE"
 # driver's tick_project. MC_WORKERS_DONE_BY's case: computed per tick, never a
 # knob. A settings row that set it would be overwritten by the fan-out anyway.
 PLUMBING="$PLUMBING MC_PROJ_GATE"
+# FRC_KILL_GRACE and FRC_WT_OWNER (BH-9906) are SET BY bin/fix-round-claim.sh
+# on the one fix round it launches (`FRC_WT_OWNER=1 FRC_KILL_GRACE=... setsid`)
+# and read by that round's bin/blocked-resolver.sh --fix-here: the runner's
+# kill grace (its own knob is FIX_ROUND_KILL_GRACE_S on fix-round-claim) and
+# "the runner removes the worktree". PL_PROJECT's case: an output of the
+# runner, never a knob. A settings row that set FRC_WT_OWNER would make every
+# hub round leave its worktree behind on a TERM.
+PLUMBING="$PLUMBING FRC_KILL_GRACE FRC_WT_OWNER"
 PLUMBING=$(printf '%s' "$PLUMBING" | tr '\n' ' ')
 
 # --- 1. shape ----------------------------------------------------------------

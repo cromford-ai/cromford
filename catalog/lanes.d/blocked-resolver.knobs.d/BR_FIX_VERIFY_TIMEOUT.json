@@ -1,0 +1,11 @@
+{
+  "env": "BR_FIX_VERIFY_TIMEOUT",
+  "type": "int",
+  "default": 2700,
+  "min": 300,
+  "max": 21600,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9906-verify-budget.sh",
+  "note": "BH-9906: the budget of the whole verify block of a fix round (typecheck, unit, closure lint, ci-local, selection gate, repro), separate from BR_FIX_AGENT_TIMEOUT. Each typecheck and unit command runs under the seconds left; a later step with none left writes VERIFY_TIMEOUT: <step>. A round whose verification ran out ends FIX_RESULT verify-timeout and keeps the agent commit for a verify-only retry. The box bounds a round at BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN."
+}

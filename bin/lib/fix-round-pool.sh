@@ -37,10 +37,14 @@
 #                   claimed, the stale re-offer comes back      FRP_WORD=deferred
 # A pool row that may be a live machine is never answered with a local run.
 #
-#   frp_key <id> <cap_key>     prints FXR-<id>-<ck8>
+#   frp_key <id> <cap_key> [<requeues>]
+#                              prints FXR-<id>-<ck8>, or FXR-<id>-<ck8>-r<n> for
+#                              a row the runner re-offered n > 0 times after a
+#                              timeout (BH-9906; a stale re-offer keeps n, so it
+#                              keeps its key and its "no second round" guard)
 #   frp_placed <project>       rc 0 when the project's fix rounds go to the pool.
 #                              One settings read set a project a process (cached).
-#   frp_put <id> <box> <project> <cap_key> <attempt>
+#   frp_put <id> <box> <project> <cap_key> <attempt> [<requeues>]
 #                              the read and the put above. Sets FRP_WORD, FRP_KEY,
 #                              and for `ran` FRP_ST and FRP_REASON. rc 0 for every
 #                              word but deferred.
@@ -51,10 +55,12 @@ declare -A _FRP_PLACE=()
 _frp_log() { if command -v frc_log >/dev/null 2>&1; then frc_log "$*"; else printf '%s\n' "$*" >&2; fi; }
 
 frp_key() {
-  local ck8
+  local ck8 n="${3:-0}"
   ck8=$(printf '%s' "${2:-}" | sha256sum 2>/dev/null | cut -c1-8)
   [ "${#ck8}" = 8 ] || return 1
-  printf 'FXR-%s-%s' "${1:-}" "$ck8"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  # A row re-offered after a timeout (BH-9906) is a new pool round: its own key.
+  if [ "$n" -gt 0 ]; then printf 'FXR-%s-%s-r%s' "${1:-}" "$ck8" "$n"; else printf 'FXR-%s-%s' "${1:-}" "$ck8"; fi
 }
 
 frp_placed() {
@@ -78,9 +84,9 @@ frp_placed() {
 }
 
 frp_put() {
-  local id="${1:-}" box="${2:-}" p="${3:-}" ck="${4:-}" att="${5:-}" resp st reason meta res
+  local id="${1:-}" box="${2:-}" p="${3:-}" ck="${4:-}" att="${5:-}" nrq="${6:-0}" resp st reason meta res
   FRP_WORD=deferred; FRP_KEY=""; FRP_ST=""; FRP_REASON=""
-  FRP_KEY=$(frp_key "$id" "$ck") || { _frp_log "row $id $p/$ck: no pool key (sha256sum); not queued"; return 1; }
+  FRP_KEY=$(frp_key "$id" "$ck" "$nrq") || { _frp_log "row $id $p/$ck: no pool key (sha256sum); not queued"; return 1; }
   resp=$(_jobs_req GET "/api/queue?project=$p&key=$FRP_KEY&limit=1" 2>/dev/null) \
     && IFS=$'\t' read -r st reason < <(jq -r --arg k "$FRP_KEY" 'if (.queue | type) != "array" then error("no queue") else
          ([.queue[] | select(.ticket_key == $k)][0] // {}) | [(.status // "none"),

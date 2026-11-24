@@ -102,7 +102,7 @@ fresh() {
   cp "$DIR/bin/jobs-client.sh" "$H/bin/"
   cp "$DIR"/bin/lib/jobs/*.sh "$H/bin/lib/jobs/"
   cp "$DIR/bin/lib/fix-round-queue.sh" "$DIR/bin/lib/hub-box.sh" "$DIR/bin/lib/lane-gate.sh" \
-     "$DIR/bin/lib/env-path.sh" "$H/bin/lib/"
+     "$DIR/bin/lib/env-path.sh" "$DIR/bin/lib/fix-round-reap.sh" "$H/bin/lib/"
   printf 'HARNESS_SECRET=test-secret\nJOBS_URL=https://jobs.invalid\nJOBS_RETRIES=0\n' > "$H/env/global.env"
   printf 'b1\n' > "$T/boxname"
   echo ok > "$T/stub.mode"
@@ -162,8 +162,8 @@ reqs() { local n; n=$(grep -c "${1:-fix-rounds}" "$T/curl.log" 2>/dev/null); ech
 
 # tick [env assignments...] — the lane as cron runs it.
 tick() {
-  ( unset BOX_NAME JOBS_URL HARNESS_SECRET JOBS_BOX FIX_ROUND_CLAIM FIX_ROUND_CLAIM_MAX \
-          BR_FIX_LANE_TIMEOUT BR_FIX_HOP_MARGIN LANE_GATE_DISABLE GH_TOKEN
+  ( unset BOX_NAME JOBS_URL HARNESS_SECRET JOBS_BOX FIX_ROUND_CLAIM FIX_ROUND_CLAIM_MAX FIX_ROUND_RUN_MAX \
+          BR_FIX_LANE_TIMEOUT BR_FIX_HOP_MARGIN BR_FIX_AGENT_TIMEOUT BR_FIX_VERIFY_TIMEOUT LANE_GATE_DISABLE GH_TOKEN
     export HARNESS="$H" LANE_REGISTRY="$T/lanes.json" PATH="$FAKE:$PATH" FIX_ROUND_CLAIM_FOREGROUND=1
     for kv in "$@"; do export "${kv?}"; done
     bash "$H/bin/fix-round-claim.sh" >/dev/null 2>&1 )
@@ -307,15 +307,23 @@ N=$(grep -c 'not configured' "$H/logs/fix-round-claim.log" 2>/dev/null); N=${N:-
 [ "$RC" -eq 0 ] && [ "$N" = 1 ] && [ "$(reqs)" = 0 ] && ok || bad "(j) rc=$RC not-configured lines $N requests $(reqs)"
 
 # ── (k) the stale cutoff in the claim body ───────────────────────────────────
+# TEST-CHANGE (BH-9906): the cutoff is ceil((BR_FIX_AGENT_TIMEOUT +
+# BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN) / 60), the box's new round bound;
+# BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN is only the fallback when the agent
+# or verify knob is not a number. Every old case is kept on the fallback path.
 stale_of() { grep '/api/fix-rounds/claim' "$T/bodies.log" | head -1 | cut -d' ' -f3- | jq -c '.stale_min'; }
 fresh; tick
-[ "$(stale_of)" = 95 ] && ok || bad "(k) default stale_min $(stale_of), want 95"
-fresh; tick BR_FIX_LANE_TIMEOUT=60 BR_FIX_HOP_MARGIN=60
-[ "$(stale_of)" = 2 ] && ok || bad "(k) 60+60 stale_min $(stale_of), want 2"
-fresh; tick BR_FIX_LANE_TIMEOUT=61 BR_FIX_HOP_MARGIN=60
-[ "$(stale_of)" = 3 ] && ok || bad "(k) 61+60 stale_min $(stale_of), want 3 (ceil, not floor)"
-fresh; tick BR_FIX_LANE_TIMEOUT=junk
-[ "$(stale_of)" = null ] && ok || bad "(k) junk timeout stale_min $(stale_of), want absent"
+[ "$(stale_of)" = 110 ] && ok || bad "(k) default stale_min $(stale_of), want 110 (3600+2700+300)"
+fresh; tick BR_FIX_AGENT_TIMEOUT=60 BR_FIX_VERIFY_TIMEOUT=60 BR_FIX_HOP_MARGIN=60
+[ "$(stale_of)" = 3 ] && ok || bad "(k) 60+60+60 stale_min $(stale_of), want 3"
+fresh; tick BR_FIX_AGENT_TIMEOUT=61 BR_FIX_VERIFY_TIMEOUT=60 BR_FIX_HOP_MARGIN=60
+[ "$(stale_of)" = 4 ] && ok || bad "(k) 61+60+60 stale_min $(stale_of), want 4 (ceil, not floor)"
+fresh; tick BR_FIX_AGENT_TIMEOUT=junk BR_FIX_LANE_TIMEOUT=60 BR_FIX_HOP_MARGIN=60
+[ "$(stale_of)" = 2 ] && ok || bad "(k) fallback 60+60 stale_min $(stale_of), want 2"
+fresh; tick BR_FIX_AGENT_TIMEOUT=junk BR_FIX_LANE_TIMEOUT=61 BR_FIX_HOP_MARGIN=60
+[ "$(stale_of)" = 3 ] && ok || bad "(k) fallback 61+60 stale_min $(stale_of), want 3 (ceil, not floor)"
+fresh; tick BR_FIX_AGENT_TIMEOUT=junk BR_FIX_LANE_TIMEOUT=junk
+[ "$(stale_of)" = null ] && ok || bad "(k) junk timeouts stale_min $(stale_of), want absent"
 
 # ── (l) the runner is detached: the tick does not wait for it ────────────────
 fresh
@@ -331,6 +339,10 @@ E=$(( ($(date +%s%N) - S) / 1000000 ))
 touch "$T/stub.release"
 for _ in $(seq 1 60); do [ "$(rowf 1 .status)" = "done" ] && break; sleep 0.25; done
 [ "$(rowf 1 .status)" = "done" ] && [ "$(stubs)" = 1 ] && ok || bad "(l) the detached round never finished: $(rowf 1 .status)"
+# TEST-CHANGE (BH-9906): the detached runner now makes one claim pass (its
+# drain) after its finish. Wait for it to exit, bounded, so the next case's
+# fresh tree is not claimed from by this case's runner.
+for _ in $(seq 1 100); do pgrep -f "$H/bin/fix-round-claim.sh" >/dev/null 2>&1 || break; sleep 0.1; done
 
 # ── (m) a 409 on finish is logged once and not retried ───────────────────────
 fresh
@@ -338,7 +350,7 @@ row 1 b1 queued 0 null
 touch "$T/finish409"
 tick
 [ "$(reqs /api/fix-rounds/finish)" = 1 ] && ok || bad "(m) finish requests $(reqs /api/fix-rounds/finish)"
-[ "$(grep -c '409' "$H/logs/fix-round-claim.log" 2>/dev/null)" = 1 ] && ok || bad "(m) 409 log lines: $(cat "$H/logs/fix-round-claim.log" 2>/dev/null)"
+[ "$(grep -c ': 409 on finish' "$H/logs/fix-round-claim.log" 2>/dev/null)" = 1 ] && ok || bad "(m) 409 log lines: $(cat "$H/logs/fix-round-claim.log" 2>/dev/null)"
 
 # ── (o) a record for another project is dropped, the result kept ─────────────
 fresh

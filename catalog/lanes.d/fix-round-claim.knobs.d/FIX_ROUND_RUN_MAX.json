@@ -1,0 +1,11 @@
+{
+  "env": "FIX_ROUND_RUN_MAX",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 10,
+  "unit": "rounds",
+  "zero_means": "off",
+  "read_in": "bin/fix-round-claim.sh",
+  "note": "BH-9906: fix rounds this box runs at the same time. The tick counts the live runners (the held locks/fix-round-<p>-<ck>.lock files) and claims at most FIX_ROUND_RUN_MAX - running rows; a row it does not claim stays queued, with no alert. Per-project rows lane.fix-round-claim.<project>.FIX_ROUND_RUN_MAX apply: the box uses the minimum over the projects it owns. Does not apply on the Fly pool, where each round has its own machine. 0 = off: the box claims nothing."
+}

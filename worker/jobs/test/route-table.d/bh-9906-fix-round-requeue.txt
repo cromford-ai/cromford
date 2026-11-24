@@ -1,0 +1,3 @@
+# FIX-ROUND REQUEUE (BH-9906): a claimed fix round goes back to queued for the
+# same box, by the box that holds the claim. Bearer-gated.
+POST /api/fix-rounds/requeue

@@ -739,6 +739,8 @@ FIX_LANE_TIMEOUT="${BR_FIX_LANE_TIMEOUT:-5400}"
 # only to page a claim older than FIX_LANE_TIMEOUT + this (br_fix_stale_claim).
 FIX_HOP_MARGIN="${BR_FIX_HOP_MARGIN:-300}"
 FIX_AGENT_TIMEOUT="${BR_FIX_AGENT_TIMEOUT:-3600}"
+# The verify block's own budget (BH-9906): the brvb_ fragment reads it.
+FIX_VERIFY_TIMEOUT="${BR_FIX_VERIFY_TIMEOUT:-2700}"
 ADJ_TIMEOUT="${BR_ADJ_TIMEOUT:-1200}"
 # The two models this lane runs are model_routes rows, asked PER PROJECT at the
 # call (BH-1510.1): build.execute.fallback for a fix round, build.review for an
@@ -5046,62 +5048,6 @@ br_fix_remote() {
   return 0
 }
 
-# br_fix_unclaimed <project> <rkey> <cap-key> <row-json> — NOTHING WAITS
-#   SILENTLY (BH-2674). A queued row older than FIX_LANE_TIMEOUT means the
-#   owning box's claimer is not taking its work: one page, keyed on the park, so
-#   the --id alert-state (bin/lib/alert-state.sh) sends it once however many
-#   ticks see it. An enqueued_at that does not parse is said and never read as
-#   age 0 (D11).
-br_fix_unclaimed() {
-  local p="$1" rkey="$2" ck="$3" row="$4" box id enq at now
-  case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) return 0 ;; esac
-  box=$(printf '%s' "$row" | jq -r '.box // "?"' 2>/dev/null)
-  id=$(printf '%s' "$row" | jq -r '.id // "?"' 2>/dev/null)
-  enq=$(printf '%s' "$row" | jq -r '.enqueued_at // ""' 2>/dev/null)
-  at=""
-  [ -n "$enq" ] && { at=$(date -u -d "$enq" +%s 2>/dev/null) || at=""; }
-  if [ -z "$at" ]; then
-    say "$p/$rkey: fix-round row $id's enqueued_at '$enq' does not parse — its age is unknown, no unclaimed page"
-    return 0
-  fi
-  now=$(date -u +%s)
-  [ $((now - at)) -gt "$FIX_LANE_TIMEOUT" ] || return 0
-  "$H/bin/lane-alert.sh" --id "fix-round-unclaimed-$p-$ck" blocked-resolver \
-    "$p/$rkey: fix-round row $id for $box has sat queued since $enq (over ${FIX_LANE_TIMEOUT}s) — bin/fix-round-claim.sh on $box has not claimed it; the park is held until it does" \
-    >/dev/null 2>&1 || true
-  return 0
-}
-
-# br_fix_stale_claim <project> <rkey> <cap-key> <row-json> — A DEAD BOX'S CLAIM
-#   IS PAGED, NOT WAITED ON FOREVER (review F1 on #2872). The claim route
-#   re-offers a stale `claimed` row only to the box that holds it, so a box
-#   that died, was drained or was replaced mid-round leaves the row claimed
-#   for good and br_one holds the park every tick. Past FIX_LANE_TIMEOUT +
-#   FIX_HOP_MARGIN (the claimer's own stale bound; the box kills its round at
-#   FIX_LANE_TIMEOUT) that is one page, keyed on the park so alert-state sends
-#   it once. An updated_at that does not parse is said, never read as age 0.
-br_fix_stale_claim() {
-  local p="$1" rkey="$2" ck="$3" row="$4" box id up at now bound
-  case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) return 0 ;; esac
-  case "$FIX_HOP_MARGIN" in ''|*[!0-9]*) return 0 ;; esac
-  bound=$((FIX_LANE_TIMEOUT + FIX_HOP_MARGIN))
-  box=$(printf '%s' "$row" | jq -r '.claimed_by // .box // "?"' 2>/dev/null)
-  id=$(printf '%s' "$row" | jq -r '.id // "?"' 2>/dev/null)
-  up=$(printf '%s' "$row" | jq -r '.updated_at // ""' 2>/dev/null)
-  at=""
-  [ -n "$up" ] && { at=$(date -u -d "$up" +%s 2>/dev/null) || at=""; }
-  if [ -z "$at" ]; then
-    say "$p/$rkey: fix-round row $id's updated_at '$up' does not parse — its claim age is unknown, no stale-claim page"
-    return 0
-  fi
-  now=$(date -u +%s)
-  [ $((now - at)) -gt "$bound" ] || return 0
-  "$H/bin/lane-alert.sh" --id "fix-round-stale-claim-$p-$ck" blocked-resolver \
-    "$p/$rkey: fix-round row $id claimed by $box since $up (over ${bound}s = BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN) with no result — the claim is re-offered only to $box, so if $box is gone the park is held until the row is released" \
-    >/dev/null 2>&1 || true
-  return 0
-}
-
 # br_fix_adopt <project> <rkey> <reason> <url> <record> <tkey> <cap-key> <row-json>
 #   THE HUB TAKES A FINISHED ROUND'S RESULT, EXACTLY ONCE (BH-2674). br_one's
 #   in-flight gate calls it for this park's row once the row is `done`. The
@@ -5161,6 +5107,13 @@ br_fix_adopt() {
     "setup-blocked "*)
       what=$(printf '%s' "${res#setup-blocked }" | base64 -d 2>/dev/null)
       br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "on $box: ${what:-no detail}" fix-round "whatever the owning box $box names above, on $box" ;;
+    verify-timeout|"verify-timeout "*)
+      # BH-9906: the agent is done and its commit is kept; no rung is spent.
+      # The box already re-offered the row FIX_ROUND_TIMEOUT_RETRIES - 1 times,
+      # so a later tick buys at most a verify-only round.
+      what=$(printf '%s' "${res#verify-timeout}" | sed 's/^ //' | base64 -d 2>/dev/null)
+      br_event resolver_fix_verify_timeout "$p" "$ck" "$reason" "on $box: the agent is done, verification owed: ${what:-no detail}"
+      br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "on $box: the agent is done, verification owed: ${what:-no detail}" fix-round "a box with room for the verification (BR_FIX_VERIFY_TIMEOUT, FIX_ROUND_RUN_MAX on $box)" ;;
     terminal)
       rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null
       say "$p/$rkey [$reason]: the fix round on $box ended without a verified push — $(br_fix_terminal_word "$reason")"
@@ -5748,6 +5701,7 @@ br_fix_round() {
   # OWNED FROM HERE (BH-1363), before the worktree add rather than after it: a
   # half-created tree costs the same gigabytes as a finished one.
   BR_FIX_WT="$wt"; BR_FIX_REPO="$REPOS/$p"
+  [ "${BR_FIX_HERE:-0}" = 1 ] && echo "FIX_WT $wt"   # BH-9906: the box runner removes it once the round's session is empty
   if [ "$reuse" = 1 ] && git -C "$REPOS/$p" worktree add -q "$wt" "brfix/$ck" 2>>"$LOG"; then
     say "$p/$rkey [$reason]: reusing the checkpoint branch brfix/$ck left by an earlier round ($(git -C "$wt" rev-parse --short HEAD))"
   elif ! wterr=$(git -C "$REPOS/$p" worktree add -q "$wt" -B "brfix/$ck" "origin/$br" 2>&1 >/dev/null); then
@@ -6008,9 +5962,15 @@ $live$brief"
   # CHECKPOINT (a): a hotfix asked for this slot while the round was setting up.
   if br_yield_take "$p" "$rkey" "$ck" "$reason" "$wt" "before the agent call"; then return 0; fi
   rc=0
+  # BH-9906: a verification timeout kept the agent's commit for this head — verify only, no second agent call.
+  if command -v brvb_agent_done >/dev/null 2>&1 && brvb_agent_done "$p" "$ck" "$lease" "$wt"; then
+    say "$p/$rkey [$reason]: verify-only retry: the agent's commit $(git -C "$wt" rev-parse --short HEAD) from an earlier round on ${lease:0:8} — no agent call"
+  else
   br_count llm
   ( cd "$wt" && env ${gienv[@]+"${gienv[@]}"} AGENT_CALL_ROLE=build.execute.fallback HARNESS="$H" timeout -k 60 "$FIX_AGENT_TIMEOUT" "$H/bin/agent-call.sh" execute "$p" "$fix_model" \
       "$FIX_AGENT_TIMEOUT" "$ST/$p/$ck.fix-run.txt" "$prompt" ) >>"$LOG" 2>&1 || rc=$?
+  [ "$rc" = 0 ] && command -v brvb_mark_agent_done >/dev/null 2>&1 && brvb_mark_agent_done "$p" "$ck" "$lease" "$wt" "${mref:-main}"   # BH-9906: kept before the verification
+  fi
   # CHECKPOINT (b): the ask arrived WHILE the agent worked. Its commit is on
   # brfix/$ck and stays there, so the next round starts from it.
   if br_yield_take "$p" "$rkey" "$ck" "$reason" "$wt" "after the agent call"; then return 0; fi
@@ -6053,17 +6013,28 @@ $live$brief"
   fi
   # <<< br regenerate
   local vrc=0
+  local vleft vkg="${FRC_KILL_GRACE:-60}"   # FRC_KILL_GRACE: lane.fix-round-claim.FIX_ROUND_KILL_GRACE_S (fallback 60), exported by bin/fix-round-claim.sh
+  # THE VERIFY BLOCK HAS ITS OWN BUDGET (BH-9906): BR_FIX_VERIFY_TIMEOUT for all
+  # of it, each command under the seconds left; a step with none left is
+  # VERIFY_TIMEOUT: <step> and does not run. Fallback 1800 s a command when the
+  # fragment is not on this box (the old literal limit).
+  command -v brvb_budget >/dev/null 2>&1 && brvb_budget
   {
     echo "== typecheck =="
     if grep -q '"typecheck"' "$wt/package.json" 2>/dev/null; then
-      ( cd "$wt" && timeout 1200 npm run typecheck 2>&1 ); echo "TYPECHECK_EXIT: $?"
+      vleft=$(brvb_left 2>/dev/null || echo 1800)
+      ( cd "$wt" && timeout -k "$vkg" "$vleft" npm run typecheck 2>&1 ); echo "TYPECHECK_EXIT: $?"
     else echo "TYPECHECK_EXIT: no-typecheck-script"; fi
     echo "== unit =="
-    if grep -q '"test:unit"' "$wt/package.json" 2>/dev/null; then
-      ( cd "$wt" && timeout 1800 npm run test:unit 2>&1 ); echo "UNIT_EXIT: $?"
+    if command -v brvb_spent >/dev/null 2>&1 && brvb_spent; then echo "VERIFY_TIMEOUT: unit"
+    elif grep -q '"test:unit"' "$wt/package.json" 2>/dev/null; then
+      vleft=$(brvb_left 2>/dev/null || echo 1800)
+      ( cd "$wt" && timeout -k "$vkg" "$vleft" npm run test:unit 2>&1 ); echo "UNIT_EXIT: $?"
     elif grep -q '"test"' "$wt/package.json" 2>/dev/null; then
-      ( cd "$wt" && timeout 1800 npm test 2>&1 ); echo "UNIT_EXIT: $?"
+      vleft=$(brvb_left 2>/dev/null || echo 1800)
+      ( cd "$wt" && timeout -k "$vkg" "$vleft" npm test 2>&1 ); echo "UNIT_EXIT: $?"
     else echo "UNIT_EXIT: no-test-script"; fi
+    if command -v brvb_spent >/dev/null 2>&1 && brvb_spent; then echo "VERIFY_TIMEOUT: closure-lint"; else
     # >>> br closure-lint verify (BH-5064)
     # Red refuses the push like a red unit run. could-not-run, skipped (no pack:
     # every product repo) and off are recorded and refuse nothing.
@@ -6088,7 +6059,11 @@ $live$brief"
     # <<< br ci-local verify
     command -v br_sg_verify >/dev/null 2>&1 && br_sg_verify "$wt" "origin/${mref:-main}" "$ST/$p/$ck.selection-gate" "$p"   # BH-8062
     command -v brfr_verify >/dev/null 2>&1 && ! brfr_verify "$wt" "$ST/$p/$ck" && vrc=1   # BH-9472: the reproduced CI test, re-run on the round's tree; still-red or could-not-run refuses the push
+    fi   # BH-9906: the steps above run only while the verify budget lasts
   } > "$out" 2>&1
+  # BH-9906: a step that timed out (agent rc 0) is not a red round: no baseline, no rung, the agent's commit kept.
+  [ "$rc" = 0 ] && command -v brvb_is_timeout >/dev/null 2>&1 && brvb_is_timeout "$out" && { brvb_verify_timeout_exit "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$out"; return 0; }
+  command -v brvb_forget >/dev/null 2>&1 && brvb_forget "$p" "$ck"   # BH-9906: a verification that ran to its end (green or red) uses up the agent record; only a timeout keeps it
   grep -qE '^(TYPECHECK|UNIT|CLOSURE_LINT)_EXIT: [1-9]|SELECTION_GATE_EXIT: 1' "$out" && vrc=1
   command -v brlad_vb_rescore >/dev/null 2>&1 && [ "$vrc" = 1 ] && [ "$rc" = 0 ] && brlad_vb_rescore "$p" "$ck" "$wt" "$out" "origin/${mref:-main}" && vrc=0   # BH-9437: red on main too
   grep -q '^CI_LOCAL_EXIT: 1' "$out" && { vrc=1; say "$p/$rkey [$reason]: the CI lint steps are red on the round's head ($(grep -c '^CI-LOCAL ' "$out") finding line(s), see $out) — not pushed"; }
@@ -6300,6 +6275,7 @@ $(head -c 4000 "$unaddr")" >/dev/null 2>&1 || true
     return 0
   fi
   if [ "$prc" = 0 ]; then
+    command -v brvb_forget >/dev/null 2>&1 && brvb_forget "$p" "$ck"   # BH-9906: the agent's commit is pushed, its record and ref go
     say "$p/$rkey [$reason]: FIX ROUND pushed $(git -C "$wt" rev-parse --short HEAD) to $br — $br_next_judge"
     br_record "$p" "$ck" fix-round "$reason" "pushed $(git -C "$wt" rev-parse --short HEAD) to $br, typecheck+unit green$cok" fixrounds "$url" "${head:--}"
     # THE PUSH IS REMEMBERED FOR THE SUPERSEDE GUARD (BH-1642): the rebuild rung may not close this PR
@@ -7770,6 +7746,7 @@ if [ "$BR_FIX_HERE" = 1 ]; then
   br_setup_blocked() { BR_FIX_SAID=1; echo "FIX_RESULT setup-blocked $(printf '%s' "$6" | base64 -w0)"; }
   br_fix_terminal()  { BR_FIX_SAID=1; echo "FIX_RESULT terminal"; }
   br_rebuild_fresh() { BR_FIX_SAID=1; echo "FIX_RESULT rebuild-fresh"; }
+  br_fix_verify_timeout() { BR_FIX_SAID=1; echo "FIX_RESULT verify-timeout $(printf '%s' "$6" | base64 -w0)"; }
   br_round_begin() { :; }
   br_yield_take() { return 1; }
   br_rounds_running() { echo 0; }
@@ -7805,7 +7782,16 @@ if [ "$BR_FIX_HERE" = 1 ]; then
     br_setup_blocked - - - - - "blocked-resolver is in observe mode on $(hostname 2>/dev/null || echo the owning box) (flags/blocked-resolver-observe or automerge-disabled)"
   else
     trap 'br_wt_drop "the round ended"' EXIT
-    trap 'br_wt_drop "the round was signalled"; mc_git_auth_clear 2>/dev/null; exit 143' TERM INT HUP
+    # FRC_WT_OWNER=1 (BH-9906): bin/fix-round-claim.sh removes the worktree once
+    # no process of the round's session is left; removing it here, under
+    # verify steps that still run in their own process groups, is the
+    # ERR_MODULE_NOT_FOUND of project-3 2026-11-23. The EXIT trap is cleared first:
+    # `exit` inside this trap would run it.
+    if [ "${FRC_WT_OWNER:-0}" = 1 ]; then
+      trap 'trap - EXIT; mc_git_auth_clear 2>/dev/null; exit 143' TERM INT HUP
+    else
+      trap 'br_wt_drop "the round was signalled"; mc_git_auth_clear 2>/dev/null; exit 143' TERM INT HUP
+    fi
     br_fix_here_run "$_fh_in" "${BR_FIX_ARGS[@]}"
   fi
   echo "FIX_RECORD $(br_load "$_fh_p" "$_fh_ck" | base64 -w0)"
