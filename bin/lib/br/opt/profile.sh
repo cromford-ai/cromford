@@ -213,6 +213,20 @@ br_opt_prof_tick_end() {
     grows=$(awk -F'\t' '{ s += $7 } END { printf "%d", s }' "$f" 2>/dev/null)
     top=$(sort -t$'\t' -k6,6nr "$f" 2>/dev/null | head -5 | awk -F'\t' '{ printf "%s%s/%s:%ss", (NR > 1 ? " " : ""), $1, $2, $6 }')
   fi
-  say "prof: secs=$secs discovery=$dis prepass=$pre order=$ord loop=$lop rows=$_BR_PROF_ROWS gh=${g:-0} gh_rows=${grows:-0} search=${s:-0} pulls=${pu:-0} issues=${is:-0} raw=${r:-0} d1=${d1:-0} llm=${l:-0} memo_hits=${m:-0} unchanged=${u:-0} discovery_rows=${RAWCOUNT:-0} retired_skipped=${BDI_SKIPPED:-0} discovery_src=${BDI_SRC:--} project=${ONLY:-fleet} top=[$top]"
+  # BH-9952: an entry whose name holds a `.` is a part of a source (bdb_sub),
+  # and goes to discovery_sub=. discovery_src= keeps the whole sources, in
+  # their order. Both new fields go after project= and before top=[...], which
+  # stays the last field (BH-5946's pin).
+  local src="" sub="" e
+  local -a ents=()
+  IFS=, read -r -a ents <<<"${BDI_SRC:-}"
+  for e in ${ents[@]+"${ents[@]}"}; do
+    [ -n "$e" ] || continue
+    case "${e%%:*}" in
+      *.*) sub="${sub:+$sub,}$e" ;;
+      *)   src="${src:+$src,}$e" ;;
+    esac
+  done
+  say "prof: secs=$secs discovery=$dis prepass=$pre order=$ord loop=$lop rows=$_BR_PROF_ROWS gh=${g:-0} gh_rows=${grows:-0} search=${s:-0} pulls=${pu:-0} issues=${is:-0} raw=${r:-0} d1=${d1:-0} llm=${l:-0} memo_hits=${m:-0} unchanged=${u:-0} discovery_rows=${RAWCOUNT:-0} retired_skipped=${BDI_SKIPPED:-0} discovery_src=${src:--} project=${ONLY:-fleet} discovery_sub=${sub:--} rung_bound=${BRRB_FIRED:-0} top=[$top]"
   return 0
 }

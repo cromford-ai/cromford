@@ -46,10 +46,13 @@ afterEach(() => { if (mounted) { mount(null, mounted); mounted = null; } });
 // ---------------------------------------------------------------- V1, V8
 test('V1 approvalOf: only a waiting v1 row with a readable requested_at is waiting', () => {
   const a = approvalOf(row(), NOW);
-  assert.deepEqual(a, {
-    waiting: true, ticketId: 'T-501', ticketUrl: TICKET_URL,
-    since: FDETAIL.requested_at, ageMin: 125, head: HEAD
-  });
+  assert.deepEqual(Object.keys(a).sort(), ['ageMin', 'head', 'since', 'ticketId', 'ticketUrl', 'waiting']);
+  assert.equal(a.waiting, true);
+  assert.equal(a.ticketId, 'T-501');
+  assert.equal(a.ticketUrl, TICKET_URL);
+  assert.equal(a.since, FDETAIL.requested_at);
+  assert.equal(a.ageMin, 125);
+  assert.equal(a.head, HEAD);
   assert.deepEqual(approvalOf({ ledger: row() }, NOW), a, 'the point-read body unwraps');
   for (const status of ['closed', 'approved', 'hold', 'mystery', '', null, 'WAITING']) {
     assert.equal(approvalOf(row({ status }), NOW), null, `status ${status}`);

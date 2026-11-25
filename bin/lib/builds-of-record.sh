@@ -88,24 +88,47 @@ bor_local_dir() {
 }
 
 bor_union() {
-  local p="${1:-}" rows rc b f name rest seen ts line out="" results
+  local p="${1:-}" rows rc b f name rest ts line out="" results k
+  # LINEAR, NOT QUADRATIC (BH-9952). The duplicate check was a `case` match on
+  # a string that grew by one name per RESULT, and each RESULT forked one
+  # `date -u -r`, and `out="$out..."` copied the whole output once per row:
+  # about 10,000 names on the hub, 600 s per call. Now `seen` is
+  # an associative array, and ONE find gives every RESULT mtime. A RESULT the
+  # find did not list (written after it, a symlink) takes the old date fork.
+  # The output is appended with +=, which does not copy it.
+  local -A seen=() mt=()
   [ -n "$p" ] || return 1
   rows=$(bor_list "$p"); rc=$?
   [ "$rc" = 1 ] && return 1
   # No root: the DB rows only, no local RESULT scan.
   b="${H:-${HARNESS:-}}"; results=()
   [ -n "$b" ] && b="$b/builds" && results=("$b/$p"-*/RESULT "$b/pool-$p"-*/RESULT "$b/fly-$p"-*/RESULT)
-  seen=$'\n'"$(printf '%s\n' "$rows" | cut -f2)"$'\n'
+  # Column 2 of each ledger row (the whole line when it has no tab, as cut does).
+  while IFS= read -r line; do
+    k="${line#*$'\t'}"; k="${k%%$'\t'*}"
+    [ -n "$k" ] && seen["$k"]=1
+  done <<<"$rows"
+  if [ "${#results[@]}" -gt 0 ]; then
+    while IFS= read -r line; do
+      f="${line%$'\t'*}"; ts="${line##*$'\t'}"
+      [ -n "$f" ] && [ "$f" != "$line" ] && mt["$f"]="${ts%%.*}Z"
+    done < <(TZ=UTC find "$b" -mindepth 2 -maxdepth 2 -type f -name RESULT \
+               \( -path "$b/$p-*" -o -path "$b/pool-$p-*" -o -path "$b/fly-$p-*" \) \
+               -printf '%p\t%TY-%Tm-%TdT%TH:%TM:%TS\n' 2>/dev/null)
+  fi
   for f in ${results[@]+"${results[@]}"}; do
     [ -f "$f" ] || continue
     name="${f%/RESULT}"; name="${name##*/}"; name="${name#pool-}"; name="${name#fly-}"
     rest="${name#"$p"-}"
     [[ "$rest" =~ ^([A-Z][A-Z0-9]*-[0-9]+) ]] || continue
-    case "$seen" in *$'\n'"$name"$'\n'*) continue ;; esac
-    seen="$seen$name"$'\n'
-    ts=$(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || ts=-
+    k="${BASH_REMATCH[1]}"
+    [ -n "${seen[$name]+x}" ] && continue
+    seen["$name"]=1
+    ts="${mt[$f]:-}"
+    [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+      || { ts=$(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || ts=-; }
     line=""; IFS= read -r line < "$f"
-    out="$out${BASH_REMATCH[1]}"$'\t'"$name"$'\t-\t'"$ts"$'\t'"${line//$'\t'/ }"$'\t-\t-\n'
+    out+="$k"$'\t'"$name"$'\t-\t'"$ts"$'\t'"${line//$'\t'/ }"$'\t-\t-\n'
   done
   [ -n "$rows" ] && printf '%s\n' "$rows"
   printf '%s' "$out"

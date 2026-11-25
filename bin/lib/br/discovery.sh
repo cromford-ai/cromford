@@ -91,6 +91,27 @@ br_from_builds() {
   local -A bseen=()
   local bi="" bp rows bdir bupd bres bjob bep bst bsx bat bate bnow
   local -a bor_items=() bor_p=() bor_key=() bor_res=() bor_ep=()
+  # BH-9952: with the bh-9952-discovery-batch fragment the ledger loop is two
+  # passes with no fork per row (bfast=1), and its parts are timed.
+  local bfast=0 bt0 bt_u=0 bt_l0 bt_g0 bi2 bk
+  local -a lp=() lkey=() lres=() lep=() lbst=() lbdir=() lsig=() bpairs=()
+  command -v bdb_state_batch >/dev/null 2>&1 && bfast=1
+  # NO FORK PER RECORD, AND A PROJECT RUN READS ONLY ITS OWN (BH-6044). On
+  # 2026-10-11 builds/ held 7,887 dirs, and this walk forked bin/project-of.sh
+  # (and through it fleet-conf.sh) for every record before it dropped the rows
+  # of other projects. The second glob also matched every pool-* dir again.
+  # Since BH-5913 thirteen project runs did that whole walk at once: ~4,700 s
+  # of discovery each, the hub at load 80 on 8 vCPUs, and the merge conductor's
+  # workers killed at their deadline before their first line. So a project run
+  # globs builds/<p>-*/ and builds/pool-<p>-*/ only, the fleet glob visits each
+  # dir once, and the owner of a dir is matched in this shell against ONE read
+  # of the project list — project-of.sh --prefix's own rule: `pool-` stripped,
+  # the longest project name that prefixes `<name>-` wins (project-6-os over
+  # project-6). A list that cannot be read owns nothing, as project-of.sh did.
+  pl=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-) || pl=""
+  # BH-9467: the per-path (signature, decision) cache. Begun BEFORE the ledger
+  # loop since BH-9952, which notes its stable skips in the same file.
+  command -v bdc_begin >/dev/null 2>&1 && bdc_begin builds "$pl"
   # LEDGER-ONLY RECORDS (BH-2349). A build whose record never reached this box
   # is still in the jobs ledger. Only rows with a job id and NO local dir are
   # added: a local dir stays the glob's below, markers and all, so nothing is
@@ -100,20 +121,44 @@ br_from_builds() {
     # shellcheck source=bin/lib/build-archive.sh
     command -v ba_path >/dev/null 2>&1 || . "$H/bin/lib/build-archive.sh" 2>/dev/null || true
     bnow=$(date -u +%s)
+    bt_l0=$SECONDS
     while IFS= read -r bp; do
       [ -n "$bp" ] || continue
       [ -z "$ONLY" ] || [ "$ONLY" = "$bp" ] || continue
-      rows=$(bor_union "$bp" 2>/dev/null) || continue
+      bt0=$SECONDS
+      if [ "$bfast" = 1 ]; then
+        bdb_union "$bp"; bi2=$?; rows="$_BDB_U"
+      else
+        rows=$(bor_union "$bp" 2>/dev/null); bi2=$?
+      fi
+      bt_u=$(( bt_u + SECONDS - bt0 ))
+      [ "$bi2" = 0 ] || continue
       while IFS=$'\t' read -r _ bdir _ bupd bres _ bjob; do
         [ -n "$bdir" ] && [ "${bjob:--}" != - ] || continue
         bor_local_dir "$bdir" >/dev/null 2>&1 && continue
         # An archived dir (BH-7437) is a dir: its record is never re-offered.
-        command -v ba_path >/dev/null 2>&1 && ba_path "$H" "$bdir" >/dev/null 2>&1 && continue
+        if [ "$bfast" = 1 ]; then bdb_archived "$bdir" && continue
+        else command -v ba_path >/dev/null 2>&1 && ba_path "$H" "$bdir" >/dev/null 2>&1 && continue; fi
         case "$bdir" in "$bp"-*) ;; *) continue ;; esac
         rest="${bdir#"$bp"-}"; key="${rest%-*}"
         [ -n "$key" ] || continue
         [ -n "$bupd" ] || continue
-        bep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
+        if [ "$bfast" = 1 ]; then
+          # PASS 1 (BH-9952): builtins only. The state reads are batched below,
+          # and a row the last tick found a stable skip, under the same
+          # signature, is skipped before them.
+          bdb_epoch "$bupd" || continue; bep="$_BDB_EP"
+          bk="$bp-$key"; bst="$ST/$bp/${bk//[^A-Za-z0-9._-]/-}.json"
+          bsx=-
+          if [ -f "$bst" ]; then
+            bdb_ledger_sig "$bp" "$bst" "$bupd"; bsx="$_BDB_SIG"
+            bdb_ledger_skip "ledger:$bp/$bdir" "$bsx" && continue
+            bpairs+=("$bst"$'\t'"$bdir")
+          fi
+          lp+=("$bp"); lkey+=("$key"); lres+=("$bres"); lep+=("$bep"); lbst+=("$bst"); lbdir+=("$bdir"); lsig+=("$bsx")
+          continue
+        fi
+        [ -n "$bupd" ] || continue; bep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
         # NOT RE-OFFERED. There is no dir to carry .blocked-resolver-superseded,
         # so the ticket's own state is the marker: this build already consumed
         # (rebuild_seen), or a ladder attempt at or after the record, means the
@@ -137,26 +182,36 @@ br_from_builds() {
         bor_p+=("$bp"); bor_key+=("$key"); bor_res+=("$bres"); bor_ep+=("$bep")
       done <<<"$rows"
     done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
+    if [ "$bfast" = 1 ]; then
+      # ONE jq over every state file, then PASS 2: the same decisions, in the
+      # same order, as the per-row read above. A stable skip is noted.
+      bdb_state_batch bpairs
+      for bi2 in "${!lp[@]}"; do
+        if [ "${lsig[$bi2]}" != - ]; then
+          bk="${lbst[$bi2]}"$'\t'"${lbdir[$bi2]}"
+          [ -n "${_BDB_ST[$bk]+x}" ] || continue
+          bsx="${_BDB_ST[$bk]}"
+          [ "${bsx%%$'\t'*}" = false ] || { [ "${bsx%%$'\t'*}" = true ] && bdb_ledger_note "ledger:${lp[$bi2]}/${lbdir[$bi2]}" "${lsig[$bi2]}"; continue; }
+          bat="${bsx#*$'\t'}"
+          if [ -n "$bat" ]; then
+            bdb_epoch "$bat" || continue; bate="$_BDB_EP"
+            [ "$bate" -lt "${lep[$bi2]}" ] || { bdb_ledger_note "ledger:${lp[$bi2]}/${lbdir[$bi2]}" "${lsig[$bi2]}"; continue; }
+          fi
+        fi
+        bor_items+=("ledger:${#bor_p[@]}")
+        bor_p+=("${lp[$bi2]}"); bor_key+=("${lkey[$bi2]}"); bor_res+=("${lres[$bi2]}"); bor_ep+=("${lep[$bi2]}")
+      done
+    fi
+    if command -v bdb_sub >/dev/null 2>&1; then
+      bdb_sub builds.union "$bt_u"; bdb_sub builds.ledger "$(( SECONDS - bt_l0 - bt_u ))"
+    fi
   fi
-  # NO FORK PER RECORD, AND A PROJECT RUN READS ONLY ITS OWN (BH-6044). On
-  # 2026-10-11 builds/ held 7,887 dirs, and this walk forked bin/project-of.sh
-  # (and through it fleet-conf.sh) for every record before it dropped the rows
-  # of other projects. The second glob also matched every pool-* dir again.
-  # Since BH-5913 thirteen project runs did that whole walk at once: ~4,700 s
-  # of discovery each, the hub at load 80 on 8 vCPUs, and the merge conductor's
-  # workers killed at their deadline before their first line. So a project run
-  # globs builds/<p>-*/ and builds/pool-<p>-*/ only, the fleet glob visits each
-  # dir once, and the owner of a dir is matched in this shell against ONE read
-  # of the project list — project-of.sh --prefix's own rule: `pool-` stripped,
-  # the longest project name that prefixes `<name>-` wins (project-6-os over
-  # project-6). A list that cannot be read owns nothing, as project-of.sh did.
-  pl=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-) || pl=""
+  bt_g0=$SECONDS
   if [ -n "$ONLY" ]; then
     bglob=("$H"/builds/pool-"$ONLY"-*/ "$H"/builds/"$ONLY"-*/)
   else
     bglob=("$H"/builds/pool-*-*/ "$H"/builds/*-*/)
   fi
-  command -v bdc_begin >/dev/null 2>&1 && bdc_begin builds "$pl"  # BH-9467: the per-path (signature, decision) cache
   for d in "${bglob[@]}" "${bor_items[@]}"; do
     bi=""
     case "$d" in ledger:*) bi="${d#ledger:}" ;; esac
@@ -298,6 +353,7 @@ br_from_builds() {
     esac
     printf 'build\t%s\t%s\t%s\t-\t%s\t%s\t-\n' "$project" "$(br_rkey "$project-$key")" "$rec_reason" "$d" "$key"
   done
+  command -v bdb_sub >/dev/null 2>&1 && bdb_sub builds.glob "$(( SECONDS - bt_g0 ))"
   command -v bdc_end >/dev/null 2>&1 && bdc_end builds
   return 0
 }
@@ -380,6 +436,12 @@ br_from_rebuilds() {
   local -A bor_rows=() bor_rc=()
   local -a rfiles=()
   local rcur
+  # BH-9952: with the bh-9952-discovery-batch fragment a record is ONE jq
+  # (bdb_rec), the union and `queue_list <p> done` are read once per project
+  # per tick, the times are ISO-parsed in bash, and the parts are timed.
+  local rfast=0 rok=0 rt0 rt_u=0 rt_q=0 rt_w0=$SECONDS
+  local rat="" rurl="" rprec="" rseen="" rnh="" rwj=""
+  command -v bdb_rec >/dev/null 2>&1 && rfast=1
   now=$(date -u +%s)
   # BH-9467: a one-PR run reads only the records that name its PR (one grep);
   # every other run globs, through the per-path cache.
@@ -400,9 +462,22 @@ br_from_rebuilds() {
     # dropped before the cat and the jq forks below would drop it.
     command -v bdi_rec_skip >/dev/null 2>&1 && bdi_rec_skip "$f" && { _bdcn "$f" skip; continue; }
     command -v bdc_read >/dev/null 2>&1 && bdc_read
-    st=$(cat "$f" 2>/dev/null); [ -n "$st" ] || { _bdcn "$f" skip; continue; }
-    oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
+    if [ "$rfast" = 1 ]; then
+      # The cat's value with a builtin: trailing newlines cut, as $(...) does.
+      st=""; IFS= read -r -d '' st < "$f" 2>/dev/null; st="${st%"${st##*[!$'\n']}"}"
+    else
+      st=$(cat "$f" 2>/dev/null)
+    fi
+    [ -n "$st" ] || { _bdcn "$f" skip; continue; }
     ck="${f##*/}"; ck="${ck%.json}"
+    # The outcome stays its own read: tests/blocked-resolver-discovery.bh-9029
+    # D4 counts it as the proof that each open record is read.
+    oc=$(printf '%s' "$st" | jq -r '.outcome // ""' 2>/dev/null)
+    rok=0
+    if [ "$rfast" = 1 ] && bdb_rec "$st"; then
+      rok=1; last="$_BDB_R_LAST"; rat="$_BDB_R_AT"; rurl="$_BDB_R_URL"
+      rprec="$_BDB_R_PREC"; rseen="$_BDB_R_SEEN"; rnh="$_BDB_R_NH"; rwj="$_BDB_R_WJ"
+    else
     # THE ENQUEUE THAT DID NOT LAND (BH-488). Rung 3 closed the PR, marked the
     # record superseded and released the conductor's hand-off BEFORE the enqueue
     # — so when the enqueue answers rc 1 there is no source left that can see
@@ -429,6 +504,7 @@ br_from_rebuilds() {
     # sees the lift. A held row costs no slot (br_one answers rc 3).
     # A data-lane park's own rows (BH-4926) are read past the same way.
     last=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.action // "")' 2>/dev/null)
+    fi
     case "$last" in
       rebuild-fresh-failed|rebuild-fresh-board-miss)
       case "$oc" in ''|HELD) ;; *) _bdcn "$f" skip; continue ;; esac
@@ -437,8 +513,10 @@ br_from_rebuilds() {
       # enqueue with, so there is nothing to retry.
       case "$ck" in "$p"-*) ;; *) _bdcn "$f" skip; continue ;; esac
       key=$(br_key_shape "${ck#"$p"-}") || { _bdcn "$f" skip; continue; }
+      if [ "$rok" = 1 ]; then url="$rurl"; prec="$rprec"; else
       url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
       prec=$(printf '%s' "$st" | jq -r '.parked_rec // "-"' 2>/dev/null)
+      fi
       printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" rebuild-enqueue-failed "${url:--}" "${prec:--}" "$key"
       n=$((n+1))
       continue
@@ -451,7 +529,9 @@ br_from_rebuilds() {
     # held, it costs no slot (rc 3).
     case "$oc" in
       '') ;;
-      HELD) [ -n "$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)" ] || { _bdcn "$f" skip; continue; } ;;
+      HELD)
+        [ "$rok" = 1 ] || rnh=$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)
+        [ -n "$rnh" ] || { _bdcn "$f" skip; continue; } ;;
       # Parked on the data lane (BH-4926): offered so br_one re-reads the
       # ledger and the probe; parked, it costs no slot (rc 3).
       DATA_LANE) ;;
@@ -468,18 +548,23 @@ br_from_rebuilds() {
     # would make the STALLED alert's own instruction false, because clearing
     # .outcome would put back a row this source no longer recognises.
     [ "$last" = rebuild-fresh ] || { _bdcn "$f" skip; continue; }
+    if [ "$rok" = 1 ]; then at="$rat"; else
     at=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not) and (startswith("data-lane") | not) and . != "escalate-data-lane")] | last | (.at // "")' 2>/dev/null)
+    fi
     # AN UNREADABLE TIMESTAMP ABORTS. Everything below is "did this RESULT arrive
     # after the rebuild started", and without a start there is no such question.
     [ -n "$at" ] || { _bdcn "$f" skip; continue; }
-    at_ep=$(date -u -d "$at" +%s 2>/dev/null) || { _bdcn "$f" skip; continue; }
+    if [ "$rfast" = 1 ]; then bdb_epoch "$at" || { _bdcn "$f" skip; continue; }; at_ep="$_BDB_EP"
+    else at_ep=$(date -u -d "$at" +%s 2>/dev/null) || { _bdcn "$f" skip; continue; }; fi
     # The cap key is <project>-<KEY> whenever a key was derivable. When it is not
     # (a PR-number key like o-tproj-77) there is no build to poll for, and the
     # nokey cap in br_rebuild_fresh is that park's answer instead.
     case "$ck" in "$p"-*) ;; *) _bdcn "$f" skip; continue ;; esac
     key=$(br_key_shape "${ck#"$p"-}") || { _bdcn "$f" skip; continue; }
+    if [ "$rok" = 1 ]; then url="$rurl"; seen="$rseen"; else
     url=$(printf '%s' "$st" | jq -r '.parked_url // "-"' 2>/dev/null)
     seen=$(printf '%s' "$st" | jq -r '(.rebuild_seen // []) | join(" ")' 2>/dev/null)
+    fi
     # THE RECORD. Every shape the rebuild can land in: a pool build reaped onto
     # the hub (pool-…), a fly lane's own dir, a box/hub build, and the relayed
     # copy (<project>-<KEY>-remote<stamp>, which the third glob already covers).
@@ -493,7 +578,10 @@ br_from_rebuilds() {
     brc=1
     if command -v bor_union >/dev/null 2>&1; then
       if [ -z "${bor_rc[$p]+x}" ]; then
-        bor_rows[$p]=$(bor_union "$p" 2>/dev/null); bor_rc[$p]=$?
+        rt0=$SECONDS
+        if [ "$rfast" = 1 ]; then bdb_union "$p"; bor_rc[$p]=$?; bor_rows[$p]="$_BDB_U"
+        else bor_rows[$p]=$(bor_union "$p" 2>/dev/null); bor_rc[$p]=$?; fi
+        rt_u=$(( rt_u + SECONDS - rt0 ))
       fi
       brc="${bor_rc[$p]}"
     fi
@@ -511,14 +599,18 @@ br_from_rebuilds() {
         fi
         case " $seen " in *" $dn "*|*" $bdir "*|*" pool-$bdir "*|*" fly-$bdir "*) continue ;; esac
         [ -n "$bupd" ] || continue
-        ep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
+        if [ "$rfast" = 1 ]; then bdb_epoch "$bupd" || continue; ep="$_BDB_EP"
+        else ep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue; fi
         [ "$ep" -ge "$at_ep" ] || continue
         [ "$ep" -ge "$res_ep" ] || continue
         rec="$d"; recname="$dn"; res_ep="$ep"; res="$bres"
         # A local RESULT wins over the ledger's copy of line 1: bin/pr-url-reconcile.sh
         # rewrites it in place (PR_CREATE_FAILED -> PR_CREATED), and the ledger
         # line would rebuild into a PR that did open (BH-614).
-        [ -n "$d" ] && [ -f "$d/RESULT" ] && res=$(head -1 "$d/RESULT" 2>/dev/null)
+        if [ -n "$d" ] && [ -f "$d/RESULT" ]; then
+          if [ "$rfast" = 1 ]; then res=""; { IFS= read -r res < "$d/RESULT" || [ -n "$res" ]; } 2>/dev/null
+          else res=$(head -1 "$d/RESULT" 2>/dev/null); fi
+        fi
       done <<<"${bor_rows[$p]}"
     else
     for d in "$H"/builds/pool-"$p"-"$key"-* "$H"/builds/fly-"$p"-"$key"-* \
@@ -542,8 +634,13 @@ br_from_rebuilds() {
     # reached this box: bin/fly-pool.sh closes the row `done` with the RESULT
     # line as its reason. Fail closed on anything it cannot place in time.
     if [ -z "$res" ] && command -v queue_list >/dev/null 2>&1; then
+      if [ "$rfast" = 1 ]; then
+        rt0=$SECONDS; bdb_qdone "$p"; rt_q=$(( rt_q + SECONDS - rt0 ))
+        qrow=$(awk -F'\t' -v k="$key" '$2==k && $4=="done" {print; exit}' <<<"$_BDB_Q")
+      else
       qrow=$(queue_list "$p" "done" 2>/dev/null \
              | awk -F'\t' -v k="$key" '$2==k && $4=="done" {print; exit}')
+      fi
       if [ -n "$qrow" ]; then
         qat=$(cut -f8 <<<"$qrow")
         # AN EXTERNAL BUILD IS ALWAYS OLDER THAN OUR ATTEMPT (BH-947 review I1).
@@ -559,7 +656,7 @@ br_from_rebuilds() {
         # behind a `duplicate` answer could not read a row, the placeholder
         # `<KEY>@duplicate-race`. A job this lane enqueued has a ledger id there
         # (`~rN`), so neither shape can match one of our own rows.
-        wj=$(printf '%s' "$st" | jq -r '.wait_job // ""' 2>/dev/null)
+        if [ "$rok" = 1 ]; then wj="$rwj"; else wj=$(printf '%s' "$st" | jq -r '.wait_job // ""' 2>/dev/null); fi
         if [ -n "$qat" ] && qep=$(date -u -d "$qat" +%s 2>/dev/null) \
            && { [ "$qep" -ge "$at_ep" ] || [ "$wj" = "$key@$qat" ] || [ "$wj" = "$key@duplicate-race" ]; }; then
           case " $seen " in *" queue:$qat "*) continue ;; esac
@@ -622,6 +719,10 @@ br_from_rebuilds() {
     printf 'rebuild\t%s\t%s\t%s\t%s\t%s\t%s\t-\n' "$p" "$ck" "$out" "${url:--}" "${rec:--}" "$key"
     n=$((n+1))
   done
+  if command -v bdb_sub >/dev/null 2>&1; then
+    bdb_sub rebuilds.union "$rt_u"; bdb_sub rebuilds.queue "$rt_q"
+    bdb_sub rebuilds.walk "$(( SECONDS - rt_w0 - rt_u - rt_q ))"
+  fi
   command -v bdc_end >/dev/null 2>&1 && bdc_end rebuilds
   return 0
 }

@@ -1,0 +1,10 @@
+{
+  "env": "BR_RUNG_KILL_GRACE_SECS",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 600,
+  "unit": "seconds",
+  "read_in": "bin/blocked-resolver.d/bh-9952-rung-bound.sh",
+  "note": "BH-9952: the seconds between the TERM and the KILL when a rung runs past BR_RUNG_MAX_SECS. The rung's TERM trap (br_wt_drop, br_round_end) needs seconds, not minutes."
+}

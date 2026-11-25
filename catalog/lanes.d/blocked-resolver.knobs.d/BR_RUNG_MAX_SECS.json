@@ -1,0 +1,11 @@
+{
+  "env": "BR_RUNG_MAX_SECS",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 7200,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9952-rung-bound.sh",
+  "note": "BH-9952: the most wall seconds one rung (one candidate's br_one) may run. Past it, the rung's process tree gets TERM (then KILL after BR_RUNG_KILL_GRACE_SECS), the log names reason=rung-bound, the profile row records rc 124, and the tick goes to the next candidate. 0 = no bound (the seed). A kill ends a fix round's paid agent call, so a value under FIX_AGENT_TIMEOUT (3600) loses that spend."
+}

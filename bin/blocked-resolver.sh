@@ -8234,6 +8234,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   BHW_P="$P"; BHW_TKEY="${TKEY:--}"; BHW_URL="${URL:--}"
   [ "$BHW_ON" = 1 ] || BHW_P=""
   command -v br_opt_prof_row_begin >/dev/null 2>&1 && br_opt_prof_row_begin
+  command -v brrb_begin >/dev/null 2>&1 && brrb_begin  # BH-9952: the rung time bound (BR_RUNG_MAX_SECS)
   (
     exec 9>"$H/locks/blocked-resolver-$P-$RKEY.lock"
     # A HELD KEY LOCK IS A ROUND ALREADY RUNNING, and it says so (BH-5125): this
@@ -8258,8 +8259,10 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
     # agent and then cleans up after it. 143 = 128 + SIGTERM, the rc a shell
     # killed by that signal reports.
     trap 'br_wt_drop "the round was signalled"; mc_git_auth_clear 2>/dev/null; br_round_end; exit 143' TERM INT HUP
+    command -v brrb_arm >/dev/null 2>&1 && brrb_arm
     br_one "$SRC" "$P" "$RKEY" "$REASON" "${URL:--}" "${REC:--}" "${TKEY:--}"
   ) </dev/null || RC=$?
+  command -v brrb_end >/dev/null 2>&1 && brrb_end "$P" "$RKEY" "$SRC" "$REASON" && RC=124
   command -v br_opt_prof_row_end >/dev/null 2>&1 && br_opt_prof_row_end "$P" "$RKEY" "$SRC" "$REASON" "$RC"
   [ -n "$BHW_P" ] && bhw_ack "$P" "${TKEY:--}" "${URL:--}" dispatched
   BHW_P=""
