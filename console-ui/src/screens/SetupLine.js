@@ -43,6 +43,44 @@ const PILLS = {
 };
 const PILL_CLASS = { live: 'pill pill--live', fail: 'pill pill--dead', ok: 'pill', muted: 'pill pill--muted' };
 
+// The box station's sub-steps (BH-7975), in the order each path runs them.
+// The shell station prints one `BEAT box.<sub> <state> [detail]` line per sub
+// into the box step's log excerpt.
+export const BOX_SUB_ORDER = {
+  pool: ['bootstrap', 'queue', 'pool_app', 'image', 'smoke'],
+  dedicated: ['provision', 'tailnet', 'register', 'bootstrap']
+};
+const BOX_PATH_ALIAS = { fly: 'pool' };
+const BEAT_RE = /^BEAT box\.([a-z_]{1,20}) (running|done|failed|skipped)(?: (.*))?$/;
+
+// The path whose list holds a seen sub that the other list does not, or null.
+function inferBoxPath(seen) {
+  for (const sub of seen) {
+    const inPool = BOX_SUB_ORDER.pool.includes(sub);
+    const inDed = BOX_SUB_ORDER.dedicated.includes(sub);
+    if (inPool !== inDed) return inPool ? 'pool' : 'dedicated';
+  }
+  return null;
+}
+
+// excerpt -> [{sub, pill, detail}]. Only whole BEAT box lines count, and the
+// last line of a sub wins. The path's subs come first in path order, then
+// unknown subs in arrival order. A path that is not pool or dedicated is
+// inferred from the subs seen.
+export function boxSubLines(excerpt, path) {
+  if (typeof excerpt !== 'string' || !excerpt) return [];
+  const last = new Map();
+  for (const line of excerpt.split(/\r?\n/)) {
+    const m = BEAT_RE.exec(line);
+    if (m) last.set(m[1], { state: m[2], detail: m[3] || '' });
+  }
+  const seen = [...last.keys()];
+  const known = BOX_PATH_ALIAS[path] || path;
+  const order = BOX_SUB_ORDER[Object.prototype.hasOwnProperty.call(BOX_SUB_ORDER, known) ? known : inferBoxPath(seen)] || [];
+  const subs = [...order.filter((sub) => last.has(sub)), ...seen.filter((sub) => !order.includes(sub))];
+  return subs.map((sub) => ({ sub, pill: PILLS[last.get(sub).state], detail: last.get(sub).detail }));
+}
+
 export const POLL_MS = 5000;
 const LIVE = ['queued', 'running'];
 const CANCELLABLE = ['queued', 'running', 'failed'];
@@ -86,7 +124,10 @@ export function setupView(data, nowMs) {
       ? { excerpt: s.log_excerpt || '', href: fixLink(s.error_code), retry: run.state === 'failed' }
       : null;
     const end = s.finished_at || (s.state === 'running' ? null : s.started_at);
-    return { station: s.station, ord: s.ord, pill, detail, duration: formatDuration(s.started_at, end, nowMs), fix };
+    const item = { station: s.station, ord: s.ord, pill, detail, duration: formatDuration(s.started_at, end, nowMs), fix };
+    // Only the box station carries sub-lines.
+    if (s.station === 'box') item.subs = boxSubLines(s.log_excerpt, run.inputs && run.inputs.box);
+    return item;
   });
   const done = run.state === 'done';
   return {
@@ -112,6 +153,15 @@ export function StationList({ view, busy, onRetry }) {
             <span class="setup-station__detail">${s.detail}</span>
             <span class="setup-station__dur">${s.duration || '—'}</span>
           </div>
+          ${s.subs && s.subs.length ? html`
+            <ol class="setup-substations">
+              ${s.subs.map((b) => html`
+                <li key=${b.sub} class=${`setup-substation setup-substation--${b.pill.tone}`}>
+                  <span class=${PILL_CLASS[b.pill.tone]}>${b.pill.label}</span>
+                  <span class="setup-substation__name">box.${b.sub}</span>
+                  <span class="setup-substation__detail">${b.detail}</span>
+                </li>`)}
+            </ol>` : null}
           ${s.fix ? html`
             <div class="setup-fixbox">
               <pre>${s.fix.excerpt || '(no log)'}</pre>

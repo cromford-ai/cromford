@@ -1,0 +1,2 @@
+# BH-7975: the box-beats fixture is read by a console-ui test (cross-tree row, BH-8573).
+tests/fixtures/box-beats.bh-7975.txt	spa	console-ui/tests/setupline-box.bh-7939.test.js reads tests/fixtures/box-beats.bh-7975.txt (BH-7975)

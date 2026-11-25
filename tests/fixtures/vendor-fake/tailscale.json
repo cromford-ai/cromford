@@ -1,0 +1,5 @@
+{
+  "_comment": "Fake seed for bin/lib/vendor/tailscale.sh (BH-7975). join and ip are keyed by host. An object with error is a failed call. An unseeded key is rc 70.",
+  "join": {"fdaa:0:1a2b:a7b:1::5": "10.0.0.13", "fdaa:0:1a2b:a7b:1::6": {"error": "tailscale up: auth key expired"}, "_hygiene": "fixture-hygiene-allow: a tailnet answer must be in 100.64/10, the range ts_ip_ok accepts; 10.0.0.13 is the stub bin/share/mapping.py maps"},
+  "ip": {"acme-own-box": "10.0.0.13", "fdaa:0:1a2b:a7b:1::5": "10.0.0.13", "_hygiene": "fixture-hygiene-allow: a tailnet answer must be in 100.64/10, the range ts_ip_ok accepts; 10.0.0.13 is the stub bin/share/mapping.py maps"}
+}

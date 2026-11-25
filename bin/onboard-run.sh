@@ -115,9 +115,15 @@ obs_smoke() {
 }
 
 # _obr_station <station> — runs one station; its output is the step's log.
+# On a dedicated box the clone runs on the project's own box (BH-7975): the
+# station runs in a subshell, so BOX changes for that station only.
 _obr_station() {
   case "$1" in
-    register|prompt|label|box|clone)
+    clone)
+      if [ "${OBS_BOX_PATH:-}" = dedicated ]; then _obr_dedicated_box || return 1; fi
+      if declare -F obs_clone >/dev/null; then obs_clone
+      else echo "obs_clone is not defined"; return 1; fi ;;
+    register|prompt|label|box)
       if declare -F "obs_$1" >/dev/null; then "obs_$1"
       else echo "obs_$1 is not defined"; return 1; fi ;;
     tracker) echo "tracker connect is not built yet (wave 3)"; return 1 ;;
@@ -179,6 +185,51 @@ _obr_beat() {
     9) line "cancelled $ID at $st"; exit 0 ;;
     2) line "not-found $ID"; exit 1 ;;
   esac
+}
+
+# _obr_box_inputs <run-json-file> — the box station's path (BH-7975). Exports
+# OBS_BOX_PATH: '' or shared -> shared, pool or fly (the console picker's id)
+# -> pool, dedicated -> dedicated; any other value is kept, so the station
+# fails `unknown box path`. OBS_HAVE_BOX is inputs.have_box ("I have a box").
+# OBS_TAILSCALE is off only when inputs.tailscale is exactly "off".
+_obr_box_inputs() {
+  local b
+  b=$(jq -r '.run.inputs.box // empty' "$1" 2>/dev/null)
+  case "$b" in
+    ''|shared) OBS_BOX_PATH=shared ;;
+    pool|fly) OBS_BOX_PATH=pool ;;
+    *) OBS_BOX_PATH="$b" ;;
+  esac
+  OBS_HAVE_BOX=$(jq -r '.run.inputs.have_box // empty | strings' "$1" 2>/dev/null)
+  OBS_TAILSCALE=on
+  [ "$(jq -r '.run.inputs.tailscale // empty | strings' "$1" 2>/dev/null)" = off ] && OBS_TAILSCALE=off
+  export OBS_BOX_PATH OBS_HAVE_BOX OBS_TAILSCALE
+}
+
+# _obr_dedicated_box — sets BOX to the project's own box address from the
+# registry (written by the box station's register step), and
+# OBS_SSH_ACCEPT_NEW=1: the box may be one this run made (see _obs_box_cmd).
+_obr_dedicated_box() {
+  local ip
+  ip=$("$ROOT/bin/fleet-conf.sh" --tailnet-ip "$PROJECT" 2>/dev/null)
+  [ -n "$ip" ] || { echo "no box address in the registry for $PROJECT"; return 1; }
+  BOX="$ip"
+  OBS_SSH_ACCEPT_NEW=1
+}
+
+# obs_run_cancelled — the box station's cancel probe during a long wait
+# (bin/lib/onboard-box.sh _obx_wait). ONE read of the run, never a beat: a
+# beat would rewrite the step's started_at (BH-7975). No keep-alive is needed:
+# the cron lane holds `flock -n locks/onboard-run.lock` for the whole tick,
+# so no other tick runs the stale check while this station waits.
+# rc 0 only when the answer parses and .run.state is not `running`; a
+# transport failure, a non-2xx or an unparseable answer is rc 1 (keep
+# waiting), with no alert (JOBS_ALERT=0).
+obs_run_cancelled() {
+  local out st
+  out=$(JOBS_ALERT=0 _jobs_req GET "/api/onboarding/runs/$ID" 2>/dev/null) || return 1
+  st=$(jq -r '.run.state // empty | strings' <<<"$out" 2>/dev/null) || return 1
+  [ -n "$st" ] && [ "$st" != running ]
 }
 
 # shellcheck source=bin/lib/onboard-envelopes.sh
@@ -265,6 +316,7 @@ obe_consume "$TMP/run.json" "$ID"   # the run's AI-account envelope (BH-7968): h
 BOX=""
 [ "$(inp box)" = shared ] && BOX="${ONBOARD_SHARED_BOX:-}"
 [ -n "$BOX" ] || BOX="${HARNESS_BOX_PREFIX-}small"
+_obr_box_inputs "$TMP/run.json"   # the box station's path (BH-7975)
 if [ -z "$PREFIX" ]; then
   # load-project.sh's derivation: the initials of the name's segments.
   PREFIX=$(echo "$PROJECT" | awk -F- '{for(i=1;i<=NF;i++) printf toupper(substr($i,1,1))}')

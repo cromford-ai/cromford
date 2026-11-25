@@ -18,7 +18,7 @@
 # load-project.sh), and source bin/lib/deployment.sh (obs_box reads
 # HARNESS_REPO). Other globals read, each with the CLI's own default when
 # unset: PREFIX_LC (from PREFIX), CONTEXT_FILE (empty), FLY (0), QUEUE
-# (fly/onboard-queue.conf). Globals a station SETS: REG_MODE (obs_register; the
+# (fly/onboard-queue.conf), OBS_BOX_PATH (shared). Globals a station SETS: REG_MODE (obs_register; the
 # others derive it when it is unset) and OBS_RUN_ON_BOX (obs_box, obs_clone).
 #
 # A function called as `obs_x || exit 1` runs with `set -e` OFF inside it, so
@@ -241,7 +241,10 @@ obs_label() {
 }
 
 # _obs_box_cmd — sets OBS_RUN_ON_BOX: ssh to $BOX, or a local bash when $BOX is
-# this machine.
+# this machine. OBS_SSH_ACCEPT_NEW=1 adds -o StrictHostKeyChecking=accept-new:
+# the dedicated path (BH-7975) sets it for the first contact with a box it
+# just made or was given, whose host key is in no known_hosts. Cron has no tty
+# to answer the default `ask`.
 # Run the block LOCALLY when the target box IS this machine. Loading project-7
 # from the project-6 box itself tried `ssh root@box-project-6-1`, which
 # is a tailnet name the box does not resolve for ITSELF: the ssh died with
@@ -254,6 +257,8 @@ _obs_box_cmd() {
     . bin/lib/cron-lines.sh || return 1
   fi
   OBS_RUN_ON_BOX=(ssh -o ConnectTimeout=15 "root@$BOX" bash -s --)
+  [ "${OBS_SSH_ACCEPT_NEW:-0}" = 1 ] \
+    && OBS_RUN_ON_BOX=(ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "root@$BOX" bash -s --)
   if [ "$BOX" = "$(hostname 2>/dev/null)" ] \
      || { [ -r /root/harness/state/box-id ] && [ "$(cron_box_id_for "$BOX")" = "$(cat /root/harness/state/box-id)" ]; }; then
     echo "target box is THIS machine — running the bootstrap block locally, not over ssh"
@@ -267,6 +272,14 @@ _obs_box_cmd() {
 # rc.
 obs_box() {
   local BOOT_RC
+  # The pool and dedicated paths (BH-7975) live in bin/lib/onboard-box.sh.
+  # Unset or `shared` is the body below, unchanged.
+  case "${OBS_BOX_PATH:-shared}" in
+    shared) ;;
+    *) # shellcheck source=bin/lib/onboard-box.sh
+       . "${BASH_SOURCE[0]%/*}/onboard-box.sh" || return 1
+       obx_run; return $? ;;
+  esac
   REG_MODE="${REG_MODE:-$(_obs_reg_mode)}"
   echo "== box: $BOX =="
   _obs_box_cmd || return 1

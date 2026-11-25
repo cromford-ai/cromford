@@ -34,8 +34,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -86,6 +86,7 @@ tests/fanin.bh-186-test.sh:generic-api-key:323
 tests/fc-board.bh-983-test.sh:generic-api-key:36
 tests/fc-siblings-parallel.bh-5520-test.sh:generic-api-key:377
 tests/fix-round-wrong-tree.bh-8896-test.sh:generic-api-key:175
+tests/fixtures/onboarding-worker.bh-7975.mjs:generic-api-key:34
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:97
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:117
 tests/fixtures/unblock-act.bh-7726/corpus-20261019.json:generic-api-key:137
@@ -158,6 +159,10 @@ tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
 tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
 tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:122
 tests/onboard-ready-facts.bh-8744-test.sh:generic-api-key:123
+tests/onboard-run-box.bh-7975-test.sh:generic-api-key:143
+tests/onboard-run-box.bh-7975-test.sh:generic-api-key:194
+tests/onboard-run-box.bh-7975-test.sh:curl-auth-header:234
+tests/onboard-run-box.bh-7975-test.sh:curl-auth-header:237
 tests/onboard-run-vendor-budget.bh-7934-test.sh:generic-api-key:57
 tests/onboard-run.bh-7934-test.sh:generic-api-key:76
 tests/openrouter-audit.bh-4001-test.sh:generic-api-key:21

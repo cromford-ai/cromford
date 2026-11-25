@@ -1,0 +1,4 @@
+BEAT box.provision done e2860f1c4a7d98
+BEAT box.tailnet done @TS_IP@ acme-os-box
+BEAT box.register done acme-os-box @TS_IP@
+BEAT box.bootstrap done rc 0

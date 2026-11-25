@@ -1,0 +1,6 @@
+{
+  "_comment": "Fake seed for bin/lib/vendor/fly-machines.sh (BH-7975). create is keyed by app, state and private_ip by machine id. An unseeded key is rc 70.",
+  "create": {"box-acme-os": {"id": "e2860f1c4a7d98"}, "box-slow-os": {"id": "e2860f1c4a7d99"}, "box-tsfail-os": {"id": "e2860f1c4a7d9a"}},
+  "state": {"e2860f1c4a7d98": "started", "e2860f1c4a7d99": "created", "e2860f1c4a7d9a": "started"},
+  "private_ip": {"e2860f1c4a7d98": "fdaa:0:1a2b:a7b:1::5", "e2860f1c4a7d99": "fdaa:0:1a2b:a7b:1::7", "e2860f1c4a7d9a": "fdaa:0:1a2b:a7b:1::6"}
+}
