@@ -291,4 +291,5 @@ worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:381
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:400
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:423
 worker/jobs/test/web-vault.bh-7595.test.js:generic-api-key:578
+worker/jobs/test/webhook-receiver.bh-9934.test.js:generic-api-key:32
 worker/otp-inbox/test/email.bh-7732.test.js:generic-api-key:19

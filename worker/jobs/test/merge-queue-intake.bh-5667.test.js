@@ -398,14 +398,19 @@ test('11 ?project=nope is 404; a project name or a repo slug filters', async (t)
 });
 
 // ── 12. atomicity ───────────────────────────────────────────────────────────
-test('12 a failing queue statement is a 500 and commits no delivery row', async (t) => {
+// BH-9934: a throw after the signature check is a dead letter: 200 and one
+// `github:dead` row, so GitHub does not redeliver in a loop. The batch still
+// commits nothing: no `github` delivery row, no queue row, no wake.
+test('12 a failing queue statement is a dead letter (200) and commits no delivery row', async (t) => {
   const c = await setup(t); if (!c) return;
   const real = c.DB.batch;
   c.DB.batch = async (stmts) => real([...stmts.slice(0, -1), { run: async () => { throw new Error('boom'); } }]);
   for (const d of [checkDelivery('at-1', { name: 'lint' }), prDelivery('at-2')]) {
     const r = await sendDelivery(worker, c.env, d);
-    assert.equal(r.status, 500, d.id);
-    assert.equal(c.count('webhook_deliveries', `WHERE delivery_id='${d.id}'`), 0);
+    assert.equal(r.status, 200, d.id);
+    assert.equal(r.body.dead_letter, true, d.id);
+    assert.equal(c.count('webhook_deliveries', `WHERE vendor='github' AND delivery_id='${d.id}'`), 0);
+    assert.equal(c.count('webhook_deliveries', `WHERE vendor='github:dead' AND delivery_id='${d.id}'`), 1);
   }
   assert.equal(c.count('wakes'), 0);
   for (const tb of TABLES) assert.equal(c.count(tb), 0);
@@ -415,14 +420,16 @@ test('12 a failing queue statement is a 500 and commits no delivery row', async 
   assert.equal(c.count('merge_queue_checks'), 1);
 });
 
-test('12 the queue INSERT failing rolls back the delivery row with it (one batch, delivery first)', async (t) => {
+test('12 the queue INSERT failing rolls back the delivery row with it (one batch, delivery first; BH-9934 dead letter)', async (t) => {
   let fail = true;
   const hooks = { beforeRun(sql) { if (fail && /INSERT INTO merge_queue_(checks|batches)/.test(sql)) throw new Error('disk I/O error'); } };
   const c = await setup(t, { hooks }); if (!c) return;
   for (const d of [checkDelivery('ab-1', { name: 'lint' }), prDelivery('ab-2')]) {
     const r = await sendDelivery(worker, c.env, d);
-    assert.equal(r.status, 500, d.id);
-    assert.equal(c.count('webhook_deliveries', `WHERE delivery_id='${d.id}'`), 0, `${d.id}: delivery committed without its rows`);
+    assert.equal(r.status, 200, d.id);
+    assert.equal(r.body.dead_letter, true, d.id);
+    assert.equal(c.count('webhook_deliveries', `WHERE vendor='github' AND delivery_id='${d.id}'`), 0, `${d.id}: delivery committed without its rows`);
+    assert.equal(c.count('webhook_deliveries', `WHERE vendor='github:dead' AND delivery_id='${d.id}'`), 1, `${d.id}: no dead letter`);
   }
   assert.equal(c.count('wakes'), 0);
   fail = false;
@@ -430,12 +437,14 @@ test('12 the queue INSERT failing rolls back the delivery row with it (one batch
   assert.equal(c.count('merge_queue_checks'), 1);
 });
 
-test('12 a mapper read that throws (schema not applied) is a 500 with no rows', async (t) => {
+test('12 a mapper read that throws (schema not applied) is a dead letter (200) with no other rows', async (t) => {
   const c = await setup(t); if (!c) return;
   c.db.exec('DROP TABLE merge_queue_checks');
   const r = await sendDelivery(worker, c.env, checkDelivery('ns-1', { name: 'lint' }));
-  assert.equal(r.status, 500);
-  assert.equal(c.count('webhook_deliveries'), 0);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.dead_letter, true);
+  assert.equal(c.count('webhook_deliveries', "WHERE vendor='github'"), 0);
+  assert.equal(c.count('webhook_deliveries', "WHERE vendor='github:dead' AND delivery_id='ns-1'"), 1);
   c.db.exec('DROP TABLE merge_queue_batches');
   const live = await c.get('/api/merge-queue/live');
   assert.equal(live.status, 503);

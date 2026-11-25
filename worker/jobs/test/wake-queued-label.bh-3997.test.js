@@ -62,8 +62,10 @@ test('webhook: pull_request.labeled with label queued is stored as a pr wake', a
   assert.equal(inserts(r)[0].binds[3], 'pull_request.labeled');
 });
 
+// BH-9934: `merge-queue` left this list. It is one of WAKE_PR_LABELS now and
+// wakes as pull_request.labeled.merge-queue (test/webhook-receiver.bh-9934 L1).
 test('webhook: any other label, or a label-less labeled, is still dropped', async () => {
-  for (const label of [{ name: 'merge-queue' }, { name: 'checking' }, { name: 'Queued' }, undefined]) {
+  for (const label of [{ name: 'checking' }, { name: 'Queued' }, undefined]) {
     const payload = { action: 'labeled', number: 3928, repository, pull_request: { number: 3928 } };
     if (label) payload.label = label;
     const r = await deliver('pull_request', payload);

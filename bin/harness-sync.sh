@@ -1018,8 +1018,18 @@ deploy_workers() {
     # <<< worker npm ci
     # BH-6813: a worker whose src reads HARNESS_SHA (the Sentry harness_sha tag)
     # gets the snapshot sha as a var, so each event names the build it ran.
-    local WVAR=()
+    local WVAR=() WSELF=""
     grep -rqs HARNESS_SHA "$WDIR/src" && WVAR=(--var "HARNESS_SHA:$SNAP")
+    # BH-9934: a worker whose src reads HARNESS_SELF_APPS (the GitHub
+    # receiver's self-App filter, worker/jobs/src/lib/webhook-receiver.js)
+    # gets the fleet's App list, resolved by bin/lib/harness-self.sh in a
+    # subshell (env/global.env; a trust list is never a settings row). An empty
+    # list passes no var, so the worker filters nothing.
+    if grep -rqs HARNESS_SELF_APPS "$WDIR/src"; then
+      # shellcheck source=bin/lib/harness-self.sh
+      WSELF=$( . "$HARNESS/bin/lib/harness-self.sh" >/dev/null 2>&1; printf '%s' "${HARNESS_SELF_APPS:-}" )
+      [ -n "$WSELF" ] && WVAR+=(--var "HARNESS_SELF_APPS:$WSELF")
+    fi
     (cd "$WDIR" && set -a && . "$CFENV" && set +a \
         && wrangler_run 300 deploy "${WVAR[@]}" >>"$LOG" 2>&1)
     local DRC=$?

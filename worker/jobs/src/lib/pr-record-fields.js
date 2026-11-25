@@ -229,8 +229,11 @@ export const STATUS_MERGE_SQL = `UPDATE pr_records SET
 // higher (an edit of the newest comment replaces it; an edit of an older one
 // does not), and when the value differs. The CHECK_MERGE_SQL upsert pattern.
 // Index: ux_pr_records_repo_number (the conflict target), test X1.
-export const MERGIFY_SQL = `INSERT INTO pr_records (repo, number, mergify_queue, fields_at, last_source, webhook_at, created_at, refreshed_at)
-    VALUES (?1, ?2, json(?3), json_object('mergify_queue', ?4), 'webhook', ?4, ?4, ?4)
+// mergifySql(guard): with a guard (BH-9934, a function of its first bind
+// index that gives one SQL condition) the row comes from a SELECT with that
+// condition, so a statement whose guard is false inserts and updates nothing.
+export const mergifySql = (guard = null) => `INSERT INTO pr_records (repo, number, mergify_queue, fields_at, last_source, webhook_at, created_at, refreshed_at)
+    ${guard ? "SELECT" : "VALUES ("}?1, ?2, json(?3), json_object('mergify_queue', ?4), 'webhook', ?4, ?4, ?4${guard ? ` WHERE ${guard(6)}` : ")"}
     ON CONFLICT(repo, number) DO UPDATE SET
       mergify_queue = json(?3),
       fields_at = json_set(pr_records.fields_at, '$.mergify_queue', max(coalesce(json_extract(pr_records.fields_at, '$.mergify_queue'), ''), ?4)),
@@ -241,6 +244,7 @@ export const MERGIFY_SQL = `INSERT INTO pr_records (repo, number, mergify_queue,
            OR (json_extract(pr_records.mergify_queue, '$.at') = ?4
                AND json_extract(pr_records.mergify_queue, '$.comment_id') <= ?5))
       AND pr_records.mergify_queue IS NOT json(?3)`;
+export const MERGIFY_SQL = mergifySql();
 
 // A push to a PR branch: every open record of the repo on that head ref gets
 // head_commit {sha, at}. Binds: ?1 repo, ?2 head_ref, ?3 value (JSON), ?4 the
@@ -255,13 +259,22 @@ export const HEAD_PUSH_SQL = `UPDATE pr_records SET head_commit = json(?3),
       AND (json_extract(fields_at, '$.head_commit') IS NULL OR json_extract(fields_at, '$.head_commit') <= ?4)
       AND head_commit IS NOT json(?3)`;
 
-// fieldStmtOf(DB, w, checksMax) — the statement of a write of fieldWritesOf,
-// or null for any other kind.
-export function fieldStmtOf(DB, w, checksMax) {
+// fieldStmtOf(DB, w, checksMax, guard) — the statement of a write of
+// fieldWritesOf, or null for any other kind. `guard` (BH-9934) is null or
+// {sql, binds}: sql(i) gives one SQL condition whose binds start at ?i, and
+// binds are its values. With a guard, the statement changes rows only when
+// the condition holds (the receiver's delivery claim: a duplicate delivery
+// writes nothing).
+export function fieldStmtOf(DB, w, checksMax, guard = null) {
+  const and = (at) => (guard ? `\n      AND ${guard.sql(at)}` : "");
+  const gb = guard ? guard.binds : [];
   if (w.kind === "status") {
-    return DB.prepare(STATUS_MERGE_SQL).bind(w.repo, w.sha, `$."${w.name}"`, JSON.stringify(w.value), w.at, checksMax);
+    // sql-ident-ok: STATUS_MERGE_SQL is a module constant; and() appends the caller's guard with a numeric bind index only
+    return DB.prepare(STATUS_MERGE_SQL + and(7)).bind(w.repo, w.sha, `$."${w.name}"`, JSON.stringify(w.value), w.at, checksMax, ...gb);
   }
-  if (w.kind === "mergify") return DB.prepare(MERGIFY_SQL).bind(w.repo, w.number, JSON.stringify(w.value), w.at, w.id);
-  if (w.kind === "head-push") return DB.prepare(HEAD_PUSH_SQL).bind(w.repo, w.head_ref, JSON.stringify(w.value), w.at);
+  // sql-ident-ok: mergifySql builds from module text; the guard gets a numeric bind index only
+  if (w.kind === "mergify") return DB.prepare(mergifySql(guard ? guard.sql : null)).bind(w.repo, w.number, JSON.stringify(w.value), w.at, w.id, ...gb);
+  // sql-ident-ok: HEAD_PUSH_SQL is a module constant; and() appends the caller's guard with a numeric bind index only
+  if (w.kind === "head-push") return DB.prepare(HEAD_PUSH_SQL + and(5)).bind(w.repo, w.head_ref, JSON.stringify(w.value), w.at, ...gb);
   return null;
 }

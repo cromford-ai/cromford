@@ -17,6 +17,7 @@
 // delivery never replaces a newer value from any source.
 
 import { ensureColumns, ensureTable } from "./core.js";
+import { CLAIM_GUARD_SQL } from "./webhook-receiver.js";
 import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX, REVIEWERS_MAX, REVIEWER_RE } from "../routes/pr-records.js";
 import { fieldWritesOf, fieldStmtOf } from "./pr-record-fields.js";
 
@@ -198,8 +199,12 @@ function baseWritesOf(event, payload, t) {
 // not newer, differs from the value (a replay changes 0 rows), and the object
 // already holds the name or has fewer than CHECKS_MAX names. refreshed_at
 // does not move on an existing row: a check does not carry the whole PR.
-export const CHECK_MERGE_SQL = `INSERT INTO pr_records (repo, number, checks, fields_at, last_source, webhook_at, created_at, refreshed_at)
-    VALUES (?1, ?2, json_object(?3, json(?4)), json_object('checks', ?5), 'webhook', ?5, ?5, ?5)
+// BH-9934 checkMergeSql({guardAt}): with guardAt the row comes from a SELECT
+// that runs only WHERE the delivery claim guard holds (binds ?7, ?8).
+export const checkMergeSql = ({ guardAt = 0 } = {}) => {
+  const row = `?1, ?2, json_object(?3, json(?4)), json_object('checks', ?5), 'webhook', ?5, ?5, ?5`;
+  return `INSERT INTO pr_records (repo, number, checks, fields_at, last_source, webhook_at, created_at, refreshed_at)
+    ${guardAt ? `SELECT ${row} WHERE ${CLAIM_GUARD_SQL(guardAt)}` : `VALUES (${row})`}
     ON CONFLICT(repo, number) DO UPDATE SET
       checks = json_set(coalesce(pr_records.checks, '{}'), ?6, json(?4)),
       fields_at = json_set(pr_records.fields_at, '$.checks', max(coalesce(json_extract(pr_records.fields_at, '$.checks'), ''), ?5)),
@@ -209,6 +214,8 @@ export const CHECK_MERGE_SQL = `INSERT INTO pr_records (repo, number, checks, fi
       AND json_extract(pr_records.checks, ?6) IS NOT json(?4)
       AND (json_type(pr_records.checks, ?6) IS NOT NULL
            OR (SELECT count(*) FROM json_each(coalesce(pr_records.checks, '{}'))) < ${CHECKS_MAX})`;
+};
+export const CHECK_MERGE_SQL = checkMergeSql();
 
 // A push to the base branch: every open record of the repo on that base gets
 // mergeable_state NULL (case 2). Binds: ?1 repo, ?2 base_ref, ?3 at. A row
@@ -245,21 +252,49 @@ export const REVIEW_MERGE_SQL = `UPDATE pr_records SET
       AND json_extract(reviews, ?3) IS NOT json(?4)
       AND (json_type(reviews, ?3) IS NOT NULL OR (SELECT count(*) FROM json_each(reviews)) < ${REVIEWERS_MAX})`;
 
-function stmtOf(DB, w) {
-  const f = fieldStmtOf(DB, w, CHECKS_MAX);
+// One statement per write. With `claim` ({deliveryId, claim}, BH-9934) each
+// statement carries the delivery claim guard, its binds numbered right after
+// the statement's own, so it changes rows only for the delivery that won. The
+// BH-9935 field statements (status, mergify, head-push) take the same guard.
+function stmtOf(DB, w, claim = null) {
+  const g = () => (claim ? [claim.deliveryId, claim.claim] : []);
+  const and = (at) => (claim ? `\n      AND ${CLAIM_GUARD_SQL(at)}` : "");
+  const f = fieldStmtOf(DB, w, CHECKS_MAX, claim ? { sql: CLAIM_GUARD_SQL, binds: g() } : null);
   if (f) return f;
   if (w.kind === "review") {
-    return DB.prepare(REVIEW_MERGE_SQL).bind(w.repo, w.number, `$."${w.login}"`, JSON.stringify(w.value), w.at);
+    // sql-ident-ok: REVIEW_MERGE_SQL is a module constant; and() appends CLAIM_GUARD_SQL with a numeric bind index only
+    return DB.prepare(REVIEW_MERGE_SQL + and(6)).bind(w.repo, w.number, `$."${w.login}"`, JSON.stringify(w.value), w.at, ...g());
   }
   if (w.kind === "fields") {
     const names = Object.keys(w.fields);
-    return DB.prepare(upsertSql(names, { refresh: w.refresh }))
-      .bind(w.repo, w.number, w.at, "webhook", ...names.map((f) => w.fields[f]));
+    return DB.prepare(upsertSql(names, { refresh: w.refresh, guardAt: claim ? names.length + 5 : 0 }))
+      .bind(w.repo, w.number, w.at, "webhook", ...names.map((f) => w.fields[f]), ...g());
   }
   if (w.kind === "check") {
-    return DB.prepare(CHECK_MERGE_SQL).bind(w.repo, w.number, w.name, JSON.stringify(w.value), w.at, `$."${w.name}"`);
+    return DB.prepare(checkMergeSql({ guardAt: claim ? 7 : 0 }))
+      .bind(w.repo, w.number, w.name, JSON.stringify(w.value), w.at, `$."${w.name}"`, ...g());
   }
-  return DB.prepare(BASE_PUSH_SQL).bind(w.repo, w.base_ref, w.at);
+  // sql-ident-ok: BASE_PUSH_SQL is a module constant; and() appends CLAIM_GUARD_SQL with a numeric bind index only
+  return DB.prepare(BASE_PUSH_SQL + and(4)).bind(w.repo, w.base_ref, w.at, ...g());
+}
+
+// prRecordStmts(env, t, event, payload, {deliveryId, claim}) — BH-9934: the
+// guarded record statements of one wake delivery, for the receiver's ONE wake
+// batch (routes/webhooks.js recordWake), so the record and its wake commit
+// together. NEVER throws: a failure is one warn and [] (the wake still goes,
+// and the max-age backstop heals the record).
+export async function prRecordStmts(env, t, event, payload, { deliveryId, claim }) {
+  try {
+    const writes = prRecordWritesOf(event, payload, t);
+    if (!writes.length) return [];
+    await ensureTable(env, "pr_records");
+    await ensureColumns(env, "pr_records");
+    return writes.map((w) => stmtOf(env.DB, w, { deliveryId, claim }));
+  } catch (e) {
+    const error = String((e && e.message) || e).slice(0, 300);
+    console.warn("[pr-record-intake] webhook record statements not built", event, error);
+    return [];
+  }
 }
 
 // recordPrRecord — {written} (rows changed) or {written: 0, error}. Never throws.

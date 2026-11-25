@@ -2093,6 +2093,9 @@ export function hexEqual(a, b) {
 // The labels an `issues.labeled` delivery wakes triage for. A label name is read
 // to DECIDE and never stored, like `ref` and `deployment_status.state` below.
 export const WAKE_ISSUE_LABELS = ["ai-build", "hotfix"];
+// BH-9934: the merge-queue labels a `pull_request` labeled OR unlabeled
+// delivery wakes the conductor for. Exact, case-sensitive names, like `queued`.
+export const WAKE_PR_LABELS = ["merge-queue", "dequeued", "merge-queue-paused"];
 export function wakeOf(event, p) {
   const pay = p && typeof p === "object" ? p : {};
   const action = String(pay.action || "");
@@ -2114,10 +2117,19 @@ export function wakeOf(event, p) {
       // Every other label change moves nothing the fleet watches.
       // BH-4055: GitHub's native merge queue `enqueued` / `dequeued` are the
       // same kind of moment, so they wake the fleet as well; the wake class
-      // re-judges pipeline-health's PR checks on them. `unlabeled` stays
-      // dropped: the stored row carries no label name to tell `queued` apart.
-      if (action === "labeled") {
-        if (String(obj(pay.label).name || "") !== "queued") return null;
+      // re-judges pipeline-health's PR checks on them. `unlabeled queued`
+      // stays dropped: its stored row would carry no label name.
+      // BH-9934: `labeled` and `unlabeled` for a label in WAKE_PR_LABELS wake
+      // too. Their event names the action AND the label
+      // (pull_request.<action>.<label>), so the readers of the bare
+      // `pull_request.labeled` (bin/lib/wake-class-pr-closed.sh reads it as
+      // "queued") never misread them. `labeled queued` keeps today's event.
+      if (action === "labeled" || action === "unlabeled") {
+        const name = String(obj(pay.label).name || "");
+        const key = num(pay.number || obj(pay.pull_request).number);
+        if (action === "labeled" && name === "queued") return { kind: "pr", key };
+        if (!WAKE_PR_LABELS.includes(name)) return null;
+        return { kind: "pr", key, event: `pull_request.${action}.${name}` };
       } else if (!["opened", "synchronize", "reopened", "closed", "ready_for_review",
         "enqueued", "dequeued"].includes(action)) return null;
       return { kind: "pr", key: num(pay.number || obj(pay.pull_request).number) };

@@ -45,6 +45,7 @@
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
+import { CLAIM_GUARD_SQL } from "../lib/webhook-receiver.js";
 import { fieldValues } from "../lib/pr-record-fields.js";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -254,16 +255,21 @@ export function checkPut(body, now) {
 // right-hand side reads the row as it was before the update.
 // refresh: false keeps refreshed_at on an existing row: a write that does not
 // carry the whole PR (a webhook comment) must not reset the max-age backstop.
-export function upsertSql(names, { refresh = true } = {}) {
+// BH-9934 guardAt: the INSERT takes its row from a SELECT that runs only
+// WHERE the delivery claim guard (lib/webhook-receiver.js CLAIM_GUARD_SQL,
+// binds ?guardAt and ?guardAt+1) holds; with the guard false the statement
+// changes 0 rows. Off by default: the PUT and the list sync do not pass it.
+export function upsertSql(names, { refresh = true, guardAt = 0 } = {}) {
   const newer = (f) => `(json_extract(pr_records.fields_at, '$.${f}') IS NULL OR json_extract(pr_records.fields_at, '$.${f}') <= ?3)`;
   const cols = names.join(", ");
   const vals = names.map((_, i) => `?${i + 5}`).join(", ");
   const firstAt = `json_object(${names.map((f) => `'${f}', ?3`).join(", ")})`;
   const sets = names.map((f) => `${f} = CASE WHEN ${newer(f)} THEN excluded.${f} ELSE pr_records.${f} END`);
   const atSet = names.map((f) => `'$.${f}', CASE WHEN ${newer(f)} THEN ?3 ELSE json_extract(pr_records.fields_at, '$.${f}') END`).join(", ");
+  const row = `?1, ?2, ${vals}, ${firstAt}, ?4,
+            CASE WHEN ?4 = 'github' THEN ?3 END, CASE WHEN ?4 = 'webhook' THEN ?3 END, ?3, ?3`;
   return `INSERT INTO pr_records (repo, number, ${cols}, fields_at, last_source, gh_read_at, webhook_at, created_at, refreshed_at)
-    VALUES (?1, ?2, ${vals}, ${firstAt}, ?4,
-            CASE WHEN ?4 = 'github' THEN ?3 END, CASE WHEN ?4 = 'webhook' THEN ?3 END, ?3, ?3)
+    ${guardAt ? `SELECT ${row} WHERE ${CLAIM_GUARD_SQL(guardAt)}` : `VALUES (${row})`}
     ON CONFLICT(repo, number) DO UPDATE SET
       ${sets.join(",\n      ")},
       fields_at = json_set(pr_records.fields_at, ${atSet}),

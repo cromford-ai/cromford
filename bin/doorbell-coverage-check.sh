@@ -1,4 +1,5 @@
 #!/bin/bash
+# alert-writer: by-design — each ALERTS line pairs with its own fleet_alert beat under a fixed akey (doorbell:<repo>, webhook-dead-letter:github) that console_alert_resolve_akey closes; alert-line.sh would mint a different akey and the resolve would miss it
 # bin/doorbell-coverage-check.sh — HUB, daily: every repo in fleet.conf has a
 # LIVE webhook pointing at the harness-jobs receiver, or ONE ALERTS line per
 # repo per day naming the exact arming command. Read-only — this script never
@@ -45,7 +46,7 @@
 #
 # Overrides: DOORBELL_RING_H (the ringing window in hours, default 24).
 # Tests only: HARNESS, HARNESS_ALERTS, FLEET_CONF, JOBS_URL,
-# DOORBELL_GH (a `gh` stand-in).
+# DOORBELL_GH (a `gh` stand-in), DOORBELL_BEAT (a bin/beat.sh stand-in).
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 
@@ -63,6 +64,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ALERTS="${HARNESS_ALERTS:-$H/logs/ALERTS.log}"
 LOG="$H/logs/doorbell-coverage-check.log"
 GH="${DOORBELL_GH:-gh}"
+BEAT="${DOORBELL_BEAT:-$HERE/beat.sh}"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 mkdir -p "$H/logs" "$H/flags" 2>/dev/null
 
@@ -167,7 +169,7 @@ alert_once() { # alert_once <repo> <line>
   [ -f "$flag" ] && return 0
   : > "$flag" 2>/dev/null
   echo "$(STAMP) [doorbell] $line" >> "$ALERTS"
-  "$HERE/beat.sh" "$(jq -nc --arg akey "doorbell:$slug" --arg l "[doorbell] $line" \
+  "$BEAT" "$(jq -nc --arg akey "doorbell:$slug" --arg l "[doorbell] $line" \
     '{kind:"fleet_alert",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
 }
 
@@ -289,6 +291,42 @@ if [ -z "$ONE" ]; then
     echo "$(STAMP) cursor-lag stale=$STALE_N" >> "$LOG"
   else
     echo "$(STAMP) cursor-lag check failed (worker did not answer)" >> "$LOG"
+  fi
+
+  # >>> receiver dead letters (BH-9934). A delivery whose handling threw
+  # after the signature check is a webhook_deliveries row of vendor
+  # github:dead, and the receiver answered 200, so GitHub does not retry it.
+  # ONE alert while the count is above 0 (the flag below is its "already
+  # fired" state; a lost flag re-fires one alert, never silence), resolved
+  # when the count is back at 0. The rows age out with the 7-day delivery
+  # prune. A failed read is one LOG line, no alert, and the flag stays: an
+  # outage is not "no dead letters".
+  DL_FLAG="$H/flags/webhook-dead-letter-github"
+  DL_AKEY="webhook-dead-letter:github"
+  if command -v _jobs_req >/dev/null 2>&1 \
+     && DL_JSON=$(JOBS_ALERT=0 _jobs_req GET "/api/webhook-dead-letters?vendor=github" 2>/dev/null) \
+     && DL_TSV=$(printf '%s' "$DL_JSON" | jq -r 'if (.count | type) == "number" then
+          [ .count, (.newest.delivery_id // "-"), (.newest.event // "-"), ((.newest.error // "-") | gsub("[\t\n]"; " ")) ] | map(tostring) | @tsv
+        else error("shape") end' 2>/dev/null) && [ -n "$DL_TSV" ]; then
+    IFS=$'\t' read -r DL_N DL_ID DL_EV DL_ERR <<< "$DL_TSV"
+    echo "$(STAMP) dead-letters vendor=github count=$DL_N" >> "$LOG"
+    if [ "$DL_N" -gt 0 ] 2>/dev/null; then
+      if [ ! -f "$DL_FLAG" ]; then
+        DL_LINE="the GitHub receiver holds $DL_N dead-letter delivery row(s) (webhook_deliveries vendor github:dead): a delivery threw after its signature check, so its wake and PR record were not written. Newest: delivery $DL_ID, event $DL_EV, error: $DL_ERR. Needs (operator): read the error and fix its cause, then redeliver that delivery from the hook's Recent Deliveries log (repo or App webhook settings). bin/jobs-client.sh GET /api/webhook-dead-letters?vendor=github shows the count; the rows age out after webhook_delivery_keep_s."
+        echo "$(STAMP) [doorbell] $DL_LINE" >> "$ALERTS"
+        "$BEAT" "$(jq -nc --arg akey "$DL_AKEY" --arg l "[doorbell] $DL_LINE" \
+          '{kind:"fleet_alert",project:"fleet",akey:$akey,line:$l}')" >/dev/null 2>&1 || true
+        flag_set --local-only webhook-dead-letter-github on "doorbell: $DL_N dead-letter row(s), alert sent" >/dev/null 2>&1
+      fi
+    elif [ -f "$DL_FLAG" ]; then
+      flag_clear --local-only webhook-dead-letter-github "doorbell: 0 dead-letter rows" >/dev/null 2>&1
+      # shellcheck source=bin/lib/console-alert-resolve.sh
+      if . "$HERE/lib/console-alert-resolve.sh" 2>/dev/null; then
+        echo "$(STAMP) dead-letters resolve $(console_alert_resolve_akey "$DL_AKEY" doorbell-dead-letters-zero 2>/dev/null)" >> "$LOG"
+      fi
+    fi
+  else
+    echo "$(STAMP) dead-letters check failed (worker did not answer)" >> "$LOG"
   fi
 fi
 

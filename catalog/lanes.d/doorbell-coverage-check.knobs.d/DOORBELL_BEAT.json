@@ -1,0 +1,10 @@
+{
+  "env": "DOORBELL_BEAT",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "settable": false,
+  "read_in": "bin/doorbell-coverage-check.sh",
+  "note": "BH-9934: no static default, the script computes it ($HERE/beat.sh). Read by bin/doorbell-coverage-check.sh as ${DOORBELL_BEAT:-$HERE/beat.sh}: the command that sends each fleet_alert beat (the doorbell:<repo> alerts and the webhook-dead-letter:github alert). A test seam like DOORBELL_GH (tests/doorbell-dead-letter.bh-9934-test.sh records the beats with it), a command on the box, so it is NOT settable from the control plane."
+}

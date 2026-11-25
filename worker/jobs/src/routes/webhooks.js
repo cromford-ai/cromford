@@ -10,7 +10,7 @@
 
 import { json } from "../lib/http.js";
 import {
-  WAKE_REPO_RE, hmacSha256Hex, hexEqual, wakeOf,
+  WAKE_REPO_RE, hmacSha256Hex, hexEqual, wakeOf, ensureColumns,
 } from "../lib/core.js";
 import {
   deliveryIdOf, verifyJira, verifyLinear, linearFresh, jiraKeyOf, linearKeyOf,
@@ -18,7 +18,10 @@ import {
 } from "../lib/tracker-webhooks.js";
 import { mapMergeQueueDelivery } from "../lib/merge-queue-intake.js";
 import { recordGithubGate } from "../lib/pr-gate-intake.js";
-import { recordPrRecord } from "../lib/pr-record-intake.js";
+import { recordPrRecord, prRecordStmts } from "../lib/pr-record-intake.js";
+import {
+  bodyCapOf, readCappedBody, receiverKnobs, selfSenderOf, selfAppOf, deadLetterStmt,
+} from "../lib/webhook-receiver.js";
 
 // recordWake — the one write every receiver makes (BH-4079). With a delivery
 // id, the delivery row and the wake row go in ONE env.DB.batch (one D1
@@ -33,20 +36,26 @@ import { recordPrRecord } from "../lib/pr-record-intake.js";
 // row, because it runs right after it). Jira and Linear pass none, and with
 // none every path below is the one it was. `queueRows` counts the rows they
 // changed.
-async function recordWake(env, t, { vendor, deliveryId, repo, kind, key, ev, keepS, extra = [] }) {
+// BH-9934: `claim` and `records` (GitHub only). The delivery row is written
+// with the claim, and the PR record statements (lib/pr-record-intake.js
+// prRecordStmts, each guarded on that claim) run LAST in the same batch, so
+// the record and its wake commit together and a duplicate delivery writes no
+// record. `queueRows` counts the `extra` slice only.
+async function recordWake(env, t, { vendor, deliveryId, repo, kind, key, ev, keepS, extra = [], claim = null, records = [] }) {
   const minute = t.slice(0, 16) + ":00Z";
   const wakeSql = (guard) => `INSERT INTO wakes (repo, kind, key, event, minute, at)
          ${guard ? "SELECT ?1,?2,?3,?4,?5,?6 WHERE changes() = 1" : "VALUES (?1,?2,?3,?4,?5,?6)"}
          ON CONFLICT(repo, kind, key, minute) DO NOTHING`;
   let duplicate, pruned, queueRows = 0;
   if (deliveryId) {
-    const [d, w, ...q] = await env.DB.batch([
-      deliveryStmt(env, vendor, deliveryId, t),
+    const [d, w, ...rest] = await env.DB.batch([
+      deliveryStmt(env, vendor, deliveryId, t, claim),
       env.DB.prepare(wakeSql(true)).bind(repo, kind, key, ev, minute, t),
       ...extra,
+      ...records,
     ]);
     duplicate = changesOf(d) === 0 || changesOf(w) === 0;
-    queueRows = q.reduce((n, r) => n + changesOf(r), 0);
+    queueRows = rest.slice(0, extra.length).reduce((n, r) => n + changesOf(r), 0);
     pruned = await pruneDeliveries(env, t, keepS);
   } else if (extra.length) {
     const [w, ...q] = await env.DB.batch([env.DB.prepare(wakeSql(false)).bind(repo, kind, key, ev, minute, t), ...extra]);
@@ -66,9 +75,13 @@ async function recordWake(env, t, { vendor, deliveryId, repo, kind, key, ev, kee
 }
 
 const changesOf = (r) => (r && r.meta && r.meta.changes) || 0;
-const deliveryStmt = (env, vendor, deliveryId, t) =>
-  env.DB.prepare(`INSERT OR IGNORE INTO webhook_deliveries (vendor, delivery_id, at) VALUES (?1,?2,?3)`)
-    .bind(vendor, deliveryId, t);
+// BH-9934: with a claim the new row stores it (the record statements' guard);
+// without one (Jira, Linear, the queue-only path) the SQL is unchanged.
+const deliveryStmt = (env, vendor, deliveryId, t, claim = null) => (claim
+  ? env.DB.prepare(`INSERT OR IGNORE INTO webhook_deliveries (vendor, delivery_id, at, claim) VALUES (?1,?2,?3,?4)`)
+    .bind(vendor, deliveryId, t, claim)
+  : env.DB.prepare(`INSERT OR IGNORE INTO webhook_deliveries (vendor, delivery_id, at) VALUES (?1,?2,?3)`)
+    .bind(vendor, deliveryId, t));
 
 // A bounded best-effort prune of delivery ids older than keepS, after a commit.
 async function pruneDeliveries(env, t, keepS) {
@@ -125,6 +138,80 @@ async function trackerWake(env, t, vendor, payload, headers, key, mapper, fresh)
   }
 }
 
+// Everything the GitHub route does after the signature check. Any throw is
+// the caller's dead letter.
+async function githubDelivery(env, t, event, raw, deliveryId) {
+  let payload = {};
+  try { payload = JSON.parse(raw); } catch { payload = {}; }
+  const repo = String((payload && payload.repository && payload.repository.full_name) || "");
+  if (!WAKE_REPO_RE.test(repo)) return json(202, { ok: true, ignored: "no repository slug" });
+  // BH-4954: the PR gate facts this delivery proves (head/draft/closed,
+  // hotfix, CI green, a thread HOLD). Before wakeOf on purpose:
+  // converted_to_draft and the hotfix label are deliveries wakeOf drops.
+  // Keyed on the delivery id, so none means no row. Never throws, and the
+  // response below is unchanged either way.
+  await recordGithubGate(env, t, event, payload, deliveryId);
+  const w = wakeOf(event, payload);
+  let wakes = Boolean(w && w.key);
+  // BH-9934: an echo of the fleet's own App write (HARNESS_SELF_APPS, the
+  // pairs in row webhook.github.self_echo_actions) writes the record and no
+  // wake. The settings read runs only for a sender in the list.
+  let selfApp = "";
+  if (wakes && selfSenderOf(env, payload)) {
+    selfApp = selfAppOf(env, event, payload, await receiverKnobs(env));
+    if (selfApp) wakes = false;
+  }
+  // BH-8067 C2: the fleet's PR record (pr_records) from the payload. A wake
+  // with a delivery id writes it inside the wake batch (BH-9934, below);
+  // every other delivery writes it here, as before (check_run.created is a
+  // delivery wakeOf drops). Never throws.
+  const inBatch = wakes && Boolean(deliveryId);
+  if (!inBatch) await recordPrRecord(env, t, event, payload);
+  // BH-5667: a Mergify batch draft's rows ride the same batch as the
+  // delivery row. null for every other delivery, with no read.
+  const mq = (await mapMergeQueueDelivery(env.DB, event, payload, { repo, at: t })) || [];
+  // An event nobody owns is ACCEPTED and dropped. 202, not 400: a hook
+  // subscribed a little too widely must not show up in GitHub's delivery
+  // log as a wall of red, or the one real failure is invisible in it.
+  if (!wakes && !mq.length) {
+    return json(202, selfApp ? { ok: true, ignored: "self-app", app: selfApp } : { ok: true, ignored: event || "unknown" });
+  }
+  // Only the retention row matters here; GitHub routes on the slug.
+  const keepS = (await readWebhookConfig(env, "github", "")).keepS;
+  if (!wakes) return json(200, await recordQueueRows(env, t, { deliveryId, stmts: mq, keepS }));
+
+  const pay = payload && typeof payload === "object" ? payload : {};
+  const action = String(pay.action || "");
+  const ev = w.event || (/^[a-z_]{1,32}$/.test(action) ? `${event}.${action}` : event);
+  // BH-9934: the record write rides the wake batch, guarded on this
+  // delivery's claim: 20 identical deliveries make 1 record write.
+  let claim = null, records = [];
+  if (inBatch) {
+    await ensureColumns(env, "webhook_deliveries");
+    claim = crypto.randomUUID();
+    records = await prRecordStmts(env, t, event, payload, { deliveryId, claim });
+  }
+  return json(200, await recordWake(env, t, {
+    vendor: "github", deliveryId, repo, kind: w.kind, key: w.key, ev, keepS, extra: mq, claim, records,
+  }));
+}
+
+// The dead letter of a GitHub delivery (BH-9934). No delivery id: a
+// `none:<uuid>` id, so the row still counts. 500 only when this write fails.
+async function deadLetter(env, t, event, deliveryId, e) {
+  const error = String((e && e.message) || e).slice(0, 300);
+  const id = deliveryId || `none:${crypto.randomUUID()}`;
+  try {
+    await ensureColumns(env, "webhook_deliveries");
+    await deadLetterStmt(env, id, t, error, event.slice(0, 64)).run();
+  } catch (e2) {
+    return json(500, { error: "delivery not recorded", detail: error.slice(0, 200),
+      dead_letter_error: String((e2 && e2.message) || e2).slice(0, 200) });
+  }
+  console.warn("[webhooks] github dead letter", id, event, error);
+  return json(200, { ok: true, dead_letter: true, delivery_id: id });
+}
+
 const parseObj = (raw) => {
   try { const p = JSON.parse(raw); return p && typeof p === "object" && !Array.isArray(p) ? p : null; } catch { return null; }
 };
@@ -148,8 +235,14 @@ export const routes = [
       if (!env.GITHUB_WEBHOOK_SECRET) {
         return json(503, { error: "webhook receiver not configured (GITHUB_WEBHOOK_SECRET unset)" });
       }
+      // BH-9934: the body cap BEFORE the HMAC, so an unsigned caller cannot
+      // make the worker read or hash an unbounded body. Settings row
+      // webhook.github.max_body_bytes, read from memory only (bodyCapOf).
+      const cap = bodyCapOf(env);
+      const body = await readCappedBody(req, cap);
+      if (body.tooLarge) return json(413, { error: "payload too large", cap });
+      const raw = body.raw;
       const sig = req.headers.get("x-hub-signature-256") || "";
-      const raw = await req.text().catch(() => "");
       const want = "sha256=" + await hmacSha256Hex(env.GITHUB_WEBHOOK_SECRET, raw);
       if (!hexEqual(sig, want)) return json(401, { error: "bad signature" });
 
@@ -158,44 +251,16 @@ export const routes = [
       // request that describes nothing — 200 with no row, or the hook shows as
       // failing in the repo settings forever.
       if (event === "ping") return json(200, { ok: true, pong: true });
-
-      let payload = {};
-      try { payload = JSON.parse(raw); } catch { payload = {}; }
-      const repo = String((payload && payload.repository && payload.repository.full_name) || "");
-      if (!WAKE_REPO_RE.test(repo)) return json(202, { ok: true, ignored: "no repository slug" });
-      // BH-4954: the PR gate facts this delivery proves (head/draft/closed,
-      // hotfix, CI green, a thread HOLD). Before wakeOf on purpose:
-      // converted_to_draft and the hotfix label are deliveries wakeOf drops.
-      // Keyed on the delivery id, so none means no row. Never throws, and the
-      // response below is unchanged either way.
-      await recordGithubGate(env, t, event, payload, deliveryIdOf("github", req.headers));
-      // BH-8067 C2: the fleet's PR record (pr_records) from the payload. Before
-      // wakeOf for the same reason: check_run.created is a delivery it drops.
-      // Never throws; the response below is unchanged either way.
-      await recordPrRecord(env, t, event, payload);
-      const w = wakeOf(event, payload);
-      const wakes = Boolean(w && w.key);
+      const deliveryId = deliveryIdOf("github", req.headers);
+      // BH-9934: a throw after the signature check is a DEAD LETTER: one
+      // webhook_deliveries row (vendor github:dead) with the id and the error,
+      // and 200, so GitHub does not redeliver in a loop. The batch committed
+      // nothing, so a manual redelivery runs again. Only a failed dead-letter
+      // write is a 500. bin/doorbell-coverage-check.sh alerts on the count.
       try {
-        // BH-5667: a Mergify batch draft's rows ride the same batch as the
-        // delivery row. null for every other delivery, with no read.
-        const mq = (await mapMergeQueueDelivery(env.DB, event, payload, { repo, at: t })) || [];
-        // An event nobody owns is ACCEPTED and dropped. 202, not 400: a hook
-        // subscribed a little too widely must not show up in GitHub's delivery
-        // log as a wall of red, or the one real failure is invisible in it.
-        if (!wakes && !mq.length) return json(202, { ok: true, ignored: event || "unknown" });
-        // Only the retention row matters here; GitHub routes on the slug.
-        const keepS = (await readWebhookConfig(env, "github", "")).keepS;
-        const deliveryId = deliveryIdOf("github", req.headers);
-        if (!wakes) return json(200, await recordQueueRows(env, t, { deliveryId, stmts: mq, keepS }));
-
-        const pay = payload && typeof payload === "object" ? payload : {};
-        const action = String(pay.action || "");
-        const ev = w.event || (/^[a-z_]{1,32}$/.test(action) ? `${event}.${action}` : event);
-        return json(200, await recordWake(env, t, {
-          vendor: "github", deliveryId, repo, kind: w.kind, key: w.key, ev, keepS, extra: mq,
-        }));
+        return await githubDelivery(env, t, event, raw, deliveryId);
       } catch (e) {
-        return json(500, { error: wakes ? "wake not recorded" : "queue rows not recorded", detail: String((e && e.message) || e).slice(0, 200) });
+        return deadLetter(env, t, event, deliveryId, e);
       }
     },
   ],

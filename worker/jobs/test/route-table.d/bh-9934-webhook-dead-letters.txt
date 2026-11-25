@@ -1,0 +1,4 @@
+# WEBHOOK DEAD LETTERS (BH-9934): the count and newest row of the GitHub
+# receiver's dead letters (webhook_deliveries vendor `<vendor>:dead`). Read by
+# bin/doorbell-coverage-check.sh. Bearer-gated.
+GET /api/webhook-dead-letters
