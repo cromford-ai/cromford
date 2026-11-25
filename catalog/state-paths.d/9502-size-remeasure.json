@@ -1,0 +1,3 @@
+[
+    {"path": "size-remeasure", "class": "box-local", "authority": "bin/size-remeasure.sh, the hub one-shot of BH-9502", "note": "state/size-remeasure/: posted (the comment URL and UTC time; the done stamp), alerted (the not-posted alert dedup, removed by a post) and split-chain.json (the last report, overwritten). The durable record is the hidden marker on the #6025 thread, checked before every post. At most three files, never growing. Hub lane only, never carried"}
+]

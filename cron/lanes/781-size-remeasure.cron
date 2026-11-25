@@ -1,0 +1,11 @@
+# @hub-lanes
+
+# ── SIZE RE-MEASURE LANE (BH-9502) ──────────────────────────────────────────
+# Daily at 07:47Z. A one-shot: it does nothing until #9441 and #9437 are both
+# closed as completed and SIZE_REMEASURE_DELAY_DAYS (14) passed since the later
+# close. Then it runs bin/split-chain-report.sh --days 14, counts ABANDONED and
+# closed-unmerged PRs by product-line bucket per repo from builds/, and posts
+# ONE comment on #6025. After the post (state/size-remeasure/posted) it makes
+# no call. It changes no limit. Preview: bin/size-remeasure.sh --dry-run.
+# Off: flags/lane-off-size-remeasure (bin/harness-ctl.sh off size-remeasure).
+47 7 * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/size-remeasure.sh >/dev/null 2>&1

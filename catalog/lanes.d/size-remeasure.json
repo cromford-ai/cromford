@@ -1,0 +1,123 @@
+{
+  "id": "size-remeasure",
+  "name": "14-day size re-measure on #6025 (one-shot)",
+  "scope": "hub",
+  "script": "bin/size-remeasure.sh",
+  "cadence": "47 7 * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-size-remeasure",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "SIZE_REMEASURE_DELAY_DAYS",
+      "type": "int",
+      "default": 14,
+      "min": 1,
+      "max": 90,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9502: the lane posts only this many days after the later close of the gate issues (#9441 scope item 6: 'Fourteen days after'). Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_DELAY_DAYS:-14}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_WINDOW_DAYS",
+      "type": "int",
+      "default": 14,
+      "min": 1,
+      "max": 90,
+      "unit": "days",
+      "zero_means": null,
+      "note": "BH-9502: the window of both tables: bin/split-chain-report.sh --days <this> and the build dirs whose deciding file is this recent. Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_WINDOW_DAYS:-14}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_EDGE_LOW",
+      "type": "int",
+      "default": 600,
+      "min": 1,
+      "unit": "product lines",
+      "zero_means": null,
+      "note": "BH-9502: the first bucket edge ('under 600'). The three edges must ascend; a bad set falls back to 600/1200/3000 with one log line. Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_EDGE_LOW:-600}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_EDGE_MID",
+      "type": "int",
+      "default": 1200,
+      "min": 1,
+      "unit": "product lines",
+      "zero_means": null,
+      "note": "BH-9502: the second bucket edge ('600 to 1200', both ends in). Not the size limit: the lane reads no limit and changes none. Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_EDGE_MID:-1200}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_EDGE_HIGH",
+      "type": "int",
+      "default": 3000,
+      "min": 1,
+      "unit": "product lines",
+      "zero_means": null,
+      "note": "BH-9502: the third bucket edge ('1200 to 3000', 'over 3000'). Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_EDGE_HIGH:-3000}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_GATE_ISSUES",
+      "type": "string",
+      "default": "9441 9437",
+      "unit": null,
+      "zero_means": null,
+      "note": "BH-9502: space-separated issue numbers that must all be closed as completed before the delay starts ('this ticket and #9437'). Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_GATE_ISSUES:-9441 9437}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_TARGET_ISSUE",
+      "type": "int",
+      "default": 6025,
+      "min": 1,
+      "unit": null,
+      "zero_means": null,
+      "note": "BH-9502: the issue the one comment goes on ('a comment on #6025'). Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_TARGET_ISSUE:-6025}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_MAX_PAGES",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 100,
+      "unit": "pages",
+      "zero_means": null,
+      "note": "BH-9502: the most comment pages (100 each) read from the target thread to look for the hidden marker; a thread past it is not posted to (absence not proven). Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_MAX_PAGES:-30}.",
+      "settable": true
+    },
+    {
+      "env": "SIZE_REMEASURE_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "BH-9502 test seam: epoch seconds used as the clock. Read by bin/size-remeasure.sh as ${SIZE_REMEASURE_NOW:-0}; 0 means the real clock (date +%s). NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "SIZE_REMEASURE_SPLIT_CHAIN",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "note": "BH-9502 test seam: the path of the split-chain report the lane runs; empty means bin/split-chain-report.sh beside the script. An exec path, NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/size-remeasure.log"
+  }
+}
