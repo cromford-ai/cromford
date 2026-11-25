@@ -12,8 +12,10 @@
 #      else the file; the console's /staff kill switch), staff-off-tackler
 #      (lane_switch, file: Archie's Overlooker pause). Then lane_gate_or_exit
 #      unblock (flag lane-off-unblock) and lane_env_apply unblock. Then the
-#      row unblock.enabled: 0 exits; unreadable exits (fail closed); no row
-#      runs. Each stop is one line in logs/unblock.log and rc 0.
+#      row unblock.enabled: 0 exits; no row runs. Each stop is one line in
+#      logs/unblock.log and rc 0. Unreadable (an outage, BH-9556) is an error:
+#      one line, ONE alert unblock-settings-unreachable (bin/lane-alert.sh),
+#      rc 1, and no collector, GitHub or ledger call.
 #   1. Per project: the lock is unb_scope_lock <p> (scope.sh: pl_lane_lock
 #      unblock <p>, locks/unblock-<p>.lock; held = one line, the project is
 #      skipped, never a wait). The mode is unb_scope_mode <p> (scope.sh, the
@@ -206,7 +208,11 @@ case "$rc:$EN" in
   0:1|2:*) ;;
   0:0) ubt_log "off: unblock.enabled=0"; exit 0 ;;
   0:*) ubt_log "off: unblock.enabled='$EN' is not 0 or 1 (fail closed)"; exit 0 ;;
-  *) ubt_log "unblock.enabled unreadable (rc $rc); tick skipped (fail closed)"; exit 0 ;;
+  *) # BH-9556: an outage is an error, not a quiet skip: one line, ONE alert, rc 1.
+     ubt_log "unblock.enabled unreadable (rc $rc); tick skipped (error)"
+     HARNESS="$H" "$H/bin/lane-alert.sh" --severity warn --id unblock-settings-unreachable unblock \
+       "[unblock-settings-unreachable] the settings read of unblock.enabled failed (rc $rc). The unblock tick did not run." >/dev/null 2>&1 || true
+     exit 1 ;;
 esac
 
 MAXREC="${UNBLOCK_MAX_RECORDS:-200}"

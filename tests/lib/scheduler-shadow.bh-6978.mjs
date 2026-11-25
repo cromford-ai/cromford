@@ -9,7 +9,8 @@
 //
 // Test hooks (never worker routes):
 //   GET  /__rows?table=sched_ticks|sched_diffs   every row, ORDER BY id
-//   PUT  /__setting {key, value}                  writes a settings row
+//   PUT  /__setting {key, value[, actor]}         writes a settings row (actor
+//                                                 default fixture, set on conflict too)
 //   POST /__sql {sql}                             runs seed SQL (exec)
 //   POST /__reset                                 a fresh database
 //   PUT  /__answer {method, path, status, body}   that method on that path
@@ -51,7 +52,9 @@ const handle = async (method, url, headers, body) => {
   }
   if (path === '/__setting') {
     const b = JSON.parse(body || '{}');
-    db.prepare("INSERT INTO settings (key,value,note,actor,updated_at) VALUES (?,?,'fixture','fixture','2026-10-16T00:00:00Z') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(b.key, String(b.value));
+    // BH-9556: the write sets the actor on conflict too, as PUT /api/settings
+    // does, so a fixture value is never taken for the untouched seed.
+    db.prepare("INSERT INTO settings (key,value,note,actor,updated_at) VALUES (?,?,'fixture',?,'2026-10-16T00:00:00Z') ON CONFLICT(key) DO UPDATE SET value=excluded.value, actor=excluded.actor").run(b.key, String(b.value), String(b.actor || 'fixture'));
     return [200, '{"ok":true}'];
   }
   if (path === '/__sql') {

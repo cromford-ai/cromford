@@ -51,7 +51,11 @@
 # The window is (state/scheduler/<p>.last, AT] when that stamp is less than
 # 900 s old (three */5 ticks), else (AT - 300 s, AT] (one tick).
 #
-# Exit paths, all rc 0: the lane switch is on -> nothing; scheduler.mode=off
+# Exit 1 (BH-9556): the settings read of scheduler.mode fails (an outage, not
+# a missing row) -> one `SCHED-TICK error=settings-unreachable` line, ONE
+# alert scheduler-settings-unreachable, no read, no POST, .last unchanged.
+#
+# Every other exit path is rc 0: the lane switch is on -> nothing; scheduler.mode=off
 # -> one `SCHED-TICK project=<p> mode=off` line; the lock is held -> one
 # `skipped (running)` line; no key prefix or repo slug -> one `skipped=` line;
 # a required input unreadable (issues, edges, holds, jobs, pr_state, claims,
@@ -59,8 +63,10 @@
 # no POST; a lane input unreadable (decisions, stack-wait, pool-log, overlap)
 # -> the verdicts are written and the POST carries compared=0 and no diffs.
 #
-# Settings rows: scheduler.mode (shadow; enforce; off; any other value runs
-# shadow and says `mode=<v> not a mode`), scheduler.projects (cromford,
+# Settings rows: scheduler.mode (enforce, the seed since BH-9556: the worker
+# moves the untouched shadow seed on its first settings read; shadow and off
+# are the kill flags; any other value runs shadow and says `mode=<v> not a
+# mode`; a missing row is shadow), scheduler.projects (cromford,
 # the --all list, and the projects enforce applies to),
 # scheduler.parent_reads_max (20), scheduler.sibling_checks_max (20). Those
 # values are the code defaults when a row is missing.
@@ -114,7 +120,21 @@ trap 'rm -rf "$TMP"' EXIT
 # setting <key> <default> — the row's value, or the default (no row, outage).
 setting() { local v; v=$(setting_get "$1" 2>/dev/null | tr -d '[:space:]') && [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2"; }
 
-MODE=$(setting scheduler.mode shadow)
+# THE MODE ROW (BH-9556). Read with its rc: an outage is an error, never a
+# shadow tick. rc 0 = the row (empty = shadow); rc 2 = no row = shadow (the
+# code default; bin/lib/sched-gate.sh reads a missing row as not enforced
+# too); any other rc = one error line, ONE alert scheduler-settings-unreachable,
+# exit 1: no read, no POST, .last not stamped.
+MODE_RC=0
+MODE=$(setting_get scheduler.mode 2>/dev/null) || MODE_RC=$?
+case "$MODE_RC" in
+  0) MODE=$(printf '%s' "$MODE" | tr -d '[:space:]'); [ -n "$MODE" ] || MODE=shadow ;;
+  2) MODE=shadow ;;   # fallback shadow; row scheduler.mode
+  *) line "SCHED-TICK error=settings-unreachable (scheduler.mode, rc $MODE_RC)"
+     HARNESS="$H" "$H/bin/alert-line.sh" --severity warn --id scheduler-settings-unreachable \
+       "[scheduler-settings-unreachable] the settings read of scheduler.mode failed (rc $MODE_RC). The scheduler tick did not run; it does not fall back to shadow." >/dev/null 2>&1 || true
+     exit 1 ;;
+esac
 case "$MODE" in
   shadow|off|enforce) ;;
   *) line "SCHED mode=$MODE not a mode; running shadow"; MODE=shadow ;;

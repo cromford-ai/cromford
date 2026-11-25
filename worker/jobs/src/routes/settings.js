@@ -14,6 +14,7 @@ import {
 } from "../lib/core.js";
 import { CAP_KEY_PREFIX_RE, capChangeStmt } from "../lib/cost-caps.js";
 import { invalidateSettings, settingsRows } from "../lib/settings-cache.js";
+import { applySeedMoves, SEED_MOVE_ACTOR } from "../lib/seed-moves.js";
 import { CONFIG_KINDS, configChangeStmts, listConfigChanges } from "../lib/config-changes.js";
 import { retiredModeRefusal } from "../lib/retired-mode-values.js";
 import {
@@ -221,6 +222,9 @@ export const routes = [
     "GET", "/api/settings",
     async ({ env, t }) => {
       return d1Guarded("settings", async () => {
+      // BH-9556: the guarded seed moves, once per isolate, before the read;
+      // never throws (lib/seed-moves.js).
+      await applySeedMoves(env.DB, () => invalidateSettings(env));
       // BH-5781: the rows come from the per-isolate snapshot; the lead_* proof
       // below still reads setting_sigs live on every call.
       const { rows } = await settingsRows(env);
@@ -363,6 +367,7 @@ export const routes = [
       // A key that could never exist is a caller bug, and saying "no row" to it
       // would send that caller to its fallback forever without ever complaining.
       if (key === null || !SETTING_KEY_RE.test(key)) return json(400, { error: "key must match ^[a-z0-9_.-]{1,64}$" });
+      await applySeedMoves(env.DB, () => invalidateSettings(env));   // BH-9556, never throws
       // BH-5781: a lead_* row is read live, never from the snapshot, so its
       // signature is always judged against the row D1 holds now.
       const row = isLeadKey(key)
@@ -523,6 +528,11 @@ export const routes = [
       // writes it.
       if (actor === REGISTRY_SEED_ACTOR) {
         return json(400, { error: `actor '${REGISTRY_SEED_ACTOR}' is reserved for POST /api/settings/seed-registry` });
+      }
+      // BH-9556: actor `seed` is what lib/seed-moves.js matches. An operator
+      // write under it could be moved by the next deploy's first read.
+      if (actor === SEED_MOVE_ACTOR) {
+        return json(400, { error: `actor '${SEED_MOVE_ACTOR}' is reserved for the schema seed and its moves` });
       }
       const upsert = env.DB.prepare(
         `INSERT INTO settings (key, value, note, actor, updated_at)

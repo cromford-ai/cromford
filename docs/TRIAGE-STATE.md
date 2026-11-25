@@ -543,6 +543,13 @@ ended `claim refused: ticket :: ticket max 1 already running` in
   ` — building: <keys>`. A census outage:
   `triage shards: running-build census unreadable — no key skipped for a running build this tick (the claim stays the backstop)`.
 
+## Lanes that act (BH-9556)
+
+The NEEDS sweep, the scheduler and the unblock lane act by default, each with
+one kill flag in a settings row, and a settings outage is an error with one
+alert in each lane. The table, the seed move and the exit codes are in
+docs/CUSTODY.md "Lanes that act (BH-9556)".
+
 ## Follow-ups (out of scope here)
 
 - Native GitHub issue dependencies ("blocked by" relations) and sub-issues are

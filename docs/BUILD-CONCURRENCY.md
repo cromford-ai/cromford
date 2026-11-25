@@ -1227,6 +1227,18 @@ it write nothing at all.
 
 ---
 
+## The scheduler owns dispatch by default (BH-9556)
+
+Since BH-9556 the seed row `scheduler.mode` moves from `shadow` to `enforce` on
+the jobs worker's first settings read. In enforce the pool (`bin/fly-pool.sh`
+gate 0c) and run-build (`bin/lib/rb/gates.sh`) dispatch from
+`GET /api/scheduler/ready` through `bin/lib/sched-gate.sh`. A stale or
+unreadable ready set still falls back to today's path (sibling-serial,
+overlap-schedule, stack-wait). An operator row `shadow` or `off` is the kill
+flag and is never moved. A missing row stays shadow. A settings outage in
+`bin/scheduler.sh` is exit 1 with one `scheduler-settings-unreachable` alert,
+never a shadow tick. See docs/CUSTODY.md "Lanes that act (BH-9556)".
+
 ## Schedule by planned-file overlap (BH-475, 2026-09-16)
 
 **The number.** In 24h the ledger showed 17 cromford builds as `planning`;

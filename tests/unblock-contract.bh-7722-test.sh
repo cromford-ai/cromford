@@ -7,7 +7,8 @@
 #        staff-kill-watchman (another agent) runs
 #   C2   lane-off-unblock (the lane gate): 0 reads; C2b staff-off-tackler file
 #        the same; staff-off-tackler-x runs
-#   C3   unblock.enabled=0 and an unreadable row: 0 collector calls; absent runs
+#   C3   unblock.enabled=0 and an unreadable row: 0 collector calls; absent runs;
+#        unreadable is rc 1 and one unblock-settings-unreachable alert (BH-9556)
 #   C4   the project mode table, read through bin/lib/unblock/scope.sh (the
 #        settings cache): shadow, act, " shadow" run; missing, off, Shadow,
 #        ACT, 1, actx and no settings cache never call a collector. With no
@@ -233,9 +234,12 @@ eq "C3 enabled=0 collector calls" "$(collects)" 0
 eq "C3 enabled=0 ledger calls" "$(ledger)" 0
 has "C3 enabled=0 log" "$LOG" "unblock.enabled=0"
 reset; collector queue "$T/one.jsonl"; touch "$FXT/settings/unblock.enabled.fail"
-tick; eq "C3 unreadable rc" "$?" 0
+# BH-9556: an unreadable row is an error (rc 1) with ONE alert, not a quiet rc 0.
+tick; eq "C3 unreadable rc" "$?" 1
 eq "C3 unreadable collector calls" "$(collects)" 0
+eq "C3 unreadable ledger calls" "$(ledger)" 0
 has "C3 unreadable log" "$LOG" "unblock.enabled unreadable"
+eq "C3 unreadable: one unblock-settings-unreachable alert" "$(cnt '^ALERT .*unblock-settings-unreachable' "$FXT/seq.log")" 1
 reset; collector queue "$T/one.jsonl"; rm -f "$FXT/settings/unblock.enabled"
 tick; eq "C3 absent row runs" "$(collects)" 1
 

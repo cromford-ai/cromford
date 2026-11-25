@@ -37,7 +37,9 @@
 #
 # KNOBS (settings rows, read with setting_get; a missing or non-numeric row is
 # the fallback): console.needs.max_age_days (14), console.needs.sweep_dry_run
-# (1 = dry; an outage is dry), console.needs.sweep_max_rows (5000 changes per
+# (0 = apply, the seed since BH-9556; 1 = dry, the kill flag; fallback 0; any
+# value but 0 or 1 is 0; an outage is exit 4, never a dry run),
+# console.needs.sweep_max_rows (5000 changes per
 # run), console.needs.sweep_max_reads (300 GitHub reads per run),
 # console.needs.sweep_page_size (500 rows per candidates page),
 # console.needs.sweep_apply_chunk (100 rows per apply call; keep it at or under
@@ -57,7 +59,9 @@
 #
 # EXIT. 0 every run that finished (changes or not), not-configured, lock held;
 # 2 bad arguments; 3 a fail-closed candidates read (ONE alert needs-sweep-read,
-# nothing applied, ledger row failed). A refused apply chunk is ONE alert
+# nothing applied, ledger row failed); 4 the settings read of
+# console.needs.sweep_dry_run failed (BH-9556: ONE alert needs-sweep-settings,
+# no candidates read, no ledger row). A refused apply chunk is ONE alert
 # needs-sweep-apply, the run goes on, the ledger row says partial.
 #
 # Env: NS_NOW (epoch seconds) is a test seam for the clock.
@@ -67,7 +71,7 @@
 #   summary is unchanged. bin/staff/clerk-lever.sh sets clerk:<action key 12>.
 # OFF: flags/lane-off-needs-sweep (bin/harness-ctl.sh off needs-sweep).
 # Registry: catalog/lanes.d/needs-sweep.json.
-# Doc: docs/notes/2026-11-05-BH-9117-needs-sweep.md.
+# Doc: docs/notes/2026-11-05-BH-9117-needs-sweep.md; docs/CUSTODY.md "Lanes that act (BH-9556)".
 #
 # gh-rest: no-graphql
 set -uo pipefail
@@ -147,7 +151,7 @@ DRY_FLAG=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_FLAG=1; shift ;;
-    -h|--help) sed -n '2,67p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,74p' "$0"; exit 0 ;;
     *) echo "needs-sweep: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -209,8 +213,25 @@ knob() {
   command -v setting_get >/dev/null 2>&1 && v=$(JOBS_ALERT=0 setting_get "$1" 2>/dev/null)
   if [[ "$v" =~ ^[0-9]+$ ]]; then printf '%s\n' "$v"; else printf '%s\n' "$2"; fi
 }
+# THE MODE ROW (BH-9556). It is read with its rc, because an outage is not a
+# dry run: rc 0 = the row; rc 2 = no row (apply); any other rc = the settings
+# read failed: one error line, ONE alert needs-sweep-settings, exit 4, before
+# any candidates read and with no ledger row. No jobs client or an empty
+# JOBS_URL is not-configured (exit 0, no alert), as the other exits above.
+if ! command -v setting_get >/dev/null 2>&1 || ! command -v jobs_configured >/dev/null 2>&1 || ! jobs_configured; then
+  log "not-configured (no jobs client)"; exit 0
+fi
+DRY_RC=0
+DRY_ROW=$(JOBS_ALERT=0 setting_get console.needs.sweep_dry_run 2>/dev/null) || DRY_RC=$?
+if [ "$DRY_RC" != 0 ] && [ "$DRY_RC" != 2 ]; then
+  log "error: settings unreachable (console.needs.sweep_dry_run, rc $DRY_RC) - nothing read, nothing applied"
+  alert needs-sweep-settings "[needs-sweep-settings] the settings read of console.needs.sweep_dry_run failed (rc $DRY_RC). The NEEDS sweep did not run; it does not fall back to a dry run."
+  exit 4
+fi
+DRY_ROW=$(printf '%s' "$DRY_ROW" | tr -d '[:space:]')
+# fallback 0; row console.needs.sweep_dry_run (1 = dry, the kill flag)
+case "$DRY_ROW" in 0|1) ;; *) DRY_ROW=0 ;; esac
 MAX_AGE_DAYS=$(knob console.needs.max_age_days 14)    # fallback; row console.needs.max_age_days
-DRY_ROW=$(knob console.needs.sweep_dry_run 1)         # fallback; row console.needs.sweep_dry_run
 MAX_ROWS=$(knob console.needs.sweep_max_rows 5000)    # fallback; row console.needs.sweep_max_rows
 MAX_READS=$(knob console.needs.sweep_max_reads 300)   # fallback; row console.needs.sweep_max_reads
 # Transport bounds; 0 is no bound for these, so 0 is the fallback too.
@@ -220,7 +241,7 @@ HTTP_TIMEOUT=$(knob console.needs.sweep_http_timeout_s 30)   # fallback; row con
 [ "$PAGE_SIZE" -gt 0 ] || PAGE_SIZE=500
 [ "$APPLY_CHUNK" -gt 0 ] || APPLY_CHUNK=100
 [ "$HTTP_TIMEOUT" -gt 0 ] || HTTP_TIMEOUT=30
-DRY=1; [ "$DRY_ROW" = 0 ] && DRY=0; [ "$DRY_FLAG" = 1 ] && DRY=1
+DRY=0; [ "$DRY_ROW" = 1 ] && DRY=1; [ "$DRY_FLAG" = 1 ] && DRY=1
 MODE=dry; [ "$DRY" = 0 ] && MODE=apply
 RUN_KEY="run:$(date -u -d "@$NOW" +%Y%m%dT%H%M%SZ)"
 

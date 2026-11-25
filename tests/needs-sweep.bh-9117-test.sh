@@ -7,13 +7,17 @@
 # is a `gh` stub in the `gh api -i` shape gh_rest reads. No call leaves the box.
 #
 #   U   ns_decide, cases (a)-(o) of the plan, through NS_LIB_ONLY=1
-#   S1  dry by default (the seed): every case decided, nothing changed,
-#       apply:false bodies, ONE ledger row `dry`, would= from the endpoint
+#   S1  dry with the kill flag row console.needs.sweep_dry_run=1 (an operator
+#       row; since BH-9556 the seed moves to 0): every case decided, nothing
+#       changed, apply:false bodies, ONE ledger row `dry`, would= from the endpoint
 #   S2  console.needs.sweep_dry_run=0: rows move, nothing is deleted,
 #       commands expire, ONE ledger row `applied`, a re-run changes nothing
 #   S3  --dry-run overrides a 0 row
 #   S4  console.needs.max_age_days=30 moves fewer rows than the fallback 14;
-#       no settings rows -> fallbacks and DRY; a dead jobs worker -> DRY
+#       no settings rows -> fallbacks and APPLY (BH-9556); a dead jobs worker
+#       -> rc 4 and ONE needs-sweep-settings alert, never a dry run; a dead
+#       worker behind a fresh settings cache -> the run reads, and the failed
+#       ledger put is one log line
 #   S5  250 decisions -> 3 apply POSTs (chunks of 100), commands_before on the last
 #       and the page-size, apply-chunk and http-timeout settings rows
 #   S6  fail-closed reads (500, no rows, a cursor that does not advance): rc 3,
@@ -200,7 +204,9 @@ jget() { curl -sS -X POST "$JOBS_URL/__get" --data-binary "$1"; }
 cget() { curl -sS -X POST "$JOBS_URL/__cget" --data-binary "$1"; }
 mode() { curl -sS -X POST "$JOBS_URL/__mode" --data-binary "$1" >/dev/null; }
 stage_of() { cget "SELECT stage || ':' || merged AS s FROM builds WHERE id = $1" | jq -r '.[0].s'; }
-setk() { jsql "UPDATE settings SET value='$2' WHERE key='$1'"; }
+# setk writes an operator row (actor test): the BH-9556 seed move changes a row
+# only while its actor is still `seed`.
+setk() { jsql "UPDATE settings SET value='$2', actor='test' WHERE key='$1'"; }
 RESET() { : > "$H/logs/ALERTS.log"; : > "$H/logs/needs-sweep.log"; : > "$T/gh-calls.txt"; scratch_rm "$H/state/alerts"; scratch_rm "$H/state/alert-line-sent"; }
 # Each run is one second later, so each run has its own ledger key run:<stamp>.
 RUNSEQ=0
@@ -217,7 +223,8 @@ if [ "$src" = 3 ]; then echo "SKIP: node:sqlite unavailable in this runtime"; ex
 [ "$(jget "SELECT COUNT(*) n FROM settings WHERE key LIKE 'console.needs.%'" | jq -r '.[0].n')" = 7 ] \
   && ok "seed: the seven console.needs.* rows" || bad "seed rows: $(jget "SELECT key FROM settings WHERE key LIKE 'console.needs.%'")"
 
-# --- S1: dry by default -------------------------------------------------------
+# --- S1: dry with the kill flag row --------------------------------------------
+setk console.needs.sweep_dry_run 1
 RESET; run
 L="$H/logs/needs-sweep.log"
 [ "$RC" = 0 ] && ok "S1 rc 0" || bad "S1 rc $RC: $(cat "$T/run.out")"
@@ -294,14 +301,23 @@ grep -qF " dry 130 " "$L" && bad "S4 a 20-day row must stay with a 30-day window
 grep -qF " dry 2000 demo-board TK-2000 plan_deferred -> stale (aged)" "$L" && ok "S4 window 30 still moves the 50-day row" || bad "S4 50-day row"
 jsql "DELETE FROM settings WHERE key LIKE 'console.needs.%'"
 RESET; run
-grep -qF " dry 130 demo-board TK-30 plan_deferred -> stale (aged)" "$L" && ok "S4 no row: fallback 14 days" || bad "S4 fallback window"
-grep -q '^mode=dry ' <<<"$(summary | sed 's/.* summary //')" && [ "$(stage_of 130)" = "plan_deferred:0" ] && ok "S4 no row: fallback DRY" || bad "S4 fallback dry: $(summary)"
-RESET; JOBS_URL="http://127.0.0.1:9" "$H/$SCRIPT_REL" >/dev/null 2>&1
-grep -q '^mode=dry ' <<<"$(summary | sed 's/.* summary //')" && ok "S4 a dead jobs worker: DRY" || bad "S4 outage: $(summary)"
+grep -qF " apply 130 demo-board TK-30 plan_deferred -> stale (aged)" "$L" && ok "S4 no row: fallback 14 days" || bad "S4 fallback window"
+grep -q '^mode=apply ' <<<"$(summary | sed 's/.* summary //')" && [ "$(stage_of 130)" = "stale:0" ] && ok "S4 no row: fallback APPLY (BH-9556)" || bad "S4 fallback apply: $(summary)"
+# BH-9556: a dead jobs worker is an error (rc 4, one alert), never a dry run.
+RESET; JOBS_URL="http://127.0.0.1:9" "$H/$SCRIPT_REL" >/dev/null 2>&1; RC=$?
+[ "$RC" = 4 ] && [ -z "$(summary)" ] && ok "S4 a dead jobs worker: rc 4, no dry-run summary" || bad "S4 outage: rc=$RC $(summary)"
+[ "$(grep -c 'needs-sweep-settings' "$H/logs/ALERTS.log")" = 1 ] && ok "S4 a dead jobs worker: one needs-sweep-settings alert" || bad "S4 outage alerts: $(cat "$H/logs/ALERTS.log")"
+# The ledger put still fails to one log line: the mode row comes from a fresh
+# box settings cache (BH-5781), the worker behind it is dead.
+printf '{"fetched_at":%s,"values":{"console.needs.sweep_dry_run":"1"},"seeded":{}}\n' "$(date -u +%s)" > "$H/state/settings-cache.json"
+RESET; JOBS_SETTINGS_CACHE_S=600 JOBS_URL="http://127.0.0.1:9" "$H/$SCRIPT_REL" >/dev/null 2>&1; RC=$?
+rm -f "$H/state/settings-cache.json"
+[ "$RC" = 0 ] && grep -q '^mode=dry ' <<<"$(summary | sed 's/.* summary //')" && ok "S4 a dead worker behind a fresh cache row 1: the run reads, dry" || bad "S4 cached: rc=$RC $(summary)"
 grep -q 'ledger needs_sweep run:.* not written' "$L" && ok "S4 a failed ledger put is one log line" || bad "S4 ledger line: $(cat "$L" | tail -3)"
 
 # --- S5: chunks of 100 --------------------------------------------------------
 srv s5 "$(seed_many 250)"
+setk console.needs.sweep_dry_run 1
 RESET; run
 [ "$(posts)" = 3 ] && ok "S5 250 decisions -> 3 apply POSTs" || bad "S5 posts: $(posts)"
 [ "$(jq -s -c 'map(.builds | length)' "$T/s5.bodies")" = "[100,100,50]" ] && ok "S5 100/100/50" || bad "S5 sizes: $(jq -s -c 'map(.builds|length)' "$T/s5.bodies")"
@@ -352,6 +368,7 @@ grep -q 'needs-sweep' "$T/s8.log" && bad "S9 a request was sent" || ok "S9 no re
 
 # --- S10: the caps ------------------------------------------------------------
 srv s10 "$(seed_main)"
+setk console.needs.sweep_dry_run 1
 setk console.needs.sweep_max_reads 1
 RESET; run
 grep -q ' reads=1 INCOMPLETE' <<<"$(summary)" && [ "$RC" = 0 ] && ok "S10 read cap: reads=1 INCOMPLETE, rc 0" || bad "S10 read cap: rc=$RC $(summary)"
@@ -368,6 +385,7 @@ rm -f "$H/flags/lane-off-needs-sweep"
 
 # --- S13: the settle window -----------------------------------------------------
 srv s13 "$(seed_main)"
+setk console.needs.sweep_dry_run 1
 RESET; run
 grep -qF " dry 42 " "$L" && bad "S13 a closure 10 s old must be kept: $(grep -F ' dry 42 ' "$L")" || ok "S13 a closure 10 s old is kept"
 grep -qF " dry 43 demo-board TK-43 pr_created -> pr_closed (pr_closed)" "$L" && ok "S13 a closure 1 day old is pr_closed" || bad "S13 row 43"

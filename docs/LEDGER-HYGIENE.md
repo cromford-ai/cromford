@@ -235,6 +235,15 @@ double build.
 
 ---
 
+### The NEEDS sweep applies by default (BH-9556)
+
+`bin/needs-sweep.sh` closes the console build rows that ask for a person but
+are over (BH-9117). Since BH-9556 it applies by default: the seed row
+`console.needs.sweep_dry_run` moves from 1 to 0 on the jobs worker's first
+settings read, and a missing row is 0. The row `1` is the kill flag (dry run).
+A settings outage is exit 4 with one `needs-sweep-settings` alert, never a dry
+run. See docs/CUSTODY.md "Lanes that act (BH-9556)".
+
 ## Config
 
 `catalog/ledger-ttl.conf` is the fleet's answer, reviewed and committed, and

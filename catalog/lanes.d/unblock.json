@@ -17,11 +17,11 @@
     {
       "env": "UNBLOCK_ACT",
       "type": "int",
-      "default": 0,
+      "default": 1,
       "min": 0,
       "max": 1,
       "zero_means": "off",
-      "note": "BH-7726/BH-7722: 1 = act where the project's row unblock.project.<p>.mode says act; 0 = shadow everywhere (logs WOULD_<ACTION>, writes only the ledger). The lane never flips it. Read by bin/lib/unblock/act.sh and by bin/unblock.sh for the ledger row's mode.",
+      "note": "BH-7726/BH-7722: 1 = act where the project's row unblock.project.<p>.mode says act; 0 = shadow everywhere (logs WOULD_<ACTION>, writes only the ledger), the kill flag; BH-9556 default 1. The lane never flips it. Read by bin/lib/unblock/act.sh and by bin/unblock.sh for the ledger row's mode.",
       "read_in": "bin/lib/unblock/act.sh",
       "settable": true
     },

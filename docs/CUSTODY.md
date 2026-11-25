@@ -81,3 +81,37 @@ queue line. A lane file that defines no `hgr_<lane>` is rc 3.
 - [Defaults at the deadline](human-gates/defaults.md)
 - [Digest and replies](human-gates/digest-and-replies.md)
 - [Review dates](human-gates/review-dates.md)
+
+## Lanes that act (BH-9556)
+
+Three hub lanes computed a decision and acted on none of it. Their seed rows
+said dry run or shadow, and an outage of the settings read looked the same as
+those modes. Since BH-9556 (slice C0) each lane acts by default, keeps one kill
+flag in a settings row, and treats a settings outage as an error.
+
+| Lane | Acts by default | Kill flag | Missing row | Outage |
+|---|---|---|---|---|
+| `bin/needs-sweep.sh` | `console.needs.sweep_dry_run=0`: it applies | the row `1` (dry); `--dry-run` | apply (fallback 0) | exit 4, ONE alert `needs-sweep-settings`, no candidates read, no ledger row |
+| `bin/scheduler.sh` | `scheduler.mode=enforce`: the ready set decides dispatch (BH-6979; a stale set falls back to today's path) | the row `shadow` or `off` | shadow (code default, as `bin/lib/sched-gate.sh`) | exit 1, ONE `SCHED-TICK error=settings-unreachable` line, ONE alert `scheduler-settings-unreachable`, no POST, `.last` not stamped |
+| `bin/unblock.sh` | `unblock.enabled=1`, `unblock.project.<p>.mode=act`, `lane.unblock.unblock_act=1` (registry default `UNBLOCK_ACT` 1) | `unblock.enabled=0`; the project row `shadow`/`off`; `lane.unblock.unblock_act=0` | `unblock.enabled` missing runs | exit 1, ONE alert `unblock-settings-unreachable` (bin/lane-alert.sh), no collector, GitHub or ledger call |
+
+The seed move. A schema.d statement cannot change a row (the schema is
+additive). So the jobs worker runs ONE guarded batch on the first settings read
+of each DB binding (`worker/jobs/src/lib/seed-moves.js`, called by
+`GET /api/settings` and `GET /api/settings/<key>`). It moves
+`console.needs.sweep_dry_run` 1 -> 0 and `scheduler.mode` shadow -> enforce,
+each only while the row still has the seed value AND actor `seed`. A moved row
+carries actor `seed:BH-9556`. An operator row (any other actor) is never moved,
+so an operator's `1`, `shadow` or `off` stays the kill flag. `PUT /api/settings`
+refuses actor `seed`. A failed batch is one `console.warn`, never a throw; the
+next read retries. Rollback: write the old value with an operator actor.
+
+Unblock already acted for cromford in prod (an operator wrote
+`unblock.project.cromford.mode=act` and `lane.unblock.unblock_act=1` on
+2026-10-26), so no row moves for unblock. The other projects keep their
+per-project mode rows: the per-project flip is the operator's choice (BH-7727).
+
+Deferred to the slices after #9554 (the custody table, the lease and the
+custodian dispatch): `plan_stale` requeue, `plan_blocked` defaults, orphaned
+build retries, `ABANDONED` release and re-plan, parked queue rows and the
+un-ingested results deadline. The resolver timeout ladder is the next slice.

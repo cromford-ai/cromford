@@ -84,7 +84,7 @@ trap 'kill "$SPID" 2>/dev/null' EXIT
 
 rows() { curl -sS "$JOBS_URL/__rows?table=$1"; }
 sql() { curl -sS -X POST -d "$(jq -nc --arg s "$1" '{sql:$s}')" "$JOBS_URL/__sql" > /dev/null; }
-setting() { curl -sS -X PUT -d "$(jq -nc --arg k "$1" --arg v "$2" '{key:$k,value:$v}')" "$JOBS_URL/__setting" > /dev/null; }
+setting() { curl -sS -X PUT -d "$(jq -nc --arg k "$1" --arg v "$2" --arg a "${3:-fixture}" '{key:$k,value:$v,actor:$a}')" "$JOBS_URL/__setting" > /dev/null; }
 answer() { curl -sS -X PUT -d "$1" "$JOBS_URL/__answer" > /dev/null; }
 job() { # job <id> <ticket> <status> [meta] [created_at]
   sql "INSERT INTO jobs (id,project,ticket_id,kind,box,stage,status,created_at,updated_at,meta) VALUES
@@ -103,6 +103,10 @@ reset() {
   : > "$H/logs/scheduler.log"; : > "$T/gh.log"; : > "$T/dispatch.log"; : > "$T/srv.log"
   rm -f "$T/overlap.txt" "$T/cap.txt" "$H/logs/fly-pool.log"
   : > "$H/logs/fly-pool.log"
+  # BH-9556: the real worker moves the untouched seed scheduler.mode (shadow,
+  # actor seed) to enforce on its first settings read. This suite tests the
+  # shadow lane, so it writes shadow itself, as an operator would.
+  setting scheduler.mode shadow test
 }
 run() { ( cd "$T" && SCHED_NOW="${1:-$NOW}" bash "$H/bin/scheduler.sh" "${2:-proj}" ) > "$T/run.out" 2>&1; RC=$?; }
 sched() { grep "SCHED ticket=BH-$1 " "$H/logs/scheduler.log" | tail -1 | sed 's/^[^ ]* //'; }
