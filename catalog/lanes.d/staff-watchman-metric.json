@@ -1,0 +1,64 @@
+{
+  "id": "staff-watchman-metric",
+  "name": "Staff watchman metric (samples live_unrotated_secrets: the non-allowlisted git-history secret locations still open or never claimed, plus register credentials past due; no lever action)",
+  "scope": "hub",
+  "script": "bin/staff/watchman-metric.sh",
+  "cadence": "52 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-watchman-metric",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "WM_METRIC_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/watchman-metric.sh",
+      "note": "BH-9423 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The allowlist and the repos root are the collector's lib knobs (lib.staff-watchman.*), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "WM_METRIC_FIXTURE",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/watchman-metric.sh",
+      "note": "BH-9423 test seam: a file the lane sources after its libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "WM_METRIC_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/watchman-metric.sh",
+      "note": "BH-9423 test seam: 1 = load wmm_rotation_due and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/watchman-metric.sh",
+      "note": "Test seam gate: bin/staff/watchman-metric.sh honors WM_METRIC_NOW and WM_METRIC_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-watchman-metric.log"
+  }
+}

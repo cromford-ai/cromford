@@ -1,0 +1,12 @@
+{
+  "env": "WM_DUMMY_LINES",
+  "read_in": "bin/lib/watchman-allow.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 50,
+  "unit": "lines",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9423: how many first lines of a file, read at the leaking commit, may say DUMMY VALUES (any case) to allowlist its locations. Out of range is one warn line and the default."
+}

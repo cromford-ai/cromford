@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── STAFF WATCHMAN METRIC (BH-9423, watchman v2) ────────────────────────────
+# Hourly at :52. Samples watchman's metric live_unrotated_secrets: the
+# non-allowlisted git-history secret locations whose finding is open or not
+# yet claimed, plus the register credentials past their due date. The sample
+# settles watchman's due lever actions. No lever action, no ticket. One line
+# per run in logs/staff-watchman-metric.log.
+# Off: flags/lane-off-staff-watchman-metric (bin/harness-ctl.sh off
+# staff-watchman-metric), or the staff kill flags (staff-off-all,
+# staff-kill-all, staff-off-watchman, staff-kill-watchman).
+52 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/watchman-metric.sh >> /root/harness/logs/staff-watchman-metric-cron.log 2>&1

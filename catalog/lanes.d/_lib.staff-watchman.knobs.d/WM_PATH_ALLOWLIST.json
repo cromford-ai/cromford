@@ -1,0 +1,9 @@
+{
+  "env": "WM_PATH_ALLOWLIST",
+  "read_in": "bin/lib/watchman-allow.sh",
+  "type": "string",
+  "default": "tests/,__tests__/,e2e/,fixtures/,.harness/specs/,*.md",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9423: comma-separated path patterns whose secret-shaped locations are test data, read by bin/lib/watchman-allow.sh. A pattern ending in / matches a whole path segment anywhere (tests/ matches pkg/tests/x.js, not contests/x.js); a pattern starting with *. matches the file suffix; any other pattern is one exact path. A pattern with a character outside [A-Za-z0-9_./*-] is dropped with one warn line. Empty (or no valid pattern) = this default list. An allowlisted location stays in the leak cache but makes no beat, no baseline count, no finding and no count in live_unrotated_secrets."
+}

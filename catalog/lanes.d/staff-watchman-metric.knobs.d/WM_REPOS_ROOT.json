@@ -1,0 +1,10 @@
+{
+  "env": "WM_REPOS_ROOT",
+  "read_in": "bin/staff/watchman-metric.sh",
+  "type": "string",
+  "default": "/root/repos",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9423: the directory that holds the fleet repos on the hub: <root>/<project>. The metric lane reads it to test each git-history secret location against the path and dummy-line allowlist, the same root the collector scans (lib knob staff-watchman WM_REPOS_ROOT, applied by the lane with lib_env_apply staff-watchman). Set both to the same value. Empty = /root/repos. A path a root lane reads, so only env/global.env on the hub moves it. NOT settable from the control plane.",
+  "settable": false
+}

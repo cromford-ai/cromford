@@ -33,12 +33,22 @@
 #                   (rc != 0, one commit that times out, a report that is not
 #                   a list) saves nothing, so the next due scan repeats the
 #                   range; the WM_SCAN_FAIL_ALERT-th in a row is one warn beat.
-#                   Every tick prints every cached location.
+#                   Every tick prints every cached location that is not
+#                   allowlisted (below).
 #   rotation-due    catalog/staff-rotations.d/<id>.json, one file per
 #                   credential: {id, where, owner, due} or {id, where, owner,
 #                   rotated_at, every_days}. `where` names the file and the
 #                   variable, never a value. Fires when now >= due + 1 day,
 #                   and writes the latch state/staff/watchman/due/<id> = due.
+#
+# PATH ALLOWLIST (BH-9423, bin/lib/watchman-allow.sh): a location whose file
+# matches WM_PATH_ALLOWLIST (default tests/, __tests__/, e2e/, fixtures/,
+# .harness/specs/, *.md), or whose first WM_DUMMY_LINES lines at its commit say
+# DUMMY VALUES, stays in the leak cache but makes no beat, does not count toward
+# WM_FIRST_SCAN_MAX and is not printed. A baseline whose non-allowlisted count
+# is at or under WM_FIRST_SCAN_MAX prints those locations one by one, not its
+# baseline finding. One `allowlist skipped=<n> path=<n> dummy=<n>` log line a
+# tick. A missing lib = no filter and no rotation register, one warn line.
 #
 # A ROTATED credential (the register's due is later than the latch, and not
 # yet past) closes its finding as merged: GET /api/staff/findings?agent=watchman
@@ -71,6 +81,7 @@ BIN="$(cd "$(dirname "$0")/.." && pwd)"
   . "$BIN/jobs-client.sh" 2>/dev/null || true
   . "$BIN/lib/gh-rest.sh" 2>/dev/null || true
   . "$BIN/lib/gitleaks-pin.sh" 2>/dev/null || true
+  . "$BIN/lib/watchman-allow.sh" 2>/dev/null || true
 }
 # The suite's seams. Sandbox only, and settable:false in the registry.
 NOW_S=""; GL_SEAM=""
@@ -117,6 +128,16 @@ REGDIR="$H/catalog/staff-rotations.d"
 mkdir -p "$WMS/scan" "$WMS/leaks" "$WMS/due" 2>/dev/null || warn "cannot create $WMS; nothing is saved this tick"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/wm-collect.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
+# The path allowlist (BH-9423): an allowlisted location stays in the leak
+# cache, and is never beaten, counted toward a baseline or printed.
+if command -v wm_allow_load >/dev/null 2>&1; then
+  wm_allow_load 2> "$TMP/allow.warn"
+  while IFS= read -r l; do warn "${l#watchman-allow: warn: }"; done < "$TMP/allow.warn"
+else
+  warn "bin/lib/watchman-allow.sh is missing; no path allowlist and no rotation register this tick"
+  wm_allow_split() { WM_ALLOW_N_PATH=0; WM_ALLOW_N_DUMMY=0; cp "$1" "$2"; }
+  wm_register_read() { : > "$2"; }
+fi
 URL="${CONSOLE_URL:-}"; URL="${URL%/}/staff/watchman"
 OBS=$(date -u -d "@$NOW_S" +%Y-%m-%dT%H:%M:%SZ) || exit 1
 # put <file> <content>: temp + rename; rc 1 when it cannot be written.
@@ -176,12 +197,13 @@ mkdir -p "$WMS/first" "$WMS/base" 2>/dev/null
 # beat <id> <text>: one bin/lane-alert.sh call at WM_PAGE_SEVERITY.
 beat() { [ "$SEV" = off ] || "$H/bin/lane-alert.sh" --id "$1" --severity "$SEV" staff "$2" >/dev/null 2>&1; }
 
-# baseline <project> <all locations file>: a first scan with more than
-# WM_FIRST_SCAN_MAX locations. They go to base/<p>.jsonl (never printed one by
-# one), and base/<p>.item is ONE finding that names the count; one beat.
+# baseline <project> <all locations file> <non-allowlisted locations file>: a
+# first scan with more than WM_FIRST_SCAN_MAX non-allowlisted locations. All
+# locations go to base/<p>.jsonl, and base/<p>.item is ONE finding that names
+# the non-allowlisted count; one beat.
 baseline() {
-  local p=$1 f=$2 n slug url item title
-  n=$(grep -c . "$f")
+  local p=$1 f=$2 hf=$3 n slug url item title
+  n=$(grep -c . "$hf")
   put "$WMS/base/$p.jsonl" "$(cat "$f")" || { warn "cannot write the baseline of $p; its tips are not saved"; return 1; }
   slug=$("$BIN/fleet-conf.sh" "$p" repo 2>/dev/null)
   [[ $slug =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && url="https://github.com/$slug" || url=$URL
@@ -190,7 +212,7 @@ baseline() {
     | (group_by(.rule) | map({r: .[0].rule, n: length}) | sort_by(-.n, .r) | .[0:3] | map("\(.r) \(.n)") | join(", ")) as $top
     | {item: {check: "history-baseline", project: $p, locations: $n, at: $at},
        title: "Critical: \($n) secret-shaped locations in the git history of \($p) at its first scan (\($files) files; \($top)). Too many to file one by one: review state/staff/watchman/base/\($p).jsonl on \($host), and allowlist test fixtures in the repo .gitleaksignore",
-       source: {kind: "staff-security", url: $url, labels: []}, observedAt: $obs, class: "history-baseline"}' "$f") || return 1
+       source: {kind: "staff-security", url: $url, labels: []}, observedAt: $obs, class: "history-baseline"}' "$hf") || return 1
   put "$WMS/base/$p.item" "$item" || { warn "cannot write the baseline finding of $p"; return 1; }
   title=$(jq -r .title <<<"$item")
   beat "staff-watchman-baseline-$p-$NOW_S" "$title"
@@ -288,8 +310,9 @@ scan() {
       return 3
     fi
     LC_ALL=C sort -u "$WMS/first/$p.jsonl" 2>/dev/null > "$TMP/all"
-    if [ "$(grep -c . "$TMP/all")" -gt "$FIRST_MAX" ]; then
-      baseline "$p" "$TMP/all" || return 1
+    wm_allow_split "$TMP/all" "$TMP/allhit" "$ROOT"
+    if [ "$(grep -c . "$TMP/allhit")" -gt "$FIRST_MAX" ]; then
+      baseline "$p" "$TMP/all" "$TMP/allhit" || return 1
       : > "$TMP/new"
     else
       LC_ALL=C comm -23 "$TMP/all" <(LC_ALL=C sort -u "$WMS/leaks/$p.jsonl") > "$TMP/new"
@@ -299,13 +322,19 @@ scan() {
   if [ "$new" -gt 0 ]; then
     { cat "$WMS/leaks/$p.jsonl" "$TMP/new" > "$WMS/leaks/$p.jsonl.tmp.$$" && mv -f "$WMS/leaks/$p.jsonl.tmp.$$" "$WMS/leaks/$p.jsonl"; } 2>/dev/null \
       || { sl=0; cat "$TMP/new" >> "$TMP/unsaved"; warn "cannot write the leak cache of $p; its tips are not saved"; }
-    if [ "$SEV" != off ]; then
+    # Only the non-allowlisted new locations beat (BH-9423).
+    local hits
+    wm_allow_split "$TMP/new" "$TMP/newhit" "$ROOT"
+    hits=$(grep -c . "$TMP/newhit")
+    if [ "$hits" = 0 ]; then
+      log "scan $p: $new new locations, all allowlisted; no beat"
+    elif [ "$SEV" != off ]; then
       local firstt more=""
       firstt=$(jq -s -r 'sort_by(.commit, .file, .line, .rule) | .[0]
-        | "Critical: secret in git history: \(.rule) in \(.project) \(.file):\(.line) (commit \(.commit[0:12]))"' "$TMP/new")
-      [ "$new" -gt 1 ] && more=" (+$((new - 1)) more)"
+        | "Critical: secret in git history: \(.rule) in \(.project) \(.file):\(.line) (commit \(.commit[0:12]))"' "$TMP/newhit")
+      [ "$hits" -gt 1 ] && more=" (+$((hits - 1)) more)"
       beat "staff-watchman-leak-$p-$NOW_S" "$firstt$more"
-      log "beat $p severity $SEV new=$new"
+      log "beat $p severity $SEV new=$hits"
     fi
   fi
   [ "$sl" = 1 ] || { WHY="cannot write the leak cache"; return 1; }
@@ -369,29 +398,8 @@ while IFS=$'\t' read -r at p; do
 done < <(LC_ALL=C sort -t$'\t' -k1,1n -k2,2 "$TMP/due")
 
 # ═════ rotation register ═════════════════════════════════════════════════════
-: > "$TMP/reg"
-for f in "$REGDIR"/*.json; do
-  [ -e "$f" ] || continue
-  name=$(basename "$f" .json)
-  why=$(jq -r --arg n "$name" '
-    def realdate: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-      and ((. + "T00:00:00Z" | try (fromdateiso8601 | strftime("%Y-%m-%d")) catch "") as $r | $r == .);
-    def printable($max): type == "string" and length >= 1 and length <= $max and (test("[[:cntrl:]]") | not);
-    if type != "object" then "not an object"
-    elif (.id | type) != "string" or (.id | test("^[a-z][a-z0-9-]{1,47}$") | not) then "id"
-    elif .id != $n then "the file name is not <id>.json"
-    elif (.where | printable(200) | not) then "where"
-    elif (.where | test("[A-Za-z0-9+/=_-]{24,}")) then "where looks like a value; name the file and the variable"
-    elif (.owner | printable(100) | not) then "owner"
-    elif has("due") and (has("rotated_at") or has("every_days")) then "both due and rotated_at"
-    elif has("due") then (if (.due | realdate) then "" else "due" end)
-    elif (has("rotated_at") and has("every_days")) | not then "neither due nor rotated_at + every_days"
-    elif (.rotated_at | realdate | not) then "rotated_at"
-    elif (.every_days | type) != "number" or .every_days != (.every_days | floor) or .every_days < 1 or .every_days > 3650 then "every_days"
-    else "" end' "$f" 2>/dev/null) || why="not JSON"
-  if [ -n "$why" ]; then log "watchman: register $name.json invalid ($why); skipped"; continue; fi
-  jq -c '{id, where, owner, due: (.due // ((.rotated_at + "T00:00:00Z" | fromdateiso8601) + .every_days * 86400 | strftime("%Y-%m-%d")))}' "$f" >> "$TMP/reg"
-done
+wm_register_read "$REGDIR" "$TMP/reg" 2> "$TMP/reg.bad"
+while IFS= read -r l; do log "watchman: register $l; skipped"; done < "$TMP/reg.bad"
 dsec() { date -u -d "$1T00:00:00Z" +%s; }
 
 # ═════ rotated -> merged, before any new latch is written ════════════════════
@@ -472,7 +480,27 @@ for cf in "$WMS/leaks"/*.jsonl "$TMP/unsaved"; do
   [ -s "$cf" ] || continue
   cat "$cf" >> "$TMP/hist"
 done
+# One baseline finding per project whose first scan held too many
+# non-allowlisted locations. A baseline whose non-allowlisted count is now at
+# or under WM_FIRST_SCAN_MAX prints those locations one by one instead.
+: > "$TMP/basel"
+SKIP_PATH=0; SKIP_DUMMY=0
+for bf in "$WMS/base"/*.item; do
+  [ -s "$bf" ] || continue
+  bp=$(basename "$bf" .item)
+  wm_allow_split "$WMS/base/$bp.jsonl" "$TMP/basehit" "$ROOT"
+  SKIP_PATH=$((SKIP_PATH + WM_ALLOW_N_PATH)); SKIP_DUMMY=$((SKIP_DUMMY + WM_ALLOW_N_DUMMY))
+  if [ "$(grep -c . "$TMP/basehit")" -gt "$FIRST_MAX" ]; then
+    jq -c . "$bf" >> "$TMP/basel" 2>/dev/null
+  else
+    cat "$TMP/basehit" >> "$TMP/hist"
+  fi
+done
 LC_ALL=C sort -u "$TMP/hist" -o "$TMP/hist"
+wm_allow_split "$TMP/hist" "$TMP/histhit" "$ROOT"
+SKIP_PATH=$((SKIP_PATH + WM_ALLOW_N_PATH)); SKIP_DUMMY=$((SKIP_DUMMY + WM_ALLOW_N_DUMMY))
+mv -f "$TMP/histhit" "$TMP/hist"
+log "allowlist skipped=$((SKIP_PATH + SKIP_DUMMY)) path=$SKIP_PATH dummy=$SKIP_DUMMY"
 : > "$TMP/keyed"
 while IFS= read -r it; do
   p=$(jq -r .project <<<"$it")
@@ -491,11 +519,6 @@ while IFS= read -r it; do
 done < "$TMP/hist"
 jq -s -c 'sort_by(.st, .o.item.project, .o.item.commit, .o.item.file, .o.item.line, .o.item.rule) | .[]' "$TMP/keyed" > "$TMP/ordered"
 
-# One baseline finding per project whose first scan held too many locations.
-: > "$TMP/basel"
-for bf in "$WMS/base"/*.item; do
-  [ -s "$bf" ] && jq -c . "$bf" >> "$TMP/basel" 2>/dev/null
-done
 ROTN=$(cat "$TMP/rot" "$TMP/basel" | grep -c .)
 WIN=$((MAX_ITEMS - ROTN)); [ "$WIN" -lt 0 ] && WIN=0
 jq -r --argjson w "$WIN" --argjson now "$NOW_S" -s 'to_entries[] | "\(.value.k)\t\(if .key < $w then $now else .value.st end)"' "$TMP/ordered" > "$TMP/printed" 2>/dev/null
