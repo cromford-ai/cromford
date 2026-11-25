@@ -342,9 +342,14 @@ PY
   for c in project-5 project-3 project-2; do
     "$MT" render "$DIR/config/mergify/repos/$c.conf" > "$M/$c.yml" 2>/dev/null || no "M2 $c renders"
   done
-  for c in project-5 project-3; do
+  # TEST-CHANGE (project-3#1374, 2026-11-24): project-3.conf now HAS status_check_any (project-3 is in
+  # lane mode, where a lead or human verdict publishes lead-verdict), so M2b keeps one real conf
+  # without the key and asserts the project-3 render carries the regex and the 2 vetoes.
+  for c in project-5; do
     ! grep -qE 'check-failure|~=' "$M/$c.yml" || no "M2b $c renders no veto and no regex condition"
   done
+  grep -qF 'check-success~=^(lead-verdict|harness-verdict)$' "$M/project-3.yml" || no "M2b project-3 renders the lead-verdict|harness-verdict regex"
+  [ "$(grep -cE -- '-check-failure=(lead-verdict|harness-verdict)' "$M/project-3.yml")" -eq 4 ] || no "M2b project-3 renders 2 vetoes in each of its 2 queues"
   BASE=$(git -C "$DIR" merge-base HEAD origin/main 2>/dev/null || true)
   if [ -n "$BASE" ] && git -C "$DIR" show "$BASE:bin/mergify-template.sh" > /dev/null 2>&1; then
     mkdir -p "$M/base/bin" "$M/base/config/mergify"
