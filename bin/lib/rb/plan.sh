@@ -37,6 +37,7 @@
 #   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
 #   WT_LINE WT_RC LP_PLACE LP_WHY
 #   MN_NOTE DEFER_TOP
+#   CPK_ADOPT CPK_FETCH_RC CPK_P CPK_RULE CPK_TOK
 #   SI_HOUT SI_HRC SI_MSG SI_OUT SI_RC
 # shellcheck shell=bash
 
@@ -927,6 +928,32 @@ if [ ! -e "$BUILD/prebuild-repro.txt" ] && [ -x "$HARNESS/bin/prebuild-repro.sh"
 fi
 command -v pr_brief_line >/dev/null 2>&1 && REPRO_BRIEF_LINE="$(pr_brief_line "$BUILD")"
 # <<< prebuild repro
+# >>> child section adopt (BH-9537)
+# A SPLIT CHILD PLANS FROM ITS PARENT'S SECTION. bin/run-decompose.sh ends each
+# child's context pack with `Section: complete` when the parent's section for
+# that child carries an owns list, acceptance tests and an observable outcome
+# (bin/lib/child-pack.sh). Such a child has no pre-plan of its own, so the adopt
+# block below would log PREPLAN_MISS and the PLAN stage would plan from nothing.
+# Here the pack is fetched early, into the file the context pack block below
+# reads (one GET; that block reuses the file or this answer). CPK_ADOPT=1 turns
+# the adopt block's MISS into CHILD, and the PLAN stage gets an amend
+# instruction. Fail-open: no lib, no pack or an incomplete section is today's
+# path. A resumed dir is not asked.
+CPK_ADOPT=0; CPK_FETCH_RC=""; CPK_P=""
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
+if command -v cpk_complete >/dev/null 2>&1 && [ ! -s "$BUILD/plan.md" ]; then
+  if ! { [ -s "$BUILD/context-pack.md" ] && [ -s "$BUILD/context-pack.md.parent" ]; }; then
+    # shellcheck source=bin/lib/context-pack.sh
+    [ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
+    if command -v cp_fetch >/dev/null 2>&1; then
+      JOBS_ALERT=0 cp_fetch "$PROJECT" "$KEY" "$BUILD/context-pack.md" >/dev/null 2>&1; CPK_FETCH_RC=$?
+    fi
+  fi
+  CPK_P=$(head -n1 "$BUILD/context-pack.md.parent" 2>/dev/null)
+  if [ -n "$CPK_P" ] && [ "$CPK_P" != "$KEY" ] && cpk_complete "$BUILD/context-pack.md"; then CPK_ADOPT=1; fi
+fi
+# <<< child section adopt (BH-9537)
 # >>> preplan adopt
 # ADOPT A PRE-PLAN (the operator, 2026-09-14). bin/run-preplan.sh has written plans into
 # plans/<project>-<KEY>/ since 2026-07-23 and this file never read one: the
@@ -1043,6 +1070,15 @@ else
     fi
   fi
 fi
+# BH-9537: a split child with a complete parent section (CPK_ADOPT, set by the
+# child section adopt block) adopts that section as its draft. Only a MISS
+# changes: a real pre-plan HIT, a STALE (BH-9672's included) and OFF stand, and
+# a replan-amended child stays MISS (the section predates the amendment).
+if [ "$PP_RESUMED" != 1 ] && [ "${CPK_ADOPT:-0}" = 1 ] && [ ! -s "$BUILD/replan-amendment.md" ]; then
+  case "$PP_OUTCOME" in
+    MISS*) PP_OUTCOME="CHILD parent section of ${CPK_P:-its parent} adopted as the draft" ;;
+  esac
+fi
 if [ "$PP_RESUMED" = 1 ]; then
   echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_${PP_OUTCOME%% *} resumed dir already carries a plan — outcome unchanged ($PP_OUTCOME)" >> "$BUILD/pipeline.log"
 else
@@ -1058,6 +1094,8 @@ case "$PP_OUTCOME" in
     case "$PP_DIR" in "$HARNESS/plans/"*) rm -rf "$PP_DIR" ;; esac ;;
   OFF*)
     echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_OFF ${PP_OUTCOME#OFF } — planning fresh" >> "$BUILD/pipeline.log" ;;
+  CHILD*)
+    echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_CHILD adopted the parent section of ${CPK_P:-its parent} as the draft — PLAN stage checks and amends it" >> "$BUILD/pipeline.log" ;;
   *)
     echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_MISS ${PP_OUTCOME#MISS } — planning fresh" >> "$BUILD/pipeline.log" ;;
 esac
@@ -1082,7 +1120,7 @@ if [ "$PP_RESUMED" != 1 ]; then
 if [ -e "$BUILD/preplan-event" ]; then
   echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_EVENT already recorded by an earlier attempt ($(head -1 "$BUILD/preplan-event" 2>/dev/null)) — not re-posted" >> "$BUILD/pipeline.log"
 else
-  case "$PP_OUTCOME" in HIT*) PP_EV=ADOPTED ;; STALE*) PP_EV=STALE ;; OFF*) PP_EV=OFF ;; *) PP_EV=MISS ;; esac
+  case "$PP_OUTCOME" in HIT*) PP_EV=ADOPTED ;; STALE*) PP_EV=STALE ;; OFF*) PP_EV=OFF ;; CHILD*) PP_EV=CHILD ;; *) PP_EV=MISS ;; esac
   case "$PP_OUTCOME" in *' '*) PP_EV_DETAIL=${PP_OUTCOME#* } ;; *) PP_EV_DETAIL="" ;; esac
   PP_EV_DETAIL=${PP_EV_DETAIL:0:400}
   if [ -z "${JOB_ID:-}" ] || ! command -v job_event >/dev/null 2>&1; then
@@ -1179,13 +1217,16 @@ BUILD_CALL_FP=$(cat "$BUILD/call-fp" 2>/dev/null)
 # CP_PARENT and CP_PREAMBLE, so a value inherited from the environment cannot
 # turn a non-child into a child. No token cap on the build plan. Fail-open: a
 # non-child's prompt and model are exactly today's.
-CP_WHY=""
+CP_WHY=""; CPK_RULE=""
 # shellcheck source=bin/lib/context-pack.sh
 [ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
 # shellcheck source=bin/lib/child-plan.sh
 [ -r "$HARNESS/bin/lib/child-plan.sh" ] && . "$HARNESS/bin/lib/child-plan.sh" 2>/dev/null
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
 if [ -s "$BUILD/context-pack.md" ] && [ -s "$BUILD/context-pack.md.parent" ]; then CP_RC=0
 elif ! command -v cp_fetch >/dev/null 2>&1; then CP_RC=9; CP_WHY="no context-pack lib"
+elif [ -n "${CPK_FETCH_RC:-}" ]; then CP_RC=$CPK_FETCH_RC  # BH-9537: the child section adopt block already asked
 else JOBS_ALERT=0 cp_fetch "$PROJECT" "$KEY" "$BUILD/context-pack.md" >/dev/null 2>&1; CP_RC=$?
 fi
 case "$CP_RC" in 0|9) ;; 2) CP_WHY="no context pack" ;; *) CP_WHY="context pack unreachable" ;; esac
@@ -1194,6 +1235,13 @@ if [ "$CP_RC" = 0 ] && command -v cp_preamble >/dev/null 2>&1 \
    && CP_PARENT=$(head -n1 "$BUILD/context-pack.md.parent" 2>/dev/null) && [ -n "$CP_PARENT" ]; then
   command -v child_plan_model >/dev/null 2>&1 \
     && CP_M=$(child_plan_model "$PROJECT" "$PLAN_MODEL") && [ -n "$CP_M" ] && PLAN_MODEL=$CP_M
+  # BH-9537: the pack is the survey; name the files changed since its commit,
+  # and, for an adopted section, ask for an amend instead of a fresh plan.
+  if command -v cpk_rule >/dev/null 2>&1 \
+     && CPK_RULE=$(cpk_rule "$BUILD/context-pack.md" "$WT" "origin/${BASE:-main}" "${CPK_ADOPT:-0}" 2>/dev/null) \
+     && [ -n "$CPK_RULE" ]; then
+    CP_PREAMBLE="${CP_PREAMBLE}${CPK_RULE}"$'\n\n'
+  fi
   echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN parent=$CP_PARENT model=$PLAN_MODEL" >> "$BUILD/pipeline.log"
 else
   CP_PARENT=""; CP_PREAMBLE=""
@@ -2207,6 +2255,8 @@ fi
 # the checker runs inside $(...) so neither its rc nor an exit can change this build.
 [ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
 [ -r "$HARNESS/bin/lib/child-plan-tripwire.sh" ] && . "$HARNESS/bin/lib/child-plan-tripwire.sh" 2>/dev/null
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
 if [ -z "${CP_PARENT:-}" ]; then
   if [ -s "$BUILD/context-pack.md" ] \
      || { command -v cp_fetch >/dev/null 2>&1 \
@@ -2217,7 +2267,12 @@ fi
 if [ -n "${CP_PARENT:-}" ]; then
   if command -v cpt_check >/dev/null 2>&1; then
     CPT_VERDICT=$(cpt_check "$PROJECT" "$KEY" "$CP_PARENT" 2>/dev/null | head -n1) || true
-    echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN_TRIPWIRE ${CPT_VERDICT:-UNMEASURED checker printed nothing}" >> "$BUILD/pipeline.log"
+    # BH-9537: child plan tokens against the parent's, on the same line. Alert only.
+    CPK_TOK=""
+    if command -v cpk_tokens >/dev/null 2>&1; then
+      CPK_TOK=$(cpk_tokens "$PROJECT" "$KEY" "$CP_PARENT" "$BUILD" 2>/dev/null | head -n1) || true
+    fi
+    echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN_TRIPWIRE ${CPT_VERDICT:-UNMEASURED checker printed nothing}${CPK_TOK:+ $CPK_TOK}" >> "$BUILD/pipeline.log"
   else
     echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN_TRIPWIRE skipped (no checker)" >> "$BUILD/pipeline.log"
   fi

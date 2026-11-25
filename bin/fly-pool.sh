@@ -4290,7 +4290,7 @@ for MF in "$POOL"/*.json; do
                merged-review2.md harness-suite-fix.txt \
                qa.md e2e.md evidence.md changed-files.txt \
                reviewed-sha headbound-outcome headbound-review.md headbound-review-run.txt harness-suite-head.txt \
-               pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log brief.md \
+               pipeline.log cost.csv validate.txt red.txt green.txt mutation-check.txt context.json gh-stderr.log brief.md context-pack.md \
                execute-transcript.md stop-reason.txt ticket-meta.json gate.txt gate-run.tail.txt; do
         T=$(mktemp); if mexec "$MID" "base64 -w0 $RB/$A 2>/dev/null" > "$T" && [ -s "$T" ]; then base64 -d "$T" > "$LOCAL/$A" 2>/dev/null; fi; rm -f "$T"
       done
@@ -5408,6 +5408,8 @@ done
 # their files for the next tick; the sweep and the spawn walk wait for it too.
 if [ -n "${PTS_STOP:-}" ]; then wait; exit 0; fi
 
+      # context-pack.md (BH-9537) is a split child's pack: the hub reads it to
+      # see what the child plan started from.
 # >>> dead-machine sweep (BH-660)
 # THE SWEEP fly/builder-runner.sh:459-462 has been promising since wave 3 ("a
 # stopped pool machine is then destroyed by fly-pool.sh's dead-machine sweep").

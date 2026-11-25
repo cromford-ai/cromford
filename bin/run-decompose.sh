@@ -166,6 +166,11 @@ fi
 if [ -r "$(dirname "$0")/lib/context-pack.sh" ]; then . "$(dirname "$0")/lib/context-pack.sh"
 elif [ -r "$HARNESS/bin/lib/context-pack.sh" ]; then . "$HARNESS/bin/lib/context-pack.sh"
 fi
+# BH-9537: cpk_extend completes each pack (file map, siblings, Section line).
+# shellcheck source=bin/lib/child-pack.sh
+if [ -r "$(dirname "$0")/lib/child-pack.sh" ]; then . "$(dirname "$0")/lib/child-pack.sh"
+elif [ -r "$HARNESS/bin/lib/child-pack.sh" ]; then . "$HARNESS/bin/lib/child-pack.sh"
+fi
 # dcp_publish <spec-or-empty> — always rc 0. Line n of children.txt is spec
 # index n-1 (bin/lib/fc-issues.sh, bin/lib/fc-board.sh), so each lane that files
 # from the spec gives each child its own body and never a sibling's; only the
@@ -202,6 +207,13 @@ dcp_publish() {
     fi
     mv -f "$dir/$child.md.tmp" "$dir/$child.md" \
       || { LOG "context pack not composed (write failed) for $child"; continue; }
+    # BH-9537: the parent's file map for this child's paths, at the commit it
+    # was read at, the siblings and their files, and the Section line the
+    # child's plan stage reads. A failure keeps cp_compose's bytes as they are.
+    if command -v cpk_extend >/dev/null 2>&1; then
+      word=$(cpk_extend "$dir/$child.md" "$spec" "$((n - 1))" "$BUILD/children.txt" "$BUILD/plan.md" "$sha" 2>/dev/null </dev/null) \
+        || LOG "context pack extend skipped (${word:-no reason}) for $child"
+    fi
     if [ "$DRY" = 1 ]; then
       echo "would POST /api/context-packs $child"
       LOG "context pack dry-run for $child"
