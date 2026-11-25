@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merge failures, 14 days</title>
+<style>
+:root{--bg:#FCFCFC;--ink:#1A1A1A;--mut:#5B6470;--line:#E3E6EA;--card:#FFFFFF;--acc:#2563EB;--bad:#B42318;--warn:#B54708;--ok:#067647;--soft:#F3F5F8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif}
+nav{position:sticky;top:0;z-index:5;background:rgba(252,252,252,.96);border-bottom:1px solid var(--line);padding:10px 24px;display:flex;gap:18px;flex-wrap:wrap;font-size:13px}
+nav a{color:var(--acc);text-decoration:none}
+nav b{margin-right:8px}
+main{max-width:1600px;margin:0 auto;padding:24px}
+h1{font-size:28px;margin:8px 0 4px}
+h2{font-size:20px;margin:36px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:0 0 8px}
+p,li{max-width:960px}
+.sub{color:var(--mut);margin:0 0 20px}
+.grid{display:grid;gap:16px}
+.g4{grid-template-columns:repeat(4,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.kpi b{display:block;font-size:28px;line-height:1.1}
+.kpi span{color:var(--mut);font-size:13px}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--soft);font-weight:600;white-space:nowrap}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
+.p-plan{background:#EEF4FF;color:#1D4ED8}.p-exec{background:#ECFDF3;color:var(--ok)}.p-test{background:#FFF6E5;color:var(--warn)}
+.p-rev{background:#F4EBFF;color:#6941C6}.p-merge{background:#FEF3F2;color:var(--bad)}.p-ops{background:#F2F4F7;color:#344054}
+code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:13px}
+a{color:var(--acc)}
+ul{padding-left:20px;margin:6px 0}
+.note{border-left:3px solid var(--warn);background:#FFFAEB;padding:10px 14px;border-radius:0 8px 8px 0;max-width:960px}
+@media(max-width:900px){.g4,.g3,.g2{grid-template-columns:1fr}main{padding:16px}}
+</style>
+</head>
+<body>
+<nav><b>Merge failures</b><a href="#numbers">Numbers</a><a href="#causes">Causes</a><a href="#stage">Changes by stage</a><a href="#tickets">Tickets filed</a><a href="#decide">Decisions for the operator</a><a href="#unknown">Not known</a><a href="#method">Method</a></nav>
+<main>
+<h1>Merge failures, 2026-10-27 to 2026-11-10</h1>
+<p class="sub">Fleet-wide read of the merge conductor, the blocked-resolver, the review findings and the build records. Written 2026-11-10.</p>
+
+<div class="grid g4">
+<div class="card kpi"><b>about 1,330</b><span>PRs merged</span></div>
+<div class="card kpi"><b>127</b><span>PRs discarded (real lost builds, 106 tickets)</span></div>
+<div class="card kpi"><b>127</b><span>PRs red after one CI rerun (project-6 91)</span></div>
+<div class="card kpi"><b>38%</b><span>cromford queue batches red (114 of 303)</span></div>
+</div>
+
+<h2>The short answer</h2>
+<div class="card">
+<ol>
+<li><b>Builds open PRs they did not verify.</b> On project-6, 36% of builds (353 of 982) could not run their own suite, and the PR opened anyway. CI is the first real test.</li>
+<li><b>The builder gate does not run the tests that fail later.</b> project-6 has no pre-push gate file. On cromford the whole-repo ratchet suites are outside the gate.</li>
+<li><b>The recovery ladder repeats failures.</b> It rebuilds a ticket on the same red checks, and it abandons after one failed fix round with no re-plan.</li>
+<li><b>Gates park true work on false signals.</b> The iron-law scan parked 79 PRs, and review accepted 65 of 65. A parser fault mislabelled 138 queue ejections as "unknown".</li>
+<li><b>Parallel builds start with no file list.</b> On project-6 and project-3, 100% of sibling holds are blind, and most conflicting PRs conflict within 1 hour of opening.</li>
+</ol>
+</div>
+
+<h2 id="numbers">Numbers</h2>
+<div class="grid g2">
+<div class="wrap"><table>
+<tr><th>Outcome (distinct PRs)</th><th class="n">PRs</th><th>Note</th></tr>
+<tr><td>Merged</td><td class="n">about 1,330</td><td>project-9 422 are human merges</td></tr>
+<tr><td>Closed without a merge</td><td class="n">550</td><td>423 are bookkeeping (408 Mergify batch drafts)</td></tr>
+<tr><td>Real discarded builds</td><td class="n">127</td><td>106 tickets</td></tr>
+<tr><td>Red after one rerun (RED_TWICE)</td><td class="n">127</td><td>project-6 91</td></tr>
+<tr><td>Parked for a human</td><td class="n">214</td><td>iron-law 79, ejected twice 54, head not re-approved 49, prequeue red 36</td></tr>
+<tr><td>Needed a rebase</td><td class="n">98</td><td>project-6 42, project-3 31</td></tr>
+<tr><td>Abandoned</td><td class="n">51</td><td>project-6 28, cromford 13</td></tr>
+<tr><td>Paid re-reviews</td><td class="n">282</td><td>on 177 PRs; about 93% came back APPROVE</td></tr>
+</table></div>
+<div class="wrap"><table>
+<tr><th>Repo</th><th class="n">Merged</th><th class="n">Discarded</th><th class="n">Red twice</th><th class="n">Conflict rate</th><th class="n">Ejected</th></tr>
+<tr><td>project-6</td><td class="n">260</td><td class="n">59</td><td class="n">91</td><td class="n">10.9%</td><td class="n">23</td></tr>
+<tr><td>cromford</td><td class="n">238</td><td class="n">28</td><td class="n">5</td><td class="n">3.3%</td><td class="n">104</td></tr>
+<tr><td>project-3</td><td class="n">264</td><td class="n">6</td><td class="n">3</td><td class="n">10.3%</td><td class="n">14</td></tr>
+<tr><td>project-4</td><td class="n">77</td><td class="n">4</td><td class="n">1</td><td class="n">n/a</td><td class="n">0</td></tr>
+<tr><td>project-12, project-13, project-14</td><td class="n">0</td><td class="n">16</td><td class="n">16</td><td class="n">n/a</td><td class="n">0</td></tr>
+</table></div>
+</div>
+
+<h3 style="margin-top:20px">The 127 discarded builds</h3>
+<div class="wrap"><table>
+<tr><th>Class</th><th class="n">PRs</th><th>Main repo</th><th>First failure</th><th class="n">Ticket merged later</th></tr>
+<tr><td>Rebuilt after CI stayed red</td><td class="n">40</td><td>project-6 29</td><td>The builder suite did not run (69 of 86 build dirs say could-not-run)</td><td class="n">17 of 40</td></tr>
+<tr><td>Closed with no harness lane as closer</td><td class="n">40</td><td>cromford 14, project-6 9, project-5 7</td><td>Red 10, conflict 8, review hold 8, no failure seen 14</td><td class="n">2 of 40</td></tr>
+<tr><td>Abandoned after a review block</td><td class="n">26</td><td>project-6 19, cromford 7</td><td>Lead or security BLOCK; the fix round made no verified commit (30 of 30)</td><td class="n">4 of 26</td></tr>
+<tr><td>Abandoned after 3 red rebuilds</td><td class="n">10</td><td>cromford 4, new repos 5</td><td>Same red on each rebuild</td><td class="n">1 of 10</td></tr>
+<tr><td>Rebuilt: the fixed head had no review</td><td class="n">8</td><td>project-12 3, project-13 2</td><td>A green fix push got a rebuild, not a re-review</td><td class="n">0 of 8</td></tr>
+<tr><td>Other abandons</td><td class="n">3</td><td>cromford 2</td><td>Prequeue red 2, conflict 1</td><td class="n">n/a</td></tr>
+</table></div>
+
+<h2 id="causes">Causes, with evidence</h2>
+<div class="grid g2">
+<div class="card"><h3>1. The builder's own tests do not run</h3>
+<ul>
+<li>project-6: 353 of 982 builds (36%) recorded <code>HARNESS_EXIT: could-not-run</code>. 173 had ENOSPC.</li>
+<li>The pool Postgres has no pgvector since migration <code>20261028194822_knowledge_chunk.sql</code>. A full run fails 967 to 1,325 of about 2,500 test files, so builders narrow the scope.</li>
+<li>project-6 has no <code>bin/prepush-gate.sh</code>. "PREPUSH-GATE mode=block" ran nothing on 54 of 54 builds read.</li>
+<li>Unit shards failed on 29 of the 32 red project-6 PRs that name their checks. Example: #3802 failed <code>tenancy-class.dt-1</code> because a new migration had no <code>-- tenancy:</code> header.</li>
+</ul></div>
+<div class="card"><h3>2. A red or unfinished verify does not stop the PR</h3>
+<ul>
+<li><code>REBASE_VERIFY_FAILED</code> is in the result of 58 of 159 project-3 builds (36%) and 47 of 356 project-6 builds (13%).</li>
+<li>Of 34 project-6 rebase typechecks, 13 ran out of memory (tsc exit 134) and 6 were red. All 19 PRs opened on the old base.</li>
+<li>The PR self-check refused twice on 11 builds, and each PR was still queued.</li>
+<li><code>EVIDENCE_GATE_ENFORCE</code> is 0.</li>
+</ul></div>
+<div class="card"><h3>3. Whole-repo ratchets fail only in the queue (cromford)</h3>
+<ul>
+<li>114 of 303 queue batch runs were red. Each batch held 1 PR. 39 of 48 PRs stayed red after the rerun, so the failures are deterministic.</li>
+<li><code>no-state-files</code> failed in 37 red runs and <code>no-flag-files</code> in 12. Neither is in <code>catalog/test-impact-always.txt</code>.</li>
+<li>In all 8 red batches with a readable gate log, the builder gate had not run the failing suite.</li>
+<li>Prequeue red parked 36 PRs: green alone, red when merged with main (<code>lanes-registry</code> on 10 PRs).</li>
+</ul></div>
+<div class="card"><h3>4. The recovery ladder repeats the failure</h3>
+<ul>
+<li>Rebuild-fresh does not compare failing checks. project-14 #17, #18, #19 (TK-16): 3 rebuilds in 3 hours, all red.</li>
+<li>Fix rounds: "agent rc=0, verify rc=1, no verified commit" 41 times; timeout 7 times. The cap is 1 round in practice, 2 in the docs.</li>
+<li>After the cap, a review block goes to ABANDONED. No re-plan is tried ("adjudicate 0, rebuild 0").</li>
+<li>project-4#2205 ran 156 iron-law fix rounds on a false positive.</li>
+</ul></div>
+<div class="card"><h3>5. Gates fire on false signals</h3>
+<ul>
+<li>Iron-law: 79 PRs parked; 65 of 65 accepted on review. The 4 samples read were all false: a test fake, a single-org admin route, a printed secret name, a parameterized SQL template.</li>
+<li><code>checks/client-id-trust/WHY.md</code> lists cron and webhook routes as known false positives. <code>check.sh</code> does not apply the list. 11 of 16 project-4 hits are in those routes.</li>
+<li>138 of 182 eject events read "unknown" because Mergify changed its comment format. BH-9229 fixed the parser on 11-08. 61 "ejected twice" parks used the wrong label.</li>
+<li>506 of 921 HEAD_MOVED events are not head moves. They are the first look at a PR before its verdict binds.</li>
+</ul></div>
+<div class="card"><h3>6. Parallel builds collide</h3>
+<ul>
+<li>28 of 42 project-6 conflicts and 22 of 31 project-3 conflicts appear within 1 hour of PR open. Main moved during the 1.5 to 2.6 hour build.</li>
+<li>Sibling holds on project-6 and project-3: 100% say "(no pre-plan list)". The plan's file list stays on the Fly machine.</li>
+<li>The overlap guard has made 0 decisions since 2026-09-19. Sibling-serial logged "prs=unread" 7,035 times.</li>
+<li>The 360-minute ceiling released 279 holds. On project-6, 6 of 24 released tickets conflicted, 4 with the exact ticket they had waited for.</li>
+<li>Shared append files: project-3 <code>docs/RECENT-CHANGES.md</code> hit 14 PRs; project-6 list-everything tests hit 5.</li>
+</ul></div>
+<div class="card"><h3>7. The in-build review misses spec gaps</h3>
+<ul>
+<li>Lead BLOCK classes by ticket: wrong-data 88, red-build 59, core-flow-broken 41, data-loss 25, auth-bypass 16.</li>
+<li>Example, project-6#3322: the ticket asked for time in a state, and the code measured time since <code>createdAt</code>.</li>
+<li>20 of the 36 "findings outlasted the fix round" PRs are large, median about 2,900 lines. TK-1506 had 4,166 lines in 59 files.</li>
+</ul></div>
+<div class="card"><h3>8. New repos had no working CI</h3>
+<ul>
+<li>project-12, project-13 and project-14: 0 merged, 16 closed. The failing checks were the E2E jobs on every rebuild.</li>
+<li>That points at repo or CI setup, not at the tickets.</li>
+</ul></div>
+</div>
+
+<h2 id="stage">Process changes by stage</h2>
+<div class="wrap"><table>
+<tr><th>Stage</th><th>Change</th><th>What it removes</th><th>Ticket</th></tr>
+<tr><td><span class="pill p-plan">Plan</span></td><td>Requirements coverage with one row per ticket field, quoted. A plan with fewer rows than scope items is refused.</td><td>Lead blocks on wrong-data (88 tickets)</td><td>#9441</td></tr>
+<tr><td><span class="pill p-plan">Plan</span></td><td>A "Shared contracts" section: each repo declares its contracts (tenancy header, lane fragment, tool fragment), and the plan lists the ones the diff triggers.</td><td>CI red on invariant tests</td><td>#9441</td></tr>
+<tr><td><span class="pill p-plan">Plan</span></td><td>Post the plan's file list to the coordination DB at the end of PLAN. Give a cheap list before launch.</td><td>Blind sibling holds; conflicts in parallel builds</td><td>#9440</td></tr>
+<tr><td><span class="pill p-exec">Execute</span></td><td>Merge current main on the machine before the PR opens, then verify that tree. Red after one fix pass: no PR.</td><td>PRs that open already red or already in conflict</td><td>#9434</td></tr>
+<tr><td><span class="pill p-exec">Execute</span></td><td>could-not-run, an unfinished typecheck or a refused self-check ends the build with no PR.</td><td>Most of the 91 red project-6 PRs</td><td>#9434</td></tr>
+<tr><td><span class="pill p-test">Test</span></td><td>project-6 gets <code>bin/prepush-gate.sh</code>: typecheck, repo-wide invariant suites, affected unit tests.</td><td>Unit shard failures in CI</td><td>project-6 #3814</td></tr>
+<tr><td><span class="pill p-test">Test</span></td><td>cromford gate runs the whole-repo ratchets, on the branch merged with fresh main. A learner adds a suite after 3 red batches.</td><td>38% red queue batches; 36 prequeue parks</td><td>#9439</td></tr>
+<tr><td><span class="pill p-test">Test</span></td><td>Pool image: pgvector, disk headroom, a tsc heap knob, and a daily probe.</td><td>173 ENOSPC builds; scoped-down test runs</td><td>#9435</td></tr>
+<tr><td><span class="pill p-test">Test</span></td><td>Replace list-everything tests and append files with per-entry fragments.</td><td>Conflicts on shared index files</td><td>project-6 #3814</td></tr>
+<tr><td><span class="pill p-rev">Review</span></td><td>Run the lead-review checklist inside the build, row by row against the coverage table.</td><td>Lead blocks after an in-build APPROVE</td><td>#9441</td></tr>
+<tr><td><span class="pill p-rev">Review</span></td><td>Iron-law checks apply their false-positive lists. A printed secret name is a note.</td><td>79 parks and 65 adjudication calls</td><td>#9436</td></tr>
+<tr><td><span class="pill p-merge">Merge lane</span></td><td>No rebuild when the same checks failed before. Re-plan once at the fix cap. Re-review a green fix push before any rebuild. No fix round for iron-law.</td><td>58 rebuild or abandon PRs; the 156-round loop</td><td>#9437</td></tr>
+<tr><td><span class="pill p-merge">Merge lane</span></td><td>Conductor state fixes: no HEAD_MOVED before the first verdict, report-only checks, migration ledger gate, old ejection labels, restamp loop, rebase skip, verdict carry, closer attribution.</td><td>False parks, wasted reruns, re-review cost</td><td>#9438</td></tr>
+<tr><td><span class="pill p-merge">Merge lane</span></td><td>The hold ceiling releases a ticket only when its blocker has no open PR on the declared files.</td><td>Conflicts after a ceiling release (25% on project-6)</td><td>#9440</td></tr>
+<tr><td><span class="pill p-ops">Onboarding</span></td><td>A new repo releases tickets only after a no-op canary PR goes green in its CI.</td><td>16 discarded PRs on 3 new repos</td><td>#9442</td></tr>
+</table></div>
+
+<h2 id="tickets">Tickets filed (10, all <code>ai-build</code> + <code>hotfix</code>)</h2>
+<div class="wrap"><table>
+<tr><th>Ticket</th><th>Title</th><th>Area</th></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9434">cromford #9434</a></td><td>Build: no PR opens when the suite could not run, the rebase verify is red, or the self-check refused</td><td>Build PR-open path</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9435">cromford #9435</a></td><td>Pool builder image: pgvector in Postgres, disk headroom, tsc heap</td><td>Pool image</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9436">cromford #9436</a></td><td>Iron-law checks: apply the known false-positive lists</td><td><code>checks/</code></td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9437">cromford #9437</a></td><td>Blocked-resolver ladder: no rebuild on the same red, replan at the fix cap, re-review before rebuild, no fix round for iron-law</td><td>Blocked-resolver</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9438">cromford #9438</a></td><td>Merge conductor: 8 state fixes</td><td>Merge conductor</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9439">cromford #9439</a></td><td>cromford builder gate: run the whole-repo ratchet suites, and fix the red-batch report</td><td>Test-impact gate</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9440">cromford #9440</a></td><td>Overlap scheduling for pool builds: publish planned files, make the guard decide, no blind ceiling release</td><td>Pool scheduler</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9441">cromford #9441</a></td><td>Plan and in-build review: field-level requirements coverage, shared-contract list, lead checklist inside the build</td><td>Prompts and plan gates</td></tr>
+<tr><td><a href="https://github.com/example-org/cromford/issues/9442">cromford #9442</a></td><td>Onboarding: a new repo releases tickets only after a no-op PR goes green in its CI</td><td>Onboarding</td></tr>
+<tr><td><a href="https://github.com/example-org/project-6/issues/3814">project-6 #3814</a></td><td>Builder gate for project-6: run the repo-wide invariant tests before push, and split the list-everything tests</td><td>project-6 repo</td></tr>
+</table></div>
+<p>Open tickets that already cover part of the findings, and were not repeated: #9425 (red-twice cause report, no rebuild on a red main or a flake), #9405 (fix round after a queue ejection), #9404 (fix-round timeout retry), #9311 (<code>state-paths.json</code> shared index), #8935 (no queue without a verdict), #8732 (a closed PR sets its ticket to abandoned), #9096 (docs-only overlap).</p>
+<p>Three tickets edit <code>bin/blocked-resolver.sh</code> (#9437, #9404, #9425) and two edit the conductor (#9438, #9405). They can conflict if they build at the same time.</p>
+
+<h2 id="decide">Decisions for the operator</h2>
+<div class="grid g3">
+<div class="card"><h3>Size limits</h3><p>Large diffs are the common factor in abandoned PRs (median about 2,900 lines). The size gate has been 1,200 lines and 30 files since 2026-10-14 (#6025), and #8739 asks for the fewest tickets. Both pull against the abandon data. Decision 2026-11-10: the gate stays at 1,200 / 30. #9441 now carries a re-measure step that posts abandon counts by diff size on #6025, 14 days after #9441 and #9437 merge.</p></div>
+<div class="card"><h3>project-3 <code>RECENT-CHANGES.md</code></h3><p>This hand-appended file conflicted on 14 PRs. The fix is a fragment directory or <code>merge=union</code> in the project-3 repo. Filed on the project-3 board on 2026-11-10 as an internal engineering ticket.</p></div>
+<div class="card"><h3>Direct commits on project-3</h3><p>25 of 41 conflict pairs were against a client developer's direct commits to main (105 of about 280 commits). #9440 makes those commits count as file owners. A branch rule for that developer is a separate choice.</p></div>
+</div>
+
+<h2 id="unknown">Not known</h2>
+<ul>
+<li>Who closed 39 of the 40 PRs that no harness lane closed. The GitHub App quota was exhausted during the read. #9438 item 8 records the closer from now on.</li>
+<li>The failing check names for 59 of the 91 red project-6 PRs. The log reason has no names. #9425 builds that report.</li>
+<li>Whether 93% of red cromford batches are case A (gate did not run the suite). The report cannot read the gate log on 106 of 114 runs. #9439 fixes the read.</li>
+<li>Which verify step failed in each fix round. The output stays on the boxes.</li>
+<li>Who pushed 182 of the 415 real head moves.</li>
+<li>Root causes on project-12, project-13, project-14 and cromford. No job logs were read. #9442 runs the canary on them.</li>
+<li>The cost of the 127 discarded builds. The project-6 pool build median is $4.79 and the p90 is $27.16 (150 builds).</li>
+</ul>
+
+<h2 id="method">Method</h2>
+<ul>
+<li>Window: 2026-10-27 00:00Z to 2026-11-10 21:52Z. Source host: the hub, <code>bh-hub-2</code>.</li>
+<li>Counts are distinct PRs unless the row says events. A PR can be in more than one class.</li>
+<li>Sources: <code>logs/merge-conductor.log</code> (673,543 lines in the window), <code>state/merge-conductor/pr-state.tsv</code>, <code>eject-cause/</code>, <code>state/ci-batch-red/</code>, <code>logs/blocked-resolver.log</code>, <code>logs/findings.log</code>, build RESULT and review files, and about 75 GitHub REST calls.</li>
+<li>Four agents read one failure class each: closed PRs, CI red and ejections, review and policy gates, conflicts. Their work files are in <code>/tmp/agentA</code> to <code>/tmp/agentD</code> on the hub.</li>
+<li>Conflict files come from <code>git merge-tree</code> of each PR head against main at its first DIRTY event.</li>
+<li>The class splits for conflicts (generated file, hot file, sibling slicing) are rule-based and approximate.</li>
+<li>Code claims that were checked in the local checkout: no <code>bin/prepush-gate.sh</code> in project-6; <code>bin/lib/rb/pr.sh:411-430</code> ships on a failed rebase verify; <code>EVIDENCE_GATE_ENFORCE</code> defaults to 0; <code>check.sh</code> for client-id-trust has no cron or webhook rule; the ratchet suites are not in <code>catalog/test-impact-always.txt</code>; <code>POOL_AFTER_MAX_MIN</code> defaults to 360; <code>BR_MAX_FIXROUNDS</code> defaults to 1.</li>
+</ul>
+</main>
+</body>
+</html>
