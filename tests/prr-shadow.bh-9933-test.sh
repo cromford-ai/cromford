@@ -161,7 +161,9 @@ else
 fi
 
 # ---- seams -------------------------------------------------------------------------
-for l in unblock blocked-resolver pr-state-reconcile main-red-pr-pair merge-conductor pipeline-health dequeue-watch wake-loop; do
+# merge-conductor left this list in BH-9936 (wave 4): its seam now defines the
+# CI read's three functions, pinned below and in tests/prr-ci-state.bh-9936-test.sh.
+for l in unblock blocked-resolver pr-state-reconcile main-red-pr-pair pipeline-health dequeue-watch wake-loop; do
   f="$DIR/bin/lib/prr-shadow.d/$l.sh"
   [ -r "$f" ] || { bad "seams: $f missing"; continue; }
   bash -n "$f" && ok || bad "seams: $f does not parse"
@@ -170,6 +172,13 @@ for l in unblock blocked-resolver pr-state-reconcile main-red-pr-pair merge-cond
   NF=$(declare -F | wc -l)
   prr_seam_load "$l" && ok || bad "seams: prr_seam_load $l must return 0"
   [ "$(declare -F | wc -l)" = "$NF" ] && ok || bad "seams: loading $l defined a function"
+done
+f="$DIR/bin/lib/prr-shadow.d/merge-conductor.sh"
+bash -n "$f" && ok || bad "seams: $f does not parse"
+grep -q "^# .*merge-conductor" "$f" && ok || bad "seams: $f header must name the lane merge-conductor"
+prr_seam_load merge-conductor && ok || bad "seams: prr_seam_load merge-conductor must return 0"
+for fn in mc_ci_record mc_ci_github mc_ci_norm; do
+  command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: loading merge-conductor must define $fn"
 done
 prr_seam_load no-such-lane && bad "seams: an unknown lane must return 1" || ok
 

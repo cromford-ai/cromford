@@ -1,0 +1,9 @@
+{
+  "env": "PRR_CI_IGNORE_RE",
+  "read_in": "bin/lib/prr-ci-state.sh",
+  "type": "string",
+  "default": "Summary|Mergify Merge Queue|suite:mergify|suite:vercel|Vercel.*|Rule: .*|Queue: .*",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9936 (BH-9926 wave 4). prr_ci_state skips the record check entries whose WHOLE name matches this regex (jq test; the code adds the anchors ^(?:...)$, so the value holds no dollar sign: lanes-registry 20a refuses one in a default): checks that GitHub actions/runs does not show (the Mergify summary and queue checks, Vercel). An empty value ignores nothing. A regex jq refuses is the default plus one PRR_CI_KNOB line in logs/prr-shadow.log. Read through lane_knob (libs scope) when the caller has it, else from the environment."
+}

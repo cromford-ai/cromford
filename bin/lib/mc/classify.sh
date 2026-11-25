@@ -763,7 +763,49 @@ mc_job_running() {
 #   stays red) and its globals (MC_CI_ADVISORY, MC_CI_RED_CHECKS,
 #   MC_CI_RED_RUN_IDS, MC_CI_REQ_APPLIED, MC_CI_REQ_SHA, all reset at entry)
 #   are in bin/lib/mc-ci-advisory.sh. No queue rules: every failure counts.
+#
+#   BH-9926 wave 4: mc_ci_state <owner/repo> <sha> <PR number> reads through
+#   prr_read (bin/lib/prr-shadow.sh), lane merge-conductor, step row
+#   lane.merge-conductor.gh_source (off | shadow, the default | record). The
+#   record side is prr_ci_state (bin/lib/prr-ci-state.sh) through the seam
+#   bin/lib/prr-shadow.d/merge-conductor.sh; it serves only green and pending,
+#   and every other word reads GitHub. On a record answer the globals above
+#   stay at their reset values. With no number (every caller but the
+#   conductor's ci-read step), or when a lib does not load, the read is
+#   _mc_ci_state_github, the body below, unchanged. Call it as a plain command.
 mc_ci_state() {
+  local slug="$1" sha="$2" n="${3:-}" f w
+  if ! [[ "$n" =~ ^[1-9][0-9]{0,9}$ ]] || ! _mc_ci_prr_load; then
+    _mc_ci_state_github "$slug" "$sha"; return 0
+  fi
+  MC_CI_READ_WHY=""; MC_CI_READ_HELD=0
+  MC_HEAD_COMMIT_TS=""; MC_HEAD_COMMIT_SHA=""; MC_CI_RUNS=""; MC_CI_RUNS_SHA=""
+  MC_CI_ADVISORY=""; MC_CI_RED_CHECKS=""; MC_CI_RED_RUN_IDS=""; MC_CI_REQ_APPLIED=0; MC_CI_REQ_SHA=""
+  f=$(mktemp "${TMPDIR:-/tmp}/mc-ci.XXXXXX") || { _mc_ci_state_github "$slug" "$sha"; return 0; }
+  prr_read merge-conductor "$slug#$n@${sha:0:12}" "$f" mc_ci_record mc_ci_github mc_ci_norm "$slug" "$sha" "$n" >/dev/null
+  w=$(head -1 "$f" 2>/dev/null); rm -f "$f"
+  echo "${w:-unavailable}"
+}
+
+# _mc_ci_prr_load — rc 0 when prr_read and the merge-conductor seam's CI
+#   functions are defined (bin/lib/prr-shadow.sh, bin/lib/prr-ci-state.sh,
+#   bin/lib/prr-shadow.d/merge-conductor.sh, sourced once).
+_mc_ci_prr_load() {
+  local d="${BASH_SOURCE[0]%/*}/.."
+  if ! command -v prr_read >/dev/null 2>&1; then
+    [ -r "$d/prr-shadow.sh" ] || return 1
+    # shellcheck source=bin/lib/prr-shadow.sh
+    . "$d/prr-shadow.sh" || return 1
+  fi
+  if ! command -v mc_ci_record >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/prr-ci-state.sh
+    [ -r "$d/prr-ci-state.sh" ] && . "$d/prr-ci-state.sh"
+    prr_seam_load merge-conductor || return 1
+  fi
+  command -v mc_ci_record >/dev/null 2>&1 && command -v prr_ci_state >/dev/null 2>&1
+}
+
+_mc_ci_state_github() {
   local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
   MC_CI_READ_WHY=""; MC_CI_READ_HELD=0
   MC_HEAD_COMMIT_TS=""; MC_HEAD_COMMIT_SHA=""; MC_CI_RUNS=""; MC_CI_RUNS_SHA=""

@@ -1,0 +1,12 @@
+{
+  "env": "PRR_CI_PENDING_MAX_S",
+  "read_in": "bin/lib/prr-ci-state.sh",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "every pending answer from the record reads GitHub at once",
+  "required": false,
+  "note": "BH-9936 (BH-9926 wave 4). prr_ci_state answers a PR head's CI word from the PR record's checks. When a check of the head is pending for longer than this (now minus the oldest pending entry's at), it reads GitHub one time (actions/runs?head_sha=) and writes the result back into the record (one pr_record_put, source github), so a missed completed event does not hold a PR for ever. The repo's CI takes about 7 to 10 min. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not an integer in 0..86400 is 900 and one PRR_CI_KNOB line in logs/prr-shadow.log names it."
+}

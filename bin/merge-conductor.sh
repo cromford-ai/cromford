@@ -845,7 +845,7 @@ pr_worker() {
     # `unavailable`, as any failed read, plus one CI_READ_HELD line per
     # (PR, head): no alert, no Sentry, no memo, the next tick reads again.
     CIF="$MC_TICK_DIR/ci-state.$BASHPID"; mkdir -p "$MC_TICK_DIR" 2>/dev/null
-    mc_ci_state "$SLUG" "$HEAD" > "$CIF" 2>/dev/null || true
+    mc_ci_state "$SLUG" "$HEAD" "$NUM" > "$CIF" 2>/dev/null || true
     CI=$(cat "$CIF" 2>/dev/null); rm -f "$CIF"; [ -n "$CI" ] || CI=unavailable
     [ "$CI" = unavailable ] || MC_CI_READ_HELD=0
     if [ "$MC_CI_READ_HELD" = 1 ] && ! mc_attempt_has "cireadheld $KEY $HEAD"; then

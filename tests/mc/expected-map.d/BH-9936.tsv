@@ -1,0 +1,6 @@
+# tests/mc/expected-map.d/BH-9936.tsv — BH-9926 wave 4 (CI from the record):
+# mc_ci_state reads through prr_read with the PR number; its old body is
+# _mc_ci_state_github and _mc_ci_prr_load loads the prr libs. origin=lib
+# because both are new module functions.
+classify	_mc_ci_prr_load	lib
+classify	_mc_ci_state_github	lib
