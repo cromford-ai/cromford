@@ -1,0 +1,8 @@
+# BH-9924 (slice BH-9956): the flow agent's D1 half. claim and record are the
+# one dedup store (flow_actions.decision_key), count is the per-ticket action
+# count, waiting is the per-project snapshot of the waiting tickets. Gated by
+# the bearer. The panel family is a separate fragment (BH-9924.10).
+POST /api/flow-agent/claim
+POST /api/flow-agent/record
+GET /api/flow-agent/count
+PUT /api/flow-agent/waiting

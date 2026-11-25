@@ -1,0 +1,6 @@
+-- ── BH-9956: the retention answer for the two flow-agent tables, for now ─────
+-- The retention rule lands in BH-9924.2 (#9958), and that PR deletes this file
+-- (d1-retention-coverage C4 refuses a no-retention line on a ruled table).
+-- No statement here.
+-- no-retention: flow_actions rule lands in #9958 (BH-9924.2), which deletes this file
+-- no-retention: flow_waiting rule lands in #9958 (BH-9924.2), which deletes this file
