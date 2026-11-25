@@ -1,0 +1,4 @@
+# PERF PROBE WARM (BH-9792): the deploy watermark of the warm-up hub lane
+# bin/perf-probe-warm.sh (newest row by warmed_at; insert or ignore).
+GET /api/perf-probe/warm
+POST /api/perf-probe/warm

@@ -1,0 +1,68 @@
+{
+  "id": "perf-probe-warm",
+  "name": "Perf probe post-deploy warm-up",
+  "scope": "hub",
+  "script": "bin/perf-probe-warm.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-perf-probe-warm",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PERF_PROBE_WARM_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "unit": null,
+      "zero_means": "off",
+      "note": "BH-9792: 1 = the warm-up lane polls each enabled catalog/perf-probe.d row for a new GitHub deployment; 0 = the lane exits with 0 requests. Code fallback ${PERF_PROBE_WARM_ENABLED:-1}.",
+      "read_in": "bin/perf-probe-warm.sh"
+    },
+    {
+      "env": "PERF_PROBE_WARM_POLL_MIN",
+      "type": "int",
+      "default": 5,
+      "min": 1,
+      "max": 1440,
+      "unit": "minutes",
+      "zero_means": null,
+      "note": "BH-9792: minutes between two GitHub deployments reads of one project (state/perf-probe/<project>/warm.json last_poll_at). The other minutes read one state file and stop. Code fallback 5.",
+      "read_in": "bin/perf-probe-warm.sh"
+    },
+    {
+      "env": "PERF_PROBE_HEALTH_WAIT_S",
+      "type": "int",
+      "default": 180,
+      "min": 1,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9792: how long the warm-up waits for the row's health_path to answer 200 before it logs one line and leaves the deployment for the next poll. Code fallback 180.",
+      "read_in": "bin/perf-probe-warm.sh"
+    },
+    {
+      "env": "PERF_PROBE_HEALTH_POLL_S",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-9792: the gap between two health reads inside PERF_PROBE_HEALTH_WAIT_S. Code fallback 10.",
+      "read_in": "bin/perf-probe-warm.sh"
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/perf-probe-warm.log"
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "perf-probe-keepwarm",
+  "name": "Perf probe keep-warm",
+  "scope": "hub",
+  "script": "bin/perf-probe-keepwarm.sh",
+  "cadence": "* * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-perf-probe-keepwarm",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PERF_PROBE_KEEPWARM_MIN",
+      "type": "int",
+      "default": 5,
+      "min": 0,
+      "max": 1440,
+      "unit": "minutes",
+      "zero_means": "off",
+      "note": "BH-9792: minutes between two keep-warm rounds of one project (state/perf-probe/<project>/keepwarm.json last_at). 0 = keep-warm off, 0 requests. Code fallback 5.",
+      "read_in": "bin/perf-probe-keepwarm.sh"
+    },
+    {
+      "env": "PERF_PROBE_KEEPWARM_ROUTES",
+      "type": "int",
+      "default": 10,
+      "min": 1,
+      "max": 200,
+      "unit": "routes",
+      "zero_means": null,
+      "note": "BH-9792: a keep-warm round loads the first N routes of the row, once each. Code fallback 10.",
+      "read_in": "bin/perf-probe-keepwarm.sh"
+    },
+    {
+      "env": "PERF_PROBE_KEEPWARM_FAIL_MAX",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 100,
+      "unit": "rounds",
+      "zero_means": null,
+      "note": "BH-9792: failed keep-warm rounds in a row (no session, or no 2xx load) before the lane logs keepwarm paused and stops that project until ppio_keepwarm_reset (the daily run or a warm-up). Code fallback 3.",
+      "read_in": "bin/perf-probe-keepwarm.sh"
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/perf-probe-keepwarm.log"
+  }
+}

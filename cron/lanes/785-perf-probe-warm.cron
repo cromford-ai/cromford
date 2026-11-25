@@ -1,0 +1,11 @@
+# ── PERF-PROBE-WARM LANE (BH-9792) ─────────────────────────────────────────
+# Every minute: bin/perf-probe-warm.sh reads state/perf-probe/<project>/warm.json
+# for each enabled row in catalog/perf-probe.d/. Every PERF_PROBE_WARM_POLL_MIN
+# minutes it reads the newest GitHub deployment; a new successful one gets a
+# health preflight, one session and two passes over the routes (pass 2 writes
+# post-deploy result rows), then one perf_probe_warm row. Files no ticket.
+# 0 LLM calls. The hub lease gates it. Off: flags/lane-off-perf-probe-warm, or
+# bin/harness-ctl.sh off perf-probe-warm.
+# Note: docs/notes/2026-11-17-BH-9786-perf-probe.md.
+# @hub-lanes
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/perf-probe-warm.sh >> /root/harness/logs/perf-probe-warm.log 2>&1

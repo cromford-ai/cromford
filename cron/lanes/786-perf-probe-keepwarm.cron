@@ -1,0 +1,11 @@
+# ── PERF-PROBE-KEEPWARM LANE (BH-9792) ─────────────────────────────────────
+# Every minute: bin/perf-probe-keepwarm.sh reads state/perf-probe/<project>/
+# keepwarm.json for each enabled row with keepwarm != false. Every
+# PERF_PROBE_KEEPWARM_MIN minutes it GETs the first PERF_PROBE_KEEPWARM_ROUTES
+# routes once with the open session. No result row, no ticket, 0 LLM calls.
+# PERF_PROBE_KEEPWARM_FAIL_MAX failed rounds in a row pause the project until
+# the next daily run or warm-up. The hub lease gates it. Off:
+# flags/lane-off-perf-probe-keepwarm, or bin/harness-ctl.sh off perf-probe-keepwarm.
+# Note: docs/notes/2026-11-17-BH-9786-perf-probe.md.
+# @hub-lanes
+* * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/perf-probe-keepwarm.sh >> /root/harness/logs/perf-probe-keepwarm.log 2>&1

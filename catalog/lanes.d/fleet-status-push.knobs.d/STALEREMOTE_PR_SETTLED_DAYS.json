@@ -1,0 +1,11 @@
+{
+  "env": "STALEREMOTE_PR_SETTLED_DAYS",
+  "read_in": "bin/fleet-status-push.sh",
+  "type": "int",
+  "default": 7,
+  "min": 0,
+  "max": 365,
+  "unit": "days",
+  "zero_means": "off",
+  "note": "BH-10060: the fleet-status `remote_results_pending` counter skips a hub backup json whose own result line is PR_CREATED, PR_MERGED or PR_CLOSED with a GitHub pull URL once the json is older than this many days, the same rule as the pipeline-health staleremote check (BH-9142). The env value wins; when it is unset the lane reads the pipeline-health knob of the same name, so both counters stay equal. 0 turns the rule off. A non-number or a value over 365 falls back to 7."
+}

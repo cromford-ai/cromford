@@ -95,6 +95,15 @@ FLEET_PROJECTS=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
 # BH-5001: the held set as pool_holds rows, while pool_state_rows is on.
 # shellcheck source=bin/lib/pool-state-rows.sh
 . "$H/bin/lib/pool-state-rows.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-state-rows.sh" 2>/dev/null || true
+# BH-10060: the staleremote detector's no-read filters (retired, PR-settled,
+# cached ledger-terminal) for remote_results_pending. No lib: today's count.
+# shellcheck source=bin/lib/remote-results-ledger.sh
+. "$H/bin/lib/remote-results-ledger.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/remote-results-ledger.sh" 2>/dev/null || true
+# The detector's settled window, ONE value for the counter and the detector:
+# env first, then the pipeline-health lane's knob row, read once per run.
+RR_PRDAYS=${STALEREMOTE_PR_SETTLED_DAYS:-$(command -v lane_knob >/dev/null 2>&1 && lane_knob pipeline-health STALEREMOTE_PR_SETTLED_DAYS 2>/dev/null)}
+RR_PRDAYS=${RR_PRDAYS:-7}  # fallback of the pipeline-health knob STALEREMOTE_PR_SETTLED_DAYS
+{ [[ "$RR_PRDAYS" =~ ^[0-9]+$ ]] && [ "$RR_PRDAYS" -le 365 ]; } || RR_PRDAYS=7
 
 # fsp_project_row <project> — ONE project's part of the snapshot (BH-5944), as
 # one JSON line: {"v":1,"project":p,"at":<epoch>,"row":{the seven .projects[p]
@@ -104,7 +113,7 @@ FLEET_PROJECTS=$("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
 # Reads NOW. rc 1 when the row could not be built.
 fsp_project_row() {
   local P="$1" MT AGE LAST HELD FAILEDN HELDKEYS HROWS K QD QAGE QROWS QOLD QEPOCH JF JAGE POOL ROW
-  local N J JK SIB RD BOX OFF LANE
+  local N J JK SIB RD BOX OFF LANE TERMN=0 RRLIB=0
   if [ -f "$H/logs/$P.log" ]; then
     MT=$(stat -c %Y "$H/logs/$P.log" 2>/dev/null || echo 0)
     AGE=$(( (NOW - MT) / 60 ))
@@ -155,6 +164,34 @@ fsp_project_row() {
   # pool_held <key> — rc 0 when that row is held. One reader for both the DB and
   # the file path below, so the two can never disagree about what "queued" means.
   pool_held() { [ -n "${1:-}" ] && grep -qxF -- "$1" <<<"$HELDKEYS"; }
+  # TERMINAL KEYS ARE NOT QUEUED EITHER (BH-10060). bin/fly-pool.sh's
+  # push-rejected terminal gate (pool_terminal_check, BH-1075/BH-5006) skips a
+  # key every tick and leaves its queue row, so it would count and age here
+  # forever. pool_terminal_key <key> — rc 0 when the pool would skip it, by the
+  # gate's own rule: with the rows on and the worker answered (HROWS=1), an
+  # active pool_terminals row is terminal; a row cleared at or after the file's
+  # verdict makes the file stale (a re-arm on another hub); no row, or no
+  # answer, leaves the decision to state/pool/<p>/<key>.terminal. The same
+  # snapshot psr_load took above: no second GET. Counted in `terminal`, never
+  # dropped. Held wins: a held key is out already and counts in `held` only.
+  pool_terminal_key() {
+    local k="${1:-}" tf r rc=2 cl clat fat
+    [ -n "$k" ] || return 1
+    tf="$H/state/pool/$P/$k.terminal"
+    if [ "$HROWS" = 1 ] && command -v psr_terminal >/dev/null 2>&1; then
+      r=$(psr_terminal "$k"); rc=$?
+    fi
+    if [ "$rc" = 0 ]; then
+      cl=$(jq -r '.cleared_at // empty' <<<"$r" 2>/dev/null)
+      [ -n "$cl" ] || return 0
+      [ -f "$tf" ] || return 1
+      clat=$(date -u -d "$cl" +%s 2>/dev/null) || clat=0
+      fat=$(date -u -d "$(jq -r '.created_at // empty' "$tf" 2>/dev/null)" +%s 2>/dev/null) || fat=0
+      [ "$clat" -lt "$fat" ]
+      return
+    fi
+    [ -e "$tf" ]
+  }
   QD=""; QAGE=""
   if command -v queue_list >/dev/null 2>&1; then
     QROWS=$(queue_list "$P" queued 2>/dev/null)
@@ -168,8 +205,11 @@ fsp_project_row() {
       QROWS=$(printf '%s\n' "$QROWS" | while IFS= read -r L; do
                 [ -n "$L" ] || continue
                 K=$(printf '%s' "$L" | awk -F'\t' '{print $2}')
-                pool_held "$K" || printf '%s\n' "$L"
+                pool_held "$K" && continue
+                if pool_terminal_key "$K"; then printf 'T\t%s\n' "$L"; else printf '%s\n' "$L"; fi
               done)
+      TERMN=$(printf '%s\n' "$QROWS" | grep -c '^T'$'\t' || true)
+      QROWS=$(printf '%s\n' "$QROWS" | grep -v '^T'$'\t' || true)
     fi
     if [ -n "$QROWS" ]; then
       QD=$(printf '%s\n' "$QROWS" | grep -c . || true)
@@ -203,6 +243,7 @@ fsp_project_row() {
       case "$JF" in *.failed.json) continue ;; esac
       K=$(basename "$JF" .json)
       pool_held "$K" && continue
+      pool_terminal_key "$K" && { TERMN=$((TERMN+1)); continue; }
       QD=$((QD+1))
       JAGE=$(( (NOW - $(stat -c %Y "$JF" 2>/dev/null || echo "$NOW")) / 60 ))
       [ "$JAGE" -gt "$QAGE" ] && QAGE=$JAGE
@@ -210,9 +251,18 @@ fsp_project_row() {
   fi
   [ -n "$QAGE" ] || QAGE=0
   POOL=false; flag_on fly-pool "$P" && POOL=true
-  ROW=$(jq -nc --argjson a "$AGE" --arg l "$LAST" --argjson q "${QD:-0}" --argjson qa "$QAGE" --argjson fp "$POOL" --argjson hd "${HELD:-0}" --argjson fl "${FAILEDN:-0}" \
-    '{triage_log_age_min:$a,last_line:$l,queue_depth:$q,oldest_queued_min:$qa,held:$hd,failed:$fl,pool:$fp}') || return 1
+  ROW=$(jq -nc --argjson a "$AGE" --arg l "$LAST" --argjson q "${QD:-0}" --argjson qa "$QAGE" --argjson fp "$POOL" --argjson hd "${HELD:-0}" --argjson fl "${FAILEDN:-0}" --argjson tm "${TERMN:-0}" \
+    '{triage_log_age_min:$a,last_line:$l,queue_depth:$q,oldest_queued_min:$qa,held:$hd,failed:$fl,terminal:$tm,pool:$fp}') || return 1
   # The remote results this project's staging never consumed (section 5 below).
+  # BH-10060: the jsons bin/pipeline-health.sh's staleremote detector would page,
+  # by its own no-read filters and in its order: retired by the retention rule,
+  # PR-settled past the knob, or folderless and cached ledger-terminal. The
+  # cache is the detector's (it reads the jobs ledger under its own cap); this
+  # counter only reads it, so it lags the detector by one pipeline-health tick.
+  # RR_PRDAYS is resolved once per run, at the top of the script.
+  if command -v rr_terminal_cache_load >/dev/null 2>&1; then
+    RRLIB=1; rr_terminal_cache_load "$H/state/remote-results-terminal/$P.tsv"
+  fi
   N=0
   for J in "$H/state/remote-results/$P/"*.json; do
     [ -f "$J" ] || continue
@@ -226,6 +276,11 @@ fsp_project_row() {
     # becomes a page.
     MT=$(stat -c %Y "$J" 2>/dev/null || stat -f %m "$J" 2>/dev/null || echo "$NOW")
     [ $(( NOW - MT )) -gt 1800 ] || continue
+    if [ "$RRLIB" = 1 ]; then
+      rr_terminal_cache_marked "$JK" "$MT" && continue
+      [ "$RR_PRDAYS" -gt 0 ] && rr_json_pr_settled "$J" "$MT" "$NOW" "$((RR_PRDAYS*86400))" && continue
+      ! rr_folder_present "$H" "$P" "$JK" && rr_terminal_cache_has "$JK" "$MT" && continue
+    fi
     # Consumed per the box's rr-consumed row: not pending. No row, an outage or
     # no client counts it as before. Asked only for a json that would count.
     command -v rrr_consumed >/dev/null 2>&1 && rrr_consumed "$P" "$J" >/dev/null && continue

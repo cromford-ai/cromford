@@ -5,7 +5,10 @@
 //
 // POST /api/perf-probe/results {project, day, kind, run_key, rows:[...]}
 //   rows[i] = {route, ttfb_ms, total_ms, bytes, status, over_budget, outcome,
-//   loads, breaks}. One D1 batch of upserts on the natural key (project, route,
+//   loads, breaks}. outcome is pass | fail | unmeasured, or
+//   failed-then-recovered (BH-9792: the warm-up lane bin/perf-probe-warm.sh
+//   writes it for a post-deploy load that broke and passed on its one retry).
+//   One D1 batch of upserts on the natural key (project, route,
 //   day, kind, run_key): a rerun on the same day replaces the row. At most
 //   perf_probe.rows_max rows per call. 200 {written: <n>}.
 // A bad field is 400 {error: <field>}; a bad row field is
@@ -20,7 +23,7 @@ const PROJECT_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RUN_KEY_RE = /^[A-Za-z0-9._:-]{1,80}$/;
 const KINDS = new Set(["daily", "post-deploy"]);
-const OUTCOMES = new Set(["pass", "fail", "unmeasured"]);
+const OUTCOMES = new Set(["pass", "fail", "unmeasured", "failed-then-recovered"]);
 // Field cap: input validation of one text cell, not a limit on work, so it is
 // not a settings row (the same rule as suite-quarantine.js).
 const ROUTE_MAX = 500;
