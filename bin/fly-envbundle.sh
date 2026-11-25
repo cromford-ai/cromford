@@ -82,6 +82,11 @@
 # the GH_TOKEN check does not (the pool never ships the PAT). Its only caller is
 # `bin/fly-pool-secrets-sync.sh <project> --no-box`, so the whitelist keeps one
 # copy. See docs/notes/2026-10-25-BH-8317-secret-store.md.
+#
+# SHARED POOL APP (BH-9783): --hub-global refuses (rc 1, no bundle file left)
+# an api-key project whose pool app another project also names
+# (state/fly/<p>.json .app or flags/fly-pool-app-<p>). Its marker would land in
+# the app's HBUNDLE_G_* secrets, which every project on the app boots from.
 set -uo pipefail
 
 PROJECT="${1:?usage: fly-envbundle.sh <project> <outdir> [--pool|--hub-global]}"
@@ -245,6 +250,34 @@ case "$CARC" in
   *) rm -f "$OUTDIR/global.env" "$OUTDIR/$PROJECT.env"
      die "settings row claude_auth.$PROJECT is not oauth or api-key; no Claude credential is bundled" ;;
 esac
+# --- a shared pool app refuses an api-key mode (BH-9783) --------------------
+# --hub-global writes the app's HBUNDLE_G_* secrets, which every project that
+# names the app boots from. So an api-key project's marker on a shared app
+# reaches the oauth projects too. The app is the one state/fly/<p>.json (what
+# the sync writes to) or flags/fly-pool-app-<p> names; a project counts when
+# either of its two files names the same app.
+envbundle_app_of() { # envbundle_app_of <state-json> <flag> -> app names, one per line
+  jq -r '.app // empty' "$1" 2>/dev/null | head -n 1 | tr -d '[:space:]'; echo
+  head -n 1 "$2" 2>/dev/null | tr -d '[:space:]'; echo
+}
+if [ -n "$HUBG" ] && [ "$CAUTH" = api-key ]; then
+  SAPP=$(envbundle_app_of "$HARNESS/state/fly/$PROJECT.json" "$HARNESS/flags/fly-pool-app-$PROJECT" | grep -m1 .)
+  if [ -n "$SAPP" ]; then
+    SHARED=$(
+      for f in "$HARNESS"/state/fly/*.json "$HARNESS"/flags/fly-pool-app-*; do
+        [ -f "$f" ] || continue
+        case "$f" in *-active.json) continue ;; */state/fly/*) q="${f##*/}"; q="${q%.json}" ;; *) q="${f##*/fly-pool-app-}" ;; esac
+        [[ "$q" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+        # Not grep -q: it closes the pipe early, and pipefail reads that as a miss.
+        envbundle_app_of "$HARNESS/state/fly/$q.json" "$HARNESS/flags/fly-pool-app-$q" | grep -xF -- "$SAPP" >/dev/null && printf '%s\n' "$q"
+      done | sort -u | tr '\n' ' ')
+    SHARED="${SHARED% }"
+    if [ "$(wc -w <<<"$SHARED")" -gt 1 ]; then
+      rm -f "$OUTDIR/global.env" "$OUTDIR/$PROJECT.env"
+      die "--hub-global: pool app $SAPP is named by more than one project ($SHARED); claude_auth.$PROJECT is api-key, and its CLAUDE_AUTH_MODE=api-key in the app's HBUNDLE_G_* secrets would reach every one of them. Give $PROJECT its own pool app."
+    fi
+  fi
+fi
 if [ "$CAUTH" = api-key ]; then
   # Replace, never append: the builder sources global.env, so a second line wins.
   { grep -v -e '^CLAUDE_CODE_OAUTH_TOKEN=' -e '^ANTHROPIC_API_KEY=' -e '^CLAUDE_AUTH_MODE=' "$OUTDIR/global.env"

@@ -5876,12 +5876,15 @@ pool_pull_skeleton() {
 # applies over the base: every line the blocks wrote replaces its key; the
 # untouched placeholder means "keep the base token"; a token line the lease
 # STRIPPED (a pinned project whose token is missing, bin/lib/pool-account.sh)
-# becomes `-CLAUDE_CODE_OAUTH_TOKEN`, which removes the base line.
+# becomes `-CLAUDE_CODE_OAUTH_TOKEN`, which removes the base line. A bundle
+# with no CLAUDE_AUTH_MODE line (every oauth spawn) gets `-CLAUDE_AUTH_MODE`, so
+# an api-key project's HBUNDLE_G_ marker on a shared app never reaches it (BH-9783).
 pool_pull_override() {
   awk -v b="CLAUDE_CODE_OAUTH_TOKEN=$POOL_PULL_BASE" '
+    /^CLAUDE_AUTH_MODE=/ { m = 1 }
     /^CLAUDE_CODE_OAUTH_TOKEN=/ { c = 1; if ($0 == b) next }
     { print }
-    END { if (!c) print "-CLAUDE_CODE_OAUTH_TOKEN" }' "$1"
+    END { if (!c) print "-CLAUDE_CODE_OAUTH_TOKEN"; if (!m) print "-CLAUDE_AUTH_MODE" }' "$1"
 }
 # pool_pull_seal <tmp>: NO TOKEN GOES IN THE MACHINE CONFIG. flyctl stores a
 # --file-local file as config.files[].raw_value, which `machines list --json`

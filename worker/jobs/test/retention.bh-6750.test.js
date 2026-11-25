@@ -11,7 +11,7 @@
 //      stage_events_daily, then removed; the sums equal the removed rows;
 //      events of a running job stay
 //   R4 cost_rows and ledgers are never touched (with the defaults: the
-//      BH-6774 cost_rows.archive rule is off)
+//      BH-6774 cost_rows.archive and BH-6865 ledgers.archive rules are off)
 //   R5 dry run (the seeded default): every count is written to retention_runs,
 //      no row is removed
 //   R6 budget: a backlog bigger than retention.max_rows drains across runs,
@@ -115,8 +115,12 @@ test('R4 cost_rows and ledgers are never touched', async (t) => {
   assert.equal(count(db, 'SELECT COUNT(*) n FROM cost_rows'), 1);
   assert.equal(count(db, 'SELECT COUNT(*) n FROM ledgers'), 1);
   // TEST-CHANGE (BH-6774): cost_rows now has a rule, cost_rows.archive, that MOVES
-  // rows to the archive store and is off by default; ledgers still have none.
-  assert.ok(!r.body.rules.some((x) => x.table === 'ledgers'), 'no rule names ledgers');
+  // rows to the archive store and is off by default.
+  // TEST-CHANGE (BH-6865): ledgers now have one rule, ledgers.archive, that MOVES
+  // rows of audited, allowlisted kinds and is off by default.
+  const l = r.body.rules.filter((x) => x.table === 'ledgers');
+  assert.deepEqual(l.map((x) => [x.rule, x.off, x.removed]), [['ledgers.archive', true, 0]],
+    'the only ledgers rule (ledgers.archive) is off by default');
   assert.ok(r.body.rules.filter((x) => x.table === 'cost_rows').every((x) => x.off === true),
     'the only cost_rows rule (cost_rows.archive) is off by default');
 });

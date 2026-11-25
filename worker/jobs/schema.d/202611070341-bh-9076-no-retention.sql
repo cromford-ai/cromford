@@ -109,7 +109,6 @@
 -- no-retention: box_commands frozen: the BH-2518 v1 table; the worker reads and writes only box_commands_v2 since BH-5750 (0014-bh-5750), and it is never dropped
 --
 -- Ledgers and claims (a missing row re-does an action or a metered call):
--- no-retention: ledgers claim: ledger rows are claim keys (GET /api/ledger?key); an archived row reads as "not done"; kinds move one by one (BH-6774 C2)
 -- no-retention: archie_actions claim: dedupe_key UNIQUE is the once-per-action claim of an Archie playbook action (routes/archie-actions.js); archive owed
 -- no-retention: archie_research claim: dedupe_key UNIQUE is the claim of a metered research call (cost_usd); a missing row re-runs the call; archive owed
 -- no-retention: archie_decisions claim: escalation_key UNIQUE is the once-per-escalation claim (routes/archie-autonomy.js); archive owed

@@ -13,13 +13,21 @@
 // natural key as its primary key and an index on its time column. A column the
 // hot table gains later (ensureColumns) is added here on the next copy.
 //
-// NO LEDGER TABLE IS HERE. Ledger rows are claim keys (GET /api/ledger?key,
-// POST /api/ledger/claim): an archived row would read as "not done". Ledger
-// kinds move only after a per-kind reader audit (BH-6774 C2).
+// LEDGER ROWS MOVE ONLY THROUGH ledgers.archive (routes/retention.d/
+// bh-6865-ledgers-archive.js). Ledger rows are claim keys (GET /api/ledger?key,
+// POST /api/ledger/claim), so a kind moves only when the per-kind audit
+// (lib/ledger-kind-class.js) calls it movable, an operator lists it in
+// retention.ledgers.archive_kinds, and the rule has recorded it in the sticky
+// retention.ledgers.archived_kinds. Every reader of a moved kind goes through
+// the archive fallback (lib/ledger-archive.js). A ledger key can be written
+// again after it moved, so the copy is newer-wins (`newer` below).
 import { BH9076_ARCHIVE_TABLES } from "./archive-tables.bh-9076.js";
 
 export const ARCHIVE_TABLES = {
   cost_rows: { key: ["box", "row_hash"], time: "ts" },
+  // BH-6865: ledgers.archive. `newer`: the upsert keeps the archive row when it
+  // is newer than the hot copy, and the count-back accepts it.
+  ledgers: { key: ["kind", "key"], time: "updated_at", newer: "updated_at" },
   stage_events: { key: ["id"], time: "created_at" },
   // BH-7243.0: the roadmap retention rules (routes/retention.js).
   roadmap_ideas: { key: ["id"], time: "updated_at" },
@@ -87,7 +95,9 @@ export async function ensureArchiveTable(env, table) {
 // then count them back by their key. An upsert, not INSERT OR IGNORE: a hot
 // row can change after a copy whose delete failed (the ingest fills lane_id,
 // guard_fp, participant), and the re-copy must carry the newer values before
-// the hot row is deleted. Returns true only when every row is in the archive. Throws
+// the hot row is deleted. With spec.newer the update runs only when the hot
+// row is not older than the archive row, and the count-back accepts an archive
+// row at least as new as the hot one. Returns true only when every row is in the archive. Throws
 // "archive copy failed: ..." on a write error, so the caller deletes nothing.
 export async function archiveCopy(env, table, rows, at) {
   if (!rows.length) return true;
@@ -95,9 +105,11 @@ export async function archiveCopy(env, table, rows, at) {
   const cols = Object.keys(rows[0]);
   const set = [...cols.filter((c) => !spec.key.includes(c)), "archived_at"]
     .map((c) => `${q(c)} = excluded.${q(c)}`).join(", ");
+  // sql-ident-ok: table, key and newer columns come from ARCHIVE_TABLES, quoted by q()
+  const newerWhere = spec.newer ? ` WHERE excluded.${q(spec.newer)} >= ${q(table)}.${q(spec.newer)}` : "";
   const sql = `INSERT INTO ${q(table)} (${cols.map(q).join(", ")}, archived_at)
                VALUES (${cols.map((_, i) => `?${i + 1}`).join(",")}, ?${cols.length + 1})
-               ON CONFLICT (${spec.key.map(q).join(", ")}) DO UPDATE SET ${set}`;
+               ON CONFLICT (${spec.key.map(q).join(", ")}) DO UPDATE SET ${set}${newerWhere}`;
   try {
     for (let i = 0; i < rows.length; i += COPY_CHUNK) {
       await env.ARCHIVE.batch(rows.slice(i, i + COPY_CHUNK).map((r) =>
@@ -106,8 +118,10 @@ export async function archiveCopy(env, table, rows, at) {
   } catch (e) {
     throw new Error(`archive copy failed: ${String((e && e.message) || e).slice(0, 200)}`);
   }
-  const keys = JSON.stringify(rows.map((r) => spec.key.map((k) => r[k])));
-  const on = spec.key.map((k, i) => `a.${q(k)} = json_extract(j.value, '$[${i}]')`).join(" AND ");
+  const tuple = spec.newer ? [...spec.key, spec.newer] : spec.key;
+  const keys = JSON.stringify(rows.map((r) => tuple.map((k) => r[k])));
+  let on = spec.key.map((k, i) => `a.${q(k)} = json_extract(j.value, '$[${i}]')`).join(" AND ");
+  if (spec.newer) on += ` AND a.${q(spec.newer)} >= json_extract(j.value, '$[${spec.key.length}]')`;
   // sql-ident-ok: table and key columns come from ARCHIVE_TABLES, quoted by q(); the keys are a bind
   const row = await env.ARCHIVE.prepare(
     `SELECT COUNT(*) AS n FROM json_each(?1) j JOIN ${q(table)} a ON ${on}`).bind(keys).first();

@@ -373,6 +373,10 @@ fi
 # key. On the pull path global.env is composed by now: the marker with no
 # secret defers the job here. On the push path global.env arrives later, and
 # the runner's warm_up stops instead. The log names the secret, never the value.
+# STAGING IS NOT THE GATE (BH-9783): the key is staged for ANY project whose
+# pool app has the secret ANTHROPIC_API_KEY_<PROJECT>, whatever its auth mode.
+# load_env in fly/builder-runner.sh exports it only with the marker; R4 of
+# tests/fly-boot-api-key.bh-9718-test.sh tests that.
 CA_VAR="ANTHROPIC_API_KEY_$(printf '%s' "$PROJECT" | tr 'a-z-' 'A-Z_')"
 CA_KEY=""
 [[ "$CA_VAR" =~ ^ANTHROPIC_API_KEY_[A-Z0-9_]+$ ]] && CA_KEY="${!CA_VAR:-}"

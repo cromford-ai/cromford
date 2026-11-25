@@ -590,6 +590,9 @@ pool_account_lease() {
   cam=$( _cl="$(dirname "${BASH_SOURCE[0]}")/claude-auth.sh"
          [ -r "$_cl" ] || exit 3
          . "$_cl" >/dev/null 2>&1 || exit 3
+         # CACHE ONLY (BH-9783): the hub lanes keep state/settings-cache.json
+         # fresh (60 s TTL), so this read makes no GET per spawn.
+         _lg_settings_refresh() { :; }
          claude_auth_mode "$project" 2>/dev/null ); carc=$?
   if [ "$carc" = 0 ] && [ "$cam" = api-key ]; then
     # grep -v exits 1 on a bundle that holds only the token line (the pull
@@ -612,6 +615,17 @@ pool_account_lease() {
     mv "$bundle.new" "$bundle" 2>/dev/null || { rm -f "$bundle.new"; : > "$bundle"; }
     command -v _acct_log >/dev/null 2>&1 && _acct_log "$project" pool-execute "" default claude_auth_invalid
     _pa_answer default claude_auth_invalid "" 0 ""; return 0
+  fi
+  # BH-9783: an oauth bundle carries no CLAUDE_AUTH_MODE line. The pull path's
+  # override then drops the marker an api-key project left on a shared pool app
+  # (bin/fly-pool.sh pool_pull_override). A failed rewrite keeps the bundle.
+  if grep -q '^CLAUDE_AUTH_MODE=' "$bundle" 2>/dev/null; then
+    ( umask 077; grep -v '^CLAUDE_AUTH_MODE=' "$bundle" > "$bundle.new" 2>/dev/null )
+    if [ -f "$bundle.new" ] && mv "$bundle.new" "$bundle" 2>/dev/null; then
+      chmod 600 "$bundle" 2>/dev/null || true
+    else
+      rm -f "$bundle.new" 2>/dev/null
+    fi
   fi
   # BH-1657: a project pinned to its own account never spends a pool account. No
   # lease, no DB claim; the bundle's token is REPLACED by the pinned label's. A

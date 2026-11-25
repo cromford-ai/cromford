@@ -9,8 +9,10 @@
 //   C2 a CREATE TABLE inside a comment or a string literal is not a table
 //      (literal cases, plus the real 0014-bh-5750 comment
 //      "an edited CREATE TABLE IF NOT EXISTS is a no-op")
-//   C3 no rule names parks or ledgers, and no BH-9076 rule names wakes,
-//      a wake_* table, ledgers or parks (they keep their own prune or stay)
+//   C3 no rule names parks; the only rule that names ledgers is the
+//      off-by-default ledgers.archive (BH-6865: kinds, delCutoff, an archive
+//      move); no BH-9076 rule names wakes, a wake_* table, ledgers or parks
+//      (they keep their own prune or stay)
 //      and every BH-9076 rule name is one bin/d1-retention.sh logs (no digit)
 //   C4 no no-retention line names a ruled table or a table no fragment
 //      creates, none is repeated, none has an empty reason (literal near
@@ -166,11 +168,19 @@ test('C2 a CREATE TABLE in a comment or a string literal is not a table', () => 
   assert.deepEqual(createdTables(raw), ['box_commands_v2']);
 });
 
-test('C3 no rule names parks or ledgers; no BH-9076 rule names wakes or wake_*', async () => {
+test('C3 no rule names parks; only ledgers.archive names ledgers; no BH-9076 rule names wakes or wake_*', async () => {
   for (const r of RULES) {
     assert.notEqual(r.table, 'parks', `rule ${r.rule} names parks`);
-    assert.notEqual(r.table, 'ledgers', `rule ${r.rule} names ledgers (claim keys, BH-6774 C2)`);
   }
+  // Ledger rows are claim keys (BH-6774 C2). The one rule that may move them
+  // is BH-6865's ledgers.archive: off by default, gated per kind, an archive
+  // move whose delete re-checks the cutoff.
+  const led = RULES.filter((r) => r.table === 'ledgers');
+  assert.deepEqual(led.map((r) => r.rule), ['ledgers.archive'], 'a rule other than ledgers.archive names ledgers');
+  assert.equal(led[0].def, 0, 'ledgers.archive must be off by default');
+  assert.equal(typeof led[0].kinds, 'function', 'ledgers.archive must gate on kinds');
+  assert.equal(led[0].delCutoff, true, 'ledgers.archive must re-check the cutoff in its delete');
+  assert.equal(led[0].archive, 'ledgers', 'ledgers.archive must move rows to the archive, not delete them');
   const mine = await bh9076Rules();
   assert.ok(mine.some((r) => r.fragment === 'bh-9076-ops-delete.js'), 'retention.d/bh-9076-ops-delete.js has no rule');
   assert.ok(mine.some((r) => r.fragment === 'bh-9076-history-archive.js'), 'retention.d/bh-9076-history-archive.js has no rule');

@@ -14,10 +14,12 @@
 //   run removes at most max_rows per rule in statements of `batch` rows, so a
 //   large backlog drains over several hourly runs instead of in one burst.
 //
-// NEVER DELETED HERE: ledgers (claim keys as well as history: an archived row
-//   would read as "not done"; BH-6774 C2 moves kinds one by one). cost_rows are
-//   never deleted either: the cost_rows.archive rule MOVES them to the archive
-//   store (BH-6774), off by default (retention.cost_rows.archive_days = 0).
+// NEVER DELETED HERE: ledgers (claim keys as well as history). The
+//   ledgers.archive rule (retention.d/bh-6865-ledgers-archive.js) MOVES the old
+//   rows of audited, allowlisted kinds to the archive store, off by default
+//   (retention.ledgers.archive_days = 0). cost_rows are never deleted either:
+//   the cost_rows.archive rule MOVES them to the archive store (BH-6774), off
+//   by default (retention.cost_rows.archive_days = 0).
 //   stage_events_daily rows leave hot only with a verified copy in the archive
 //   D1 (BH-7109, lib/archive-daily.js), and that rule is off by default.
 //
@@ -57,6 +59,13 @@ export { COST_ARCHIVE_FLOOR_DAYS } from "./retention.d/bh-6774-cost-rows.js";
 // (optional, BH-7109) takes (env, JSON ids, now) and returns the rows the
 // archive verified as [{id, n}]; the delete then takes that JSON list instead
 // of the ids, and deletes a row only while its hot n still matches.
+// `minDays` (optional, BH-6865) is the lowest window the setting may hold, a
+// number or a function of `byKey` (a settings-row knob); a smaller value falls
+// back to `def`. `kinds` (optional) is an async
+// (env, o) -> { list, error, settle }: an empty list with no error turns the
+// rule off; `settle` moves nothing this run; the list binds as ?3 (JSON) to
+// every `ids` read. `delCutoff` (optional) binds the cutoff as ?2 to `del`, and
+// the rule then counts the delete's own changes.
 //
 // WHERE A RULE LIVES (BH-8398.0, BH-8398.1). A new rule is a new file
 // retention.d/bh-<n>-<name>.js that does `export default [ ...rules ]`.
@@ -81,7 +90,8 @@ const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 async function runRule(env, r, o) {
   const started = iso(Date.now());
   const out = { rule: r.rule, table: r.table, cutoff: null, counted: 0, removed: 0, rolled_up: 0, backlog: false, off: false, error: null };
-  const set = intSetting(o.byKey, r.key, r.def, 0, 3650);
+  const min = typeof r.minDays === "function" ? r.minDays(o.byKey) : (r.minDays || 0);
+  const set = intSetting(o.byKey, r.key, r.def, min, 3650);
   if (set === 0) { out.off = true; return { out, started }; }
   // floorDays: a window below it is raised to it, so no hot-only reader loses
   // rows inside its own window (BH-6774).
@@ -96,13 +106,22 @@ async function runRule(env, r, o) {
   }
   if (r.move && !archiveDailyBound(env)) { out.error = ARCHIVE_NOT_BOUND; return { out, started }; }
   try {
+    // After the unbound check, so an unbound real run writes no settings.
+    const extra = [];
+    if (r.kinds) {
+      const k = await r.kinds(env, o);
+      if (!k.list.length && !k.error) { out.off = true; return { out, started }; }
+      if (k.error) out.error = out.error ? `${out.error}; ${k.error}` : k.error;
+      if (!k.list.length || k.settle) return { out, started };
+      extra.push(JSON.stringify(k.list));
+    }
     // quietUnbound (BH-7243.0): with the archive unbound, the rule moves
     // nothing and counts what waits. "archive not bound" is an error only
     // while a row waits: the rule is on by default, and the lane raises an
     // alert for each rule error, so empty tables must not raise one each run.
     if (archiving && !archiveBound(env) && r.quietUnbound) {
       // sql-ident-ok: r.ids is literal subquery text from the RULES module const
-      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1).first();
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1, ...extra).first();
       const n = Number(row ? row.n : 0);
       if (n > 0) out.error = ARCHIVE_NOT_BOUND;
       if (o.dryRun) out.counted = Math.min(n, o.countCap);
@@ -111,7 +130,7 @@ async function runRule(env, r, o) {
     }
     if (o.dryRun) {
       // sql-ident-ok: r.ids is literal subquery text from the RULES module const
-      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1).first();
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM (${r.ids})`).bind(out.cutoff, o.countCap + 1, ...extra).first();
       const n = Number(row ? row.n : 0);
       out.counted = Math.min(n, o.countCap);
       out.backlog = n > 0;
@@ -120,7 +139,7 @@ async function runRule(env, r, o) {
     let tableReady = false;
     while (out.removed < o.maxRows) {
       const want = Math.min(o.batch, o.maxRows - out.removed);
-      const ids = ((await env.DB.prepare(r.ids).bind(out.cutoff, want).all()).results || []).map((x) => x.id);
+      const ids = ((await env.DB.prepare(r.ids).bind(out.cutoff, want, ...extra).all()).results || []).map((x) => x.id);
       if (ids.length === 0) break;
       let arr = JSON.stringify(ids);
       let ok = null;
@@ -129,7 +148,8 @@ async function runRule(env, r, o) {
         if (!tableReady) { await ensureArchiveTable(env, r.archive); tableReady = true; }
         const rows = (await env.DB.prepare(r.sel).bind(arr).all()).results || [];
         if (!(await archiveCopy(env, r.archive, rows, iso(Date.now())))) {
-          out.error = `archive copy not verified (${rows.length} rows); nothing deleted`;
+          const msg = `archive copy not verified (${rows.length} rows); nothing deleted`;
+          out.error = out.error && r.kinds ? `${out.error}; ${msg}` : msg;
           break;
         }
       }
@@ -141,7 +161,7 @@ async function runRule(env, r, o) {
       const stmts = [];
       if (r.rollup) stmts.push(env.DB.prepare(r.rollup).bind(arr));
       for (const sql of r.pre || []) stmts.push(env.DB.prepare(sql).bind(arr));
-      stmts.push(env.DB.prepare(r.del).bind(arr));
+      stmts.push(r.delCutoff ? env.DB.prepare(r.del).bind(arr, out.cutoff) : env.DB.prepare(r.del).bind(arr));
       const res = ok && ok.length === 0 ? null : await env.DB.batch(stmts);
       if (ok) {
         // A row the archive does not hold with the same n, or whose hot n grew
@@ -152,6 +172,12 @@ async function runRule(env, r, o) {
           out.error = `archive copy not verified for ${ids.length - gone} of ${ids.length} rows; those rows stay`;
           break;
         }
+      } else if (r.delCutoff) {
+        // A row written after the copy is newer than the cutoff: the delete
+        // keeps it, and the rule stops for this run without an error.
+        const gone = Number(res[res.length - 1].meta.changes);
+        out.removed += gone;
+        if (gone < ids.length) break;
       } else {
         out.removed += ids.length;
       }
@@ -159,10 +185,11 @@ async function runRule(env, r, o) {
       if (ids.length < want) break;
     }
     out.counted = out.removed;
-    const more = (await env.DB.prepare(r.ids).bind(out.cutoff, 1).all()).results || [];
+    const more = (await env.DB.prepare(r.ids).bind(out.cutoff, 1, ...extra).all()).results || [];
     out.backlog = more.length > 0;
   } catch (e) {
-    out.error = String((e && e.message) || e).slice(0, 300);
+    const msg = String((e && e.message) || e).slice(0, 300);
+    out.error = out.error && r.kinds ? `${out.error}; ${msg}` : msg;
   }
   return { out, started };
 }

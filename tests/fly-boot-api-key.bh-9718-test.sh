@@ -32,6 +32,7 @@
 # Run from anywhere: bash tests/fly-boot-api-key.bh-9718-test.sh  (exit 0 = pass)
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
+. "$(dirname "$0")/lib/warmup-guard.bh-9783.sh" || exit 1
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -144,8 +145,9 @@ RN="$DIR/fly/builder-runner.sh"
 LOADENV=$(sed -n '/^load_env() {/,/^}/p' "$RN")
 WARMHEAD=$(sed -n '/^warm_up() {/,/APIKEY_MISSING:-}" \] ||/p' "$RN")
 grep -q '^load_env() {' <<<"$LOADENV" && ok || bad "R0: could not lift load_env from fly/builder-runner.sh"
-if grep -q 'APIKEY_MISSING' <<<"$WARMHEAD" && grep -q '^  load_env$' <<<"$WARMHEAD" \
-   && [ "$(grep -c '' <<<"$WARMHEAD")" -le 6 ]; then ok; else
+# BH-9783: the line after load_env is the guard (not a line count), so a new
+# local or comment above load_env keeps R0 green.
+if grep -q 'APIKEY_MISSING' <<<"$WARMHEAD" && warmup_guard_ok "$RN"; then ok; else
   bad "R0: warm_up must check APIKEY_MISSING right after load_env"
   echo "fly-boot-api-key (BH-9718): $PASS passed, $FAIL failed"; exit 1
 fi

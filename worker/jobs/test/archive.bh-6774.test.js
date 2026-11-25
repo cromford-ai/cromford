@@ -10,7 +10,7 @@
 //      has them, recent rows stay, the audit row counts them
 //   A2 a failed archive write deletes nothing from the hot store
 //   A3 ARCHIVE unbound: nothing is deleted, the audit row says "archive not bound"
-//   A4 the default (archive_days 0) leaves cost_rows alone, and no ledger rule exists
+//   A4 the default (archive_days 0) leaves cost_rows alone, and the ledger rule is off
 //   A5 stage_events with retention.stage_events.archive=1: old events of closed
 //      jobs are copied to the archive, then rolled up and removed; unbound =
 //      nothing removed; the flag off = the BH-6750 behaviour, no archive write
@@ -124,7 +124,7 @@ test('A3 ARCHIVE unbound: nothing is deleted, the audit row says "archive not bo
   assert.equal(db.prepare("SELECT error FROM retention_runs WHERE rule='cost_rows.archive'").get().error, 'archive not bound');
 });
 
-test('A4 the default leaves cost_rows alone, and no ledger rule exists', async (t) => {
+test('A4 the default leaves cost_rows alone, and the ledger rule is off', async (t) => {
   const s = await stores(); if (!s) return t.skip('node:sqlite unavailable');
   const { db, DB, adb, ARCHIVE } = s;
   setting(db, 'retention.dry_run', '0');
@@ -135,7 +135,11 @@ test('A4 the default leaves cost_rows alone, and no ledger rule exists', async (
   assert.equal(count(db, 'SELECT COUNT(*) n FROM cost_rows'), 1);
   assert.equal(count(db, 'SELECT COUNT(*) n FROM ledgers'), 1);
   assert.equal(costRule(r.body).off, true, 'retention.cost_rows.archive_days defaults to 0 (off)');
-  assert.ok(!r.body.rules.some((x) => x.table === 'ledgers'), 'no ledger kind moves by default');
+  // TEST-CHANGE (BH-6865): the ledgers.archive rule exists now, off by default.
+  const l = r.body.rules.filter((x) => x.table === 'ledgers');
+  assert.deepEqual(l.map((x) => [x.rule, x.off, x.removed]), [['ledgers.archive', true, 0]],
+    'no ledger kind moves by default');
+  assert.equal(hasTable(adb, 'ledgers'), false, 'the off ledger rule writes nothing to the archive');
   assert.equal(hasTable(adb, 'cost_rows'), false, 'an off rule writes nothing to the archive');
 });
 

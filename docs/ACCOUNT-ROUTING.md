@@ -529,6 +529,18 @@ stops the machine before any model call:
 With no `claude_auth.<p>` row, the bundle, the lease, the boot and `load_env`
 are the same as before.
 
+Shared pool app (BH-9783): an api-key project needs its own pool app for the
+`--no-box` sync. The app's `HBUNDLE_G_*` secrets are one set for every project
+that names the app (`state/fly/<p>.json` `.app` or `flags/fly-pool-app-<p>`).
+So `bin/fly-envbundle.sh --hub-global` refuses an api-key project on an app
+that another project also names: rc 1, no bundle file, and one FATAL line that
+names the app and the projects. `bin/fly-pool-secrets-sync.sh --no-box` then
+fails before `fly secrets import`. Fix: give the api-key project its own pool
+app. The other side: the lease strips any `CLAUDE_AUTH_MODE=` line from an
+oauth bundle, and the pull override of an oauth spawn carries
+`-CLAUDE_AUTH_MODE`, so the boot drops a marker the oauth project inherits from
+the app.
+
 Status: the rows, the worker guard, the reader, the onboarding flags, the
 billing mode (#9712), the meter skips (BH-9719) and the Fly path above exist.
 The runner lock at build time lands with #9675.
