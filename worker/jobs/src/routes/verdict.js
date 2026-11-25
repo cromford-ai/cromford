@@ -70,7 +70,7 @@ export async function prLedgerJob(db, pr) {
 // Sentry event. recordGiveUp (lib/d1-giveup.js) upserts the route's streak in
 // one statement, and only every Nth give-up of a streak (default 3) sends one
 // event, tagged d1_giveups and d1_route next to d1_attempts and d1_op.
-async function overloadGiveUp(env, route, t, fn) {
+export async function overloadGiveUp(env, route, t, fn) {
   try {
     return await fn();
   } catch (e) {

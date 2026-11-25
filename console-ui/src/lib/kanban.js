@@ -269,6 +269,10 @@ export function pipelineRows(view, externals = []) {
         detail: rowDetail(card),
         tier: card && Number.isFinite(Number(card.tier)) ? Number(card.tier) : null,
         verdict: (card && card.verdict) || null,
+        // BH-9558: who decided the current verdict, and its state word
+        // (functions/_lib/verdict-overlay.js). null when the overlay did not run.
+        verdictBy: (card && card.verdict_by) || null,
+        verdictState: (card && card.verdict_state) || null,
         prUrl: (card && card.pr_url) || null,
         prNumber: prNumberFromUrl(card && card.pr_url),
         ageMin: rowAgeMin(card),

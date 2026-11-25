@@ -19,6 +19,7 @@
 // hub at write time, never a model id.
 import { d1Guarded, json } from "../lib/http.js";
 import { MODEL_ROUTE_PROJECT_RE, MODEL_ROUTE_ROLE_RE, ensureTable, resolveModelLadder } from "../lib/core.js";
+import { LEAD_ROUND_SQL_LIST } from "../lib/verdict-rounds.js";
 
 // The plan features bin/lib/route-rules.sh derives (route_features). A match
 // may name only these; an unknown name is refused rather than silently false.
@@ -245,12 +246,15 @@ export const routes = [
       const days = Number.isInteger(dRaw) && dRaw >= 1 && dRaw <= 365 ? dRaw : 30;
       const since = new Date(Date.parse(t) - days * 86400000).toISOString().replace(/\.\d{3}Z$/, "Z");
       const byRule = rule !== null ? "AND vh.job_id IN (SELECT s.job_id FROM route_shadow s WHERE s.project=?1 AND s.rule=?3)" : "";
-      // sql-ident-ok: byRule is a literal subquery or empty; rule binds as ?3
+      // BH-9558: builder rounds only. A lead round (lib/verdict-rounds.js) is
+      // not the first review of the build.
+      // sql-ident-ok: byRule is a literal subquery or empty; rule binds as ?3; LEAD_ROUND_SQL_LIST is a constant list of literal source words
       const row = await env.DB.prepare(
         `SELECT count(*) AS reviewed, coalesce(sum(CASE WHEN vh.verdict='BLOCK' THEN 1 ELSE 0 END),0) AS blocked
            FROM verdict_history vh JOIN jobs j ON j.id = vh.job_id
           WHERE j.project=?1 AND vh.created_at >= ?2
-            AND vh.id = (SELECT min(v2.id) FROM verdict_history v2 WHERE v2.job_id = vh.job_id)
+            AND vh.id = (SELECT min(v2.id) FROM verdict_history v2
+                          WHERE v2.job_id = vh.job_id AND COALESCE(v2.source,'') NOT IN (${LEAD_ROUND_SQL_LIST}))
             ${byRule}`
       ).bind(...(rule !== null ? [project, since, rule] : [project, since])).first();
       const reviewed = Number(row && row.reviewed) || 0;

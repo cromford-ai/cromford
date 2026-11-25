@@ -1,0 +1,2 @@
+# BH-9558: the current verdict of a set of PRs (the kanban overlay reads it).
+POST /api/verdict/current

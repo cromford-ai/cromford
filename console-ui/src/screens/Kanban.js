@@ -20,7 +20,8 @@ import { externalClaims, ticketClaim, claimAge, claimIsStaleBranch, claimIsMerge
 import { Section, Skeleton, Empty, ErrorBox, Legend } from '../ui/primitives.js';
 import { agoFromMinutes, minutesSince, snapshotLabel, safeHttpsUrl, prNumberFromUrl, fmtNum } from '../lib/format.js';
 import { tierLabel } from '../lib/labels.js';
-import { stageLabel, verdictLabel } from '../lib/stages.js';
+import { stageLabel } from '../lib/stages.js';
+import { verdictBadge } from '../lib/verdict-badge.js';
 import { dropStaleClaims } from '../lib/waiting.js';
 import WaitingPanel from './WaitingPanel.js';
 
@@ -154,6 +155,8 @@ const COLUMN_LEGEND = [
 // Our own PR with no verdict yet is waiting on a review; a dash there read as
 // "reviewed, no opinion". No PR and no verdict is still a dash.
 const ownUnreviewed = (hasPr, verdict) => hasPr && !verdict;
+// BH-9558: the verdict badge names who decided (src/lib/verdict-badge.js).
+const verdictTag = (b) => html`<span class=${b.cls} title=${b.title}>${b.text}</span>`;
 
 const staleClaimWords = (n) => `${fmtNum(n)} stale claim${n === 1 ? '' : 's'} not counted`;
 
@@ -293,7 +296,7 @@ export function PipelineList({ board, external, shipped, emptyNote, onToggleAudi
         if (r.external) return html`<span class="tag tag--external">${r.externalLabel}</span>`;
         if (ownUnreviewed(r.prNumber !== null, r.verdict)) return html`<span class="tag tag--idle">not reviewed yet</span>`;
         if (!r.verdict) return html`<span class="na">—</span>`;
-        return html`<span class=${r.verdict === 'APPROVE' ? 'tag tag--green' : 'tag tag--warn'} title=${r.verdict}>${verdictLabel(r.verdict)}</span>`;
+        return verdictTag(verdictBadge(r));
       }
     },
     {
@@ -495,7 +498,7 @@ function Card({ card, column }) {
         <span>${card.project}</span>
         ${card.tier ? html`<span class="tag">${tierLabel(card.tier)}</span>` : null}
         ${card.verdict
-          ? html`<span class=${card.verdict === 'APPROVE' ? 'tag tag--green' : 'tag tag--warn'} title=${card.verdict}>${verdictLabel(card.verdict)}</span>`
+          ? verdictTag(verdictBadge({ verdict: card.verdict, verdictBy: card.verdict_by, verdictState: card.verdict_state }))
           : ownUnreviewed(prNumberFromUrl(card.pr_url) !== null, card.verdict)
             ? html`<span class="tag tag--idle">not reviewed yet</span>`
             : null}

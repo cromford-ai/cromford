@@ -38,6 +38,8 @@ import { ensureColumns, ensureTable, hexEqual, hmacSha256Hex, strictInt } from "
 import { participantAuth } from "./participants.js";
 import { recordLeadVerdict } from "../lib/pr-gate-intake.js";
 import { STANDING_SOURCES } from "../lib/verdict-sources.js";
+import { recordLeadRound } from "../lib/verdict-rounds.js";
+import { prLedgerJob } from "./verdict.js";
 
 export const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 export const SHA_RE = /^[0-9a-f]{40}$/;
@@ -524,7 +526,12 @@ export const routes = [
         // BH-8349: an advice row (human_final) is not a gate fact.
         if (humanFinal) {
           console.warn(`[verdicts] BH-8349 lead row #${res.meta.last_row_id} on ${r.repo}#${r.pr} ${r.head_sha.slice(0, 12)} recorded as advice: human verdict #${humanFinal.id} is final`);
-        } else if (STANDING_SOURCES.includes(r.source) && row) await recordLeadVerdict(env, t, row);
+        } else if (STANDING_SOURCES.includes(r.source) && row) {
+          await recordLeadVerdict(env, t, row);
+          // BH-9558: the standing row is also a round in the PR's
+          // verdict_history, so the latest verdict wins. Never throws.
+          await recordLeadRound(env, t, row, prLedgerJob);
+        }
         return json(201, {
           verdict: row, human_verified: auth === "human-token", human_signed: humanSig !== null, human_verdict_mode: mode,
           human_final: humanFinal ? { id: humanFinal.id, verdict: humanFinal.verdict } : null,

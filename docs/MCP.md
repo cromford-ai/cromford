@@ -145,7 +145,7 @@ parameters only when given.
 | `fleet_status` | read | `GET /api/dash/fleet` |
 | `project_status` | read | `GET /api/dash/p/<project>` |
 | `builds` | read | `GET /api/dash/builds?limit=` (unconfirmed: the console UI only reads `builds/<id>`) |
-| `pipeline` | read | `GET /api/dash/kanban/pipeline?project=&shipped_limit=` (`limit` is sent as `shipped_limit`) |
+| `pipeline` | read | `GET /api/dash/kanban/pipeline?project=&shipped_limit=` (`limit` is sent as `shipped_limit`). Each open build card's `verdict` is the PR's current verdict from `POST /api/verdict/current` (harness-jobs), with `verdict_by` (`builder`, `lead`, `human`, `risk-tier`), `verdict_state` (`lead_blocked`, `blocked`, `approved`, `other`) and `builder_verdict`. The payload says `verdict_known` (false: the read failed and cards show the console worker's verdict) and `verdict_overlaid`; both are absent when no open build card has a PR url (no read is made) |
 | `prs` | read | `GET /api/dash/prs/<filter.project>?limit=&state=` (refused with `project_required` when `filter.project` is missing; `state` unconfirmed) |
 | `alerts` | read | `GET /api/dash/alerts?limit=&project=&severity=` (unconfirmed) |
 | `costs` | read | `GET /api/dash/costs?limit=&project=&since=` (query parameters unconfirmed) |

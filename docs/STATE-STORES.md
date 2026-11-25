@@ -96,6 +96,14 @@ refuses a NEW script that writes a `rows` path. The ratchet allowlists every
 builds its path in a function (`_as_dir`). The ratchet cannot see a path that
 comes from a function or from another file.
 
+## The current verdict of a PR
+
+| State | Store | Writers | Readers |
+|---|---|---|---|
+| every verdict round of a PR | D1 table `verdict_history` (keyed on `job_id`; a PR's rounds are the rounds of every job with its `pr_url` artifact) | builder and review lanes through `PUT /api/jobs/:id/artifacts`; lead, human and risk-tier rows through `POST /api/verdicts` (`recordLeadRound`, `worker/jobs/src/lib/verdict-rounds.js`) | `GET /api/verdict/history`, `POST /api/verdict/current`, `bin/lib/review-bought.sh` (builder sources only), `GET /api/route-shadow/bounce` (builder rounds only) |
+| the current verdict | derived: the newest `verdict_history` round per PR url, read by `POST /api/verdict/current` | none (a read) | the kanban Pages Function (`console-ui/functions/_lib/verdict-overlay.js`), so the MCP `pipeline` tool too |
+| the standing merge-gate verdict | D1 `job_artifacts(kind=verdict)` and the `verdicts` table, unchanged | as before | every merge lane |
+
 ## What stays a file
 
 #4141 keeps these as files on purpose:

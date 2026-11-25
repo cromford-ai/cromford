@@ -53,6 +53,7 @@
 // changes no column and says so (`stage_known: false`).
 
 import { HOLD_LEDGER_KIND, holdFromLedger } from '../../../../src/lib/ticket-hold.js';
+import { openPrUrls, fetchCurrentVerdicts, overlayVerdicts } from '../../../_lib/verdict-overlay.js';
 
 const WORKER = 'https://harness-console.operator.workers.dev';
 const JOBS = 'https://harness-jobs.operator.workers.dev';
@@ -449,6 +450,11 @@ export async function onRequest(context) {
 
   // The ledger is read only here: after the console worker accepted the cookie
   // with a 200. An unauthenticated request never reaches harness-jobs.
+  // BH-9558: the current-verdict read starts now and runs beside the three
+  // ledger reads below; it is awaited last. No open build card with a PR url:
+  // no read, and the payload is not touched.
+  const prUrls = openPrUrls(payload);
+  const currentP = prUrls.length ? fetchCurrentVerdicts(env, prUrls) : null;
   // archiveDead first, so `dead_archived` keeps its exact meaning.
   const archivedBody = archiveDead(payload, { now: Date.now(), includeArchived });
   const issues = await closedIssueKeys(env);
@@ -459,6 +465,7 @@ export async function onRequest(context) {
   // A closed issue's key gets no synthetic card. An unread closed set is null,
   // which closes nothing: the stage row still shows.
   const staged = surfaceStages(marked, await ticketStages(env), { closed: issues ? issues.closed : null, now: Date.now() });
+  const overlaid = currentP ? overlayVerdicts(staged, await currentP) : staged;
   out.set('content-type', 'application/json');
-  return new Response(JSON.stringify(staged), { status: 200, statusText: upstream.statusText, headers: out });
+  return new Response(JSON.stringify(overlaid), { status: 200, statusText: upstream.statusText, headers: out });
 }

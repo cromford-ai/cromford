@@ -10,6 +10,7 @@ import { json } from "../lib/http.js";
 import { ensureTable } from "../lib/core.js";
 import { queueWake } from "./queue.js";
 import { recordBuilderApprove } from "../lib/pr-gate-intake.js";
+import { LEAD_ROUND_SQL_LIST } from "../lib/verdict-rounds.js";
 
 export const routes = [
   // ── Artifacts (phase 7) ────────────────────────────────────────────────
@@ -118,13 +119,19 @@ export const routes = [
           // The table creates itself: `wrangler deploy` is the whole deploy, so
           // schema.sql has not necessarily reached the live D1 (BH-658).
           await ensureTable(env, "verdict_history");
+          // BH-9558: the dedupe compares against the job's newest BUILDER
+          // round. A lead round (lib/verdict-rounds.js) sits in the same table,
+          // and a re-put of the same APPROVE after a lead BLOCK must not append
+          // the stale APPROVE again and make it the current verdict.
+          // sql-ident-ok: LEAD_ROUND_SQL_LIST is a constant list of literal source words
           const ins = await env.DB.prepare(
             `INSERT INTO verdict_history
                (job_id, verdict, reviewed_sha, tier, provenance, served_by, source, detail, actor, created_at)
              SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10
               WHERE NOT EXISTS (
                 SELECT 1 FROM verdict_history h
-                 WHERE h.id=(SELECT MAX(id) FROM verdict_history WHERE job_id=?1)
+                 WHERE h.id=(SELECT MAX(id) FROM verdict_history
+                              WHERE job_id=?1 AND COALESCE(source,'') NOT IN (${LEAD_ROUND_SQL_LIST}))
                    AND h.verdict IS ?2 AND h.reviewed_sha IS ?3
                    AND h.tier IS ?4 AND h.provenance IS ?5
               )`
