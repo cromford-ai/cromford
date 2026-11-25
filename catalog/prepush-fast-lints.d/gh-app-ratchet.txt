@@ -1,0 +1,3 @@
+# BH-10014: a fast always-suite the pre-push gate runs (bin/fast-lints.sh --run --set).
+# It caught a lint-red head in CI that the box pushed (2026-11-10..24: #9496).
+tests/gh-app-ratchet-test.sh

@@ -15,7 +15,9 @@
 #   rules-pack       bin/rules-pack.sh --runner local --base <fork>, every
 #                    catalog component except the two below, which run as their
 #                    own rows so a red names them
-#   fast-lints       bin/fast-lints.sh --run (the always-suites)
+#   fast-lints       bin/fast-lints.sh --run --set catalog/prepush-fast-lints.d:
+#                    the always-suites that caught real pre-push misses (BH-10014),
+#                    one file per suite; the other always-suites run in CI only
 #   checks-run       bin/checks-run.sh --tree .
 #   list-file-lint   bin/list-file-lint.sh --base <fork> (a list doc grows only with a dated note)
 #   orphans          bin/test-impact.sh orphans --check (TI_BASE = the fork)
@@ -71,7 +73,7 @@ die2() { echo "prepush-gate: $*" >&2; exit 2; }
 default_table() {
   printf '%s\t%s\n' \
     rules-pack 'bin/rules-pack.sh --runner local --tree . --base <fork> --skip determinism,checks-tree --out <out>/rules-pack.d' \
-    fast-lints 'bin/fast-lints.sh --run --out <out>/fast-lints.d' \
+    fast-lints 'bin/fast-lints.sh --run --set catalog/prepush-fast-lints.d --out <out>/fast-lints.d' \
     checks-run 'bin/checks-run.sh --tree .' \
     list-file-lint 'bin/list-file-lint.sh --base <fork>' \
     orphans 'bin/test-impact.sh orphans --check' \

@@ -22,8 +22,14 @@
 #       split already uses (BH-5292): in the set when that median is <= MAX.
 #       A non-numeric row is unmeasured and left out. Either is named under
 #       unmeasured; neither is ever an error. 0.0 counts as fast.
-#   --run [--out DIR] [--skip-suites FILE] [--max-s N]
-#       Runs every suite --list prints (same --max-s) that FILE does not name,
+#   --run [--out DIR] [--skip-suites FILE] [--max-s N] [--set DIR]
+#       With --set DIR (BH-10014): the suites are the first word of each
+#       non-blank, non-# line of DIR/*.txt (sorted, unique), not --list: no
+#       durations file is read, so the set cannot be empty for lack of one.
+#       A named suite that is not a file is a row with rc 127 and the run ends
+#       rc 2 (could-not-run), unless a suite is red: then rc 1. An empty or
+#       missing DIR is rc 2.
+#       Without --set: runs every suite --list prints (same --max-s) that FILE does not name,
 #       each from the repo root as `HARNESS_TEST_SANDBOX=1 bash <suite>`. FILE
 #       is bin/rules-pack.sh --out's suites.txt: the first word of each
 #       non-blank, non-# line is a suite to skip (its argv is ignored). An
@@ -93,7 +99,7 @@ ROOT=$(cd "$HERE/.." && pwd)
 usage() {
   cat >&2 <<'EOF'
 usage: fast-lints.sh --list [--max-s N]
-       fast-lints.sh --run [--out DIR] [--skip-suites FILE] [--max-s N]
+       fast-lints.sh --run [--out DIR] [--skip-suites FILE] [--max-s N] [--set DIR]
        fast-lints.sh --assert-budget TIMINGS [--budget-s N]
        fast-lints.sh --share-precheck [--base REF]
 EOF
@@ -122,17 +128,18 @@ posint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$((10#$1))" -ge 1 ]; }
 VERB="${1:-}"
 [ -n "$VERB" ] || bad "no verb"
 shift
-MAX="" BUDGET_ARG="" TIMINGS="" OUT="" SKIPF="" BASE=origin/main
+MAX="" BUDGET_ARG="" TIMINGS="" OUT="" SKIPF="" SETD="" BASE=origin/main
 while [ $# -gt 0 ]; do
   opt=$1
   case "$VERB:$opt" in
-    --list:--max-s|--run:--max-s|--run:--out|--run:--skip-suites|--assert-budget:--budget-s|--share-precheck:--base)
+    --list:--max-s|--run:--max-s|--run:--out|--run:--skip-suites|--run:--set|--assert-budget:--budget-s|--share-precheck:--base)
       [ $# -ge 2 ] || bad "$opt needs a value"
       case "$opt" in
         --max-s) posint "$2" || bad "--max-s must be a whole number >= 1, got '$2'"; MAX=$((10#$2)) ;;
         --budget-s) posint "$2" || bad "--budget-s must be a whole number >= 1, got '$2'"; BUDGET_ARG=$((10#$2)) ;;
         --out) [ -n "$2" ] || bad "--out needs a directory"; OUT=$2 ;;
         --skip-suites) [ -n "$2" ] || bad "--skip-suites needs a file"; SKIPF=$2 ;;
+        --set) [ -n "$2" ] || bad "--set needs a directory"; SETD=$2 ;;
         --base) [ -n "$2" ] || bad "--base needs a ref"; BASE=$2 ;;
       esac
       shift 2 ;;
@@ -155,7 +162,13 @@ trap 'rm -rf "$W"' EXIT
 
 # ── --run ──────────────────────────────────────────────────────────────────
 if [ "$VERB" = --run ]; then
-  "$HERE/fast-lints.sh" --list ${MAX:+--max-s "$MAX"} > "$W/list" || exit 2
+  if [ -n "$SETD" ]; then
+    case "$SETD" in /*) ;; *) SETD="$ROOT/$SETD" ;; esac
+    ( set +f; for f in "$SETD"/*.txt; do [ -f "$f" ] && awk '/^[[:space:]]*(#|$)/ { next } { print $1 }' "$f"; done ) | LC_ALL=C sort -u > "$W/list"
+    [ -s "$W/list" ] || { echo "fast-lints: the set $SETD names no suite; nothing to run" >&2; exit 2; }
+  else
+    "$HERE/fast-lints.sh" --list ${MAX:+--max-s "$MAX"} > "$W/list" || exit 2
+  fi
   [ -s "$W/list" ] || { echo "fast-lints: the fast set is empty; nothing to run" >&2; exit 2; }
   if [ -z "$OUT" ]; then
     OUT=$(mktemp -d) || exit 2
@@ -172,9 +185,13 @@ if [ "$VERB" = --run ]; then
     fi
   fi
   cd "$ROOT" || exit 2
-  red=0
+  red=0 missing=0
   while IFS= read -r s; do
     grep -qxF -- "$s" "$W/skip" && continue
+    if [ ! -f "$s" ]; then
+      printf '%s\t0\t127\n' "$s" >> "$OUT/timings.tsv"; missing=1
+      echo "fast-lints: done $s rc=127 0s (no such suite)"; continue
+    fi
     log="$OUT/log/$(basename "$s").log"
     t0=$(date +%s)
     HARNESS_TEST_SANDBOX=1 bash "$s" > "$log" 2>&1 < /dev/null
@@ -188,7 +205,9 @@ if [ "$VERB" = --run ]; then
       { echo "--- $s ---"; cat "$log"; echo "--- $s ---"; } >&2
     fi
   done < "$W/list"
-  exit "$red"
+  [ "$red" = 1 ] && exit 1          # red wins over a missing entry: it must stop the push
+  [ "$missing" = 1 ] && exit 2
+  exit 0
 fi
 
 # ── --assert-budget ────────────────────────────────────────────────────────

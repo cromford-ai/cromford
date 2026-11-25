@@ -1022,7 +1022,12 @@ if [ -x bin/prepush-gate.sh ] && [ "$_PPG_MODE" != off ]; then
     exit 6
   fi
   if [ -n "$_PPG_CNR" ]; then
-    PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-push gate: could-not-run\n\n'"These components were could-not-run on the build box: $_PPG_CNR. They are not green. CI decides them."$'\n'
+    # BH-10014: a component that hit the per-component timeout (rc 124) says so.
+    _PPG_CNRW=$(awk -F'\t' '$2 == "could-not-run" { printf "%s%s%s", (n++ ? ", " : ""), $1, ($3 == 124 ? " (rc 124: timed out)" : "") }' "$_PPG/summary.tsv" 2>/dev/null)
+    PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Pre-push gate: could-not-run\n\n'"These components were could-not-run on the build box: ${_PPG_CNRW:-$_PPG_CNR}. They are not green. CI decides them."$'\n'
+    # BH-10014: never a block, but countable across builds: one line per build
+    # in the box's logs/prepush-gate.log (`grep -c PREPUSH-COULD-NOT-RUN`).
+    [ -n "${HARNESS:-}" ] && [ -d "$HARNESS/logs" ] && echo "$(STAMP) PREPUSH-COULD-NOT-RUN project=$PROJECT key=$KEY ids=$_PPG_CNR" >> "$HARNESS/logs/prepush-gate.log"
   fi
   # BH-7289: the record of the suites the gate ran green on THIS head (no commit
   # comes between here and the push). A merge-queue batch drops them only when
