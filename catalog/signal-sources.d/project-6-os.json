@@ -1,0 +1,14 @@
+{
+  "project": "project-6-os",
+  "sentry": {
+    "org": "project-6-llc",
+    "project": "project-6-os",
+    "token_env": "SENTRY_MK_API_TOKEN"
+  },
+  "posthog": {
+    "host": "https://us.posthog.com",
+    "project_id": "598179",
+    "key_env": "POSTHOG_MK_PERSONAL_API_KEY",
+    "filter": "properties.app = 'project-6'"
+  }
+}

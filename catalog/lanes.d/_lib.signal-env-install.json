@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "signal-env-install",
+      "file": "bin/signal-env-install.sh",
+      "note": "BH-9799. bin/signal-env-install.sh <project> <NAME> (the value on stdin) writes one signal key into env/<project>.env under locks/harden-state.lock, between bin/harden-state.sh --release and --rearm (docs/KEY-ROTATION.md). Applied by the script with lib_env_apply signal-env-install.",
+      "knobs": [
+        {
+          "env": "SIGNAL_ENV_INSTALL_LOCK_WAIT_S",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 300,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "How long the install waits for locks/harden-state.lock (flock -w) before it gives up with nothing written. An operator command, so a short wait. Out of range = 30. Read as ${SIGNAL_ENV_INSTALL_LOCK_WAIT_S:-30}."
+        }
+      ]
+    }
+  ]
+}

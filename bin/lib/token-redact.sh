@@ -1,5 +1,5 @@
 #!/bin/bash
-# bin/lib/token-redact.sh — scrub GitHub-token- and Anthropic-key-shaped strings out of text
+# bin/lib/token-redact.sh — scrub GitHub-token-, Anthropic-, Sentry- and PostHog-key-shaped strings out of text
 # before it lands in a build file a reader or a model sees (BH-6672).
 # Sourced, never executed. Defines functions and does nothing else.
 #
@@ -18,6 +18,12 @@
 #   sk-ant-api + 2 digits + - + 20 or more [A-Za-z0-9_-]
 # The OAuth token shape (sk-ant-oat...) is NOT matched here: its handling is
 # unchanged. Neither is sk-ant-admin..., nor a key body under 20 characters.
+# BH-9799: the Sentry token and the PostHog key. Each needs a left boundary
+# (line start or a character that is not [A-Za-z0-9_]), so graphx_... is kept:
+#   sntry + 1 lower-case letter + _ + 20 or more [A-Za-z0-9_=+/.-]
+#                                           becomes `<redacted:sentry-token>`
+#   ph + 1 lower-case letter + _ + 20 or more [A-Za-z0-9_=+/.-]
+#                                           becomes `<redacted:posthog-key>`
 # NOT a token shape: an identifier with an underscore after letters
 # (ghs_fixture_installation_token, gh_app_only_for), a bare prefix, and a run
 # under the floor. sed -E only, no awk interval: mawk lacks it.
@@ -35,7 +41,9 @@ token_redact() {
     -e 's/gh[pousr]_[A-Za-z0-9]{30,}/<redacted:github-token>/g' \
     -e 's/github_pat_[A-Za-z0-9_]{22,}/<redacted:github-token>/g' \
     -e 's/x-access-token:[^@[:space:]]+@/x-access-token:<redacted:github-token>@/g' \
-    -e 's/sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}/<redacted:anthropic-key>/g'
+    -e 's/sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}/<redacted:anthropic-key>/g' \
+    -e 's#(^|[^A-Za-z0-9_])sntry[a-z]_[A-Za-z0-9_=+/.-]{20,}#\1<redacted:sentry-token>#g' \
+    -e 's#(^|[^A-Za-z0-9_])ph[a-z]_[A-Za-z0-9_=+/.-]{20,}#\1<redacted:posthog-key>#g'
 }
 
 token_redact_file() {

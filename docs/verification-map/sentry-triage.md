@@ -46,6 +46,24 @@ Other lines: `sentry token unset; nothing read`, `issue list failed (HTTP <c>)`,
 Alerts (warn, `bin/lane-alert.sh`): `sentry-triage-list` and
 `sentry-triage-ledger`, at most one each per tick.
 
+**Per-project sources (BH-9799):** after the default source, the lane runs
+one pass for each fleet project with a `sentry` block in
+`catalog/signal-sources.d/<project>.json` (reader `bin/lib/signal-source.sh`).
+That pass uses the row's org, slug and token (the row's env name, from the
+environment or parsed from `env/<project>.env`), files in the project's
+`fleet.conf` repo, and keys the ledger `<project>:<id>`,
+`<project>:<id>:regressed` and day row `<project>:<YYYY-MM-DD>`. Its summary
+line is `<ISO> sentry-triage project=<p> issues=...`, its list alert is
+`sentry-triage-list-<p>`. No token: `project=<p>: <TOKEN_ENV> unset; nothing
+read`. No fleet.conf repo: `project=<p>: no fleet.conf repo; nothing read`. An
+unreadable ledger stops the whole tick. Log lines, ticket titles, bodies and
+comments go through `token_redact`. `bin/sentry-lookup.sh '<terms>' <project>`
+reads the same row. The PostHog reader is `bin/posthog-lookup.sh <project>
+"<hogql>" | --report api-failures|web-vitals`. Keys and homes:
+`docs/KEY-ROTATION.md`. Suites: `tests/sentry-triage-multi.bh-9799-test.sh`,
+`tests/sentry-lookup-project.bh-9799-test.sh`,
+`tests/posthog-lookup.bh-9799-test.sh`.
+
 **What usually lies:**
 
 - One regression pass per issue in total. A third regression after a

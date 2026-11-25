@@ -1,0 +1,62 @@
+{
+  "libs": [
+    {
+      "id": "posthog-lookup",
+      "file": "bin/posthog-lookup.sh",
+      "note": "BH-9799. bin/posthog-lookup.sh <project> \"<hogql>\" | --report api-failures|web-vitals: one HogQL query with the project's PostHog key (catalog/signal-sources.d/<project>.json). Applied by the script with lib_env_apply posthog-lookup. An out-of-range value is the default, never a clamp.",
+      "knobs": [
+        {
+          "env": "POSTHOG_LOOKUP_TIMEOUT_S",
+          "type": "int",
+          "default": 25,
+          "min": 1,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "curl -m for the one PostHog query. The same 25 s as bin/sentry-lookup.sh, inside a medic step budget. Read as ${POSTHOG_LOOKUP_TIMEOUT_S:-25}."
+        },
+        {
+          "env": "POSTHOG_LOOKUP_MAX_ROWS",
+          "type": "int",
+          "default": 50,
+          "min": 1,
+          "max": 1000,
+          "zero_means": null,
+          "required": false,
+          "note": "The most rows printed (and the LIMIT of the canned reports). More rows print one '(posthog: <n> more rows not shown)' line. Read as ${POSTHOG_LOOKUP_MAX_ROWS:-50}."
+        },
+        {
+          "env": "POSTHOG_REPORT_API_FAILURES_H",
+          "type": "int",
+          "default": 24,
+          "min": 1,
+          "max": 336,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "The window of --report api-failures. Read as ${POSTHOG_REPORT_API_FAILURES_H:-24}."
+        },
+        {
+          "env": "POSTHOG_REPORT_WEB_VITALS_D",
+          "type": "int",
+          "default": 7,
+          "min": 1,
+          "max": 90,
+          "unit": "days",
+          "zero_means": null,
+          "required": false,
+          "note": "The window of --report web-vitals. Read as ${POSTHOG_REPORT_WEB_VITALS_D:-7}."
+        },
+        {
+          "env": "POSTHOG_REPORT_API_FAILURE_EVENT",
+          "type": "string",
+          "default": "api_error",
+          "zero_means": null,
+          "required": false,
+          "note": "The PostHog event --report api-failures counts (properties endpoint and status). Must match ^[A-Za-z0-9_$]+$, else api_error. project-6 sends no such event yet, so the report answers '(posthog: no rows)' until the app sends it. Read as ${POSTHOG_REPORT_API_FAILURE_EVENT:-api_error}."
+        }
+      ]
+    }
+  ]
+}

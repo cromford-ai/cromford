@@ -45,6 +45,7 @@ Layout: repos live in `/root/repos/<project>`, harness scripts in `/root/harness
 - [Security audit (2026-10-21)](#security-audit-2026-10-21)
 - [Build resources (BH-9288)](#build-resources-bh-9288)
 - [Performance at scale (2026-11-17)](#performance-at-scale-2026-11-17)
+- [App signals: Sentry and PostHog per project (BH-9799)](#app-signals-sentry-and-posthog-per-project-bh-9799)
 
 ## Iron guardrails (this machine)
 
@@ -279,3 +280,12 @@ REVIEW, each a [NOTE]:
 - a queue table with no end state by age, or a screen that renders the full queue
 - a draft LLM or vendor call with no still-needed check (no dedup before the spend stays `[BLOCK money]`)
 REVIEW BLOCK: `[BLOCK perf-at-scale]` for a measured regression on a key screen over the speed thresholds. Also for an unbounded or unindexed read that this diff adds or changes, on a table the plan expects past 100k rows.
+
+## App signals: Sentry and PostHog per project (BH-9799)
+
+APP SIGNALS (BH-9799, 2026-11-24). A fleet project can have its own Sentry org and PostHog project. The row is `catalog/signal-sources.d/<project>.json`; it holds env names, never a value.
+- For an error on an app (a 500, a timeout, an exception), run `bin/sentry-lookup.sh '<route or error text>' <project>` before any theory. The project name picks that project's own Sentry org and token. A project with no row uses the global `SENTRY_ORG` and `SENTRY_API_TOKEN`.
+- For app speed or failed API calls, run `bin/posthog-lookup.sh <project> --report web-vitals` (p75 LCP, CLS and INP by route, 7 days) or `--report api-failures` (failed calls by endpoint and status, 24 hours).
+- Both readers print one line and exit 0 when a key is missing or the vendor fails. Treat that line as "no evidence", not as "no problem".
+- A ticket or a comment quotes counts, routes and ids only. Never a key, a person's name or an email address. `bin/posthog-lookup.sh` refuses a query that reads person fields.
+- To install or rotate a key on a box, use `bin/signal-env-install.sh <project> <NAME>` with the value on stdin. `docs/KEY-ROTATION.md` lists each key, its homes and its rotation date.

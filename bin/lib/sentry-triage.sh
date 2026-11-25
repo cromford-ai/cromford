@@ -13,7 +13,7 @@
 #                                included, is unreadable) or ST_STOP=open-list.
 #
 # DEDUP BEFORE SPEND. The ledger row sentry-triage/<key> is read FIRST. <key> is
-# the Sentry issue id, or <id>:regressed for a regressed issue whose <id> row is
+# ST_KEY_PREFIX + the Sentry issue id, or + <id>:regressed for a regressed issue whose <id> row is
 # terminal. One regression pass per issue in total: a later regression after a
 # <id>:regressed row exists gets nothing (a deliberate limit). An issue that was
 # already regressed when its <id> pass ran (detail.regressed true) has had its
@@ -43,7 +43,7 @@
 # The worker cuts detail at 4000 chars (worker/jobs/src/routes/ledger.js), and
 # a cut detail is not JSON. _st_save cuts the diagnosis text fields first, so
 # the stored detail stays under ST_DETAIL_MAX bytes (cut = the field limit used).
-# Day row sentry-triage-day/<YYYY-MM-DD>: {filed: [<sentry ids>], calls: <n>}.
+# Day row sentry-triage-day/<ST_KEY_PREFIX><YYYY-MM-DD>: {filed: [<sentry ids>], calls: <n>}.
 # calls counts the model calls started that day; SENTRY_TRIAGE_MAX_CALLS_DAY caps it.
 # Body marker: <!-- sentry-issue: <key> --> on a ticket and on a comment.
 #
@@ -54,6 +54,16 @@
 #   ST_MAX_ATTEMPTS  attempts before an item is failed (3)
 #   ST_OPEN_LABEL    the label of the open-issue read (ai-build; empty = all)
 #   ST_RAW_DIR       when set, st_latest_event keeps Sentry's raw answer there
+# and these per-source globals (BH-9799), set by bin/sentry-triage.sh for each
+# Sentry source and left unset by discovery-daily:
+#   ST_KEY_PREFIX    put before every ledger key, day-row key and body marker
+#                    key (`<project>:` for a registry source; empty = the keys
+#                    as before: <id>, <id>:regressed, <YYYY-MM-DD>)
+#   ST_TOKEN         the Sentry token of the source; empty = SENTRY_API_TOKEN
+#   ST_SOURCE_LABEL  the `## Sentry source` prompt line after <org>/<slug>
+# Every log line, ticket title, ticket body and comment body passes through
+# token_redact (bin/lib/token-redact.sh). A body that cannot be scrubbed is not
+# posted: the item stays `diagnosed`.
 # and these helpers carry the ledger, filing and call rules for both lanes:
 # _st_attempt_put, _st_after_call, _st_create, _st_comment_once, _st_day_filed_add.
 #
@@ -62,13 +72,15 @@
 [ "$(type -t gh_rest_issue_list)" = function ] || . "$(dirname "${BASH_SOURCE[0]}")/gh-rest-list.sh" 2>/dev/null
 # shellcheck source=bin/lib/deployment.sh
 . "${HARNESS_DEPLOYMENT_FILE-$(dirname "${BASH_SOURCE[0]}")/deployment.sh}" || return 1
+# shellcheck source=bin/lib/token-redact.sh
+[ "$(type -t token_redact)" = function ] || . "$(dirname "${BASH_SOURCE[0]}")/token-redact.sh" || return 1
 
 ST_API="https://sentry.io/api/0"
 # Bytes. A UTF-8 byte count is never below the worker's UTF-16 slice count.
 ST_DETAIL_MAX=3900
 
 _st_root() { printf '%s' "${HARNESS:-${H:-}}"; }
-_st_log() { local r l="${ST_LANE:-sentry-triage}"; r=$(_st_root); [ -n "$r" ] || return 0; printf '%s %s %s\n' "$(date -u +%FT%TZ)" "$l" "$*" >> "$r/logs/$l.log"; }
+_st_log() { local r l="${ST_LANE:-sentry-triage}"; r=$(_st_root); [ -n "$r" ] || return 0; printf '%s %s %s\n' "$(date -u +%FT%TZ)" "$l" "$*" | token_redact >> "$r/logs/$l.log"; }
 _st_dash() { sed 's/[—–]/-/g'; }
 
 # _st_knob_int <name> <value> <default> <min> <max>: out of range is one log line
@@ -106,7 +118,7 @@ st_knobs() {
 # failure). The token rides as a header and is never printed.
 _st_curl() {
   local out=$1 url=$2 code; shift 2
-  code=$(curl -sS -m 25 -o "$out" -w '%{http_code}' -H "Authorization: Bearer $SENTRY_API_TOKEN" "$@" "$url" 2>/dev/null) || code=000
+  code=$(curl -sS -m 25 -o "$out" -w '%{http_code}' -H "Authorization: Bearer ${ST_TOKEN:-${SENTRY_API_TOKEN:-}}" "$@" "$url" 2>/dev/null) || code=000
   [[ $code =~ ^[0-9]{3}$ ]] || code=000
   printf '%s' "$code"
 }
@@ -222,7 +234,7 @@ _st_put() {
 # _st_day: today's day row detail as {filed: [ids], calls: n}. rc 1 = unreadable.
 _st_day() {
   local row rc=0
-  row=$(job_ledger_row "${ST_LANE:-sentry-triage}-day" "$ST_DAY") || rc=$?
+  row=$(job_ledger_row "${ST_LANE:-sentry-triage}-day" "${ST_KEY_PREFIX:-}$ST_DAY") || rc=$?
   case "$rc" in
     0) jq -c '.detail | if type == "string" then (fromjson? // {}) else . end | if type == "object" then . else {} end
          | {filed: (.filed // [] | if type == "array" then . else [] end), calls: (.calls // 0 | numbers? // 0 | floor)}' <<<"$row" 2>/dev/null \
@@ -245,16 +257,16 @@ _st_day_call() {
   d=$(_st_day) || { _st_log "day row unreadable; no calls this tick"; return 2; }
   n=$(jq -r '.calls' <<<"$d")
   [ "$n" -ge "$ST_MAX_CALLS_DAY" ] && return 1
-  job_ledger_put "${ST_LANE:-sentry-triage}-day" "$ST_DAY" counted "$(jq -c '.calls += 1' <<<"$d")" \
-    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/$ST_DAY calls failed; no call"; return 2; }
+  job_ledger_put "${ST_LANE:-sentry-triage}-day" "${ST_KEY_PREFIX:-}$ST_DAY" counted "$(jq -c '.calls += 1' <<<"$d")" \
+    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/${ST_KEY_PREFIX:-}$ST_DAY calls failed; no call"; return 2; }
 }
 # _st_day_filed_add <id>: add one id to today's filed list. rc 1 = the day row
 # is unreadable or the write failed (the write failure is logged).
 _st_day_filed_add() {
   local day
   day=$(_st_day) || return 1
-  job_ledger_put "${ST_LANE:-sentry-triage}-day" "$ST_DAY" counted "$(jq -c --arg i "$1" '.filed += [$i]' <<<"$day")" \
-    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/$ST_DAY failed"; return 1; }
+  job_ledger_put "${ST_LANE:-sentry-triage}-day" "${ST_KEY_PREFIX:-}$ST_DAY" counted "$(jq -c --arg i "$1" '.filed += [$i]' <<<"$day")" \
+    || { _st_log "ledger put ${ST_LANE:-sentry-triage}-day/${ST_KEY_PREFIX:-}$ST_DAY failed"; return 1; }
 }
 # _st_day_capped: rc 0 when no new ticket may be filed today, 1 when one may,
 # 2 when the day row is unreadable.
@@ -311,9 +323,11 @@ _st_after_call() {
 # _st_create <title> <body-file> <labels-json>: POST repos/$ST_REPO/issues.
 # Only a 201 with a number counts. Sets ST_NUM and ST_URL. rc 1 = not created.
 _st_create() {
-  local pf="$ST_TMP/payload.json" rc=0
+  local pf="$ST_TMP/payload.json" rc=0 t
   ST_NUM=""; ST_URL=""
-  jq -n --arg t "$1" --rawfile b "$2" --argjson l "$3" '{title: $t, body: $b, labels: $l}' > "$pf" || return 1
+  t=$(printf '%s\n' "$1" | token_redact) || return 1
+  token_redact_file "$2" || { _st_log "token scrub of the ticket body failed; not posted"; return 1; }
+  jq -n --arg t "$t" --rawfile b "$2" --argjson l "$3" '{title: $t, body: $b, labels: $l}' > "$pf" || return 1
   gh_rest POST "repos/$ST_REPO/issues" --input "$pf" > "$ST_TMP/created" || rc=$?
   ST_NUM=$(jq -e '.number | numbers' "$ST_TMP/created" 2>/dev/null) || ST_NUM=""
   if [ "$rc" != 0 ] || [ "${GH_REST_STATUS:-}" != 201 ] || [ -z "$ST_NUM" ]; then ST_NUM=""; return 1; fi
@@ -331,6 +345,8 @@ _st_comment_once() {
   fi
   if jq -e --arg m "$m" 'any(.[]; (.body // "") | contains($m))' "$ST_TMP/comments.json" >/dev/null 2>&1; then
     _st_log "$key comment already on #$n (marker); not posted again"
+  elif ! token_redact_file "$bf"; then
+    _st_log "$key token scrub of the comment failed; not posted, stays diagnosed"; return 1
   elif ! gh_rest_comment "$ST_REPO" "$n" "$bf"; then
     _st_log "$key comment on #$n failed (HTTP ${GH_REST_STATUS:-000}); stays diagnosed"; return 1
   fi
@@ -389,7 +405,7 @@ _st_act() {
       if [ "$rc" = 0 ]; then
         _st_log "cap SENTRY_TRIAGE_MAX_TICKETS_DAY=$ST_MAX_DAY reached; $key stays diagnosed"; ST_OUT=capped; return 0
       fi
-      tf=$(printf 'Sentry %s: %s' "$(jq -r '.short_id' <<<"$det")" "$(jq -r '.title' <<<"$dg")" | tr '\n' ' ' | _st_dash | cut -c1-120)
+      tf=$(printf 'Sentry %s: %s' "$(jq -r '.short_id' <<<"$det")" "$(jq -r '.title' <<<"$dg")" | tr '\n' ' ' | _st_dash | token_redact | cut -c1-120)
       bf="$ST_TMP/body.md"
       { printf '#### Cause\n'; jq -r '.cause' <<<"$dg"
         printf '\n#### Evidence\n- Sentry: %s\n- Events: %s total, %s in the last 24 h\n' "$perm" "$cnt" "$c24"
@@ -438,6 +454,9 @@ _st_prompt() {
   _st_evidence "$issue"
   cands=$(st_candidates "$ST_REASON")
   { cat "$(_st_root)/catalog/prompts/sentry-triage.md"
+    if [ -n "${ST_SOURCE_LABEL:-}" ]; then
+      printf '\n## Sentry source\n%s/%s (%s)\n' "$ST_ORG" "$ST_PROJECT" "$ST_SOURCE_LABEL"
+    fi
     printf '\n%s\n\n## Sentry issue\n' "$(ui_notice)"
     { jq -r --arg r "$reg" '"id: \(.id)\nshort id: \(.shortId)\ntitle: \(.title)\npermalink: \(.permalink)\nevents: \(.count)\nregressed: \($r)"' <<<"$issue"
       printf '\nlatest event:\n'; head -c 12000 "$ST_TMP/event.json"; printf '\n'; } | ui_wrap fetched-page
@@ -461,7 +480,7 @@ st_issue() { # st_issue <issue-json>
   reg=$(jq -r '(.isRegression == true) or (.status == "regressed") or (.substatus == "regressed")' <<<"$issue")
 
   # The ledger, FIRST. An outage is never "no row".
-  key=$id
+  key="${ST_KEY_PREFIX:-}$id"
   row=$(job_ledger_row "${ST_LANE:-sentry-triage}" "$key") || rc=$?
   [ "$rc" = 0 ] || [ "$rc" = 2 ] || { ST_STOP=ledger; return 75; }
   st=""; [ "$rc" = 0 ] && st=$(jq -r '.status // ""' <<<"$row")
@@ -470,7 +489,7 @@ st_issue() { # st_issue <issue-json>
       [ "$reg" = true ] || { ST_OUT=terminal; return 0; }
       # The <id> pass already saw this regression: that was its one pass.
       [ "$(jq -r '.regressed' <<<"$(_st_detail "$row")")" = true ] && { ST_OUT=terminal; return 0; }
-      key="$id:regressed"; rc=0
+      key="${ST_KEY_PREFIX:-}$id:regressed"; rc=0
       row=$(job_ledger_row "${ST_LANE:-sentry-triage}" "$key") || rc=$?
       [ "$rc" = 0 ] || [ "$rc" = 2 ] || { ST_STOP=ledger; return 75; }
       st=""; [ "$rc" = 0 ] && st=$(jq -r '.status // ""' <<<"$row") ;;
