@@ -197,11 +197,16 @@ _ghb_warn_cache_once() {
 
 # _ghb_cache_valid <path> — rc 0 when the cache exists and is within TTL.
 _ghb_cache_valid() {
-  local f="$1" now age
+  local f="$1" now age at
   [ -f "$f" ] || return 1
   _ghb_num "$_GHB_TTL" || return 1
   now=$(_ghb_now)
-  age=$(( now - $(jq -r '.fetched_at // 0' "$f" 2>/dev/null || echo 0) ))
+  # BH-10071: an empty or unparsable cache is not a cache. jq prints nothing
+  # for an empty file (rc 0), and `$(( now - ))` is a shell error that ends
+  # the caller's subshell (the resolver's candidate list was lost that way).
+  at=$(jq -r '.fetched_at // 0' "$f" 2>/dev/null) || return 1
+  _ghb_num "$at" || return 1
+  age=$(( now - at ))
   [ "$age" -lt "$_GHB_TTL" ]
 }
 
