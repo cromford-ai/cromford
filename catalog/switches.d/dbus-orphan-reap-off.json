@@ -1,0 +1,1 @@
+{"name":"dbus-orphan-reap-off","readers":["bin/dbus-orphan-reap.sh"],"box_scoped":true,"what":"stops bin/dbus-orphan-reap.sh killing leaked dbus-daemon --session orphans on a box"}

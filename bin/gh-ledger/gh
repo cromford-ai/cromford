@@ -126,6 +126,13 @@ if [ "$_ghl_depth" -ge 3 ]; then
   exit 127
 fi
 
+# NO SESSION BUS (2026-11-09). With DBUS_SESSION_BUS_ADDRESS unset, gh's keyring
+# lookup auto-launches a dbus-daemon that never exits: ~100 an hour from cron,
+# 3,705 on box-small when it ran out of memory. `disabled:` makes the
+# lookup fail at once, gh falls back to GH_TOKEN / hosts.yml, and nothing starts.
+# A bus the box already set up (Orgo's /etc/environment) is kept as it is.
+[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || export DBUS_SESSION_BUS_ADDRESS=disabled:
+
 _ghl_real=$(_ghl_find_real) || {
   echo "gh-ledger: no real gh binary found on PATH or at ${GH_LEDGER_FALLBACK:-/usr/bin/gh}" >&2
   exit 127

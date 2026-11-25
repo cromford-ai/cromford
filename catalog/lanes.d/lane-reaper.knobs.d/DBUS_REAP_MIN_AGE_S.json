@@ -1,0 +1,11 @@
+{
+  "env": "DBUS_REAP_MIN_AGE_S",
+  "read_in": "bin/dbus-orphan-reap.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 300,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "2026-11-09 dbus leak (box-small OOM three times): only an orphan session dbus-daemon older than this is killed. A bus a live gh or Claude call just started is never touched. A value outside min..max is the default. Settings key lane.lane-reaper.dbus_reap_min_age_s."
+}

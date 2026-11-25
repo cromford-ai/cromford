@@ -39,11 +39,14 @@ rfx_setup; R=$?
 audit_n() { rfx_q 'SELECT COUNT(*) AS n FROM registry_audit' | jq '.[0].n'; }
 render() { rfx_db "$RC" --root "$DIR" "$1" 2>"$T/render-$1.err"; }
 # lane_lines <render> <box-id> — the lines from cron/lanes/ fragments: no
-# comment, no PATH=, nothing inside a fleet-managed project block, no line of
-# the box's own cron/boxes/<id>.d; the box's names swapped for BOX/WATCHER.
+# comment, no PATH=, no line of the _template.d fragments (env lines such as
+# DBUS_SESSION_BUS_ADDRESS= every box gets), nothing inside a fleet-managed
+# project block, no line of the box's own cron/boxes/<id>.d; the box's names
+# swapped for BOX/WATCHER.
 lane_lines() {
   local own="$T/own-$2"
-  cat "$DIR/cron/boxes/$2.d/"*.cron 2>/dev/null | grep -v '^[[:space:]]*#' > "$own"
+  cat "$DIR/cron/boxes/$2.d/"*.cron "$DIR/cron/boxes/_template.d/"*.cron 2>/dev/null \
+    | grep -v '^[[:space:]]*\(#\|@fleet\|$\)' > "$own"
   awk '/^# BEGIN fleet-managed/ {skip=1; next} /^# END fleet-managed/ {skip=0; next} !skip' "$1" \
     | grep -v '^[[:space:]]*\(#\|$\)' | grep -v '^PATH=' | grep -vxFf "$own" \
     | sed "s/box-$2\\b/WATCHER/g; s/\\b$2\\b/BOX/g" | LC_ALL=C sort
@@ -65,7 +68,7 @@ cmp -s "$T/x.lanes" "$T/mk.lanes" && ok || bad "A1 x and project-6 lane lines di
 grep -qx '\*/5 \* \* \* \* /root/harness/bin/watchdog-ping.sh box-x' "$T/x.cron" && ok \
   || bad "A1 x pings the watchdog as box-x (no project names it; the registry does)"
 [ ! -e "$DIR/cron/boxes/x.d" ] && ok || bad "A1 a cron/boxes/x.d appeared"
-head -2 "$T/x.cron" | cmp -s - <(grep -v '^@fleet' "$DIR/cron/boxes/_template.d/000-path.cron") && ok \
+head -n "$(grep -vc '^@fleet' "$DIR/cron/boxes/_template.d/000-path.cron")" "$T/x.cron" | cmp -s - <(grep -v '^@fleet' "$DIR/cron/boxes/_template.d/000-path.cron") && ok \
   || bad "A1 x does not start with the _template.d PATH fragment"
 
 # ---- A2 ----------------------------------------------------------------------

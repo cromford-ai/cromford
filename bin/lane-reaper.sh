@@ -102,6 +102,11 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 9 || exit 0
 fi
 
+# Leaked session dbus-daemons (2026-11-09: 3,705 on small, OOM three times). One
+# line in the log when it killed any. Its own switch: flags/dbus-orphan-reap-off.
+_DBR=$(HARNESS="$H" bash "$(dirname "${BASH_SOURCE[0]}")/dbus-orphan-reap.sh" 2>/dev/null) || true
+[ -n "$_DBR" ] && log "$_DBR"
+
 GRACE=1800; MAX=20
 # shellcheck source=bin/lib/scheduler-conf.sh
 [ -r "$H/bin/lib/scheduler-conf.sh" ] && . "$H/bin/lib/scheduler-conf.sh" 2>/dev/null

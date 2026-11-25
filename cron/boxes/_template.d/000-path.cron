@@ -1,2 +1,4 @@
 # BH-1574: bin/gh-ledger/ (a directory holding ONLY a gh) goes first, so every raw gh call a lane makes is ledgered with its X-RateLimit bucket; the rest is cron's own default PATH, unchanged. FIRST line on purpose: cron applies a PATH= to the lines after it.
 PATH=/root/harness/bin/gh-ledger:/usr/bin:/bin
+# 2026-11-09: no session bus for cron. Unset, every gh keyring lookup auto-launched a dbus-daemon that never exited (3,705 on small, OOM). See bin/dbus-orphan-reap.sh.
+DBUS_SESSION_BUS_ADDRESS=disabled:

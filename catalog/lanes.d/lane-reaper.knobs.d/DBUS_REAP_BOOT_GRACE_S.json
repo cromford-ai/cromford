@@ -1,0 +1,11 @@
+{
+  "env": "DBUS_REAP_BOOT_GRACE_S",
+  "read_in": "bin/dbus-orphan-reap.sh",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "2026-11-09 dbus leak (box-small OOM three times): a bus that started within this many seconds of boot is kept: a shared session bus a boot script set up on purpose (Orgo's /etc/cron.d/orgo-session-bus on box-small). A value outside min..max is the default. Settings key lane.lane-reaper.dbus_reap_boot_grace_s."
+}

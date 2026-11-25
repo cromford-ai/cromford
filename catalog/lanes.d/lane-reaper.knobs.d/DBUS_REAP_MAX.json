@@ -1,0 +1,11 @@
+{
+  "env": "DBUS_REAP_MAX",
+  "read_in": "bin/dbus-orphan-reap.sh",
+  "type": "int",
+  "default": 5000,
+  "min": 1,
+  "max": 20000,
+  "unit": "processes",
+  "zero_means": null,
+  "note": "2026-11-09 dbus leak (box-small OOM three times): at most this many daemons are killed in one tick. 3,705 was the worst count seen (small, 2026-11-09). A value outside min..max is the default. Settings key lane.lane-reaper.dbus_reap_max."
+}
