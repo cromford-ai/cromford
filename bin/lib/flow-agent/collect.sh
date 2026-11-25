@@ -9,7 +9,10 @@
 #      is `-`): the open ai-build issues (gh_rest_issue_list, REST), key
 #      <PFX>-<n> from preplan_key_prefix, id <n>. An in-app project: GET
 #      <base><prefix>/boards, then /boards/<id>/tickets (board-creds.sh), the
-#      tickets whose status is not done (the prefix is fleet.conf column 4). Jira/Linear: could-not-run.
+#      tickets whose status is not done. Both GETs go through the tracker seam:
+#      trk_board_boards_raw and trk_board_tickets_raw (bin/lib/tracker/board.sh,
+#      loaded with tracker_load board), --max-time flow_agent.board_timeout_s
+#      (the prefix is fleet.conf column 4). Jira/Linear: could-not-run.
 #   R2 the open PRs of the repo (gh_rest_pr_list_all), at most
 #      flow_agent.pr_list_pages pages of 100. R1 and R2 run in PARALLEL.
 #   R3 ONE POST /api/waiting/state with the R1 set, cut to flow_agent.waiting_max.
@@ -84,12 +87,17 @@ _fa_board_inapp() {
   base=$(board_env_value "$bv" "$envf"); tok=$(board_env_value "$tv" "$envf")
   [ -n "$base" ] && [ -n "$tok" ] || return 1
   [ -n "$pfx" ] || return 1
-  boards=$(curl -s --fail --max-time "$to" -H "Authorization: Bearer $tok" "$base$pfx/boards" 2>/dev/null) || return 1
+  # The board adapter is the one seam for board calls (BH-7919 ratchet). This
+  # runs in flow_collect's background subshell; the context stays local.
+  command -v tracker_load >/dev/null 2>&1 && tracker_load board || return 1
+  local TRK_BOARD_BASE="$base$pfx" TRK_BOARD_TOKEN="$tok" TRK_BOARD_TOKEN_VAR="$tv" TRK_BOARD_MAX_TIME="$to" \
+    TRK_LOG="" TRK_ERR="" TRK_DRY=0
+  boards=$(trk_board_boards_raw 2>/dev/null) || return 1
   bid=$(jq -r '(if type=="array" then .[0] else .boards[0] end) | .id // empty' <<<"$boards" 2>/dev/null)
   bpfx=$(jq -r '(if type=="array" then .[0] else .boards[0] end) | (.keyPrefix // .key_prefix // empty)' <<<"$boards" 2>/dev/null)
   [ -n "$bid" ] || return 1
   raw=$(mktemp "${TMPDIR:-/tmp}/fa-board.XXXXXX") || return 1
-  curl -s --fail --max-time "$to" -H "Authorization: Bearer $tok" "$base$pfx/boards/$bid/tickets" > "$raw" 2>/dev/null || rc=1
+  trk_board_tickets_raw "$bid" > "$raw" 2>/dev/null || rc=1
   if [ "$rc" = 0 ]; then
     jq -c --arg bp "$bpfx" '
         if type == "array" then . elif type == "object" and (.tickets | type) == "array" then .tickets else error("not a board") end

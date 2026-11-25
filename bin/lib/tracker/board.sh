@@ -3,6 +3,10 @@
 # contract (bin/lib/tracker.sh, BH-4075). Functions trk_board_*, context
 # TRK_BOARD_BASE / TRK_BOARD_TOKEN / TRK_BOARD_TOKEN_VAR. The routes are the
 # ones docs/BOARD-API-CONTRACT.md documents, under the project's own base.
+# TRK_BOARD_MAX_TIME (optional, BH-10072) is curl's --max-time in seconds for
+# every call; unset, empty or not a positive integer means 30. It is context,
+# not a knob: the caller passes its own knob through it (bin/lib/flow-agent/
+# collect.sh passes the settings row flow_agent.board_timeout_s).
 #
 # Sourced, never executed: no `set -e`, no `exit`, nothing at source time.
 #
@@ -18,9 +22,10 @@
 # sent, and the answer is empty with rc 0. Otherwise the answer is on stdout and
 # a curl failure (including HTTP >= 400, `-f`) is the rc.
 _trk_board_curl() {
-  local method="$1" url="$2" data="${3:-}" idem="${4:-}" line
-  local args=(-sS -f --max-time 30 -H "User-Agent: curl/8")
-  line="curl -sS -f --max-time 30 -H \"Authorization: Bearer \$${TRK_BOARD_TOKEN_VAR:-TOKEN}\""
+  local method="$1" url="$2" data="${3:-}" idem="${4:-}" line mt="${TRK_BOARD_MAX_TIME:-}"
+  [[ "$mt" =~ ^[1-9][0-9]*$ ]] || mt=30   # 30 = the documented fallback (see the header)
+  local args=(-sS -f --max-time "$mt" -H "User-Agent: curl/8")
+  line="curl -sS -f --max-time $mt -H \"Authorization: Bearer \$${TRK_BOARD_TOKEN_VAR:-TOKEN}\""
   if [ "$method" = POST ]; then
     args+=(-X POST -H "Content-Type: application/json")
     line="$line -X POST -H 'Content-Type: application/json'"
@@ -73,6 +78,23 @@ _TRK_BOARD_LIST_KEYS='(.ticket // .) | {updatedAt: ((.lastActivityAt // .updated
 trk_board_ticket_raw() {
   _trk_board_ok "${1:-}" || return 1
   _trk_board_curl GET "$TRK_BOARD_BASE/tickets/$1"
+}
+
+# trk_board_boards_raw — GET <base>/boards, raw answer, curl's rc. rc 1 and no
+# call without a base. A read: sent under TRK_DRY too (BH-10072).
+trk_board_boards_raw() {
+  local TRK_DRY=0
+  [ -n "${TRK_BOARD_BASE:-}" ] || return 1
+  _trk_board_curl GET "$TRK_BOARD_BASE/boards"
+}
+
+# trk_board_tickets_raw <board-id> — GET <base>/boards/<id>/tickets, raw answer,
+# curl's rc. rc 1 and no call when the id is not one path segment. A read: sent
+# under TRK_DRY too (BH-10072).
+trk_board_tickets_raw() {
+  local TRK_DRY=0
+  _trk_board_ok "${1:-}" || return 1
+  _trk_board_curl GET "$TRK_BOARD_BASE/boards/$1/tickets"
 }
 
 trk_board_list() {
