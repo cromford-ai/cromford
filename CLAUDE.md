@@ -121,9 +121,11 @@ A build runs the ranked selection for its diff before it pushes, bounded:
 bin/test-impact-gate.sh --base origin/main --table /tmp/gate.md
 ```
 
-It ranks the selection by why each suite was picked (self > reads > always >
+It ranks the selection by why each suite was picked (self > topred > reads > always >
 named > source > learned > closure), shortest suite first inside a tier by the wall time
-this box last recorded for it. It runs that list until it hits its cap or its
+this box last recorded for it. `topred` (BH-9583) is the suites that turned the
+most builds of this repo GATE_RED lately, in ranking order; look for one
+`topred:` line (`docs/gates/builder-topred.md`). It runs that list until it hits its cap or its
 time budget, both settings rows on the `fly-pool` lane
 (`test_impact_gate_cap`, default 80; `test_impact_gate_budget_s`, default
 450 s, BH-1554). Everything past either bound is named as left to CI. It is NOT every

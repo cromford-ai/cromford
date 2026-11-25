@@ -33,9 +33,10 @@
 # to ~500 suites, and 80 of them took 820 s serially on an idle test host (the
 # #1541 review). So the gate is bounded twice, strongest reason first:
 #
-#   self > reads = regression > always > named > source > learned > closure
+#   self > topred > reads = regression > always > named > source > learned > closure
 #
-# self is the diff's own suites; reads is a suite that greps, diffs or counts
+# self is the diff's own suites; topred is the suites that turned the most
+# builds of this repo GATE_RED lately (BH-9583, see TOPRED below); reads is a suite that greps, diffs or counts
 # over the changed file; always is the whole-tree ratchets (the gh-rest line
 # ceiling is one); named is a suite naming a function the changed file defines.
 # `always` ranks above `named` because named is the noisier kind: every function
@@ -392,17 +393,84 @@ if [ -n "$ALSO_IN" ]; then
 fi
 [ -s "$TMP/why" ] || [ -s "$TMP/also.keep" ] || die2 "the selection came back empty (${REASON:-no reason given})"
 
+# >>> topred tier (BH-9583)
+# TOPRED. The suites that turned the most builds of this repo GATE_RED in the
+# last D days (GET /api/gate-red/top, worker/jobs/src/routes/gate-red-rank.js,
+# through the jobs client's gate-red-top verb) join the selection as tier
+# `topred`, rank 1, right after self. They sit inside the cap and the budget
+# like any ranked suite, and suite reuse sees them as ordinary run-list suites.
+# Fail-open: the first check that fails prints ONE `topred: off (<why>)` line
+# and the gate runs exactly as it does without the tier. Knobs (settings rows):
+# builder_gate.topred.enabled (no row = 1; only 0 or 1), builder_gate.topred_n
+# (no row = 5) and builder_gate.topred_window_days (no row = 14). Under
+# HARNESS_TEST_SANDBOX=1 the only client is TEST_IMPACT_GATE_JOBS_CLIENT, so a
+# test never calls the real jobs API. Note: docs/gates/builder-topred.md.
+: > "$TMP/topred.order"
+topred_tier() {
+  local jc="" v rc n days repo ans s c i=0 kept=""
+  [ "$RUNNER" = plan ] && { echo "topred: off (runner plan)"; return 0; }
+  if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ]; then
+    jc="${TEST_IMPACT_GATE_JOBS_CLIENT:-}"
+    [ -n "$jc" ] || { echo "topred: off (test sandbox, no fake client)"; return 0; }
+  elif [ -x "$H/bin/jobs-client.sh" ]; then jc="$H/bin/jobs-client.sh"
+  elif [ -x "$ROOT/bin/jobs-client.sh" ]; then jc="$ROOT/bin/jobs-client.sh"
+  fi
+  [ -n "$jc" ] && [ -x "$jc" ] || { echo "topred: off (no jobs client)"; return 0; }
+  command -v jq > /dev/null 2>&1 || { echo "topred: off (no jq)"; return 0; }
+  # builder_gate.topred.enabled: no row (rc 2) = 1, the fallback.
+  v=$("$jc" setting-get builder_gate.topred.enabled 2>/dev/null); rc=$?
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  case "$rc" in 0) ;; 2) v=1 ;; *) echo "topred: off (settings unreadable)"; return 0 ;; esac
+  case "$v" in 1) ;; 0) echo "topred: off (builder_gate.topred.enabled=0)"; return 0 ;;
+    *) echo "topred: off (bad builder_gate.topred.enabled)"; return 0 ;; esac
+  # builder_gate.topred_n (fallback 5) and builder_gate.topred_window_days (fallback 14).
+  n=$("$jc" setting-get builder_gate.topred_n 2>/dev/null); rc=$?
+  n=$(printf '%s' "$n" | tr -d '[:space:]')
+  case "$rc" in 0) ;; 2) n=5 ;; *) echo "topred: off (settings unreadable)"; return 0 ;; esac
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || { echo "topred: off (bad builder_gate.topred_n)"; return 0; }
+  days=$("$jc" setting-get builder_gate.topred_window_days 2>/dev/null); rc=$?
+  days=$(printf '%s' "$days" | tr -d '[:space:]')
+  case "$rc" in 0) ;; 2) days=14 ;; *) echo "topred: off (settings unreadable)"; return 0 ;; esac
+  [[ "$days" =~ ^[1-9][0-9]*$ ]] || { echo "topred: off (bad builder_gate.topred_window_days)"; return 0; }
+  repo="${SUITE_REUSE_REPO:-}"
+  if [ -z "$repo" ]; then
+    repo=$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -e 's#\.git/*$##' -e 's#/*$##' -e 's#:#/#g' \
+      | awk -F/ 'NF >= 2 && $(NF - 1) != "" && $NF != "" { print $(NF - 1) "/" $NF }')
+  fi
+  [ -n "$repo" ] || { echo "topred: off (no repo)"; return 0; }
+  ans=$("$jc" gate-red-top "$repo" "$n" "$days" 2>/dev/null); rc=$?
+  [ "$rc" -eq 0 ] || { echo "topred: off (read failed rc $rc)"; return 0; }
+  jq -e '.suites | type == "array"' <<< "$ans" > /dev/null 2>&1 || { echo "topred: off (bad answer)"; return 0; }
+  while IFS=$'\t' read -r s c; do
+    [ -n "$s" ] || continue
+    if ! [[ "$s" =~ ^tests/(mc/)?[A-Za-z0-9._-]+\.sh$ ]] || [[ "$s" == *..* ]]; then
+      echo "topred: dropped $s (not a tests/[mc/]*.sh path)"; continue
+    fi
+    [[ "$c" =~ ^[0-9]+$ ]] || c=0
+    [ -f "$ROOT/$s" ] || { echo "topred: dropped $s (not in this checkout)"; continue; }
+    grep -qxF -- "$s" <(cut -f1 "$TMP/topred.order") && continue
+    i=$((i + 1))
+    printf '%s\ttopred\t%s GATE_RED build(s) in %sd\n' "$s" "$c" "$days" >> "$TMP/why"
+    printf '%s\t%s\n' "$s" "$i" >> "$TMP/topred.order"
+    kept="$kept${kept:+ }$s"
+  done < <(jq -r '.suites[]? | [(.suite // "" | tostring), (.count // 0 | tostring)] | @tsv' <<< "$ans" 2>/dev/null)
+  if [ "$i" -gt 0 ]; then echo "topred: $i suite(s) from the GATE_RED ranking (${days}d, top $n): $kept"
+  else echo "topred: 0 suites in the GATE_RED ranking (${days}d)"; fi
+}
+topred_tier
+# <<< topred tier (BH-9583)
+
 # ── rank and cap ────────────────────────────────────────────────────────────
 # One row per suite: its strongest reason's rank, then every reason it has,
 # strongest first — the table a reviewer reads leads with the pin.
 awk -F'\t' '
-  BEGIN { r["self"] = 0; r["reads"] = 1; r["regression"] = 1; r["always"] = 2; r["named"] = 3
-          r["source"] = 4; r["learned"] = 5; r["closure"] = 6; r["full"] = 7 }
-  { k = ($2 in r) ? r[$2] : 7
+  BEGIN { r["self"] = 0; r["topred"] = 1; r["reads"] = 2; r["regression"] = 2; r["always"] = 3; r["named"] = 4
+          r["source"] = 5; r["learned"] = 6; r["closure"] = 7; r["full"] = 8 }
+  { k = ($2 in r) ? r[$2] : 8
     if (!($1 in best) || k < best[$1]) best[$1] = k
     w[$1, k] = w[$1, k] (w[$1, k] == "" ? "" : "; ") $2 " " $3 }
   END { for (s in best) { out = ""
-          for (k = 0; k <= 7; k++) if ((s, k) in w) out = out (out == "" ? "" : "; ") w[s, k]
+          for (k = 0; k <= 8; k++) if ((s, k) in w) out = out (out == "" ? "" : "; ") w[s, k]
           print best[s] "\t" s "\t" out } }
 ' "$TMP/why" > "$TMP/ranked.raw"
 
@@ -412,11 +480,14 @@ awk -F'\t' '
 # dropped again straight after the sort: every reader downstream sees the same
 # three fields it always did.
 DURATIONS_FILE="${TEST_IMPACT_DURATIONS_FILE:-${HARNESS_STATE_DIR:-${HARNESS:-/root/harness}/state}/test-impact-durations.tsv}"
-awk -F'\t' -v df="$DURATIONS_FILE" '
+# Inside the topred tier (rank 1) the GATE_RED ranking order wins over the
+# duration hint, so the cap keeps the suite that turned the most builds red.
+awk -F'\t' -v df="$DURATIONS_FILE" -v tf="$TMP/topred.order" '
   BEGIN { while ((getline line < df) > 0) {
             n = split(line, f, "\t")
-            if (n >= 2 && f[2] ~ /^[0-9]+$/) d[f[1]] = f[2] + 0 } }
-  { print $1 "\t" (($2 in d) ? d[$2] : 999999) "\t" $2 "\t" $3 }
+            if (n >= 2 && f[2] ~ /^[0-9]+$/) d[f[1]] = f[2] + 0 }
+          while ((getline line < tf) > 0) { n = split(line, f, "\t"); if (n >= 2) o[f[1]] = f[2] + 0 } }
+  { print $1 "\t" (($1 == 1 && ($2 in o)) ? o[$2] : (($2 in d) ? d[$2] : 999999)) "\t" $2 "\t" $3 }
 ' "$TMP/ranked.raw" \
   | LC_ALL=C sort -t"$(printf '\t')" -k1,1n -k2,2n -k3,3 \
   | cut -f1,3,4 > "$TMP/ranked"
@@ -798,7 +869,7 @@ _now=$(date +%s)
 DEADLINE=$(( _now + BUDGET - FM_PREP_S ))
 [ "$DEADLINE" -gt "$_now" ] || DEADLINE=$(( _now + 1 ))
 # The segments: one on HEAD, or (fresh main on) A on HEAD — the --also, fast
-# and nightly tiers, self and reads — then the fresh list on the merge, then the
+# and nightly tiers, self, topred and reads (ranks 0-2) — then the fresh list on the merge, then the
 # rest on HEAD. So the pins still run first, and the whole-repo suites keep
 # their place above named, source, learned and closure.
 if [ "$FM" = 1 ]; then
@@ -810,7 +881,7 @@ if [ "$FM" = 1 ]; then
     { n++ }
     !($2 in keep) { next }
     ($2 in fs) { print $2 > fr; next }
-    (n <= P || $1 <= 1) { print $2 > a; next }
+    (n <= P || $1 <= 2) { print $2 > a; next }
     { print $2 > b }' "$TMP/fm.suites" "$TMP/run.list" "$TMP/run.ranked"
   printf 'head\t%s\nfresh\t%s\nhead\t%s\n' "$TMP/seg.a" "$TMP/seg.fresh" "$TMP/seg.b" > "$TMP/segs"
 else

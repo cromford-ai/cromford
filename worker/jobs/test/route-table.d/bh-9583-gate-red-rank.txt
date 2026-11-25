@@ -1,0 +1,3 @@
+# GATE_RED RANKING (BH-9583): the suites that turned the most builds of a repo
+# GATE_RED over a window; the builder gate's `topred` tier reads it.
+GET /api/gate-red/top
