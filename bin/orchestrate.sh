@@ -555,7 +555,18 @@ $(archie_repo_activity_block 2>/dev/null | tail -n +2)
 
 "
   fi
-  printf 'You are ARCHIE, the hub orchestrator (v2, fresh-context turns), answering the operator on %s. Your working memory follows; the full turn contract is in /root/orchestrator/CLAUDE.md — including: update STATE.md before your final reply.%s Your reply is signed Archie for you; do not sign it yourself.\n\n%sSELF-IMPROVEMENT (up10) WORK NEVER RUNS ON THIS BOX. Launch it with /root/harness/bin/up10-lane.sh <slug> <brief-file>, which files the ai-build issue and starts the build over ssh on the box that owns cromford. Never git worktree add here, never run agent-call.sh or run-build.sh here — they refuse on the hub since BH-393.\n\nREAD FILES CAPPED. Every file you open, open with a cap: `tail -c 20000` for logs and rolling files, never `cat`. NEVER read /root/orchestrator/conversation-log.md whole — it is ~400KB and rolling, and its rendered tail is already below. A whole-file read becomes a 170-216KB tool result that then rides in the context of every remaining call this turn, which is where this account'"'"'s bill actually comes from. If a capped read genuinely is not enough, say so rather than reading the whole thing.\n\n=== STATE.md (working memory) ===\n%s\n\n%s%s%s=== RECENT CONVERSATION (most recent last) ===\n%s\n\n=== OPERATOR'"'"'S MESSAGE, ANSWER THIS ===\n%s' "$via" "$turnnote" "$soul" "$state" "$facts" "$inflight" "$repoact" "$hist" "$TEXT"
+  # STAFF METRICS (BH-9422): every staff agent's lever metric now vs the
+  # window, target, level, actions and lever precision, from GET
+  # /api/staff/levers/scoreboard (bin/lib/staff-scoreboard.sh). One read, the
+  # ARCHIE_STAFF_METRICS_TIMEOUT_S cap, no retry. An absent lib drops only the
+  # section, never the turn.
+  local staffm=""
+  if [ -r "$HARNESS/bin/lib/staff-scoreboard.sh" ] && . "$HARNESS/bin/lib/staff-scoreboard.sh" 2>/dev/null; then
+    staffm="$(archie_staff_metrics_block 2>/dev/null)
+
+"
+  fi
+  printf 'You are ARCHIE, the hub orchestrator (v2, fresh-context turns), answering the operator on %s. Your working memory follows; the full turn contract is in /root/orchestrator/CLAUDE.md — including: update STATE.md before your final reply.%s Your reply is signed Archie for you; do not sign it yourself.\n\n%sSELF-IMPROVEMENT (up10) WORK NEVER RUNS ON THIS BOX. Launch it with /root/harness/bin/up10-lane.sh <slug> <brief-file>, which files the ai-build issue and starts the build over ssh on the box that owns cromford. Never git worktree add here, never run agent-call.sh or run-build.sh here — they refuse on the hub since BH-393.\n\nREAD FILES CAPPED. Every file you open, open with a cap: `tail -c 20000` for logs and rolling files, never `cat`. NEVER read /root/orchestrator/conversation-log.md whole — it is ~400KB and rolling, and its rendered tail is already below. A whole-file read becomes a 170-216KB tool result that then rides in the context of every remaining call this turn, which is where this account'"'"'s bill actually comes from. If a capped read genuinely is not enough, say so rather than reading the whole thing.\n\n=== STATE.md (working memory) ===\n%s\n\n%s%s%s%s=== RECENT CONVERSATION (most recent last) ===\n%s\n\n=== OPERATOR'"'"'S MESSAGE, ANSWER THIS ===\n%s' "$via" "$turnnote" "$soul" "$state" "$facts" "$inflight" "$repoact" "$staffm" "$hist" "$TEXT"
 }
 # FRESH IS THE DEFAULT (2026-08-24). It used to require flags/orchestrator-v2 to
 # be PRESENT, with "rm the flag to fall back to -c continuation" — so the

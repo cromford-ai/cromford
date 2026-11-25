@@ -41,6 +41,7 @@ const autonomy = (agent) => ({
 });
 const chat = (agent) => ({ agent, messages: [], next: null, stopped: false, stopped_by: null, as_of: '2026-10-16T06:00:00Z' });
 const win = (days) => ({ days, source: 'settings', merged: 0, rejected: 0, noise: 0, total: 0, agree: 0, overrule: 0, precision: null, noise_rate: null });
+const scorecard = (agent) => ({ ok: true, agent, days: 7, metric: null, target: null, level: 'observe', metric_now: null, metric_then: null, actions: 0, dry_runs: 0, settled: 0, moved: 0, precision: null });
 const learning = (agent) => ({
   agent: { name: agent, autonomy: 'automation', cap: 'augmentation', status: 'active' },
   windows: [win(7), win(30)], promotion: null, decisions: [], decisions_more: false,
@@ -107,6 +108,9 @@ async function mountRoute(path) {
     else if (p === '/api/coord/staff/chat' && STAFF.has(agent)) body = chat(agent);
     // The BH-6825 learning view (on main since #7034) reads a staff agent's precision.
     else if (p === '/api/coord/staff/learning' && STAFF.has(agent)) body = learning(agent);
+    // The BH-9422 METRIC section reads a staff agent's lever scorecard (404 for
+    // archie, as the worker answers: Archie is not on staff_agents).
+    else if (p === '/api/coord/staff/levers/scorecard' && STAFF.has(agent)) body = scorecard(agent);
     else { status = 404; body = { error: 'unknown endpoint' }; }
     calls.push({ url: u, status });
     return { ok: status < 300, status, text: async () => JSON.stringify(body) };

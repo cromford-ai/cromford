@@ -1,0 +1,4 @@
+# STAFF SCOREBOARD (BH-9422): every staff agent's lever scorecard in one read,
+# for the weekly overlook report, Archie's briefing and the /staff METRICS
+# section. No earlier route matches this path.
+GET /api/staff/levers/scoreboard

@@ -1,0 +1,13 @@
+{
+  "env": "ARCHIE_STAFF_METRICS_TIMEOUT_S",
+  "read_in": "bin/lib/staff-scoreboard.sh",
+  "type": "int",
+  "default": 5,
+  "min": 1,
+  "max": 30,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "note": "BH-9422. The timeout of the one GET /api/staff/levers/scoreboard read for the `=== STAFF METRICS ===` section of Archie's turn briefing (archie_staff_metrics_block), no retry, so a down worker adds at most this many seconds to a turn. Code fallback 5; outside 1..30 is the default."
+}

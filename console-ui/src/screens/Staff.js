@@ -28,6 +28,8 @@ import { AgentAutonomy } from './staff/agent-autonomy.js';
 import { activityRows, mergePages, heartbeatText, tickHref } from '../lib/staff-activity.js';
 import { AgentChat } from './staff/agent-chat.js';
 import { AgentLearning } from './staff/agent-learning.js';
+import { StaffMetrics, AgentMetric } from './staff/staff-metrics.js';
+import { metricAgentOf } from '../lib/staff-scores.js';
 import { spendCell, spendFacts } from '../lib/staff-spend.js';
 
 const loadRoster = () => api.staffRoster();
@@ -88,7 +90,8 @@ export function StaffScreen() {
       onConfirm=${onConfirm}
       onCancel=${() => { if (!inFlight.current) setEdit(null); }}/>` : null;
 
-  return html`<${StaffView} roster=${roster} flags=${flags} onKill=${open} busy=${pending} note=${note} dialog=${dialog}/>`;
+  return html`<${StaffView} roster=${roster} flags=${flags} onKill=${open} busy=${pending} note=${note} dialog=${dialog}
+    metrics=${html`<${StaffMetrics}/>`}/>`;
 }
 
 // The reason lives in the form's own state and is written through to the
@@ -176,7 +179,9 @@ const LEGEND = [
   { term: 'ARCHIE', text: 'the Overlooker; lane-off-archie stops it, and STOP ALL STAFF does not' }
 ];
 
-export function StaffView({ roster, flags, onKill, busy = false, note = null, dialog = null }) {
+// metrics is the METRICS section the screen passes in (BH-9422); without it
+// the page is the roster alone.
+export function StaffView({ roster, flags, onKill, busy = false, note = null, dialog = null, metrics = null }) {
   const res = rosterRows(roster && roster.data);
   const flagsData = flags && flags.data;
   const allState = killState(flagsData, KILL_ALL);
@@ -214,6 +219,7 @@ export function StaffView({ roster, flags, onKill, busy = false, note = null, di
         ${body}
         <${Legend} items=${LEGEND}/>
       <//>
+      ${metrics}
     </div>`;
 }
 
@@ -264,9 +270,13 @@ export function StaffAgentScreen({ agent }) {
   // A write on this page (a promotion decide, BH-6825) re-reads the roster,
   // so the facts list (AUTONOMY) shows the level the write left.
   const isArchie = String(agent || '').trim().toLowerCase() === ARCHIE;
+  // BH-9422: the METRIC section, for a staff agent only (the scorecard answers
+  // 404 for archie).
+  const metricAgent = metricAgentOf(agent);
   return html`<${AgentDetailView} agent=${agent} roster=${roster} findings=${findings} activity=${activity}
     older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}
     autonomySlot=${isArchie ? null : html`<${AgentAutonomy} agent=${agent}/>`}
+    metricSlot=${metricAgent ? html`<${AgentMetric} agent=${metricAgent}/>` : null}
     onAgentChanged=${roster.reload}/>`;
 }
 
@@ -354,8 +364,9 @@ function lastBeat(activity) {
 const NoView = () => null;
 
 // The agent detail page. autonomySlot is the AUTONOMY section the screen
-// passes in (BH-6824); without it the spot is empty.
-export function AgentDetailView({ agent, roster, findings, activity, older = null, onOlder = null, olderBusy = false, olderError = null, autonomySlot = null, onAgentChanged = null }) {
+// passes in (BH-6824); without it the spot is empty. metricSlot is the METRIC
+// section (BH-9422), the same way.
+export function AgentDetailView({ agent, roster, findings, activity, older = null, onOlder = null, olderBusy = false, olderError = null, autonomySlot = null, metricSlot = null, onAgentChanged = null }) {
   const rr = rosterRows(roster && roster.data);
   const row = rr && rr.rows.find((a) => a.name === String(agent || '').trim().toLowerCase());
   const res = findingRows(findings && findings.data);
@@ -388,6 +399,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
         <dt key="t-beat">LAST HEARTBEAT</dt><dd key="d-beat">${lastBeat(activity)}</dd>
         ${row ? spendFacts(row, rr.sources).map(([k, v]) => html`<dt key=${`t-${k}`}>${k}</dt><dd key=${`d-${k}`}>${v}</dd>`) : null}
       </dl>
+      ${metricSlot ? html`<${Section} title="METRIC" note="the agent's lever scorecard">${metricSlot}<//>` : null}
       <${AgentChat} agent=${name} row=${row || null}/>
       ${autonomySlot ? html`<${Section} title="AUTONOMY">${autonomySlot}<//>` : null}
       <${Section} title="ACTIVITY" note="ticks, turns, findings, outcomes and decisions, newest first">

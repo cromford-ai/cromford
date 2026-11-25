@@ -53,6 +53,15 @@
 #      puts it `sent`, rc 1 leaves `pending` for the next run. A ledger that
 #      cannot be read sends nothing. Report files older than 84 days are deleted
 #      on each weekly run (one log line names the count).
+#      METRIC LINES (BH-9422): one GET /api/staff/levers/scoreboard per weekly
+#      run (bin/lib/staff-scoreboard.sh), before the ledger write. Each agent
+#      line is followed by its lever metric line (staff_scoreboard_line):
+#          metric: <metric> now <v> (<days>d ago <v>), target <t>, level <l>; actions <n>, moved <m> of <s> settled, precision <p>%
+#      The window is the settings row staff.scorecard_days (7). That precision
+#      is lever precision (moved / settled lever actions), not the issue
+#      precision above. A failed read holds nothing: the report gets ONE line
+#      `staff metrics unreadable (<reason>)` under the unattributed spend line
+#      and no metric line.
 #
 # OFF: ARCHIE_OVERLOOK_ENABLED=0, flags/lane-off-archie-overlook,
 # bin/harness-ctl.sh off archie-overlook. A paused staff agent resumes only
@@ -80,6 +89,7 @@ HENV=$(harness_env_dir "$H")
   . "$SELF/lib/archie-wake.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest-list.sh" 2>/dev/null || true
+  . "$SELF/lib/staff-scoreboard.sh" 2>/dev/null || true
 }
 # The suite's seam. Sandbox only, and settable:false in the registry.
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [ -n "${ARCHIE_OVERLOOK_FIXTURE:-}" ]; then
@@ -246,7 +256,7 @@ fi
 
 # ═════ weekly report ═════════════════════════════════════════════════════════
 weekly() {
-  local wk from from_iso st rc n acc s p spend un line report
+  local wk from from_iso st rc n acc s p spend un line report sbwhy="" sbok=0
   [ "$(date -u -d "@$NOW" +%u)" = "$DOW" ] || return 0
   wk=$(date -u -d "@$NOW" +%G-W%V)
   st=$(job_ledger_get archie_overlook "weekly-$wk" 2>/dev/null); rc=$?
@@ -260,6 +270,13 @@ weekly() {
   awk -F, -v f="$from_iso" 'NR > 1 && $1 >= f && ($4 == "staff-tick" || $4 ~ /^staff\./) { s[$4] += $13 }
     END { for (k in s) printf "%s\t%.2f\n", k, s[k] }' "$H/logs/cost.csv" > "$TMPD/spend" 2>/dev/null || : > "$TMPD/spend"
   un=$(awk -F'\t' '$1 == "staff-tick" { print $2 }' "$TMPD/spend"); un=${un:-0.00}
+  # BH-9422: every agent's lever scorecard, one read for the whole report.
+  if command -v staff_scoreboard_get >/dev/null 2>&1; then
+    sbwhy=$(staff_scoreboard_get "$TMPD/scoreboard.json") && sbok=1
+  else
+    sbwhy="no-scoreboard-lib"
+  fi
+  [ "$sbok" = 1 ] || log "weekly $wk: staff scoreboard unreadable ($sbwhy); the report goes without metric lines"
   : > "$TMPD/lines"
   while IFS=$'\t' read -r n acc; do
     s=$(acted_lines "$n" "$from" "$((NOW + 1))" | jq -cRn "$SUMMARY_JQ")
@@ -281,10 +298,12 @@ weekly() {
     spend=$(awk -F'\t' -v k="staff.$n" '$1 == k { print $2 }' "$TMPD/spend"); spend=${spend:-0.00}
     printf '%s\t- %s: filed %s, digested %s, %s, spend $%s\n' "$acc" "$n" "$(jq -r .filed <<<"$s")" \
       "$(jq -r .digested <<<"$s")" "$p" "$spend" >> "$TMPD/lines"
+    [ "$sbok" = 1 ] && printf '%s\t  metric: %s\n' "$acc" "$(staff_scoreboard_line "$TMPD/scoreboard.json" "$n")" >> "$TMPD/lines"
   done < "$TMPD/names"
   report=$({
     printf 'Staff weekly report %s (7 days to %s).\n' "$wk" "$DAY"
     printf 'unattributed staff-tick spend $%s\n' "$un"
+    [ "$sbok" = 1 ] || printf 'staff metrics unreadable (%s)\n' "${sbwhy:-unknown}"
     while IFS= read -r acc; do
       printf '\nOwner: %s\n' "$acc"
       awk -F'\t' -v a="$acc" '$1 == a { sub(/^[^\t]*\t/, ""); print }' "$TMPD/lines"

@@ -23,6 +23,8 @@
 //   sample at or before now - days (metric_then), and over the window: actions
 //   (not dry run), dry_runs, settled, moved and precision = moved / settled
 //   (null when 0 settled, never 0). The three reads run in parallel.
+//   The math is the exported scorecardOf and the days rule daysOf (BH-9422),
+//   which GET /api/staff/levers/scoreboard (staff-scoreboard.js) also runs.
 // Note: docs/notes/2026-11-06-BH-9187-staff-contract.md.
 
 import { json, d1Guarded } from "../lib/http.js";
@@ -100,6 +102,41 @@ const settleHours = (byKey) => {
   if (/^\d+(\.\d+)?$/.test(v) && Number(v) > 0) return { hours: Number(v), fallback: false };
   return { hours: SETTLE_HOURS_DEFAULT, fallback: true };
 };
+
+// THE days rule of every scorecard read (this route and the scoreboard,
+// staff-scoreboard.js). dq is the raw days= text (digits, already checked) or
+// null. Absent: the row staff.scorecard_days capped by staff.scorecard_days_max.
+// Given: must be 1..staff.scorecard_days_max. Answers {days} or {error:"days"}.
+export function daysOf(byKey, dq) {
+  const daysMax = intRow(byKey, "staff.scorecard_days_max", DAYS_MAX);
+  const days = dq !== null ? Number(dq) : Math.min(intRow(byKey, "staff.scorecard_days", DAYS_DEFAULT), daysMax);
+  if (days < 1 || days > daysMax) return { error: "days" };
+  return { days };
+}
+
+// THE scorecard math of one roster agent over `days`, shared by GET
+// /api/staff/levers/scorecard and GET /api/staff/levers/scoreboard (BH-9422) so
+// the two answers cannot drift. metricOverride is a checked metric= or null
+// (then the staff.<agent>.metric row). Three reads in parallel.
+export async function scorecardOf(env, name, byKey, days, t, metricOverride = null) {
+  const row = (k) => (byKey.has(k) ? String(byKey.get(k).value) : null);
+  const metric = metricOverride !== null ? metricOverride : metricOf(row(`staff.${name}.metric`));
+  const targetRaw = row(`staff.${name}.target`);
+  const target = targetRaw !== null && /^-?\d+(\.\d+)?$/.test(targetRaw.trim()) ? Number(targetRaw) : null;
+  const since = isoSeconds(Date.parse(t) - days * 86400e3);
+  const [now, then, c] = await Promise.all([
+    metric ? env.DB.prepare(SQL.now).bind(name, metric).first() : null,
+    metric ? env.DB.prepare(SQL.then).bind(name, metric, since).first() : null,
+    env.DB.prepare(SQL.counts).bind(name, since).first(),
+  ]);
+  const n = Number(c.n), dryRuns = Number(c.dry_runs), settled = Number(c.settled), moved = Number(c.moved);
+  return {
+    agent: name, days, metric: metric || null, target, level: levelOf(row(`staff.${name}.level`)),
+    metric_now: sampleOut(now), metric_then: sampleOut(then),
+    actions: n - dryRuns, dry_runs: dryRuns, settled, moved,
+    precision: settled === 0 ? null : moved / settled,
+  };
+}
 
 export const routes = [
   // ── POST /api/staff/levers/actions — one lever action, idempotent per key ──
@@ -192,26 +229,9 @@ export const routes = [
       return d1Guarded("staff_lever_actions", async () => {
         const [agent, { byKey }] = await Promise.all([onRoster(env, name), settingsRows(env)]);
         if (!agent) return json(404, { error: "agent not found" });
-        const daysMax = intRow(byKey, "staff.scorecard_days_max", DAYS_MAX);
-        const days = dq !== null ? Number(dq) : Math.min(intRow(byKey, "staff.scorecard_days", DAYS_DEFAULT), daysMax);
-        if (days < 1 || days > daysMax) return bad("days");
-        const row = (k) => (byKey.has(k) ? String(byKey.get(k).value) : null);
-        const metric = mq !== null ? mq.trim() : metricOf(row(`staff.${name}.metric`));
-        const targetRaw = row(`staff.${name}.target`);
-        const target = targetRaw !== null && /^-?\d+(\.\d+)?$/.test(targetRaw.trim()) ? Number(targetRaw) : null;
-        const since = isoSeconds(Date.parse(t) - days * 86400e3);
-        const [now, then, c] = await Promise.all([
-          metric ? env.DB.prepare(SQL.now).bind(name, metric).first() : null,
-          metric ? env.DB.prepare(SQL.then).bind(name, metric, since).first() : null,
-          env.DB.prepare(SQL.counts).bind(name, since).first(),
-        ]);
-        const n = Number(c.n), dryRuns = Number(c.dry_runs), settled = Number(c.settled), moved = Number(c.moved);
-        return json(200, {
-          ok: true, agent: name, days, metric: metric || null, target, level: levelOf(row(`staff.${name}.level`)),
-          metric_now: sampleOut(now), metric_then: sampleOut(then),
-          actions: n - dryRuns, dry_runs: dryRuns, settled, moved,
-          precision: settled === 0 ? null : moved / settled,
-        });
+        const d = daysOf(byKey, dq);
+        if (d.error) return bad(d.error);
+        return json(200, { ok: true, ...(await scorecardOf(env, name, byKey, d.days, t, mq !== null ? mq.trim() : null)) });
       });
     },
   ],
