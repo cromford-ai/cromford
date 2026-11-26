@@ -1,0 +1,9 @@
+{
+  "kind": "building_stale",
+  "key": "fleet",
+  "status": "3",
+  "actor": "hub",
+  "detail": "{\"stale\":3,\"held\":2,\"candidates\":5,\"window_min\":60,\"mode\":\"observe\",\"at\":\"2026-11-20T18:00:00Z\",\"valid_until\":\"2026-11-20T18:30:00Z\"}",
+  "created_at": "2026-11-15T10:00:00Z",
+  "updated_at": "2026-11-20T18:00:00Z"
+}

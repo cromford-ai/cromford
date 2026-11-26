@@ -1,0 +1,11 @@
+{
+  "env": "STALE_REAPER_COUNT_TTL_MIN",
+  "read_in": "bin/stale-build-reaper.sh",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": "off",
+  "note": "BH-10119: after each complete tick the reaper writes its dead count (survivors minus reaped) to harness-jobs ledgers(kind=building_stale, key=fleet), with detail.valid_until = now + this many minutes. The kanban Pages function (console-ui/functions/_lib/stale-overlay.js) shows that count as building_stale while the row is valid, and falls back to the console worker's number, flagged, once it expires. 30 is 3 reaper ticks, so one missed tick does not drop the board back. 0 turns the publish off. A non-number falls back to 30."
+}

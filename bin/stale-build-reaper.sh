@@ -97,6 +97,7 @@ MINUTES=$(knob STALE_REAPER_MINUTES 60 60)                          # row STALE_
 MAX=$(knob STALE_REAPER_MAX 20 1)                                   # row STALE_REAPER_MAX, default 20
 HTTP_T=$(knob STALE_REAPER_HTTP_TIMEOUT_S 60 1)                     # row STALE_REAPER_HTTP_TIMEOUT_S, default 60
 PAGE=$(knob STALE_REAPER_PAGE 500 1)                                # row STALE_REAPER_PAGE, default 500 (worker cap)
+COUNT_TTL=$(knob STALE_REAPER_COUNT_TTL_MIN 30 0)                   # row STALE_REAPER_COUNT_TTL_MIN, default 30; 0 = do not publish (BH-10119)
 [ "$PAGE" -le 500 ] || { say "knob STALE_REAPER_PAGE=$PAGE is over the worker cap 500, using 500"; PAGE=500; }
 WIN_S=$((MINUTES * 60))
 HOURS=$((MINUTES / 60))
@@ -278,6 +279,29 @@ while IFS=$'\t' read -r BKEY PROJ TKEY STAGE UPD AGE_M; do
     REFUSED=$((REFUSED+1))
   fi
 done < "$SURV"
+
+# ---------- 5. publish the dead count (BH-10119) ----------
+# The kanban's `building_stale` reads this row (console-ui/functions/_lib/
+# stale-overlay.js) while now <= valid_until. Only a complete tick reaches
+# here: a refuse() exited above, so an unknown live set publishes nothing and
+# the old row expires. A reaped row has left the build stage; a DEFERRED or
+# REFUSED row still counts. A failed PUT logs one line and changes no rc.
+if [ "$COUNT_TTL" -eq 0 ]; then
+  say "count publish off (STALE_REAPER_COUNT_TTL_MIN=0)"
+else
+  NSURV=$(grep -c . "$SURV" || true)
+  LEFT=$(( ${NSURV:-0} - REAPED )); [ "$LEFT" -ge 0 ] || LEFT=0
+  AT=$(date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+  VALID_UNTIL=$(date -u -d "@$((NOW + COUNT_TTL * 60))" +%Y-%m-%dT%H:%M:%SZ)
+  DETAIL=$(jq -nc --argjson s "$LEFT" --argjson h "$HELD" --argjson c "$CAND" --argjson w "$MINUTES" \
+    --arg m "$MODE" --arg at "$AT" --arg vu "$VALID_UNTIL" \
+    '{stale:$s, held:$h, candidates:$c, window_min:$w, mode:$m, at:$at, valid_until:$vu}')
+  if job_ledger_put building_stale fleet "$LEFT" "$DETAIL" >/dev/null 2>&1; then
+    say "count published stale=$LEFT held=$HELD valid_until=$VALID_UNTIL"
+  else
+    say "count publish failed (jobs worker), the row expires at its valid_until"
+  fi
+fi
 
 [ "$REFUSED" -eq 0 ] || alert --id stale-build-reaper.refused \
   "[stale-build-reaper] the console refused $REFUSED build close(s) this tick — see logs/stale-build-reaper.log"

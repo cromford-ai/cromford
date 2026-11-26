@@ -54,6 +54,7 @@
 
 import { HOLD_LEDGER_KIND, holdFromLedger } from '../../../../src/lib/ticket-hold.js';
 import { openPrUrls, fetchCurrentVerdicts, overlayVerdicts } from '../../../_lib/verdict-overlay.js';
+import { fetchStaleCount, overlayStale } from '../../../_lib/stale-overlay.js';
 
 const WORKER = 'https://harness-console.operator.workers.dev';
 const JOBS = 'https://harness-jobs.operator.workers.dev';
@@ -99,6 +100,8 @@ export function isArchived(card, nowMs, maxAgeMin = ARCHIVE_AFTER_MIN) {
 // `dead_failed` column and its count are touched — every other column, the
 // counts beside them, `building_stale` and `snapshot_age_min` pass through
 // untouched, because this change is about one column's rot and nothing else.
+// (`building_stale` is overlaid later, in onRequest, from the reaper's ledger
+// row: functions/_lib/stale-overlay.js, BH-10119.)
 export function archiveDead(payload, { now = Date.now(), includeArchived = false, maxAgeMin = ARCHIVE_AFTER_MIN } = {}) {
   if (!payload || typeof payload !== 'object') return payload;
   const columns = payload.columns;
@@ -455,6 +458,8 @@ export async function onRequest(context) {
   // no read, and the payload is not touched.
   const prUrls = openPrUrls(payload);
   const currentP = prUrls.length ? fetchCurrentVerdicts(env, prUrls) : null;
+  // BH-10119: the detector's stale count, one PK read, started now, awaited last.
+  const staleP = fetchStaleCount(env);
   // archiveDead first, so `dead_archived` keeps its exact meaning.
   const archivedBody = archiveDead(payload, { now: Date.now(), includeArchived });
   const issues = await closedIssueKeys(env);
@@ -465,7 +470,8 @@ export async function onRequest(context) {
   // A closed issue's key gets no synthetic card. An unread closed set is null,
   // which closes nothing: the stage row still shows.
   const staged = surfaceStages(marked, await ticketStages(env), { closed: issues ? issues.closed : null, now: Date.now() });
-  const overlaid = currentP ? overlayVerdicts(staged, await currentP) : staged;
+  const verdicted = currentP ? overlayVerdicts(staged, await currentP) : staged;
+  const overlaid = overlayStale(verdicted, await staleP, { now: Date.now() });
   out.set('content-type', 'application/json');
   return new Response(JSON.stringify(overlaid), { status: 200, statusText: upstream.statusText, headers: out });
 }

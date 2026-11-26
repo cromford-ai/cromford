@@ -183,8 +183,10 @@ const baseline = async () => {
   // so a fixed anchor gives the same answer as the function's own real clock.
   const b = archiveDead(payload(DEAD), { now: Date.parse('2026-09-24T12:00:00Z'), includeArchived: false });
   // The hold read fails the same way, so it marks nothing and says so too,
-  // and so does the ticket_stage read (BH-6536).
-  return JSON.parse(JSON.stringify({ ...b, dead_closed_known: false, held_known: false, stage_known: false }));
+  // and so does the ticket_stage read (BH-6536), and so does the
+  // building_stale read (BH-10119: the console number stays, flagged).
+  return JSON.parse(JSON.stringify({ ...b, dead_closed_known: false, held_known: false, stage_known: false,
+    building_stale_source: 'console', building_stale_reason: 'unreadable' }));
 };
 
 test('5. fail open: no env makes exactly one fetch and hides nothing', () =>
