@@ -1,0 +1,10 @@
+# @hub-lanes
+
+# ── PR RECORD SLOW SAFETY SWEEP (BH-9939, BH-9926 wave 7) ───────────────────
+# bin/prr-sweep.sh tick — every 5 min. The line is a clock: a repo is swept
+# only when its last sweep is PRR_SWEEP_INTERVAL_MIN (60) minutes old. A sweep
+# compares the PR record with GitHub for the repo's open PRs, writes each
+# difference through the normal record write (one PRR_SWEEP_FIX line), and
+# renews the list sync stamp. It gates no other lane.
+# Off via flags/lane-off-prr-sweep. Log: logs/prr-sweep.log.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/prr-sweep.sh tick >/dev/null 2>&1

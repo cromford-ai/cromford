@@ -1,0 +1,277 @@
+# br_queue_enq <project> <key> — the enqueued_at stamp of the worker's row for
+# this key, if it has one and we can read it. rc 1 on no row / no reader /
+# blank stamp.
+br_queue_enq() {
+  local row enq
+  command -v queue_row >/dev/null 2>&1 || return 1
+  row=$(queue_row "$1" "$2" 2>/dev/null) || return 1
+  enq=$(printf '%s' "$row" | cut -f2)
+  [ -n "$enq" ] && [ "$enq" != "-" ] || return 1
+  printf '%s' "$enq"
+}
+
+# br_rebuild_inflight <project> <ticket-key> — is a rebuild already queued for
+# this ticket? rc 0 + prints the row when queued/claimed; rc 1 if not live
+# (done/failed/no row/box lane); rc 2 if the queue could not be read; rc 3 if
+# there is no usable key or this box has no queue_row reader.
+#
+# rc 2 IS DELIBERATELY BOTH "the queue is down" AND "the client answered with no
+# row" — bin/jobs-client.sh returns the same non-zero for an empty `.queue[0]`
+# as for an unreachable worker, so this lane genuinely cannot tell them apart.
+# Erring toward "unreadable" is the safe half: an outage that read as "no row"
+# would ABANDON a park whose build is still running. It costs nothing today
+# because POST /api/queue upserts on (project, ticket_key) and nothing deletes
+# build_queue rows, so a ledger at the cap always HAS a row to read.
+br_rebuild_inflight() {
+  local p="$1" tkey="$2" row st
+  [ -n "$tkey" ] && [ "$tkey" != "-" ] || return 3
+  br_pool_routed "$p" || return 1
+  command -v queue_row >/dev/null 2>&1 || return 3
+  row=$(queue_row "$p" "$tkey" 2>/dev/null) || return 2
+  st=$(printf '%s' "$row" | cut -f1)
+  case "$st" in
+    queued|claimed) printf '%s' "$row"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# br_job_for_enq <state-json> <enqueued-at> — the ledger id of the job this lane
+# enqueued at that stamp, or nothing when the ledger has never seen it (a triage
+# relaunch, a watchdog requeue: an EXTERNAL job, whose RESULT is still ours to
+# read but whose cost this lane did not buy).
+br_job_for_enq() {
+  [ -n "${2:-}" ] && [ "$2" != "-" ] || return 0
+  printf '%s' "${1:-}" | jq -r --arg e "$2" \
+    'first(.rebuild_jobs[]? | select((.enqueued_at // "") == $e) | (.id // empty)) // empty' 2>/dev/null
+  return 0
+}
+
+# BR_REBUILD_WAITING — set by br_rebuild_wait and by the two other holds in the
+# rebuild rungs (an unreadable queue at the cap, a duplicate answer that raced
+# the pre-check). A WAIT IS NOT A RUNG: br_one reads this after the dispatch and
+# returns 3, which keeps the conductor's park and costs no PER_TICK slot. It is
+# a variable rather than the rung's exit code because br_regen_rung dispatches
+# the displaced rebuild rung itself and returns its own rc, so a wait behind the
+# regenerate rung would otherwise be read as a rung that ran.
+BR_REBUILD_WAITING=0
+# DID THIS RUNG ACTUALLY BUY A POOL BUILD (BH-1457, review I2)? Set at the ONE
+# place an enqueue lands (br_rebuild_settle's rc-0 arm) and read by the per-tick
+# rebuild cap. The first cut counted the DISPATCHED rung instead, and both
+# rebuild rungs return 0 on paths that enqueue nothing — the merged guard, the
+# hold gate, a spent ticket cap that abandons, a refused close, a duplicate
+# race. Four abandons therefore exhausted BR_REBUILDS_PER_TICK and every genuine
+# rebuild that tick was turned away by a line that said "already bought 4 pool
+# build(s)", which was false.
+BR_REBUILD_BOUGHT=0
+# BR_XPR_PARKED (BH-4667) — set by br_xpr_parked when a terminal or a refused
+# close left an outsider's PR for its author. Nothing was closed, recorded or
+# bought, so br_one reads this after the dispatch and returns 3, exactly like a
+# wait: a parked outsider PR never spends a PER_TICK slot. A variable for the
+# same reason as BR_REBUILD_WAITING — the callers of the terminals mostly
+# return 0 over the terminal's own rc.
+BR_XPR_PARKED=0
+
+# br_rebuild_wait <project> <cap-key> <job-id> [external] [row]
+#   A rebuild is already in flight. Write the wait fields, log it, and — for an
+#   external job the ledger has never seen — record exactly one rebuild-fresh
+#   attempt so the cap later knows this ticket already consumed its one look and
+#   br_from_rebuilds consumes that build's RESULT when it ends.
+br_rebuild_wait() {
+  local p="$1" ck="$2" jobid="$3" external="${4:-}" row="${5:-}" st has qs qby qreq who
+  BR_REBUILD_WAITING=1
+  br_set_wait "$p" "$ck" "$jobid"
+  who=""
+  if [ -n "$row" ]; then
+    qs=$(printf '%s' "$row" | cut -f1); qby=$(printf '%s' "$row" | cut -f3)
+    qreq=$(printf '%s' "$row" | cut -f4)
+    who=", ${qs:-live} on ${qby:--}"
+    [ -n "$qreq" ] && [ "$qreq" != "-" ] && who="$who, requested by $qreq"
+  fi
+  say "$p/$ck: rebuild already in flight (job $jobid$who) — waiting"
+  [ "$external" = external ] || return 0
+  st=$(br_load "$p" "$ck")
+  has=$(printf '%s' "$st" | jq -r --arg i "$jobid" '[.attempts[]? | select((.detail // "") | contains("external job \($i)"))] | length' 2>/dev/null)
+  # A jq THAT COULD NOT ANSWER IS NOT "already recorded" (BH-947 review N1): an
+  # attempts list this jq chokes on printed nothing, and `[ "" != 0 ]` is true —
+  # which skipped the one attempt that lets br_from_rebuilds consume the build.
+  # Unreadable falls through and records; the dedupe above it is the same shape.
+  [ "${has:-0}" = 0 ] || return 0
+  br_record "$p" "$ck" rebuild-fresh "external-rebuild-wait" \
+    "a build of $ck is already running (external job $jobid, not enqueued by this lane) — waiting for its RESULT"
+}
+
+# br_enqueue_dup_race <project> <cap-key> <ticket-key>
+#   THE ENQUEUE ANSWERED `duplicate` THOUGH THE PRE-CHECK SAW NOTHING LIVE —
+#   somebody (a triage relaunch, a watchdog requeue) claimed the key between the
+#   two calls. Re-probe the queue so the hold names the REAL job id and the
+#   external attempt is recorded on THIS tick; that attempt is what later lets
+#   br_from_rebuilds consume that build's RESULT instead of starting another
+#   build on top of it.
+#
+#   `inflight_rc` is LOCAL AND ZEROED here on purpose (BH-947 review I3). The
+#   callers reach this arm only with a non-zero rc from their own pre-check, and
+#   `|| inflight_rc=$?` assigns ONLY when the probe fails — so re-using their
+#   variable made a SUCCESSFUL re-probe read as a failed one and the hold always
+#   fell through to the id-less `@duplicate-race` branch.
+#
+#   Always rc 3: a duplicate answer is a wait, never a rung that ran.
+br_enqueue_dup_race() {
+  local p="$1" ck="$2" tkey="$3" row enq jobid external inflight_rc=0
+  row=$(br_rebuild_inflight "$p" "$tkey" 2>/dev/null) || inflight_rc=$?
+  if [ "$inflight_rc" = 0 ]; then
+    # THE LEDGER IS KEYED ON enqueued_at, not on the id: the id this lane minted
+    # carries a ~rN suffix the worker's row has never seen, so matching on the
+    # whole string would read every one of our own builds as somebody else's.
+    enq=$(printf '%s' "$row" | cut -f2)
+    jobid=$(br_job_for_enq "$(br_load "$p" "$ck")" "$enq")
+    external=""; [ -n "$jobid" ] || { jobid="$tkey@${enq}"; external=external; }
+    br_rebuild_wait "$p" "$ck" "$jobid" "$external" "$row"
+    return 3
+  fi
+  # The queue could not be read back (an outage, or a box with no reader): hold
+  # anyway — the one thing we know is that a live build already covers this key.
+  # THE ATTEMPT IS STILL RECORDED, under the placeholder id (BH-947 review I2).
+  # Without it the row's last non-hold attempt is not `rebuild-fresh`, so
+  # br_from_rebuilds does not poll this ticket at all and the raced build's
+  # RESULT is never consumed: the next readable tick reads the row as `done`,
+  # finds the cap unspent and buys a second build on top of a finished one. The
+  # `has` dedupe in br_rebuild_wait keeps it to one attempt per episode, and
+  # br_from_rebuilds' queue-row fallback accepts a `done` row against this exact
+  # placeholder — the next tick that CAN read the row rewrites `wait_job` with
+  # the real id.
+  say "$p/$ck: duplicate enqueue race — holding (job id unknown)"
+  br_rebuild_wait "$p" "$ck" "$tkey@duplicate-race" external
+  return 3
+}
+
+REPOS="${REPOS_ROOT:-/root/repos}"
+LOG="$H/logs/blocked-resolver.log"
+ST="$H/state/blocked-resolver"
+NOTES="$H/state/build-notes"
+mkdir -p "$ST" "$NOTES" 2>/dev/null
+MAX_REBUILDS="${BR_MAX_REBUILDS:-3}"
+# THE ONE KNOB AN OPERATOR HAND-EDITS ON THE HUB, and until BH-1457 the only one
+# on this line with no numeric guard (STARVE_SECS, REBUILD_CAP and TICK_MAX all
+# have one). `BR_PER_TICK=abc` used to survive every comparison in the tick loop
+# — they are all `[ "$N" -ge "$PER_TICK" ]`, which is an error, not a crash —
+# until the arithmetic added by this ticket evaluated it, and `$(( PER_TICK + …))`
+# on a non-number EXITS THE SHELL under `set -u`: after the pre-pass had written
+# its retire events and flags, before any rung, with no tick line and no ALERTS
+# line to say a tick had died. A typo is a fallback and a log line, never that.
+#
+# 0 IS LEGAL HERE (the registry says "0 makes every tick a no-op"), so this is
+# not br_knob_num, which treats an explicit 0 as a typo. The bad value is kept
+# and said out loud below, where say() exists.
+PER_TICK="${BR_PER_TICK:-4}"
+PER_TICK_BAD=""
+case "$PER_TICK" in
+  ''|*[!0-9]*) PER_TICK_BAD="$PER_TICK"; PER_TICK=4 ;;
+esac
+# How long a project with candidates may go unlooked-at before ONE alert says so
+# (BH-980). A typo is never a page every ten minutes: a non-numeric value falls
+# back to the default, the same way br_per_tick_for treats a bad share.
+STARVE_SECS="${BR_STARVE_ALERT_SECS:-3600}"
+case "$STARVE_SECS" in ''|*[!0-9]*) STARVE_SECS=3600 ;; esac
+# HOW LONG A STORED FAMILY RULING MAY BE CARRIED (BH-1468). The reader is
+# bin/lib/br/opt/family.sh (#1471), which does not exist yet — the knob is
+# resolved HERE, in the lane, for two reasons: the lanes registry refuses a knob
+# whose lane script never names it (a knob nothing reads is a phantom), and the
+# console has to be able to explain the setting before the module lands. The
+# module reads the resolved value out of the environment it is sourced into, so
+# a typo is corrected once, here, rather than in every module that reads it.
+# 0 = a ruling never expires.
+BR_FAMILY_TTL_SECS="${BR_FAMILY_TTL_SECS:-0}"
+case "$BR_FAMILY_TTL_SECS" in ''|*[!0-9]*) BR_FAMILY_TTL_SECS=0 ;; esac
+# A RUNG BUDGET IS NOT A POOL-BUILD BUDGET (BH-1457). PER_TICK bounds RUNGS, and
+# the rebuild rung is the most expensive one on the board — plan + execute +
+# review, a whole pool machine. When BR_PER_TICK was raised from 4 to 50 on the
+# hub (2026-09-22) it silently became permission for 50 fresh pool builds inside
+# one ten-minute tick. This is the second bound: counted across the fleet, per
+# tick, and enforced at the dispatch in br_one rather than at discovery, because
+# only the dispatch knows which rung the ladder actually resolved to.
+#
+# THE DEFAULT IS TODAY'S DEFAULT RUNG BUDGET, deliberately. At BR_PER_TICK=4 a
+# tick could never buy more than four rebuilds anyway, so a fleet at defaults
+# behaves byte for byte as it did and this cap bites only where the budget was
+# raised. 0 means no rebuild rung fires at all; every other rung still runs.
+REBUILD_CAP="${BR_REBUILDS_PER_TICK:-4}"
+case "$REBUILD_CAP" in ''|*[!0-9]*) REBUILD_CAP=4 ;; esac
+# HOW LONG ONE TICK MAY GO ON STARTING RUNGS (BH-1457; the operator, 2026-09-22 15:03Z).
+# The 14:04Z hub tick ran 12 rungs and took 53 MINUTES, and every ten-minute
+# cron in between exited on "another tick is live" — so raising the rung budget
+# bought latency rather than throughput. Rungs are serial and cannot simply be
+# made concurrent (the reasons are at the tick loop), so the answer is a bound
+# on the TICK plus a rung budget that is carried forward rather than lost.
+#
+# IT CAN ONLY STOP THE TICK BETWEEN RUNGS. A fix round holds its machine for up
+# to BR_FIX_LANE_TIMEOUT (5400s) and is never interrupted; this decides whether
+# the NEXT rung starts. 1800 is three cron periods. 0 is no cap at all, which is
+# the pre-BH-1457 loop exactly.
+TICK_MAX="${BR_TICK_MAX_SECS:-1800}"
+case "$TICK_MAX" in ''|*[!0-9]*) TICK_MAX=1800 ;; esac
+# THE LADDER'S CAPS, one per rung and all counted on the TICKET (br_cap_key).
+# BR_LADDER=0 restores exactly the pre-2026-09-15 behaviour: every branch reason
+# goes straight to REBUILD FRESH and head-not-reapproved straight to a fix round
+# (read where it is decided, in br_action, so the extracted classifier answers
+# the same thing the lane does).
+MAX_MECHANICAL="${BR_MAX_MECHANICAL:-1}"
+MAX_FIXROUNDS="${BR_MAX_FIXROUNDS:-1}"
+# THE REGENERATE RUNG, rung 1b (BH-950.2). Read by br_regen_ladder and
+# br_regen_rung: a ci-red park whose mechanical rung is spent is offered ONE
+# more tokenless merge of origin/main (mc_rebase) before an agent fix round is
+# bought. mc_rebase regenerates the generated-files table on the way through
+# ONLY once #969 lands; on today's main it is a plain re-merge, so a park with
+# nothing to merge pays a clone and falls through to its ladder answer in the
+# same tick. The default stays 1 because the #968 contract pins it there
+# (tests/merge-conductor-lib.bh-968-test.sh); 0 restores the pre-BH-950 dispatch
+# exactly.
+#
+# WHAT BOUNDS WHAT, precisely — the two are not the same bound:
+#   br_regen_offered (head8 dedup) is what bounds mc_rebase CALLS: at most one
+#     per ticket per distinct head, whatever the counter says.
+#   BR_MAX_REGEN bounds LANDED regenerates per ticket — the regens counter is
+#     bumped only by an arm that actually pushed (rc 0/5 with a new head) or
+#     handed the branch to the pool (rc 6). A regen-noop, a conflict, a rejected
+#     lease and a setup failure spend nothing, by design: nothing was merged, so
+#     a later head deserves the free merge again.
+BR_REGEN_RUNG="${BR_REGEN_RUNG:-1}"
+# A registry knob since BH-1940 (lane_env_apply above sets it). The 1 below only
+# answers when lane-gate.sh or the registry could not run: a scratch tree.
+MAX_REGEN="${BR_MAX_REGEN:-}"
+case "$MAX_REGEN" in ''|*[!0-9]*) MAX_REGEN=1 ;; esac
+# THE SMALL SHAPE'S CAPS (BH-579). A conflict of at most
+# RESOLVER_SMALL_CONFLICT_LINES lines is worth a second agent round and is not
+# worth three rebuilds; everything unmeasured keeps the large shape above.
+# CONTESTED_PR_SCAN_MAX bounds what one hold creation may read: one PR list plus
+# at most that many cached file lists.
+MAX_FIXROUNDS_SMALL="${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}"
+MAX_REBUILDS_SMALL="${BR_MAX_REBUILDS_SMALL:-1}"
+SMALL_CONFLICT_LINES="${RESOLVER_SMALL_CONFLICT_LINES:-300}"
+CONTESTED_SCAN_MAX="${CONTESTED_PR_SCAN_MAX:-40}"
+# CONTESTED_TTL (21600 = 6h) is not read here: the contract stamps it into each
+# hold at write time (mc_contested_write) and br_contested_sweep reads the ttl
+# the hold itself carries, so a hold keeps the window it was written under.
+# How much of a failing job's log rides into the fix round's prompt, per run, and
+# how many failing runs are read. The log is the whole reason the fix round can
+# answer a red CI at all, and an unbounded tail is a context bill.
+CI_LOG_BYTES="${BR_CI_LOG_BYTES:-6000}"
+CI_LOG_RUNS="${BR_CI_LOG_RUNS:-3}"
+# The fix round runs the repo's own typecheck and unit suite in the FOREGROUND.
+# 90 minutes is the lane timeout the operator specified; the agent call inside it gets
+# less, so a hung model never eats the whole budget and leaves nothing for the
+# verification that decides whether the push is safe.
+FIX_LANE_TIMEOUT="${BR_FIX_LANE_TIMEOUT:-5400}"
+# The claimer's stale-claim margin (bin/fix-round-claim.sh). The hub reads it
+# only to page a claim older than FIX_LANE_TIMEOUT + this (br_fix_stale_claim).
+FIX_HOP_MARGIN="${BR_FIX_HOP_MARGIN:-300}"
+FIX_AGENT_TIMEOUT="${BR_FIX_AGENT_TIMEOUT:-3600}"
+# The verify block's own budget (BH-9906): the brvb_ fragment reads it.
+FIX_VERIFY_TIMEOUT="${BR_FIX_VERIFY_TIMEOUT:-2700}"
+ADJ_TIMEOUT="${BR_ADJ_TIMEOUT:-1200}"
+# The two models this lane runs are model_routes rows, asked PER PROJECT at the
+# call (BH-1510.1): build.execute.fallback for a fix round, build.review for an
+# adjudication. EXECUTE_MODEL / REVIEW_MODEL set in env still win, as they did
+# when the fallback was a literal here. See br_model.
+BR_EXECUTE_MODEL_ENV="${EXECUTE_MODEL:-}"
+BR_REVIEW_MODEL_ENV="${REVIEW_MODEL:-}"
+

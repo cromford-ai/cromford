@@ -1,0 +1,3 @@
+# PERIOD (BH-9304, BH-9120.0): the four mc.period.* knobs every period screen
+# reads for its default range and its limits. Bearer-gated (a ROUTES row).
+GET /api/period/knobs

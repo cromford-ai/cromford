@@ -1,0 +1,260 @@
+# REBUILD FRESH. The LAST rung for a branch park (rung 3) and the first and only
+# one for a park with no branch to fix — a dead pool machine, a malformed plan, a
+# BUILD_DEAD record. Close the stale PR, enqueue the same ticket against CURRENT
+# main. It ends most of these, and it is also the most expensive thing this lane
+# can buy, which is why the two cheaper rungs run first (br_ladder).
+br_rebuild_fresh() {
+  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" st n cap lim ck mst mrc row jobid enq external inflight_rc crc
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  if br_is_external "$p" "$ck" "$reason"; then
+    command -v br_xpr_terminal >/dev/null 2>&1 && { br_xpr_terminal "$@"; return $?; }
+    br_xpr_parked "$p/$rkey [$reason]: external PR — never closed or rebuilt; left for the author"; return 3
+  fi
+  # A MERGED PR IS NEVER REBUILT, from any branch into this rung — and neither is
+  # a PR whose state this tick could not read (#783): unknown is not "not merged".
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    mst=$(br_pr_state "$url"); mrc=$?
+    if [ "$mrc" = 75 ]; then
+      say "$p/$rkey [$reason]: the PR state is UNVERIFIABLE this tick — nothing closed, nothing enqueued, no counter spent, retried next tick"
+      return 0
+    fi
+    if [ "$mst" = merged ]; then
+      br_resolve_merged "$p" "$ck" "$reason" "$url" "$rec"
+      return 0
+    fi
+  fi
+  # DID A HUMAN SAY NO? Asked BEFORE the cap check on purpose: a held ticket
+  # gets neither a close nor an ABANDONED alert on the tick its ladder happens
+  # to run out.
+  br_hold_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" || return 0
+  # IS THE TICKET ALREADY DONE ON THE BOARD (BH-4438)? Same place, same reason.
+  br_board_done_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" || return 0
+  st=$(br_load "$p" "$ck"); n=$(br_num "$st" rebuilds)
+  n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" rebuild rebuilds)
+  # HOW MANY REBUILDS THIS TICKET IS WORTH is the shape's answer (BH-579): three
+  # for a large conflict, exactly one for a small one — a two-line disagreement
+  # that survived a rebuild will survive the next two.
+  lim=$(br_rebuild_cap "$st")
+  # HOW MANY IT HAS ALREADY BOUGHT is the LEDGER's answer (BH-947): the distinct
+  # job ids this lane enqueued, so a duplicate the worker deduped never spends a
+  # rung. The legacy `rebuilds` counter is the fallback for a row with no ledger.
+  cap=$(br_jobs_count "$st")
+  # THE CAP IS THE LARGER OF THE TWO COUNTERS, never just the ledger (BH-947
+  # review B1). `rebuilds` is bumped in exactly two places — br_rebuild_settle's
+  # rc-0 arm, beside br_job_add, and its self-capped nokey arm — so for a row
+  # born after this landed `rebuilds >= length(rebuild_jobs)` always holds and
+  # the max changes nothing. For a row parked BEFORE it (rebuilds:2, no ledger)
+  # the first post-merge enqueue writes a one-entry ledger, and reading the
+  # ledger alone would forget the two builds already bought: the ladder would
+  # buy three more, log `rebuild 4 of 3`, and the ABANDONED alert would say
+  # "rebuilt fresh 3 times" against a counter of 5.
+  case "$cap" in ''|null) cap=$n ;; *) [ "$cap" -ge "$n" ] 2>/dev/null || cap=$n ;; esac
+
+  # IS A REBUILD ALREADY IN FLIGHT? Asked BEFORE the cap check, the event and
+  # the PR close: a duplicate answer must not spend a rung or close anything.
+  row=$(br_rebuild_inflight "$p" "$tkey" 2>/dev/null) || inflight_rc=$?
+  inflight_rc=${inflight_rc:-0}
+  if [ "$inflight_rc" = 0 ]; then
+    # THE LEDGER IS KEYED ON enqueued_at, not on the id: the id this lane minted
+    # carries a ~rN suffix the worker's row has never seen, so matching on the
+    # whole string would read every one of our own builds as somebody else's.
+    enq=$(printf '%s' "$row" | cut -f2)
+    jobid=$(br_job_for_enq "$st" "$enq")
+    external=""; [ -n "$jobid" ] || { jobid="$tkey@${enq}"; external=external; }
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD wait for rebuild already in flight (job $jobid) — observe mode"
+      return 0
+    fi
+    br_rebuild_wait "$p" "$ck" "$jobid" "$external" "$row"
+    return 3
+  fi
+  if [ "$inflight_rc" = 2 ] && [ "$cap" -ge "$lim" ]; then
+    jobid=$(printf '%s' "$st" | jq -r '(.rebuild_jobs[-1].id // "unknown")' 2>/dev/null)
+    [ -n "$jobid" ] && [ "$jobid" != "null" ] || jobid="unknown"
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD hold at the rebuild cap — queue unreadable (last job $jobid) — observe mode"
+      return 0
+    fi
+    BR_REBUILD_WAITING=1
+    br_set_wait "$p" "$ck" "$jobid"
+    say "$p/$ck: cannot read the queue to tell whether job $jobid finished — holding, NOT abandoned"
+    return 3
+  fi
+  # MAY THIS OPEN PR BE THROWN AWAY AT ALL? (BH-1642.) Asked after the cheap
+  # answers above and before either close below — the supersede and the
+  # ABANDONED close at the cap both discard the PR. A decline spends nothing.
+  if [ "${mst:-}" = open ] && ! br_supersede_guard "$p" "$ck" "$rkey" "$reason" "$url"; then
+    return 0
+  fi
+  command -v brlad_rereview_gate >/dev/null 2>&1 && ! brlad_rereview_gate "$p" "$ck" "$rkey" "$reason" "$url" && return 3   # BH-9437: a re-review of a pushed fix is pending
+  if [ "$cap" -ge "$lim" ]; then
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD abandon — rebuilt fresh $cap times and the ladder is exhausted — observe mode"
+      return 0
+    fi
+    br_abandon "$p" "$ck" "$reason" "$url" "$rec" "rebuilt fresh $cap times and the ladder is exhausted$(br_jobs_why "$st")" "$tkey"
+    return 0
+  fi
+  command -v brlad_red_gate >/dev/null 2>&1 && ! brlad_red_gate "$p" "$ck" "$rkey" "$reason" "$url" && return 3   # BH-9437: the same red set as the PR before it
+  if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD rebuild fresh (rebuild $((n+1)) of $lim) — observe mode"; return 0; fi
+  if command -v br_head_gate >/dev/null 2>&1; then br_head_gate "$p" "$ck" "$reason" "$url" || return 0; fi
+  if command -v br_pm_release >/dev/null 2>&1; then br_pm_release "$p" "$rkey" "$reason" "$tkey" || return 0; fi   # BH-7836: a held ticket's rebuild must get a plan
+  # THE CLOSE COMES FIRST, AND IT HAS TO LAND (#783). A rebuild enqueued behind a PR that is still open
+  # is two builds of one ticket, so a close GitHub refused defers the whole rung: no event, no
+  # superseded marker, no enqueue, no counter. The park is re-offered next tick and tries the same close again.
+  crc=0
+  br_close_pr "$url" "Superseded by a fresh build against current main (blocked-resolver: $reason, rebuild $((n+1)) of $lim). This branch is left in place; the rebuild takes the next free name.$(br_close_facts "$p" "$ck" "$url")" || crc=$?
+  if [ "$crc" = 3 ]; then
+    br_xpr_parked "$p/$rkey [$reason]: $url is an external author's PR — parked for the author, nothing recorded"
+    return 3
+  fi
+  if [ "$crc" != 0 ]; then
+    say "$p/$rkey [$reason]: rebuild deferred — the stale PR could not be closed this tick, nothing enqueued and no counter spent"
+    return 0
+  fi
+  if [ -n "$(br_ladder_class "$reason")" ]; then
+    br_event resolver_rung "$p" "$ck" "$reason" "rung 3 rebuild-fresh (rebuild $((n+1)) of $lim)"
+  else
+    br_event resolver_rung "$p" "$ck" "$reason" "rebuild-fresh (rebuild $((n+1)) of $lim; this park has no branch to fix, so there is no ladder above it)"
+  fi
+  # The stale record is marked so no sweep re-handles it and this lane does not
+  # re-discover it as a candidate next tick. It is MARKED, never deleted: it is
+  # the evidence the ABANDONED alert points at.
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && { : > "$rec/.blocked-resolver-superseded"; touch "$rec/COMMENTED" 2>/dev/null; }
+  # THE PARKED PR AND RECORD GO ON THE TICKET BEFORE THE ENQUEUE (BH-488), not
+  # after it succeeds. Everything above this line is already irreversible — the
+  # PR is closed, the record is marked, the conductor row will be released — so
+  # if the enqueue then fails, these two fields are the ONLY way a later tick
+  # can find its way back to this ticket. Written first, they make the retry
+  # possible; written last, they were exactly what the failed path never got.
+  br_set_field "$p" "$ck" parked_url "${url:--}"
+  br_set_field "$p" "$ck" parked_rec "${rec:--}"
+  local erc=0
+  br_enqueue_fresh "$p" "$tkey" "$n" "$reason rebuild $((n+1)) of $lim" "$rec" "$rkey" "$url" || erc=$?
+  case "$erc" in
+    3) br_enqueue_dup_race "$p" "$ck" "$tkey"; return 3 ;;
+    *)
+      br_rebuild_settle "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" "$n" "$erc" \
+        "rebuild $((n+1)) of $lim" ;;
+  esac
+}
+
+# br_rebuild_settle <p> <ck> <rkey> <reason> <url> <rec> <tkey> <n> <erc> <label>
+#   WHAT AN ENQUEUE ANSWERED, READ THE SAME WAY BY BOTH RUNGS that make one
+#   (br_rebuild_fresh and br_rebuild_retry). Three answers, three meanings:
+#
+#   rc 0  it landed: the rebuild counter is spent, the failure counter is reset
+#         and the page marker removed. This is the ONLY arm that bumps
+#         `rebuilds` — a build is never stamped done without a queue row id
+#         behind it.
+#   rc 2  no ticket key: DETERMINISTIC, so it is a spent attempt and the cap
+#         ends the ladder (BH-530, project-5 #1634). Unchanged here.
+#   rc 3  never reaches here: a `duplicate` answer is a WAIT, not a settlement,
+#         and both rungs route it to br_enqueue_dup_race before calling this.
+#   rc 4  the board answered and this key is not on it (BH-1007): also
+#         DETERMINISTIC, but on its OWN counter (`board_misses`), because a
+#         ticket the board cannot name is a different thing to fix than a PR
+#         with no derivable key. Same cap, and the abandon pages with the key.
+#         The attempt is `rebuild-fresh-board-miss`, and it is re-offered by
+#         br_from_rebuilds exactly like `rebuild-fresh-failed` — those two are
+#         the retryable pair. The miss is only ever counted a second time
+#         because the retry rung re-runs the enqueue; without the re-offer the
+#         conductor's closed sweep buries the park after miss 1.
+#         IT IS 4 AND NOT 3 BECAUSE BH-947 TOOK 3 for the duplicate-enqueue
+#         race, which both rungs intercept before this function is reached. Two
+#         different answers on one code would have routed every board miss into
+#         br_enqueue_dup_race — a REBUILD_WAIT hold on a build that was never
+#         enqueued — and this arm would never have run.
+#
+#   rc 1  the enqueue could not be made THIS time — a jobs client that is down,
+#         a box that would not answer. No counter is spent, the attempt is
+#         recorded ONCE PER EPISODE (the hold-unreadable precedent: this lane
+#         re-offers every ten minutes, and 144 identical entries a day would
+#         bury the attempt list that the ABANDONED alert prints), and the
+#         failure counter climbs. AND IT ENDS (BH-1122): after
+#         BR_ENQUEUE_FAIL_MAX failures carrying the SAME reason the park is
+#         STALLED — one alert, and no rung spent on it until its row changes.
+#         "Identical" is the reason string, so a jobs client that goes down and
+#         then a box that will not answer are two episodes, not six failures.
+br_rebuild_settle() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" rec="$6" tkey="$7" n="$8" erc="$9" label="${10}"
+  local st last fails why prev m
+  case "$erc" in
+    0)
+      # THE ONE LANDED PATH, for both rungs. It lives here rather than inline in
+      # each caller because the inline copies drifted: one of them dropped the
+      # `enqueue_why` clear and BH-1122's per-episode attempt record went with it
+      # (BH-947 review B1).
+      # OLD CLIENT (no queue_row): keep legacy counter behaviour, no ledger.
+      if br_pool_routed "$p" && [ -n "${BR_JOB_ID:-}" ] && command -v queue_row >/dev/null 2>&1; then
+        br_job_add "$p" "$ck" "$BR_JOB_ID" "$BR_JOB_ENQ"
+      fi
+      # THE POOL BUILD IS BOUGHT HERE, and nowhere else. This is the only arm of
+      # either rebuild rung that an enqueue reaches, so it is the only honest
+      # place for the per-tick cap's counter (review I2).
+      BR_REBUILD_BOUGHT=1
+      br_record "$p" "$ck" rebuild-fresh "$reason" "fresh build enqueued against current main ($label${BR_JOB_ID:+, job $BR_JOB_ID})" rebuilds "$url" -
+      # The closed PR's row moves now that there is a successor to name (BH-389).
+      br_row_closed "$p" "$tkey" "$rec" "$url" superseded \
+        "closed unmerged by blocked-resolver ($reason); superseded by rebuild ${BR_JOB_ID:-(job id not returned)} — $label" "$reason"
+      br_set_num "$p" "$ck" enqueue_failures 0
+      # BOTH non-terminal counters are spent by an enqueue that landed. Leaving
+      # board_misses behind would carry misses from a board outage into the next
+      # park on the same cap key: two old misses plus one new one is an
+      # immediate abandon for a ticket the board answered for in between.
+      br_set_num "$p" "$ck" board_misses 0
+      br_set_field "$p" "$ck" enqueue_why ""
+      # A build that STARTED is never still waiting on the last one.
+      br_set_wait "$p" "$ck" -
+      say "$p/$rkey [$reason]: REBUILD FRESH $label" ;;
+    2)
+      # NO KEY, AND THE SAME ANSWER EVERY TICK (2026-09-16, project-5 #1634).
+      # The branch, the title and the record are all read before we get here and
+      # none of them carried a key; nothing about the next tick changes that. So
+      # it is a spent rung attempt like any other, and the third one is the cap.
+      br_record "$p" "$ck" rebuild-fresh-nokey "$reason" "refused: no ticket key (branch/title/record all empty), $label" rebuilds "$url" -
+      n=$(br_num "$(br_load "$p" "$ck")" rebuilds)
+      n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" rebuild rebuilds)
+      say "$p/$rkey [$reason]: rebuild enqueue REFUSED — no ticket key; counted as attempt $n of $MAX_REBUILDS"
+      if [ "$n" -ge "$MAX_REBUILDS" ]; then
+        br_abandon "$p" "$ck" "$reason" "$url" "$rec" \
+          "the fresh rebuild was refused $n times: no ticket key could be derived from the PR branch, its title, or a build record" "$tkey"
+      fi ;;
+    4)
+      # BOARD ANSWERED BUT TICKET ID UNRESOLVED (BH-1007). The API is reachable
+      # and the ticket list is readable, but this key is not present in it.
+      # Count it as a miss; after MAX_REBUILDS identical misses the ladder is
+      # exhausted and the park is abandoned. A transient failure (empty curl,
+      # no token) stays rc 1 and is retried for free.
+      br_record "$p" "$ck" rebuild-fresh-board-miss "$reason" "board answered but ticket id unresolved for $tkey, $label" board_misses
+      m=$(br_num "$(br_load "$p" "$ck")" board_misses)
+      say "$p/$rkey [$reason]: rebuild enqueue BOARD MISS — ticket id unresolved; counted as miss $m of $MAX_REBUILDS"
+      if [ "$m" -ge "$MAX_REBUILDS" ]; then
+        [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" blocked-resolver \
+          "$p/$tkey: the fresh rebuild was abandoned after $m identical board-miss attempts — the board answered but no ticket id matched $tkey. The outcome and the attempts are in $H/logs/ALERTS.log and $H/state/blocked-resolver/$p/$ck.json." >/dev/null 2>&1 || true
+        br_abandon "$p" "$ck" "$reason" "$url" "$rec" \
+          "the fresh rebuild missed the board ticket $m times: the board answered but no ticket id matched $tkey" "$tkey"
+      fi ;;
+    *)
+      st=$(br_load "$p" "$ck")
+      last=$(printf '%s' "$st" | jq -r '[.attempts[]? | select((.action // "") | . != "held" and . != "stalled" and . != "stall-cleared" and (startswith("hold-") | not))] | last | (.action // "")' 2>/dev/null)
+      why="${BR_ENQUEUE_WHY:-no reason recorded}"
+      # THE STREAK IS PER REASON. A failure that says something new is a new
+      # episode: the jobs client coming back and the box going away are two
+      # different things to fix, and counting them together would stall a park
+      # nobody has actually retried three times for one cause.
+      prev=$(printf '%s' "$st" | jq -r '.enqueue_why // ""' 2>/dev/null)
+      if [ "$prev" = "$why" ]; then fails=$(( $(br_num "$st" enqueue_failures) + 1 )); else fails=1; fi
+      [ "$last" = rebuild-fresh-failed ] \
+        || br_record "$p" "$ck" rebuild-fresh-failed "$reason" "the enqueue did not land ($why); retried next tick, $label"
+      br_set_num "$p" "$ck" enqueue_failures "$fails"
+      br_set_field "$p" "$ck" enqueue_why "$why"
+      if [ "$fails" -ge "$ENQUEUE_FAIL_MAX" ]; then
+        br_stall "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" "rebuild enqueue" "$why" \
+                 "$(br_stall_fp "$reason" "$url" "$rec")" "$fails"
+        return 0
+      fi
+      say "$p/$rkey [$reason]: rebuild enqueue FAILED ${fails}x ($why) — retried next tick, no counter spent" ;;
+  esac
+}
+

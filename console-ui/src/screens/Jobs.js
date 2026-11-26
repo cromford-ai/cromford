@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'preact/hooks';
-import { html, Link, useSearchParam } from '../router.js';
+import { html, Link, useSearchParam, currentSearch } from '../router.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
@@ -17,6 +17,8 @@ import {
   laneRows, laneCounts, laneSortKey
 } from '../lib/jobs.js';
 import { lineTickets, jobsHeadline, ticketPath } from '../lib/line.js';
+import { parsePeriodQuery, defaultPeriod, withPeriod } from '../lib/period.js';
+import { PeriodPicker } from '../ui/PeriodPicker.js';
 
 // JOBS - the coordination DB's own view of the fleet: who claimed what, whether
 // it is still breathing, what it has spent against the cap it was handed.
@@ -33,6 +35,13 @@ import { lineTickets, jobsHeadline, ticketPath } from '../lib/line.js';
 // invisible here, and the burn figures below say so on the tile rather than
 // implying they are the whole bill.
 const REFRESH_MS = 20000;
+// The jobs read's row cap: the newest JOBS_LIMIT rows of the period.
+const JOBS_LIMIT = 200;
+
+// BH-9304: the jobs read polls while its period is still open (no `to`, or a
+// `to` in the future). A period that ended does not change, so it reads once.
+export const jobsPollMs = (period, nowMs) =>
+  (period && period.to && Date.parse(period.to) <= nowMs ? 0 : REFRESH_MS);
 
 // A lanes row is one (project, box) triage liveness row (bin/run-triage.sh ->
 // lane_tick), so its own page is the run-triage lane scoped to that project.
@@ -51,17 +60,39 @@ export function JobsScreen() {
   // ?project= is what a LANE row links into, so "this lane is silent" leads
   // straight to "here is everything it last claimed" instead of a dead end.
   const project = useSearchParam('project');
-  const jobs = useApi(() => api.jobs({ limit: 200, project: project || undefined }),
+  // BH-9304: the period comes from ?from=&to= (the picker writes it). With
+  // none, the mc.period.default_preset knob picks it; a failed knob read uses
+  // last_7_days and never holds the screen. Only then does the jobs read wait.
+  // Heard here so a search-only navigate (a picker click) re-renders.
+  useSearchParam('from');
+  useSearchParam('to');
+  const urlPeriod = parsePeriodQuery(currentSearch());
+  const knobs = useApi(() => api.periodKnobs(), []);
+  const knobValues = knobs.data && knobs.data.knobs;
+  const period = urlPeriod || (knobs.loading ? null : defaultPeriod(knobValues, Date.now()));
+  const pFrom = period ? period.from : null;
+  const pTo = period ? period.to : null;
+  const jobs = useApi(() => (pFrom
+    ? api.jobs({ limit: JOBS_LIMIT, project: project || undefined, from: pFrom, to: pTo || undefined })
+    : new Promise(() => {})), [project, pFrom, pTo], { intervalMs: jobsPollMs(period, Date.now()) });
+  // Live claims are not a period fact: a claim created before the period is
+  // still claimed now. This read sends no from/to (the no-range SQL, index
+  // idx_jobs_status_created) and always polls. It runs beside the others and
+  // the screen never waits on it; while it loads or after it fails, the live
+  // tiles count the period rows.
+  const openClaims = useApi(() => api.jobs({ status: 'running', limit: JOBS_LIMIT, project: project || undefined }),
     [project], { intervalMs: REFRESH_MS });
   const lanes = useApi(() => api.lanes(), [], { intervalMs: REFRESH_MS });
   const burn = useApi(() => api.burn(14), [], { intervalMs: 120000 });
   const flags = useApi(() => api.coordFlags(), [], { intervalMs: 60000 });
 
-  if (jobs.loading && !jobs.data) return html`<div class="page"><${PageHeadline} chip="Jobs · live" line1="Reading the line." line2="The jobs read has not answered."/><${Skeleton} rows=${8} height=${20}/></div>`;
+  const picker = html`<${PeriodPicker} period=${period} knobs=${knobValues}/>`;
+  if (jobs.loading && !jobs.data) return html`<div class="page"><${PageHeadline} chip="Jobs · live" line1="Reading the line." line2="The jobs read has not answered."/>${picker}<${Skeleton} rows=${8} height=${20}/></div>`;
   if (jobs.error && !jobs.data) {
     return html`<div class="page">
       <${Link} to="/" class="crumb">← FLEET<//>
       <${PageHeadline} chip="Jobs · live" line1="The jobs read failed." line2="Nothing on the line can be drawn."/>
+      ${picker}
       <${ErrorBox} error=${jobs.error} onRetry=${jobs.reload}/>
       <div class="footnote">This view reads the harness-jobs worker through the console's own proxy. If it
         says HARNESS_SECRET is not set, the Pages project is missing that variable - the fleet is unaffected.</div>
@@ -69,11 +100,16 @@ export function JobsScreen() {
   }
 
   const rows = jobRows(jobs.data);
-  const open = rows.filter((r) => r.status === 'running');
+  const openData = openClaims.data && !openClaims.error ? openClaims.data : null;
+  const open = openData ? jobRows(openData).filter((r) => r.status === 'running')
+    : rows.filter((r) => r.status === 'running');
+  // The note says the read is capped only when it hit the cap (D12).
+  const inPeriod = `${plural(rows.length, 'job', 'jobs')} created in this period${
+    rows.length >= JOBS_LIMIT ? ` (newest ${fmtNum(JOBS_LIMIT)} shown)` : ''}`;
 
   return html`
     <div class="page">
-      <${JobsLine} jobs=${jobs.data} lanes=${lanes.data}/>
+      <${JobsLine} jobs=${jobs.data} open=${openData} lanes=${lanes.data} picker=${picker}/>
 
       <${MergeQueueStrip}/>
 
@@ -82,10 +118,11 @@ export function JobsScreen() {
 
       <${SectionHead} num=${3} title="Jobs" note="Every claim the coordination DB holds, newest first."/>
       <${Section} title=${project ? `JOBS · ${project}` : 'JOBS'}
-        note=${`${fmtNum(rows.length)} most recent rows · ${fmtNum(open.length)} still claimed · every column sorts`}
+        note=${`${inPeriod} · ${fmtNum(open.length)} still claimed · every column sorts`}
         right=${project
-          ? html`<${Link} to="/jobs" class="crumb">SHOW ALL PROJECTS<//>`
+          ? html`<${Link} to=${withPeriod('/jobs', currentSearch())} class="crumb">SHOW ALL PROJECTS<//>`
           : null}>
+        ${rows.length === 0 ? html`<div class="footnote"><span>No jobs created in this period.</span></div>` : null}
         <${JobsTable} rows=${rows}/>
       <//>
 
@@ -123,10 +160,14 @@ export function JobsScreen() {
 const plural = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many}`;
 
 // The hero and 01 The line, from the jobs payload and the lanes payload (null
-// while it loads). Exported so it renders in a test with no fetch.
-export function JobsLine({ jobs, lanes }) {
+// while it loads). Exported so it renders in a test with no fetch. `open` is
+// the open-claims payload (status=running, no period): when it is given, the
+// live tiles (claimed now, stopped beating, quiet) count it; else the period rows.
+export function JobsLine({ jobs, open = null, lanes, picker = null }) {
   const rows = jobRows(jobs);
-  const counts = jobCounts(rows);
+  const periodCounts = jobCounts(rows);
+  const live = open ? jobCounts(jobRows(open)) : periodCounts;
+  const counts = { ...periodCounts, running: live.running, stalled: live.stalled, quiet: live.quiet };
   const hl = jobsHeadline(counts, laneCounts(laneRows(lanes)));
   const line = lineTickets(rows);
   return html`
@@ -143,6 +184,7 @@ export function JobsLine({ jobs, lanes }) {
         { label: 'Spend on these rows', value: html`<${UsdCell} value=${jobSpend(rows)}/>` }
       ]}/>
     <//>
+    ${picker}
     <${SectionHead} num=${1} title="The line"
       note=${`${plural(line.length, 'ticket', 'tickets')} in flight, one row each, furthest along first.`}/>
     <${LineBoard} rows=${rows}/>`;

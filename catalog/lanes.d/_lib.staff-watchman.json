@@ -3,7 +3,7 @@
     {
       "id": "staff-watchman",
       "file": "bin/staff/watchman-collect.sh",
-      "note": "BH-5565: Watchman's collector, run by bin/staff.sh tick watchman. It prints two deterministic checks as staff findings: history-secret (a gitleaks location in the git history of a fleet repo on this box; one beat per scan with new locations; the location only, never a value) and rotation-due (a credential in catalog/staff-rotations.d/ past its due date). A rotated credential closes its filed issue as completed and posts outcome merged. Applied by the collector with lib_env_apply staff-watchman. Note: docs/notes/2026-10-15-BH-5565-watchman.md.",
+      "note": "BH-5565: Watchman's collector, run by bin/staff.sh tick watchman. It prints three deterministic checks as staff findings: history-secret (a gitleaks location in the git history of a fleet repo on this box; one beat per scan with new locations; the location only, never a value), chat-secret (BH-10122: a gitleaks location in the Archie chat log WM_CHAT_LOG: the record time, the part, the line and the rule, never the value; one beat per tick with new locations) and rotation-due (a credential in catalog/staff-rotations.d/ past its due date). A rotated credential closes its filed issue as completed and posts outcome merged. Applied by the collector with lib_env_apply staff-watchman. Note: docs/notes/2026-10-15-BH-5565-watchman.md.",
       "knobs": [
         {
           "env": "WM_REPOS_ROOT",

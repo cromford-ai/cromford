@@ -27,6 +27,7 @@ REPORT:
 - a dependency with a published advisory
 - a secret in the git history of a fleet repo
 - a credential past its rotation due date
+- a key pasted into the chat with Archie
 
 ## When I file a ticket for a secret in git history or a credential past its rotation date
 
@@ -39,3 +40,10 @@ The issue body ends with this checklist, one line each:
 - [ ] Prove that the old value fails (name the probe).
 - [ ] Add or update `catalog/staff-rotations.d/<id>.json` with `rotated_at`.
 - [ ] Close this issue as completed. That closes the finding.
+
+## When I file a ticket for a key pasted into the chat
+
+The issue body names the location only: the record time, the part (message or reply), the line in that part and the gitleaks rule. It never holds the value.
+The issue body ends with the six checklist lines of the section above, in the same order, and then this line:
+
+- [ ] Delete or edit the chat message that holds the key, where the chat allows it.

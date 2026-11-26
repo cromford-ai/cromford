@@ -7,6 +7,7 @@
 // src/index.js holds the ordered table that decides which of these runs.
 
 import { json } from "../lib/http.js";
+import { parseRange, readPeriodKnobs } from "../lib/period.js";
 import {
   OPEN_STATUS, resolveLane, decorateJob, JOBS_SELECT, JOB_TRANSITIONS,
   checkTransition, checkPause, checkRules, putClaim, ensureColumns, jobId,
@@ -25,6 +26,15 @@ export const routes = [
       for (const col of ["project", "status", "box", "ticket_id", "kind"]) {
         const v = url.searchParams.get(col);
         if (v) { binds.push(v); where.push(`j.${col}=?${binds.length}`); }
+      }
+      // ?from=&to= (BH-9304): jobs CREATED in [from, to), through parseRange.
+      // A bad range is a 400 before the jobs read. No range param: no knob
+      // read, no bind, and the SQL text is the same as before.
+      if (url.searchParams.has("from") || url.searchParams.has("to")) {
+        const range = parseRange(url, await readPeriodKnobs(env), Date.parse(t));
+        if (range.error) return json(400, { error: range.error });
+        binds.push(range.from); where.push(`j.created_at>=?${binds.length}`);
+        binds.push(range.to); where.push(`j.created_at<?${binds.length}`);
       }
       // A positive integer: `limit=-1` used to build `LIMIT -1`, which is no limit at all.
       const limit = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 100, 1), 500);

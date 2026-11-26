@@ -1,0 +1,264 @@
+# br_pr_ref <url> [fallback-slug] — "<slug> <branch> <head>" for a PR, read with a
+# token that can actually SEE the repo.
+#
+#   rc 0  the read worked: "<slug> <branch> <head>" on stdout.
+#   rc 1  the PR was READ and genuinely has no branch (head.ref null — the head
+#         repo was deleted), or there is no URL to read at all.
+#   rc 2  THE READ FAILED — gh exited non-zero, or answered an empty body. The
+#         first line of gh's error is printed on stdout and left in
+#         BR_PR_REF_ERR. Callers must retry next tick, NOT spend a rung: the
+#         stdout copy is what survives `ref=$(br_pr_ref …)`, because a global set
+#         inside a command substitution dies with the subshell.
+#
+# THE 1-vs-2 SPLIT IS THE BUG. 2026-09-16 17:24Z and 18:04Z: both hub PATs are
+# the same GitHub user (id 2220366), so they share one 5000/hr GraphQL budget and
+# it ran out — "API rate limit already exceeded for user ID 2220366". The read
+# answered nothing, this function returned 1, and both callers read that as "this
+# PR has no branch": project-5 #1677, #1696 (ticket/TK-1669) and #1694
+# (ticket/TK-1564-r2) were OPEN and mergeable=true and were sent to REBUILD
+# FRESH, with a duplicate pool build enqueued for TK-1669. Clean PRs that needed
+# a re-review were thrown away because GitHub was rate-limiting us.
+#
+# THE READ IS REST, NEVER GRAPHQL (the fleet lesson behind
+# docs/verification-map/gh-pr-list-rest.md): `gh pr view --json` is a GraphQL
+# call and spends the bucket that was exhausted, while `gh api repos/…/pulls/N`
+# spends the far larger core bucket and carries the same two fields.
+#
+# The retry under the repo's own token stays. gh-repo-token.sh exists precisely
+# because the hub's default PAT cannot see example-org/project-5, and a read made
+# with it is a failed read rather than a PR without a branch.
+br_pr_ref() {
+  local url="${1:--}" fallback="${2:-}" slug num br="" head="" out rc=0 try errf
+  BR_PR_REF_ERR=""
+  [ -n "$url" ] && [ "$url" != "-" ] || return 1
+  slug=$(br_slug_of_url "$url") || slug="$fallback"
+  [ -n "$slug" ] || return 1
+  num=$(mc_num_of_url "$url")
+  [ -n "$num" ] || return 1
+  errf=$(mktemp 2>/dev/null) || errf=/dev/null
+  # The read memo answers first (BH-5946): the same PR object every gate before
+  # the rung already read. Any read it cannot make is the raw read below.
+  if command -v br_opt_readmemo_pr_ref >/dev/null 2>&1 && out=$(br_opt_readmemo_pr_ref "$slug" "$num"); then
+    read -r head br <<<"$out"
+  else
+  for try in 1 2; do
+    [ "$try" = 2 ] && br_use_token "$slug"
+    out=$(gh api "repos/$slug/pulls/$num" --jq '"\(.head.sha) \(.head.ref)"' 2>"$errf"); rc=$?
+    if [ "$rc" = 0 ] && [ -n "$out" ]; then read -r head br <<<"$out"; break; fi
+    BR_PR_REF_ERR=$(head -n 1 "$errf" 2>/dev/null | tr -d '\r')
+    [ -n "$BR_PR_REF_ERR" ] || BR_PR_REF_ERR="gh api repos/$slug/pulls/$num answered an empty body (rc=$rc)"
+    rc=2
+  done
+  fi
+  [ "$errf" = /dev/null ] || rm -f "$errf"
+  # A READ THAT FAILED IS NOT AN ANSWER. It says nothing about the branch, so it
+  # ends here and the caller comes back next tick.
+  [ "$rc" = 2 ] && { printf '%s' "$BR_PR_REF_ERR"; return 2; }
+  BR_PR_REF_ERR=""
+  [ "${br:-}" = null ] && br=""
+  [ "${head:-}" = null ] && head=""
+  # A HEAD IS A SHA OR IT IS NOTHING (2026-09-16). The paired read is positional,
+  # so a first field that is not the sha slides the branch into `head`:
+  # ` ticket/TK-93` reads back as head=ticket/TK-93, br= — leaving a branch NAME
+  # in the variable rung 2 falls back to for its push lease. That is the same
+  # shape as the bare `rev-parse` this file already documents: a string that is
+  # not a sha became a --force-with-lease value. jq prints a genuinely absent
+  # field as `null` (handled above), so anything that is not 40 hex here is a
+  # read that did not answer.
+  case "${head:-}" in
+    *[!0-9a-fA-F]* | "") head="" ;;
+    *) [ "${#head}" = 40 ] || head="" ;;
+  esac
+  # THE BRANCH IS REQUIRED, THE HEAD IS NOT. Rung 1 needs a head for its push
+  # lease and checks for one itself; rung 2 reads its own lease off `origin/<br>`
+  # and never needed the sha, so a head that would not read must not cost that
+  # rung the branch it CAN have.
+  [ -n "${br:-}" ] || return 1
+  printf '%s %s %s' "$slug" "$br" "${head:-}"
+}
+
+# br_close_pr <url> <why> — comment the reason, close the PR, VERIFY the close.
+# The branch is NEVER deleted: an -rN rebuild leans on the old name still being
+# taken, and a deleted branch is evidence gone.
+#
+#   rc 0   there is nothing to close (no url, a PR GitHub says is absent, one
+#          that is already closed or merged), or the PR was closed AND a fresh
+#          read confirmed it.
+#   rc 3   REFUSED (BH-4664): a positive read says an outsider wrote this PR
+#          (harness_pr_author_match says it is not ours). Nothing is commented
+#          or closed; the caller parks the row for the author and records
+#          nothing. An author read that answered with no login is NOT an
+#          outsider and keeps the path below; one that FAILED is rc 75.
+#   rc 75  GitHub did not answer — the state read, the author read, the comment
+#          or the PATCH. The PR is left EXACTLY as it is, the caller defers its
+#          whole rung and the park is re-offered next tick.
+#
+# THE EMPTY ANSWER WAS THE BUG (#768/#783). This used to ask `gh pr view --json
+# state` and compare the answer to OPEN: under a GraphQL rate limit that read
+# came back EMPTY, "not OPEN" meant "nothing to close", and rc 0 told
+# br_rebuild_fresh and br_abandon to carry on — enqueueing a duplicate build and
+# stamping ABANDONED over PRs that were open the whole time.
+br_close_pr() {
+  local url="${1:--}" why="${2:-}" slug num st rc login
+  [ -n "$url" ] && [ "$url" != "-" ] || return 0
+  # Not a PR URL at all is ABSENCE, not an unreadable PR: there is nothing here
+  # to close and no later tick will make one appear.
+  slug=$(br_slug_of_url "$url") || return 0
+  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 0
+  st=$(br_pr_state "$url"); rc=$?
+  case "$rc" in
+    0)  [ "$st" = open ] || return 0 ;;
+    44) return 0 ;;
+    *)  return 75 ;;
+  esac
+  if command -v harness_pr_author_match >/dev/null 2>&1; then
+    # A FAILED AUTHOR READ DEFERS, like the state read above it: the belt is the
+    # backstop for an outsider PR that reached a terminal, so an unknown author
+    # is never closed on.
+    login=$(br_pr_field "$url" '.user.login' "pr author") || return 75
+    if [ -n "$login" ] && [ "$login" != null ] && ! harness_pr_author_match "$login"; then
+      say "refused: $url is an external author's PR — never closed by this lane"
+      return 3
+    fi
+  fi
+  # THE COMMENT FIRST. A PR closed with no reason on it is the worse failure; a
+  # comment that lands before a PATCH that does not is repeated next tick.
+  if ! br_pr_comment "$url" "$why"; then
+    say "could not comment on $url before closing (HTTP $GH_REST_STATUS) — left open, retried next tick"
+    return 75
+  fi
+  # gh_rest_close answers 0 only when a FRESH read says closed, so the "closed"
+  # line below is written on evidence and never on a 2xx.
+  if gh_rest_close "$slug" "$num" pulls; then
+    say "closed $url ($why)"
+    # A later row of this run reads the closed PR live (BH-5946).
+    command -v br_opt_readmemo_drop >/dev/null 2>&1 && br_opt_readmemo_drop "$url"
+    return 0
+  fi
+  say "could not close $url (HTTP $GH_REST_STATUS) — left open, retried next tick"
+  return 75
+}
+
+# ---------------------------------------------------------------------------
+# THE HOLD GATE. A human said "do not rebuild this" on the TICKET, and until
+# 2026-09-18 nothing on this lane's rebuild path ever read the ticket.
+#
+# Console alert 6726 (2026-09-14): project-5 #414's parent PR was CLOSED, the
+# issue put on HOLD and de-labelled by the operator at 07:03Z, and this lane enqueued a
+# fresh build of it three times that morning (05:04, 06:44, 08:24Z). The rung
+# read the PR's merge state and its own counters; the only `gh issue` calls in
+# this whole file were the two comment WRITES. So the instruction was invisible
+# to the one lane whose job is restarting tickets.
+#
+# The gate runs BEFORE anything irreversible — before the close, before the
+# enqueue, before the cap check that would write an ABANDONED alert — so there
+# is no window where a PR has been closed and the rebuild is then refused.
+# ---------------------------------------------------------------------------
+# br_hold_issue <project> <ticket-key> <record> — "<slug> <issue-number>" for the
+# GitHub issue behind this park, or rc 1 when this lane is not one that has one.
+#   rc 1  an in-app product board (board_prefix != "-"): the ticket is not a
+#         GitHub issue, so there is nothing to read and the gate is a no-op.
+#   rc 2  an issues lane whose slug or number could not be named — logged once
+#         by the caller, and today's behaviour otherwise (a lane that cannot
+#         name the issue cannot read it).
+br_hold_issue() {
+  local p="$1" tkey="$2" rec="${3:--}" prefix slug n
+  prefix=$("$H/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null)
+  [ "$prefix" = "-" ] || return 1
+  slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
+  case "$slug" in */*) ;; *) return 2 ;; esac
+  n=$(br_ticket_id "$p" "$tkey" "$rec") || n=""
+  case "$n" in ''|*[!0-9]*) return 2 ;; esac
+  printf '%s %s' "$slug" "$n"
+}
+
+# br_hold_gate <project> <rkey> <reason> <pr-url> <record> <ticket-key>
+#   rc 0 proceed, rc 1 STOP. Called at both places a build is (re)started.
+#
+#   held       one log line in the ticket's own spelling, the row parked at the
+#              HELD terminal, NO rung spent, nothing closed, nothing enqueued,
+#              no GitHub write, no ALERTS line (a respected human instruction is
+#              not an alert) and no ticket comment (a comment per tick on a held
+#              issue is noise nobody asked for).
+#   unreadable no rung spent and nothing written but ONE attempt per episode: a
+#              read that failed says NOTHING about the ticket, so the park is
+#              re-offered next tick. The same 1-vs-2 split br_pr_ref learned on
+#              2026-09-16.
+#   clear      silent, rc 0.
+#
+#   BR_HOLD_PARKED is set on both refusals so br_one knows the rung did not run.
+#   A conductor hand-off released after a refusal would hand the PR straight back
+#   to the conductor to classify and re-park, every tick, over a read this box
+#   could not make.
+BR_HOLD_PARKED=0
+br_hold_gate() {
+  local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}"
+  local ck ref slug n out rc why uf
+  command -v hold_check >/dev/null 2>&1 || return 0
+  ref=$(br_hold_issue "$p" "$tkey" "$rec"); rc=$?
+  case "$rc" in
+    1) return 0 ;;
+    2) say "$p/$rkey [$reason]: no repo/issue number for ${tkey:--} — the hold gate has nothing to read, proceeding as before"
+       return 0 ;;
+  esac
+  read -r slug n <<<"$ref"
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  uf="$ST/$p/$ck.hold-unreadable"
+  # hold_read (bin/lib/hold-push.sh) is hold_check's verdict over the REST
+  # contract this lane already speaks (BH-2504), so every gate here and the
+  # fix round's push read the ticket the same way.
+  if command -v hold_read >/dev/null 2>&1; then out=$(hold_read "$slug" "$n"); rc=$?
+  else out=$(hold_check "$slug" "$n"); rc=$?; fi
+  why=$(printf '%s' "$out" | cut -f2-)
+  case "$rc" in
+    0) rm -f "$uf"; return 0 ;;
+    2) BR_HOLD_PARKED=1
+       say "$p/$rkey: hold check could not read $slug#$n ($why) — no rung spent, retried next tick"
+       # ONE attempt per EPISODE, the way br_setup_blocked does it. This lane
+       # re-offers the same park every ten minutes, so an outage that lasts a day
+       # would otherwise write 144 entries into a record whose whole job is to
+       # say what was TRIED — and every one of them would displace the
+       # `rebuild-fresh` attempt br_from_rebuilds reads to find a build in
+       # flight. The log line above is the per-tick evidence; the marker is
+       # deleted the moment gh answers, so the next outage says it all again.
+       [ -e "$uf" ] && return 1
+       mkdir -p "$(dirname "$uf")" 2>/dev/null; : > "$uf"
+       br_record "$p" "$ck" hold-unreadable "$reason" "could not read $slug#$n: $why"
+       return 1 ;;
+  esac
+  rm -f "$uf"
+  BR_HOLD_PARKED=1
+  # AN ABANDON IS A DIFFERENT INSTRUCTION FROM A HOLD (BH-1460). The two used to
+  # be one word, so the only way to say "close this PR" on a ticket was the same
+  # word that means "pause everything" — and a pause that closes a green,
+  # approved PR is the 2026-09-22 #1453 shape. A ticket that says ABANDON gets
+  # its PR closed, with the word that did it named on the PR.
+  if command -v hold_is_abandon >/dev/null 2>&1 && hold_is_abandon "$out"; then
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD abandon — $slug#$n says $why — observe mode"
+      return 1
+    fi
+    br_hold_abandon "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" "$slug#$n" "$why"
+    return 1
+  fi
+  if [ "$OBSERVE" = 1 ]; then
+    say "$p/$rkey [$reason]: WOULD hold — $slug#$n says $why — observe mode"
+    return 1
+  fi
+  br_record "$p" "$ck" held "$reason" "$slug#$n is held ($why)"
+  br_set_outcome "$p" "$ck" HELD
+  br_set_field "$p" "$ck" held_rec "${rec:--}"
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && : > "$rec/.blocked-resolver-held"
+  br_event resolver_held "$p" "$ck" "$reason" "$slug#$n is held ($why) — no rebuild, no enqueue, no close"
+  # "held, PR kept" IS THE CONTRACT, SPELLED OUT (BH-1460). This lane has always
+  # left the PR alone on a hold; saying it in the words the ticket uses is what
+  # makes the next reader — and the next test — able to tell a pause from an
+  # abandon at a glance.
+  say "[resolver] HOLD respected ${tkey:--} ($why) — held, PR kept: no rebuild, no enqueue, PR ${url:--} left as it is"
+  # Waiting on a human step (BH-3443) says which step, in every lane's words.
+  case "$why" in hold:waiting-on-human\ *)
+    say "$p/$rkey: #$n skip :: waiting on human: $(printf '%s' "${why#hold:waiting-on-human }" | cut -d' ' -f2-)" ;;
+  esac
+  return 1
+}
+

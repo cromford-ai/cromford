@@ -1,0 +1,310 @@
+STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
+say()   { echo "$(STAMP) $*" >> "$LOG"; }
+
+# br_model <env-value> <role> <project> — the model one call runs: the env
+# override when there is one, else the project's route. rc 75 = no route (the
+# resolver has written the ALERTS line; a missing resolver is the same answer).
+# The caller does not buy the call — a rung with no model is a rung not run,
+# offered the same head again next tick.
+br_model() {
+  [ -n "${1:-}" ] && { printf '%s' "$1"; return 0; }
+  command -v model_for >/dev/null 2>&1 || return 75
+  model_for "$2" "$3"
+}
+
+# br_count <token> — ONE counted thing, appended to this tick's ledger.
+#
+# WHY A FILE AND NOT A VARIABLE (BH-1468). Every row is dispatched inside a
+# subshell (the per-key flock below), so `BR_N_CARRIED=$((BR_N_CARRIED + 1))` at
+# the site that did the work dies with that subshell and the tick line reads 0
+# for ever. TICK_COUNTS is the same shape TICK_DONE and TICK_REBUILDS already
+# have: a mktemp made once per tick, removed by the EXIT trap. A tick that could
+# not make one counts nothing and says so once, where the file is made — never
+# here, which runs per rung.
+#
+# The tokens are `llm`, `carried`, `mechanical` and `family`. `llm` is this
+# slice's; the other three are written by the optional modules at the site that
+# did the thing, which is why this is part of the hook contract in
+# bin/lib/br/opt/README.md rather than a private helper.
+br_count() {
+  [ -n "${TICK_COUNTS:-}" ] || return 0
+  printf '%s\n' "${1:-}" >> "$TICK_COUNTS" 2>/dev/null || true
+  return 0
+}
+
+# br_quiet <class> — this row ends on a quiet exit (BH-5946). With
+# bin/lib/br/opt/unchanged.sh loaded it stores the row's local fingerprint, so
+# the next run can skip the row while nothing changed; without it, nothing.
+# The row is BR_ROW, set in br_one once the cap key is known.
+br_quiet() {
+  command -v br_opt_unchanged_mark >/dev/null 2>&1 && br_opt_unchanged_mark "${1:-}" ${BR_ROW[@]+"${BR_ROW[@]}"}
+  return 0
+}
+
+# THE THREE BOUNDS THAT TURN A RETRY-FOREVER PARK INTO A STALLED ONE (BH-1122),
+# read here rather than beside the knobs above because a typo has to be able to
+# SAY so and say() is the line above. An explicit 0 is treated as a typo too: on
+# the two stall knobs it would stall on the first failure, which is not a bound
+# anybody asked for, and on the streak it would page every tick.
+br_knob_num() { # br_knob_num <name> <value> <default> -> a usable count
+  case "${2:-}" in
+    '')            printf '%s' "$3" ;;
+    0|*[!0-9]*)    say "$1='$2' is not a usable count — using $3"; printf '%s' "$3" ;;
+    *)             printf '%s' "$2" ;;
+  esac
+}
+# After this many consecutive enqueue failures with the SAME reason, the park
+# stops spending rungs (br_stall). 3 is half an hour of */10 ticks — long enough
+# that a jobs client restarting is never a page, short enough that nothing
+# retries a dead answer 79 times (project-4 TK-1674, 2026-09-20).
+ENQUEUE_FAIL_MAX=$(br_knob_num BR_ENQUEUE_FAIL_MAX "${BR_ENQUEUE_FAIL_MAX:-}" 3)
+# ...and the same bound on an adjudication that keeps coming back with no
+# verdict. Its own knob rather than the one above: a variable named ENQUEUE
+# governing the review rung is the kind of thing an operator reads once, wrong.
+ADJ_NOVERDICT_MAX=$(br_knob_num BR_ADJ_NOVERDICT_MAX "${BR_ADJ_NOVERDICT_MAX:-}" 3)
+# How many ticks in a row may end on `reason=budget` before ONE line says this
+# lane has more parks than rungs. 12 is two hours of */10 ticks.
+SATURATED_TICKS=$(br_knob_num BR_SATURATED_TICKS "${BR_SATURATED_TICKS:-}" 12)
+# The rung budget's own typo, said here because say() did not exist where the
+# value is read. One line per tick, which is what a wrong knob deserves.
+[ -n "$PER_TICK_BAD" ] && say "BR_PER_TICK='$PER_TICK_BAD' is not a usable count — using $PER_TICK"
+
+# BH-1372: pool routing from the BH-1369 routing contract when the client is
+# loaded (its reader syncs the row, then answers from the files); the bare file otherwise.
+br_pool_routed() { if command -v routing_builder >/dev/null 2>&1; then [ "$(routing_builder "$1" 2>/dev/null)" = pool ]; else ( . "$H/bin/lib/flag-on.sh" 2>/dev/null || flag_on() { [ -f "$H/flags/$1-$2" ]; }; flag_on fly-pool "$1" ); fi; }
+flag_on() { if command -v flag_active >/dev/null 2>&1; then flag_active "$1"; else [ -f "$H/flags/$1" ]; fi; }
+if lane_switch blocked-resolver-disabled; then
+  [ "$BR_FIX_HERE" = 1 ] && echo "FIX_RESULT box-paused $(printf 'blocked-resolver-disabled on %s' "$(hostname 2>/dev/null || echo the owning box)" | base64 -w0)"
+  exit 0
+fi
+# BH-1627: ONE routing read per tick. br_pool_routed runs per PR; after this sync
+# the client answers every one of them from the files without another request
+# (knob off: no request at all). An outage leaves the files as they are.
+command -v routing_sync_all >/dev/null 2>&1 && { routing_sync_all >/dev/null 2>&1 || true; }
+OBSERVE=0
+flag_on blocked-resolver-observe && OBSERVE=1
+# The fleet kill switch stops every lane that WRITES to GitHub or launches
+# builds. This lane does both, so it honors it — classification still runs so
+# the log keeps saying what it WOULD have done while the fleet is paused.
+flag_on automerge-disabled && OBSERVE=1
+
+ONLY="${1:-}"
+# The shared per-project lane runner (BH-5913): the dispatcher's pl_dispatch and
+# a dispatched run's pl_unlock. A box mid-sync without it still scans: a project
+# run then takes the same lock file itself, below.
+# shellcheck source=bin/lib/project-lanes.sh
+[ -r "$H/bin/lib/project-lanes.sh" ] && . "$H/bin/lib/project-lanes.sh"
+
+# >>> resolver cron single-flight
+# ONE SCAN AT A TIME, AND THE LOCK IS GONE BEFORE THE FIRST RUNG. Cron fires
+# this lane every ten minutes and the ticks stacked: several live at once,
+# rediscovering the same parks and racing each other's counters. So the SCAN —
+# discovery, classification, the merged guard — runs under one lock, taken with
+# `flock -n` and never waited on: an overlapping tick exits, it does not queue
+# (the operator, 2026-09-13, "we never lock and serialize").
+#
+# The release is br_cron_unlock, called at the top of br_one's dispatch, i.e.
+# BEFORE any rung. A fix round holds its per-key lock for up to 90 minutes, and
+# a lane-wide lock held across that would stop the whole fleet's drain behind
+# one slow build — the very thing the per-key locks exist to avoid. flock lives
+# on the open file description, so the unlock inside the per-key subshell
+# releases the parent's lock too, and closing fd 8 there keeps any child the
+# rung spawns from inheriting it.
+#
+# This line goes to STDOUT, which is the cron log, and it is NOT an alert: two
+# ticks overlapping is the normal shape of a lane that sometimes runs long.
+# A --fix-here run is one round the hub already admitted, not a scan: it takes
+# no lock, so a box's own tick never turns the hub's round away (BH-594).
+# The dispatcher holds no lock: it only forks the runs, and each run locks its
+# own project.
+if [ "$BR_FIX_HERE" = 1 ] || [ "$BR_DISPATCH" = 1 ]; then
+  br_cron_unlock() { :; }
+else
+# A ONE-PROJECT RUN TAKES ITS PROJECT'S LOCK (BH-5913). `blocked-resolver.sh
+# <project>` is the unit bin/lib/project-lanes.sh starts, one per project, on
+# locks/blocked-resolver-<project>.lock. A whole-fleet scan that ran 55 minutes
+# on one project's rows used to turn every other project away. Two runs share
+# no row outside their own project, and the per-key locks keep two rounds off
+# one park, so a run locks only its project: a second run of the SAME project
+# still exits here. Under the runner the lock is already held (PL_LOCK_FD) and
+# br_cron_unlock releases it the same way, before the first rung. A run with no
+# project (an operator's whole-fleet scan) keeps the fleet scan lock.
+if [ -n "$ONLY" ]; then
+  case "$ONLY" in
+    .*|*[!A-Za-z0-9._-]*)
+      echo "$(STAMP) blocked-resolver: '$ONLY' is not a project name — exiting without a scan" >&2
+      exit 2 ;;
+  esac
+fi
+BR_SCAN_LOCK=blocked-resolver-cron.lock
+[ -z "${BR_ONLY_PR:-}" ] || { [ -n "$ONLY" ] && [[ "$BR_ONLY_PR" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[0-9]+$ ]]; } || { echo "$(STAMP) blocked-resolver: BR_ONLY_PR='$BR_ONLY_PR' needs <owner>/<repo>#<n> and a project argument — exiting without a scan" >&2; exit 2; }
+[ -z "$ONLY" ] || BR_SCAN_LOCK="blocked-resolver-$ONLY${BR_ONLY_PR:+-pr-${BR_ONLY_PR##*#}}.lock"  # BH-9369 fix 6: a one-PR run's own lock (bh-9369-one-pr-lock.sh)
+if [ -n "$ONLY" ] && [ -z "${BR_ONLY_PR:-}" ] && [ "${PL_LANE:-}" = blocked-resolver ] && [ "${PL_PROJECT:-}" = "$ONLY" ] \
+   && command -v pl_unlock >/dev/null 2>&1 && [ -n "${PL_LOCK_FD:-}" ] \
+   && { : >&"$PL_LOCK_FD"; } 2>/dev/null; then
+  br_cron_unlock() { pl_unlock; }
+else
+  exec 8>"$H/locks/$BR_SCAN_LOCK"
+  if ! flock -n 8; then
+    echo "$(STAMP) blocked-resolver: another tick is live (locks/$BR_SCAN_LOCK held) — exiting without a scan"
+    exit 0
+  fi
+  br_cron_unlock() { flock -u 8 2>/dev/null; exec 8>&-; }
+fi
+fi
+# A HUB RUN OF ONE PROJECT FIRST TAKES IN WHAT A LANE MACHINE WROTE (BH-6128).
+# A project that ran on Fly has write-backs in the jobs worker; the hub
+# publisher applies them every ten minutes, and this applies them now, so a
+# lane moved back to the hub never starts on state older than the machine's.
+# Only for a project the publisher has seen; a failure is one line and the run
+# goes on.
+if [ -n "$ONLY" ] && [ -z "${LANE_RUN_ID:-}" ] && [ "$BR_FIX_HERE" != 1 ] && [ "$BR_DISPATCH" != 1 ] \
+   && [ -d "$H/state/lane-run-inputs/blocked-resolver/$ONLY" ] && command -v lri_apply_pending >/dev/null 2>&1; then
+  BR_PRE_APPLY=$(lri_apply_pending blocked-resolver "$ONLY" 2>&1) \
+    || say "$ONLY: the lane machine's write-backs were not all applied before this run ($BR_PRE_APPLY) — the publisher retries them"
+fi
+# WHEN THIS TICK BEGAN (BH-1457). Taken HERE, the instant the tick knows it is
+# the tick, and not at the top of the rung loop: discovery is part of what a
+# tick spends, and on a fleet with 785 candidates it is a real share of it. The
+# only reader is the wall-clock bound in the loop below.
+TICK_START=$(date -u +%s)
+# WHETHER THIS SHELL HAS THE CLOCK BUILTIN. The wall bound below is read once per
+# candidate — 785 times on the hub — and `$(date -u +%s)` is a fork each time,
+# spent in the one stretch of the tick the bound itself cannot stop. bash 5 has
+# $EPOCHSECONDS; this records whether it does, once, and the fork is the fallback
+# for a shell that does not. It is NOT written as ${EPOCHSECONDS:-…} on purpose:
+# that shape is what tests/lanes-registry-test.sh §7 reads as an operator knob,
+# and a bash builtin is not one.
+BR_HAVE_EPOCH=0
+[ -n "${EPOCHSECONDS+x}" ] && BR_HAVE_EPOCH=1
+# br_now — this second, without a fork where the shell can answer.
+br_now() {
+  if [ "$BR_HAVE_EPOCH" = 1 ]; then printf '%s' "$EPOCHSECONDS"; else date -u +%s; fi
+}
+# <<< resolver cron single-flight
+# Lane liveness (BH-638): optional exactly like the libs above, so a box whose
+# harness sync has not landed the lib runs this lane unchanged. The expected-by
+# is FIX_LANE_TIMEOUT, the longest one tick may take. THE RHYTHM IS A THIRD OF
+# THAT and has to be: the reaper calls a lane silent at interval x HB_STALE_MULT
+# (3), and this lane's only tick is the per-candidate one below, BEFORE the
+# per-key subshell — inside it a fix round blocks synchronously with no chance
+# to tick, so a fixed 600s rhythm would page "silent" on every long fix round.
+# Derived, never a literal: BR_FIX_LANE_TIMEOUT is an operator knob.
+# shellcheck source=bin/lib/heartbeat.sh
+[ -r "$H/bin/lib/heartbeat.sh" ] && . "$H/bin/lib/heartbeat.sh"
+command -v hb_tick >/dev/null 2>&1 || { hb_start(){ :; }; hb_tick(){ :; }; hb_done(){ :; }; }
+HB_RHYTHM=1
+case "$FIX_LANE_TIMEOUT" in ''|*[!0-9]*) ;; *) [ "$((FIX_LANE_TIMEOUT / 3))" -gt 1 ] && HB_RHYTHM=$(( FIX_LANE_TIMEOUT / 3 )) ;; esac
+# The watchdog expects this lane on the hub only; a box running one --fix-here
+# round must not start a heartbeat it will never tick (BH-594).
+[ "$BR_FIX_HERE" = 1 ] || hb_start blocked-resolver "$HB_RHYTHM" "$FIX_LANE_TIMEOUT" "the drain of parked PRs"
+
+# >>> resolver modules
+# BH-1176: this lane is becoming a shim over bin/lib/br/. It is 3,778 lines that
+# 19 of the last 200 merges touched, and it and its suite were two of the five
+# files behind 40 of one day's 53 merge conflicts — two builds that touch two
+# unrelated concerns conflict in a file neither ticket is about. The sections
+# move out one slice at a time: ladder.sh (the classifier) and record.sh (the
+# per-key json) first, the discovery reads, the gates and the rungs after.
+#
+# LADDER AND RECORD ARE CUT (BH-5241). ladder.sh is the only copy of the
+# classifier and of br_regen_rung, and record.sh is the only copy of the
+# per-key json layer, so both are load-bearing. tests/br-split-layout-test.sh
+# case 4 holds every mapped name absent from this file;
+# tests/br/driver-ceiling.tsv caps its size.
+#
+# Modules resolve off $H, the way bin/run-triage.sh resolves bin/lib/rt and
+# bin/run-build.sh resolves bin/lib/rb. A SCRIPT has a harness root; only a
+# LIBRARY (bin/lib/merge-conductor-lib.sh, which is sourced from anywhere) has
+# to resolve bin/lib/mc off BASH_SOURCE. It matters here: the mutation block in
+# tests/blocked-resolver-rest.bh-783-test.sh runs a sed-mutated COPY of this
+# script out of its own directory, and a BASH_SOURCE lookup would send that copy
+# looking for modules that were never beside it.
+#
+# A module it cannot READ, or one it reads and cannot USE, is a REFUSAL and not
+# a shrug. Boxes take bin/ through `rsync -a` per FILE (bin/harness-sync.sh), so
+# a tick that fires mid-sync can see this script new and a module missing or
+# half written. Sourcing garbage and carrying on would drain parks with half a
+# classifier — every park answered `none`, nothing fixed, and a log line that
+# reads exactly like a quiet tick.
+BR_LIB_DIR="$H/bin/lib/br"
+BR_MODULES="discovery keys ladder lane record cap headgate datalane contested"
+for _br_m in $BR_MODULES; do
+  # shellcheck source=/dev/null
+  if [ -r "$BR_LIB_DIR/$_br_m.sh" ] && . "$BR_LIB_DIR/$_br_m.sh"; then continue; fi
+  HARNESS="$H" "$H/bin/alert-line.sh" "RESOLVER MODULE MISSING: bin/lib/br/$_br_m.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no park was drained this tick"
+  echo "blocked-resolver: bin/lib/br/$_br_m.sh is missing or unusable — refusing the tick" >&2
+  exit 1
+done
+unset _br_m
+# THE OPTIONAL LOOP (BH-1468), and it is the OPPOSITE of the required one above.
+# A box that has no bin/lib/br/opt/ at all is the NORMAL box — the modules are
+# shipped by #1470 (carry an unchanged verdict / rebase a derived-only conflict)
+# and #1471 (family-batched iron-law adjudication), and until they land every
+# hook below is undefined and the lane does exactly what it does today. So
+# absent is SILENT, not an alert and not an exit: paging a hub every ten minutes
+# for a file nobody has written yet is how an alert log stops being read.
+#
+# Fail-open on the two ways a half-synced module can arrive. bin/ reaches a box
+# through `rsync -a` per FILE (bin/harness-sync.sh, which already recurses into
+# bin/lib/br/opt/ — no sync change is needed for these), so a tick can see a
+# module that does not parse or one whose source dies part-way. Either is ONE
+# log line and today's path for the rest of the tick; sourcing garbage and
+# carrying on is what the required loop refuses, and here there is nothing to
+# refuse because the lane's own rungs are all still there.
+#
+# BR_OPT_OFF is the ONE kill switch for every optional rung: a comma list, no
+# spaces, of module names to leave unsourced. Per-behaviour flags are
+# deliberately not offered — an operator turning the seam off at 3am wants one
+# word, not a table. Per-module notes: bin/lib/br/opt/README.md.
+BR_OPT_MODULES="mechanical family cirepair stale external extfix extpark extrebase parentprio untouched profile readmemo unchanged"
+BR_OPT_OFF="${BR_OPT_OFF:-}"
+for _br_o in $BR_OPT_MODULES; do
+  case ",$BR_OPT_OFF," in *",$_br_o,"*) continue ;; esac
+  _br_of="$BR_LIB_DIR/opt/$_br_o.sh"
+  [ -r "$_br_of" ] || continue
+  if ! bash -n "$_br_of" 2>/dev/null; then
+    say "optional module bin/lib/br/opt/$_br_o.sh does not parse — skipped, this tick runs without it"
+    continue
+  fi
+  # shellcheck source=/dev/null
+  . "$_br_of" \
+    || say "optional module bin/lib/br/opt/$_br_o.sh failed on source — skipped, this tick runs without it"
+done
+unset _br_o _br_of
+# blocked-resolver.d (BH-7450): new optional code is its own file, bin/blocked-resolver.d/<key>-<name>.sh, never one more BR_OPT_MODULES word
+# (bin/list-file-lint.sh refuses that). Sourced once each, LC_ALL=C order, after the modules above, fail-open like them; BR_OPT_OFF names one without .sh.
+mapfile -t _br_frags < <(set +f; for _f in "$H"/bin/blocked-resolver.d/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+for _br_of in "${_br_frags[@]}"; do
+  _br_o=${_br_of##*/}; _br_o=${_br_o%.sh}; case ",$BR_OPT_OFF," in *",$_br_o,"*) continue ;; esac
+  bash -n "$_br_of" 2>/dev/null || { say "fragment bin/blocked-resolver.d/$_br_o.sh does not parse — skipped, this tick runs without it"; continue; }
+  # shellcheck source=/dev/null
+  . "$_br_of" || say "fragment bin/blocked-resolver.d/$_br_o.sh failed on source (rc $?) — skipped, this tick runs without it"
+done; unset _br_frags _br_of _br_o
+
+# THE DISPATCHER STOPS HERE (BH-5913): it needed only the libraries above (the
+# project hold gate among them). Nothing below this line runs in --dispatch.
+# The runs are started by the shared per-project lane runner
+# (bin/lib/project-lanes.sh): one detached `blocked-resolver.sh <project>` per
+# project that is not held, no cap, each at a stable offset inside
+# BR_DISPATCH_SPREAD_SECS (default 540, 0 = all at once). 540 keeps every start
+# inside the 10-minute cadence.
+if [ "$BR_DISPATCH" = 1 ]; then
+  BR_DISPATCH_RC=0; br_placement_check
+  if ! command -v pl_dispatch >/dev/null 2>&1; then
+    say "bin/lib/project-lanes.sh is not loaded — no project run started this dispatch"
+    BR_DISPATCH_RC=1
+  else
+    BR_SPREAD="${BR_DISPATCH_SPREAD_SECS:-540}"
+    case "$BR_SPREAD" in
+      ''|*[!0-9]*) say "BR_DISPATCH_SPREAD_SECS='$BR_SPREAD' is not a number of seconds — the dispatch uses 540"
+                   BR_SPREAD=540 ;;
+    esac
+    BR_DISPATCH_LINE=$(pl_dispatch blocked-resolver "$BR_SPREAD" "$H/bin/blocked-resolver.sh") || BR_DISPATCH_RC=$?
+    say "$BR_DISPATCH_LINE"
+  fi
+  hb_done blocked-resolver
+  exit "$BR_DISPATCH_RC"
+fi
+# <<< resolver modules
+

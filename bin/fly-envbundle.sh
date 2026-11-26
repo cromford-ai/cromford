@@ -87,6 +87,21 @@
 # an api-key project whose pool app another project also names
 # (state/fly/<p>.json .app or flags/fly-pool-app-<p>). Its marker would land in
 # the app's HBUNDLE_G_* secrets, which every project on the app boots from.
+#
+# HUB CACHE (BH-9889): with --pool AND env ENVBUNDLE_HUB_CACHE=1 (set only by
+# bin/fly-pool.sh's spawn call), a good ssh extract also writes the raw
+# extract stream to $HARNESS/state/bundle-cache/<project>.raw (dir 700, file
+# 600). NOT the env dir: bin/harden-state.sh sets chattr +i on every file under
+# it (the next mv fails, the cache freezes) and bin/audit-tail.sh pages critical
+# on every write under /etc/harness. When the owning box does not answer (ssh
+# rc 255 exactly), a cache file younger than the settings row
+# pool.env_bundle_cache_max_h (default 24 h, 0 = off) serves the bundle and one
+# stderr WARN says "env bundle from hub cache (box unreachable)". Any other ssh
+# rc, a stale, empty, symlinked or not-600 file, and every other mode
+# (fly-dispatch, --hub-global, a local extract, and the --pool callers that do
+# not set the flag: fly-pool-secrets-sync, fly-pool-rollout, docker-pool-host)
+# behave as before. A cached run
+# never rewrites the file. See docs/notes/2026-11-22-BH-9889-env-bundle-cache.md.
 set -uo pipefail
 
 PROJECT="${1:?usage: fly-envbundle.sh <project> <outdir> [--pool|--hub-global]}"
@@ -189,13 +204,83 @@ envbundle_ssh_guard() {
     0) ;;
     # Fallback of the row pool.envbundle_ssh.<project> (knob POOL_ENVBUNDLE_SSH).
     2) v="${POOL_ENVBUNDLE_SSH:-on}" ;;
-    *) echo "fly-envbundle/$PROJECT WARN: settings row $key read failed; ssh extract runs as before" >&2; return 0 ;;
+    *) ENVBUNDLE_SETTINGS_DOWN=1
+       echo "fly-envbundle/$PROJECT WARN: settings row $key read failed; ssh extract runs as before" >&2; return 0 ;;
   esac
   v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; v="${v,,}"
   [ "$v" = off ] || return 0
   "$HARNESS/bin/alert-line.sh" --id "envbundle-ssh-off-$PROJECT" --project "$PROJECT" \
     "[fly-envbundle/$PROJECT] push path refused: ssh off (settings row $key=off). A spawn for $PROJECT asked for the ssh env extract from $BOX; its machines must pull the bundle (lane.fly-pool.$PROJECT.machine_pull=1). Check bin/fly-pool-probe-pull.sh $PROJECT, or set the row to on for a secrets re-sync." 2>/dev/null || true
   die "push path refused: ssh off (settings row $key)"
+}
+
+# --- HUB CACHE (BH-9889) -----------------------------------------------------
+# Call every function here in the parent shell, never in $( ): they set
+# CACHE_MAXH, RAW and FROM_CACHE. ENVBUNDLE_SETTINGS_DOWN=1 is set by the guard
+# when its settings read failed; then the knob is NOT read again (one outage,
+# one request, one `read failed` line: tests/fly-envbundle-ssh-off.bh-8316 C).
+CACHE_MAXH=""; FROM_CACHE=""; ENVBUNDLE_SETTINGS_DOWN=""
+HUBCACHE=""; [ -n "$POOL" ] && [ "${ENVBUNDLE_HUB_CACHE:-}" = 1 ] && HUBCACHE=1
+envbundle_cache_file() { printf '%s\n' "$HARNESS/state/bundle-cache/$PROJECT.raw"; }
+# envbundle_cache_maxh — sets CACHE_MAXH (hours, 0 = off) once, lazily: only
+# on the ssh rc 255 branch and before the write after a good extract.
+envbundle_cache_maxh() {
+  [ -z "$CACHE_MAXH" ] || return 0
+  local key=pool.env_bundle_cache_max_h v rc
+  # Fallback of the row pool.env_bundle_cache_max_h (knob POOL_ENV_BUNDLE_CACHE_MAX_H): 24 h.
+  if [ "$ENVBUNDLE_SETTINGS_DOWN" = 1 ]; then
+    v="${POOL_ENV_BUNDLE_CACHE_MAX_H:-24}"
+  else
+    v=$(envbundle_ssh_read "$key"); rc=$?
+    case "$rc" in
+      0) ;;
+      2) v="${POOL_ENV_BUNDLE_CACHE_MAX_H:-24}" ;;
+      *) echo "fly-envbundle/$PROJECT WARN: settings row $key unreadable; cache max age 24h" >&2
+         CACHE_MAXH=24; return 0 ;;
+    esac
+  fi
+  v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+  if [[ "$v" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$v))" -le 168 ]; then
+    CACHE_MAXH=$((10#$v))
+  else
+    echo "fly-envbundle/$PROJECT WARN: settings row $key = '$v' is not 0..168; cache max age 24h" >&2
+    CACHE_MAXH=24
+  fi
+}
+# envbundle_cache_read <ssh rc> — sets RAW from a fresh cache and prints the one
+# hit line; else rc 1 with one WARN saying why. Never prints the file content.
+envbundle_cache_read() {
+  local f age m
+  [ -n "$HUBCACHE" ] || return 1
+  envbundle_cache_maxh
+  cmiss() { echo "fly-envbundle/$PROJECT WARN: hub cache not used: $*" >&2; return 1; }
+  [ "$CACHE_MAXH" -gt 0 ] || { cmiss "settings row pool.env_bundle_cache_max_h is 0 (off)"; return 1; }
+  f=$(envbundle_cache_file)
+  [ -e "$f" ] || [ -L "$f" ] || { cmiss "no cache file"; return 1; }
+  [ ! -L "$f" ] && [ -f "$f" ] && [ -r "$f" ] || { cmiss "cache file is not a regular readable file"; return 1; }
+  m=$(stat -c %a "$f" 2>/dev/null)
+  [ "$m" = 600 ] || { cmiss "cache file mode is $m, not 600"; return 1; }
+  age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
+  [ "$age" -lt $(( CACHE_MAXH * 3600 )) ] || { cmiss "cache age $((age / 3600))h is not under ${CACHE_MAXH}h"; return 1; }
+  RAW=$(cat "$f" 2>/dev/null)
+  [ -n "$RAW" ] || { cmiss "cache file is empty"; return 1; }
+  FROM_CACHE=1
+  echo "fly-envbundle/$PROJECT WARN: env bundle from hub cache (box unreachable): ssh rc $1 from $BOX, cache age $((age / 3600))h of ${CACHE_MAXH}h" >&2
+}
+# envbundle_cache_write — after every check passed, on a live remote --pool
+# extract only. A failed write is one WARN; the bundle still ships (rc 0).
+envbundle_cache_write() {
+  local f d
+  [ -n "$HUBCACHE" ] && [ -z "$HUBG" ] && [ "$BOX" != local ] && [ -z "$FROM_CACHE" ] || return 0
+  envbundle_cache_maxh
+  [ "$CACHE_MAXH" -gt 0 ] || return 0
+  f=$(envbundle_cache_file); d=$(dirname "$f")
+  { mkdir -p -m 700 "$d" && chmod 700 "$d" && [ ! -L "$f" ] \
+      && ( umask 077; printf '%s\n' "$RAW" > "$f.tmp.$$" ) && chmod 600 "$f.tmp.$$" \
+      && mv -f "$f.tmp.$$" "$f"; } 2>/dev/null \
+    || { rm -f "$f.tmp.$$" 2>/dev/null
+         echo "fly-envbundle/$PROJECT WARN: hub cache write failed; the bundle ships, the next dark-box spawn has no fresh copy" >&2; }
+  return 0
 }
 
 # The box's harness is /root/harness; only a local extract (the hub owning the
@@ -211,8 +296,10 @@ elif [ "$BOX" = "local" ]; then
   RAW=$(bash -c "${REMOTE_SCRIPT//\/root\/harness/$HARNESS}" 2>/dev/null) || { rc=$?; die "local env extract failed (rc $rc)"; }
 else
   envbundle_ssh_guard
+  # ssh rc 255 = the box did not answer: a fresh hub cache serves (BH-9889).
+  # Any other rc = the box answered and its extract failed; that stays FATAL.
   RAW=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "root@$BOX" "$REMOTE_SCRIPT" 2>/dev/null) \
-    || { rc=$?; die "ssh env extract from $BOX failed (ssh rc $rc)"; }
+    || { rc=$?; { [ "$rc" = 255 ] && envbundle_cache_read "$rc"; } || die "ssh env extract from $BOX failed (ssh rc $rc)"; }
 fi
 [ -n "$RAW" ] || die "empty env extract for $PROJECT"
 
@@ -264,9 +351,9 @@ if [ -n "$HUBG" ] && [ "$CAUTH" = api-key ]; then
   SAPP=$(envbundle_app_of "$HARNESS/state/fly/$PROJECT.json" "$HARNESS/flags/fly-pool-app-$PROJECT" | grep -m1 .)
   if [ -n "$SAPP" ]; then
     SHARED=$(
-      for f in "$HARNESS"/state/fly/*.json "$HARNESS"/flags/fly-pool-app-*; do
-        [ -f "$f" ] || continue
-        case "$f" in *-active.json) continue ;; */state/fly/*) q="${f##*/}"; q="${q%.json}" ;; *) q="${f##*/fly-pool-app-}" ;; esac
+      for sf in "$HARNESS"/state/fly/*.json "$HARNESS"/flags/fly-pool-app-*; do
+        [ -f "$sf" ] || continue
+        case "$sf" in *-active.json) continue ;; */state/fly/*) q="${sf##*/}"; q="${q%.json}" ;; *) q="${sf##*/fly-pool-app-}" ;; esac
         [[ "$q" =~ ^[A-Za-z0-9._-]+$ ]] || continue
         # Not grep -q: it closes the pipe early, and pipefail reads that as a miss.
         envbundle_app_of "$HARNESS/state/fly/$q.json" "$HARNESS/flags/fly-pool-app-$q" | grep -xF -- "$SAPP" >/dev/null && printf '%s\n' "$q"
@@ -308,6 +395,7 @@ if [ -z "$HUBG" ] && ! grep -q '^GH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null; th
   fi
 fi
 
+envbundle_cache_write
 chmod 600 "$OUTDIR/global.env" "$OUTDIR/$PROJECT.env" 2>/dev/null || true
 # Where this bundle came from, one non-secret line (BH-10141). bin/fly-pool.sh
 # names it in its default-token line next to the token's fingerprint. Not one

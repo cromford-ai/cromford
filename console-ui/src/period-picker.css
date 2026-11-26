@@ -1,0 +1,33 @@
+/* The period picker and chart (BH-9304, src/ui/PeriodPicker.js and
+   src/ui/PeriodChart.js). Theme tokens only: no colour literal. It wraps at
+   375px: no fixed width, and every input can shrink. */
+
+.period-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  max-width: 100%;
+  margin: 8px 0 12px;
+  font-size: var(--fs-sm);
+}
+.period-picker__presets { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; }
+.period-picker__preset {
+  min-height: 32px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text-dim);
+  font: inherit; cursor: pointer;
+}
+.period-picker__preset[aria-pressed="true"] { border-color: var(--line-active); color: var(--text-strong); }
+.period-picker__range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+.period-picker__field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; max-width: 100%; color: var(--muted); }
+.period-picker input, .period-picker select {
+  min-width: 0; max-width: 100%; min-height: 32px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text); font: inherit;
+}
+.period-picker__tz, .period-picker__oldest { color: var(--faint); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.period-picker__error { color: var(--red-lt); }
+
+.period-chart { display: block; max-width: 100%; }
+.period-chart__bar { fill: var(--accent); }
+.period-chart__value, .period-chart__bucket { fill: var(--text-dim); font-size: 9px; }
+.period-chart__gap { fill: var(--faint); }
+.period-chart__empty { color: var(--faint); padding: 12px 0; }

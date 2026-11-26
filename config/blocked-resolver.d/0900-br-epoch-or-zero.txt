@@ -1,0 +1,260 @@
+# A ledger field is an epoch or it is zero. A row half-written by a killed tick
+# must read as "never", never as a crash under set -u and never as a date.
+br_epoch_or_zero() { case "${1:-}" in ''|*[!0-9]*) printf '0' ;; *) printf '%s' "$1" ;; esac; }
+
+# br_visited_row <project> -> "<last_visited> <first_seen> <last_alerted>".
+# Zeros when the file, the row or a field is absent or unreadable — which is
+# exactly the pre-BH-980 behaviour, so an unreadable ledger degrades to today's
+# order rather than to a refused tick.
+br_visited_row() {
+  local p="$1" a b c d lv=0 fs=0 la=0
+  if [ -r "$BR_VISITED_FILE" ]; then
+    while IFS=$'\t' read -r a b c d; do
+      [ "${a:-}" = "$p" ] || continue
+      lv=$(br_epoch_or_zero "${b:-}"); fs=$(br_epoch_or_zero "${c:-}"); la=$(br_epoch_or_zero "${d:-}")
+      break
+    done < "$BR_VISITED_FILE"
+  fi
+  printf '%s %s %s\n' "$lv" "$fs" "$la"
+}
+
+# br_visited_put <project> <last_visited> <first_seen> <last_alerted> — rewrite
+# that project's row, atomically.
+#
+# THE LOCK IS SHORT AND IT IS NOT A QUEUE (D33). Two ticks overlap whenever a fix
+# round runs past the next cron fire, and a lost stamp is a project that silently
+# keeps its place at the front of the order. So the read-modify-write takes the
+# lock for its own few milliseconds and nothing else — never across a rung. A
+# lock this box cannot take in 5 seconds is not worth a skipped stamp: the write
+# goes ahead, which is no worse than not having the lock at all.
+br_visited_put() {
+  local p="$1" lv="$2" fs="$3" la="$4"
+  [ -n "$p" ] && [ "$p" != "-" ] || return 0
+  mkdir -p "$ST" "$H/locks" 2>/dev/null
+  (
+    exec 9>"$H/locks/blocked-resolver-visited.lock" || exit 0
+    flock -w 5 9 2>/dev/null || true
+    [ -f "$BR_VISITED_FILE" ] || : > "$BR_VISITED_FILE"
+    if awk -F'\t' -v OFS='\t' -v p="$p" -v lv="$lv" -v fs="$fs" -v la="$la" \
+         '$1 == p { next } NF { print } END { print p, lv, fs, la }' \
+         "$BR_VISITED_FILE" > "$BR_VISITED_FILE.tmp.$$" 2>/dev/null; then
+      mv -f "$BR_VISITED_FILE.tmp.$$" "$BR_VISITED_FILE"
+    else
+      rm -f "$BR_VISITED_FILE.tmp.$$"
+      say "$p: could not rewrite the visit ledger — its order and its starvation clock are unchanged this tick"
+    fi
+  )
+}
+
+# br_starved_alert <project> <candidate-count> <age-seconds> <since-text> <visited-list>
+#   ONE actionable line for a project this lane has candidates for and has not
+#   looked at for more than STARVE_SECS. It names what is parked, how long it has
+#   been ignored, what the tick spent instead, and the two knobs that change it —
+#   every value read from the ledger and this tick, none of them invented (D26).
+#   Same ALERTS.log + beat fallback as br_lane_down_alert, for the same reason: a
+#   box whose harness sync has not landed lane-alert.sh still pages.
+br_starved_alert() {
+  local p="$1" k="$2" age="$3" since="$4" vis="$5" line
+  line="[blocked-resolver] STARVED $p: $k parked candidate(s) were offered and this lane has not looked at the project since $since ($((age / 60)) min). This tick spent BR_PER_TICK=$PER_TICK on [${vis:--}]. Raise BR_PER_TICK in env/global.env or cap the busy projects with BR_PER_TICK_<PROJECT>; see the tick: lines in logs/blocked-resolver.log."
+  if [ -x "$H/bin/lane-alert.sh" ]; then
+    "$H/bin/lane-alert.sh" blocked-resolver "$line" >/dev/null 2>&1 || true
+  else
+    HARNESS="$H" "$H/bin/alert-line.sh" "$line"
+    "$H/bin/beat.sh" "$(jq -nc --arg p "$p" --arg akey "blocked-resolver-starved:$p" --arg l "$line" \
+      '{kind:"fleet_alert",project:$p,akey:$akey,line:$l}')" >/dev/null 2>&1 || true
+  fi
+  say "$p: STARVED — $k candidate(s) offered, no rung for $((age / 60)) min (since $since); one ALERTS line written"
+}
+
+# br_per_tick_for <project> — how many rungs this project may spend in this
+# tick. BR_PER_TICK_<PROJECT> (uppercased, every non-alphanumeric an
+# underscore: project-1 -> BR_PER_TICK_project-1_OS) when it is set to a
+# number, and the fleet total BR_PER_TICK otherwise.
+#
+# The fleet total is still the tick's hard ceiling. This only says how much of
+# it ONE project may take, so an unset override is byte-for-byte today's spend.
+# A typo is never a cap of zero: it falls back and says which variable it could
+# not read, because a project silently stopped by a bad env line is exactly the
+# invisible starvation this function exists to end.
+br_per_tick_for() {
+  local v val
+  v="BR_PER_TICK_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9\n' '_')"
+  val="${!v:-}"
+  case "$val" in
+    '')       printf '%s\n' "$PER_TICK" ;;
+    *[!0-9]*) say "$1: $v='$val' is not a number — using BR_PER_TICK=$PER_TICK"
+              printf '%s\n' "$PER_TICK" ;;
+    *)        printf '%s\n' "$val" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+# >>> br-token
+# The App token first, exactly as bin/merge-conductor.sh's use_token does it
+# (live since 2026-09-14, docs/MERGE-CONDUCTOR.md section 7.1): an installation
+# token is per-installation rate-limited and dead in an hour, and it is the
+# identity this resolver should be reading PRs on. When it is not available —
+# unarmed box, kill flag, a repo the App is not installed on — this falls to
+# today's "which of our PATs can see this repo" probe, unchanged, alert and all.
+# Both rungs are `command -v` guarded and neither ever returns nonzero.
+#
+# WHICH CREDENTIAL ANSWERED IS LOGGED (BH-597, ticket item 2). Deduped per RUN
+# rather than per tick: this resolver touches one repo many times in a single
+# pass, and a line per call would be a hundred lines saying the same thing. The
+# WORDS app/default/admin and never a token value.
+declare -A _BR_AUTH_SAID
+br_auth_log() { # br_auth_log <owner/repo> <human words>
+  [ -n "${_BR_AUTH_SAID[$1]+x}" ] && return 0
+  _BR_AUTH_SAID[$1]=1
+  say "$1: github auth: $2"
+}
+br_use_token() {
+  local _br_tok
+  if command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$1"; then
+    br_auth_log "$1" "App installation token"; return 0
+  fi
+  if command -v gh_repo_use_token >/dev/null 2>&1; then
+    # `none` is the probe's answer for a repo NO PAT of ours can see. It is not a
+    # credential, so it must not be logged as one — "none PAT" reads like a token
+    # named none. This rung still returns 0 (the resolver's reads then fail and
+    # take their own "could not read" branch, unchanged), so unlike the
+    # conductor's use_token it cannot say this by returning early.
+    gh_repo_use_token "$1"
+    _br_tok=$(gh_repo_token_for "$1")
+    # `app` reaches here too: gh_auth_for above refuses on an empty mint, but
+    # gh-repo-token.sh's own App rung mints again with --min-life and verifies
+    # visibility, so this ladder can still answer with an installation token.
+    # "app PAT" would name a credential that does not exist.
+    case "$_br_tok" in
+      app)  br_auth_log "$1" "App installation token" ;;
+      none) br_auth_log "$1" "no credential — no App installation and no PAT on this box can see the repo" ;;
+      *)    br_auth_log "$1" "$_br_tok PAT" ;;
+    esac
+  else
+    br_auth_log "$1" "default PAT"
+  fi
+  return 0
+}
+# Two arms, two resets, App first. Resetting only one would leave the process on
+# whichever token the other rung happened to export.
+br_reset_token() {
+  command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
+  command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
+  # In a project run the identity to come back to is the project's own.
+  [ -z "${BR_HOME_SLUG:-}" ] || br_home_token
+  return 0
+}
+# A PROJECT RUN READS GITHUB AS ITS PROJECT (BH-5913). One run per project, with
+# no cap on how many run at once, must not draw on one shared PAT's rate limit.
+# So a run with a project arms that project's repo credential (br_use_token:
+# its App installation token, else its repo token) before its first read, after
+# every reset, and at every row, so an hour-long run never reads on an expired
+# token (gh-token.sh answers from its cache, so the re-arm costs no mint). A
+# whole-fleet scan has no home repo and keeps the default credential.
+BR_HOME_SLUG=""
+br_home_token() {
+  case "${BR_HOME_SLUG:-}" in */*) br_use_token "$BR_HOME_SLUG" ;; esac
+  return 0
+}
+# <<< br-token
+
+# br_slug_of_url <url> — the owner/repo a PR URL names, or rc 1.
+#
+# THE SLUG WAS NEVER MISSING (2026-09-16). Both branch rungs asked
+# `fleet-conf.sh <project> repo` for it and, on an empty answer, said "no
+# repo/branch" and fell to the rung below — so on every conductor hand-off where
+# that lookup or the gh read came back blank the ladder collapsed and REBUILD
+# FRESH was the only rung that ever fired. From the log that day, on project-5
+# #1542 #1556 #1526 #1592 #1630 #1634 #1645, each within one second:
+#   "no repo/branch/head for https://github.com/example-org/project-5/pull/1645
+#    — nothing mechanical to try, FIX ROUND"
+#   "no repo/branch for https://github.com/example-org/project-5/pull/1645
+#    — REBUILD FRESH instead"
+# The answer is in the URL that line prints. It is taken from there.
+#
+# The URL is read rather than `gh pr view --json headRepository` on purpose: the
+# URL names the BASE repo, which is the one both rungs want — main is merged FROM
+# it and, for a same-repo branch (every harness build branch is one), the push
+# goes back TO it. `headRepository` is the HEAD's repo, the same thing on a
+# same-repo PR and the wrong thing on a fork. It is also one more API call for an
+# answer already in the string.
+br_slug_of_url() {
+  local url="${1:--}" slug
+  case "$url" in https://github.com/*/*/pull/*) ;; *) return 1 ;; esac
+  slug=$(mc_slug_of_url "$url")
+  case "$slug" in */*) printf '%s' "$slug"; return 0 ;; esac
+  return 1
+}
+
+# >>> br-rest
+# THE DECISION READS AND THE DECISION WRITES, ALL OF THEM (#783).
+#
+# Every one answers the gh-rest contract: rc 0 the API answered and the field is
+# on stdout, rc 44 GitHub said the PR does not exist (ABSENT — act on it), rc 75
+# GitHub did not answer (UNVERIFIABLE — the caller takes its "unknown" path, logs
+# the HTTP status, spends nothing and is re-offered the same park next tick).
+#
+# WHY THE HELPER LOGS ITS OWN 75. GH_REST_STATUS is set by gh_rest in the shell
+# that calls it, so a helper run inside `$( )` cannot hand the status back to its
+# caller — the subshell dies with it. A `say` is a file append and survives, so
+# the one line the ticket asks for is written HERE and callers only branch on rc.
+# Callers must never read GH_REST_STATUS after a `$(br_pr_field …)`.
+
+# br_pr_field <url> <jq-filter> [what] — one field of the REST PR object, on
+# stdout. A null field renders as EMPTY at rc 0 (jq `// empty`): a head repo
+# somebody deleted is a read that WORKED and said "no branch".
+br_pr_field() {
+  local url="${1:--}" filter="$2" what="${3:-pr read}" slug num f rc v
+  slug=$(br_slug_of_url "$url") || return 75
+  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 75
+  f=$(mktemp) || return 75
+  gh_rest GET "repos/$slug/pulls/$num" > "$f" 2>/dev/null; rc=$?
+  case "$rc" in
+    0)  if jq -e . "$f" >/dev/null 2>&1; then
+          v=$(jq -r "$filter // empty" "$f" 2>/dev/null) || v=""
+          printf '%s' "$v"
+        else
+          rc=75
+          say "$url: $what UNVERIFIABLE (HTTP $GH_REST_STATUS, unparsable body) — left as-is, retried next tick"
+        fi ;;
+    44) say "$url: $what — HTTP 404, the PR is absent" ;;
+    *)  say "$url: $what UNVERIFIABLE (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON}) — left as-is, retried next tick" ;;
+  esac
+  rm -f "$f"
+  return "$rc"
+}
+
+# br_pr_state <url> -> open | merged | closed, the contract's own three words.
+# `merged` is closed AND a merged_at, never the one without the other.
+br_pr_state() {
+  br_pr_field "$1" 'if .state=="closed" and .merged_at!=null then "merged" else .state end' "pr state"
+}
+
+# br_pr_comment <url> <body> — rc 0 posted, rc 75 not. The body goes to a 0600
+# temp file and is passed as `-F body=@<file>`, so it never reaches argv (or
+# anybody's process list).
+br_pr_comment() {
+  local url="${1:--}" slug num f rc
+  slug=$(br_slug_of_url "$url") || return 75
+  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 75
+  f=$(mktemp) || return 75; chmod 600 "$f" 2>/dev/null
+  printf '%s\n' "${2:-}" > "$f"
+  gh_rest_comment "$slug" "$num" "$f"; rc=$?
+  rm -f "$f"
+  return "$rc"
+}
+
+# br_issue_comment <owner/repo> <issue> <body> — the same, on an issue.
+br_issue_comment() {
+  local slug="${1:-}" issue="${2:-}" f rc
+  [ -n "$slug" ] && [ -n "$issue" ] || return 75
+  f=$(mktemp) || return 75; chmod 600 "$f" 2>/dev/null
+  printf '%s\n' "${3:-}" > "$f"
+  gh_rest_comment "$slug" "$issue" "$f"; rc=$?
+  rm -f "$f"
+  return "$rc"
+}
+# <<< br-rest
+

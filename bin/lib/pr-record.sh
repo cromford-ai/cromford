@@ -115,7 +115,7 @@
 #       rc 0 on a 200; else rc 1 and one `list-sync <repo> failed` log line.
 #
 #   pr_record_list_max_age
-#       BH-8452: the resolved PR_RECORD_LIST_MAX_AGE_S (default 900, 0 = off).
+#       BH-8452: the resolved PR_RECORD_LIST_MAX_AGE_S (default 3900 since BH-9939, 0 = off).
 #
 #   pr_record_open_rest <owner/repo> <out-file> [window-n] [need-cross]
 #       BH-9938 C1: pr_record_list <repo> open (with the window when given),
@@ -216,7 +216,7 @@ _PRR_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state lab
 _PRR_GH_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state labels"
 _PRR_DEFAULT_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.json
 _PRR_DEFAULT_HEAD_FALLBACK_S=900   # fallback only: the knob is PR_RECORD_HEAD_FALLBACK_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
-_PRR_DEFAULT_LIST_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_LIST_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
+_PRR_DEFAULT_LIST_MAX_AGE_S=3900   # fallback only: the knob is PR_RECORD_LIST_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/ (BH-9939: the prr-sweep interval plus 300 s)
 _PRR_DEFAULT_FIELD_MAX_AGE_S=3900   # fallback only: the knob is PR_RECORD_FIELD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
 
 _prr_root() { local r="${HARNESS:-${H:-}}"; [ -n "$r" ] || return 1; printf '%s' "$r"; }

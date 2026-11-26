@@ -9,7 +9,7 @@
 # (settings row staff.watchman.metric). The collector (bin/staff/watchman-
 # collect.sh) makes no request on a quiet tick, so the metric is its own lane.
 #
-# METRIC = A + B:
+# METRIC = A + B + C:
 #   A  the locations in state/staff/watchman/leaks/*.jsonl and base/*.jsonl
 #      that are NOT allowlisted (bin/lib/watchman-allow.sh, the collector's
 #      own knobs) and are live: the agent-core fingerprint of the location is
@@ -19,6 +19,10 @@
 #      whose finding is not open is closed: rotated, rejected or noise.
 #   B  the credentials in catalog/staff-rotations.d/*.json past their due date
 #      + 1 day (the collector's rotation-due rule), valid files only.
+#   C  the chat locations in state/staff/watchman/chat/leaks.jsonl (BH-10122,
+#      keys pasted into the Archie chat), live by the same rule as A. They
+#      are not put through the allowlist. The detail gets ` chat=<C>` only
+#      when that file exists.
 #
 # WHAT, in order (each step that stops writes one log line and exits 0):
 #   1  load the libs; no jq, node, jobs client, staff-contract.sh or
@@ -36,7 +40,7 @@
 #      watchman's due lever actions (C0).
 #
 # WRITES. One line per run in logs/staff-watchman-metric.log:
-#   <ts> live_unrotated_secrets=<n> history=<A> rotation=<B> allowlisted=<n> sample=<ok|failed>
+#   <ts> live_unrotated_secrets=<n> history=<A> rotation=<B> allowlisted=<n>[ chat=<C>] sample=<ok|failed>
 # `sample=ok` only after staff_metric_post returns rc 0. The row:
 # staff_metric_samples through the C0 route. No state/ file.
 #
@@ -63,7 +67,7 @@ wmm_rotation_due() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,54p' "$0"; exit 0 ;;
     *) echo "watchman-metric: unknown argument '$1'" >&2; exit 2 ;;
   esac
 done
@@ -158,26 +162,34 @@ done
 LC_ALL=C sort -u "$WORK/locs" -o "$WORK/locs"
 wm_allow_split "$WORK/locs" "$WORK/hits" "$ROOT"
 ALLOWED=$((WM_ALLOW_N_PATH + WM_ALLOW_N_DUMMY))
-A=0
-if [ -s "$WORK/hits" ]; then
+# C (BH-10122): the chat locations in chat/leaks.jsonl, never allowlisted.
+: > "$WORK/chat"
+CHATC=0
+[ -f "$WMS/chat/leaks.jsonl" ] && { CHATC=1; grep . "$WMS/chat/leaks.jsonl" | LC_ALL=C sort -u > "$WORK/chat"; }
+NA=$(grep -c . "$WORK/hits")
+cat "$WORK/hits" "$WORK/chat" > "$WORK/all"
+A=0; C=0
+if [ -s "$WORK/all" ]; then
   # One node call: the fingerprint the staff lane claims each line under.
   if ! node --input-type=module -e "
     import { readFileSync } from 'node:fs';
     import { fingerprint } from '$CORE';
     for (const l of readFileSync(process.argv[1], 'utf8').split('\n')) if (l) console.log(fingerprint(JSON.parse(l)));
-  " "$WORK/hits" > "$WORK/fps" 2>/dev/null || [ "$(grep -c . "$WORK/fps")" != "$(grep -c . "$WORK/hits")" ]; then
+  " "$WORK/all" > "$WORK/fps" 2>/dev/null || [ "$(grep -c . "$WORK/fps")" != "$(grep -c . "$WORK/all")" ]; then
     log "live_unrotated_secrets=unreadable (fingerprint failed); no sample"
     exit 0
   fi
   # The printed key is the sha256 of the line, as the collector writes it.
-  while IFS= read -r it; do printf '%s' "$it" | sha256sum | cut -c1-64; done < "$WORK/hits" > "$WORK/keys"
-  A=$(paste -d'\t' "$WORK/fps" "$WORK/keys" | awk -F'\t' -v op="$WORK/open" -v pr="$WMS/printed.tsv" '
+  while IFS= read -r it; do printf '%s' "$it" | sha256sum | cut -c1-64; done < "$WORK/all" > "$WORK/keys"
+  # Live = an open finding, or never printed. The first NA lines are history (A), the rest chat (C).
+  read -r A C < <(paste -d'\t' "$WORK/fps" "$WORK/keys" | awk -F'\t' -v op="$WORK/open" -v pr="$WMS/printed.tsv" -v na="$NA" '
     BEGIN {
       while ((getline l < op) > 0) open[l] = 1
       while ((getline l < pr) > 0) { split(l, a, "\t"); if (a[2] ~ /^[0-9]+$/ && a[2] + 0 > 0) printed[a[1]] = 1 }
     }
-    ($1 in open) || !($2 in printed) { n++ }
-    END { print n + 0 }')
+    ($1 in open) || !($2 in printed) { if (NR <= na) nh++; else nc++ }
+    END { print nh + 0, nc + 0 }')
+  [[ $A =~ ^[0-9]+$ && $C =~ ^[0-9]+$ ]] || { log "live_unrotated_secrets=unreadable (the live count failed); no sample"; exit 0; }
 fi
 
 # ── rotation register ─────────────────────────────────────────────────────────
@@ -187,8 +199,9 @@ B=$(wmm_rotation_due "$WORK/reg" "$NOW") || B=""
 [[ $B =~ ^[0-9]+$ ]] || { log "live_unrotated_secrets=unreadable (register count failed); no sample"; exit 0; }
 
 # ── 7 sample ──────────────────────────────────────────────────────────────────
-V=$((A + B))
+V=$((A + B + C))
 DETAIL="history=$A rotation=$B allowlisted=$ALLOWED"
+[ "$CHATC" = 1 ] && DETAIL="$DETAIL chat=$C"
 jq -n --argjson v "$V" --arg d "$DETAIL" \
   '{agent:"watchman", metric:"live_unrotated_secrets", value:$v, detail:$d}' > "$WORK/sample.json"
 if staff_metric_post "$WORK/sample.json" > "$WORK/sample.out" 2>/dev/null; then SAMPLE=ok; else SAMPLE=failed; fi

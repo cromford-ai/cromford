@@ -1,0 +1,10 @@
+{
+  "env": "WM_CHAT_LOG",
+  "read_in": "bin/staff/watchman-collect.sh",
+  "type": "string",
+  "default": "/root/orchestrator/conversation-log.md",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10122: the Archie chat log (bin/orc-context.sh, ORC_CONTEXT_LOG) that the chat-secret check scans with gitleaks dir --redact=100. Each record is scanned once; a key-shaped value is one chat-secret finding that names the record time, the part (message or reply), the line and the rule, never the value. Empty = no chat scan. A missing file or a path that is not a regular file (a symlink is refused) is one log line and no scan. Under HARNESS_TEST_SANDBOX=1 with this unset, the scan is off. NOT settable from the control plane: it names a file a root lane reads.",
+  "settable": false
+}

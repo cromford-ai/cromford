@@ -50,7 +50,8 @@
 # skips only the cron/boxes/<id>.d check (that list is the other box's); the
 # check that origin/main fleet.conf no longer names --host stays.
 # Key: the --account catalog key_env, else ORGO_API_KEY. The name of an unset
-# key is printed, never a value. Timeouts: BOX_LAUNCH_CALL_TIMEOUT_S,
+# key is printed, never a value; on --apply it is also one warn alert
+# (bin/lib/orgo-lever.sh, --id orgo-lever-<KEYENV>, BH-9889). Timeouts: BOX_LAUNCH_CALL_TIMEOUT_S,
 # BOX_LAUNCH_POLL_S, BOX_LAUNCH_DEADLINE_S. Dedupe lock (--apply only):
 # locks/box-ops-orgo-<id>.lock, flock -n, held = exit 0.
 #
@@ -134,6 +135,8 @@ box_ops_orgo() (
   . "$LIBD/cron-lines.sh" || exit 1
   # shellcheck source=bin/lib/restore-drill-orgo.sh
   . "$LIBD/restore-drill-orgo.sh" || exit 1
+  # shellcheck source=bin/lib/orgo-lever.sh
+  . "$LIBD/orgo-lever.sh" || exit 1
   export RESTORE_DRILL_CALL_TIMEOUT_S="${BOX_LAUNCH_CALL_TIMEOUT_S:-300}"
 
   SELF=$("$BIN/box-name.sh" 2>/dev/null | tr -dc 'A-Za-z0-9._-')
@@ -199,7 +202,9 @@ box_ops_orgo() (
   NEEDKEY=1
   [ "$VERB" = retire ] && [ "$DELETE" = 0 ] && NEEDKEY=0
   if [ "$APPLY" = 1 ]; then
-    [ "$NEEDKEY" = 0 ] || [ -n "$ORGO_API_KEY" ] || refuse "not configured: $KEYENV unset"
+    # A dead lever is loud (BH-9889): one warn alert, then the same refusal.
+    [ "$NEEDKEY" = 0 ] || [ -n "$ORGO_API_KEY" ] \
+      || { HARNESS="$H" orgo_lever_alert "$KEYENV" unset; refuse "not configured: $KEYENV unset"; }
     mkdir -p "$H/locks" || exit 1
     exec 8>"$H/locks/box-ops-orgo-$ID.lock"
     flock -n 8 || { echo "box-ops: $ID already running"; exit 0; }

@@ -11,11 +11,16 @@
 // open drawer is always the full menu, never the rail.
 
 import { useState, useEffect, useRef } from 'preact/hooks';
-import { html, Link } from '../router.js';
+import { html, Link, currentSearch, useSearchParam } from '../router.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { Skeleton } from './primitives.js';
 import { menuGroups, teamLinks, readMenuPrefs, writeMenuPrefs } from '../lib/sidemenu.js';
+import { withPeriod } from '../lib/period.js';
+
+// BH-9304: the groups whose links keep the current ?from=&to=, so moving
+// between report screens keeps the period.
+const PERIOD_GROUPS = new Set(['reports', 'logs']);
 
 const storage = () => (typeof window !== 'undefined' ? window.localStorage : null);
 // A display:none control (the collapse button in the drawer) is not a Tab stop.
@@ -28,6 +33,10 @@ export function SideMenu({ nav, groups, path, openAlerts = 0, open = false, onCl
   const roster = useApi(() => api.staffRoster(), []);
   const team = roster.data || roster.error ? teamLinks(roster.data, path) : null;
   const rail = prefs.collapsed && !open;
+  // Heard here so a search-only navigate (a period pick) re-renders the links.
+  useSearchParam('from');
+  useSearchParam('to');
+  const search = currentSearch();
 
   const navRef = useRef(null);
   // App hands a fresh onClose on every render; the key handler reads it here
@@ -78,7 +87,7 @@ export function SideMenu({ nav, groups, path, openAlerts = 0, open = false, onCl
             <span class="sidemenu__chev" aria-hidden="true">${g.open ? '▾' : '▸'}</span>${g.label}
           </button>
           ${rail || g.open ? g.items.map((it) => html`
-            <${Link} key=${it.to} to=${it.to} onNavigate=${close}
+            <${Link} key=${it.to} to=${PERIOD_GROUPS.has(g.id) ? withPeriod(it.to, search) : it.to} onNavigate=${close}
               class=${`navlink sidemenu__item${it.agent ? ' sidemenu__agent' : ''}${it.on ? ' navlink--on' : ''}`}
               aria-current=${it.on ? 'page' : undefined} title=${it.label} aria-label=${it.label}>
               ${it.icon ? html`<${it.icon} color="currentColor"/>` : html`<span class="sidemenu__dot" aria-hidden="true"></span>`}

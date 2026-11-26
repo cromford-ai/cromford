@@ -1,0 +1,264 @@
+# br_note_conflict_lines <project> <cap-key> <n> — record a measurement, biggest
+#   wins. A non-numeric n is not a measurement and is dropped rather than read
+#   as zero, and NEITHER IS A ZERO: the sidecar of a delete/modify conflict
+#   carries 0 (no markers to count), and a record that reads `conflict_lines: 0`
+#   says "measured, tiny" to every later reader when the truth is "not
+#   measurable". br_shape answers `large` for a 0 either way; this keeps the
+#   fiction out of the record as well.
+br_note_conflict_lines() {
+  local n="${3:-}"
+  case "$n" in ''|0|*[!0-9]*) return 0 ;; esac
+  br_json_edit "$1" "$2" \
+    '.conflict_lines = ([((.conflict_lines // 0) | if type == "number" then . else 0 end), ($n|tonumber)] | max)' \
+    --arg n "$n"
+}
+
+# ---------------------------------------------------------------------------
+# WHICH PATHS THIS TICKET KEEPS FIGHTING OVER (BH-579).
+#
+# TK-1529 was rebuilt three times and then ABANDONED, and every one of those
+# rebuilds hit the same conflict on the same file: siblings kept landing edits
+# to it while this ticket walked its ladder. Rebuilding against a path somebody
+# else is still moving buys the same conflict again at full price. So every
+# conflict this lane sees is remembered per (pr, head), and the second
+# occurrence of one path under a DIFFERENT (pr, head) is a RECURRENCE.
+# ---------------------------------------------------------------------------
+# br_paths_of_reason <raw-reason> — the paths a park's reason names, one per
+#   line. The raw string is whatever the conductor wrote:
+#     conflict-unresolvable: a.txt src/b.ts
+#     conflict-unresolvable: CONFLICT (content): Merge conflict in a.txt
+#   so the filter is conservative on purpose — a token is a path only when it is
+#   made of path characters, carries a `/` or a `.`, and does not end in `:`.
+#   CONFLICT, (content):, Merge, in and Auto-merging never parse, and the legacy
+#   line above answers `a.txt` and nothing else. Parking other people's PRs on
+#   an invented path is the failure this filter exists to refuse.
+br_paths_of_reason() {
+  local raw="${1:-}" tok
+  raw="${raw#conflict-unresolvable:}"
+  printf '%s\n' "$raw" | tr '[:space:]' '\n' | while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    case "$tok" in
+      *:)                 continue ;;
+      *[!A-Za-z0-9_./-]*) continue ;;
+      */*|*.*)            printf '%s\n' "$tok" ;;
+    esac
+  done | sort -u
+}
+# br_conflict_note <project> <cap-key> <pr-num> <head> <paths>
+#   One entry per (pr, head): a park re-read on the next tick is the SAME
+#   occurrence, and appending it again would turn one conflict into a
+#   recurrence with itself. Missing pr, head or paths writes nothing at all.
+br_conflict_note() {
+  local p="$1" k="$2" num="${3:-}" head="${4:-}" paths="${5:-}" arr
+  case "$num"  in ''|-) return 0 ;; esac
+  case "$head" in ''|-) return 0 ;; esac
+  [ -n "$paths" ] || return 0
+  arr=$(printf '%s\n' "$paths" | sed '/^$/d' | jq -R . | jq -sc .) || return 1
+  [ -n "$arr" ] && [ "$arr" != '[]' ] || return 0
+  br_json_edit "$p" "$k" '
+    if ((.conflicts // []) | any(((.pr|tostring) == $pr) and (.head == $head)))
+    then .
+    else .conflicts = ((.conflicts // []) + [{at:$t, pr:(($pr|tonumber?) // $pr), head:$head, paths:$paths}])
+    end' --arg pr "$num" --arg head "$head" --arg t "$(STAMP)" --argjson paths "$arr"
+}
+# br_recurring_paths <json> <pr-num> <head> <paths> — the given paths that this
+#   ticket ALREADY conflicted on under a different (pr, head). Exact string
+#   match: src/a.ts and src/a.tsx are two files. Empty output = nothing recurred.
+br_recurring_paths() {
+  local st="${1:-}" num="${2:-}" head="${3:-}" paths="${4:-}" arr
+  [ -n "$paths" ] || return 0
+  arr=$(printf '%s\n' "$paths" | sed '/^$/d' | jq -R . | jq -sc .) || return 0
+  [ -n "$arr" ] && [ "$arr" != '[]' ] || return 0
+  printf '%s' "$st" | jq -r --arg pr "$num" --arg head "$head" --argjson want "$arr" '
+    [ (.conflicts // [])[]
+      | select(((.pr|tostring) != $pr) or (.head != $head))
+      | (.paths // [])[] ] as $prev
+    | $want | map(select(. as $p | $prev | index($p))) | unique | .[]' 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# The ROUNDS LEDGER — which fix rounds are running right now, on this box.
+#
+# A fix round is one execute-stage agent call that can hold its worktree for 90
+# minutes. Unbounded they are, across overlapping */10 ticks, why a hotfix park
+# that arrives while three of them work waits for one of them to finish. The
+# ledger is what makes "how many are running" answerable at all: one file per
+# round, keyed on <project>-<cap-key>, which is the key the per-key flock below
+# already makes unique — so two live rows for one ticket are unrepresentable.
+#
+# THE ONLY PRUNE RULE IS "the pid in this row is not alive", read at
+# br_rounds_live time. Nothing sweeps later, because "later" is how a phantom
+# slot outlives the box that died holding it.
+# ---------------------------------------------------------------------------
+BR_ROUND_FILE="${BR_ROUND_FILE:-}"
+br_round_file() { echo "$ST/rounds/$(br_rkey "$1-$2").json"; }
+# br_rounds_live — prunes dead/unreadable rows FROM DISK, then prints one TSV
+# line per survivor: started_at <TAB> hotfix <TAB> file. The single reader, so
+# the prune happens exactly once per read.
+br_rounds_live() {
+  local f pid at hot row
+  [ -d "$ST/rounds" ] || return 0
+  for f in "$ST/rounds"/*.json; do
+    [ -e "$f" ] || continue
+    row=$(jq -r '[(.pid|tostring),((.started_at//0)|tostring),((.hotfix//0)|tostring)] | @tsv' "$f" 2>/dev/null) || row=""
+    IFS=$'\t' read -r pid at hot <<<"$row"
+    case "${pid:-}" in ''|null|*[!0-9]*) rm -f "$f" 2>/dev/null; continue ;; esac
+    if ! kill -0 "$pid" 2>/dev/null; then rm -f "$f" "${f%.json}.yield" 2>/dev/null; continue; fi
+    case "${at:-}" in ''|null|*[!0-9]*) at=0 ;; esac
+    [ "${hot:-0}" = 1 ] || hot=0
+    printf '%s\t%s\t%s\n' "$at" "$hot" "$f"
+  done
+}
+# THE FLEET'S REMOTE ROUNDS HOLD SLOTS TOO (BH-2674). A round the hub queued
+# for a box has no pid row here, so the queued + claimed fix_round_jobs rows
+# are added in. Read ONCE per tick (br_remote_open_prime, before the drain) and
+# inherited by every per-key subshell. An unreadable count is 0 and said: the
+# cap fails open, exactly as the local ledger does.
+BR_REMOTE_OPEN=0
+br_remote_open_prime() {
+  local n
+  BR_REMOTE_OPEN=0
+  br_fix_hops || return 0
+  command -v fix_round_open_count >/dev/null 2>&1 || return 0
+  n=$(fix_round_open_count 2>>"$LOG") || n=""
+  case "$n" in
+    ''|*[!0-9]*) say "open fix rounds unreadable — slot cap fails open this tick" ;;
+    *) BR_REMOTE_OPEN="$n" ;;
+  esac
+  return 0
+}
+br_rounds_running() { echo $(( $(br_rounds_live | wc -l) + ${BR_REMOTE_OPEN:-0} )); }
+# br_round_begin <project> <cap-key> <hotfix 0|1> <rkey> — the row, written
+# immediately before the agent call.
+#
+# $BASHPID, NOT $$: the round runs inside the per-key subshell and $$ there is
+# still the tick's pid, so a row written with it would stay "live" after the
+# round's subshell died and hold a slot until the whole tick ended.
+br_round_begin() {
+  local p="$1" ck="$2" hot="${3:-0}" rkey="${4:-}" f
+  f=$(br_round_file "$p" "$ck"); mkdir -p "$(dirname "$f")" 2>/dev/null
+  jq -nc --argjson pid "$BASHPID" --argjson t "$(date -u +%s)" --argjson h "${hot:-0}" \
+    --arg p "$p" --arg ck "$ck" --arg rk "$rkey" \
+    '{pid:$pid,started_at:$t,hotfix:$h,project:$p,ck:$ck,rkey:$rk}' > "$f.tmp" 2>/dev/null \
+    && mv "$f.tmp" "$f" 2>/dev/null
+  BR_ROUND_FILE="$f"
+  # THE CAP FAILS OPEN. A ledger write that failed leaves the round running and
+  # uncounted; a ledger that blocks work would be worse than a slot overrun.
+  return 0
+}
+# ---------------------------------------------------------------------------
+# THE FIX ROUND'S SCRATCH WORKTREE (BH-1363). The hub sat at 92% disk on
+# 2026-09-22 holding 14 GB of leaked fix worktrees dated 09-17..09-20: 1.8-2.7 GB
+# each, still registered, nothing running, the resolver idle. Two holes put them
+# there and this helper closes both.
+#
+#   * The removal was UNCHECKED. Eleven call sites ran
+#     `git worktree remove --force "$wt" >/dev/null 2>&1` and dropped the rc, and
+#     that command genuinely fails (rc 128, directory untouched) on a LOCKED
+#     worktree. A removal that failed read exactly like one that worked.
+#   * Nothing owned the directory on an UNPLANNED exit. Removal happened only at
+#     the eleven inline call sites; the per-key subshell's EXIT trap freed the
+#     ledger row and nothing else, so a round that ended anywhere but one of
+#     those eleven lines — a reboot, update-runners, an operator kill, the OOM
+#     killer — left the whole checkout behind.
+#
+# BR_FIX_WT is set the moment the path is chosen, so the trap below has an owner
+# even for a half-created tree. brfix/<ck> is NEVER touched here: that branch is
+# the round's paid-for work and the reuse path at the top of br_fix_round starts
+# from it, so dropping it buys the same agent tokens twice. Branch deletion
+# stays exactly where it is today, on the terminal call sites.
+BR_FIX_WT=""
+BR_FIX_REPO=""
+# br_wt_drop <why> [<repo> <worktree>] — remove a fix-round worktree and say so.
+# With no path it drops the round's own and CLEARS it, so an explicit call
+# followed by the trap removes once and logs once. rc 0 = the directory is gone,
+# and no call site ever reads it: a cleanup result never rewrites a verdict.
+br_wt_drop() {
+  local why="${1:-the round ended}" repo="${2:-}" wt="${3:-}"
+  if [ -z "$wt" ]; then
+    wt="${BR_FIX_WT:-}"; repo="${BR_FIX_REPO:-}"; BR_FIX_WT=""
+  fi
+  [ -n "$wt" ] || return 0
+  if [ ! -e "$wt" ]; then
+    [ -n "$repo" ] && git -C "$repo" worktree prune >/dev/null 2>&1
+    return 0
+  fi
+  if [ -n "$repo" ]; then
+    git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1
+    # -f -f is the documented override for a LOCKED working tree, and the only
+    # reason this ladder has a second rung.
+    [ -e "$wt" ] && git -C "$repo" worktree remove --force --force "$wt" >/dev/null 2>&1
+  fi
+  # ANCHORED. The last resort deletes a path under tmp/brfix/ and nothing else —
+  # never the parent, never a path a caller happened to hand us.
+  if [ -e "$wt" ]; then
+    case "$wt" in "$H/tmp/brfix/"?*) rm -rf "$wt" 2>/dev/null ;; esac
+  fi
+  [ -n "$repo" ] && git -C "$repo" worktree prune >/dev/null 2>&1
+  if [ -e "$wt" ]; then
+    say "could NOT remove the fix-round worktree $wt ($why) — it is left for bin/disk-clean.sh to sweep"
+    return 1
+  fi
+  say "removed the fix-round worktree $wt ($why)"
+  return 0
+}
+# br_round_end — the row and its yield marker die together. Safe to call twice,
+# which is what the EXIT trap relies on.
+br_round_end() {
+  [ -n "${BR_ROUND_FILE:-}" ] || return 0
+  rm -f "$BR_ROUND_FILE" "${BR_ROUND_FILE%.json}.yield" 2>/dev/null
+  BR_ROUND_FILE=""
+  return 0
+}
+# br_yield_request <requesting-cap-key> — ask the OLDEST live PLAIN round for
+# its slot. A marker on disk, never a signal and never a wait: this returns
+# immediately and the hotfix park is re-offered next tick.
+#
+# A hotfix NEVER preempts a hotfix: if any live row is itself rank 0, no marker
+# is written and the caller logs the ordinary deferral instead. rc 0 = a marker
+# exists (written now or already there), rc 1 = nothing was asked.
+br_yield_request() {
+  local ck="$1" rows oldest
+  rows=$(br_rounds_live | sort -s -t$'\t' -k1,1n) || return 1
+  [ -n "$rows" ] || return 1
+  printf '%s\n' "$rows" | awk -F'\t' '$2==1{found=1} END{exit found?1:0}' || return 1
+  oldest=$(head -1 <<<"$rows" | cut -f3)
+  [ -n "$oldest" ] || return 1
+  # Idempotent: an existing marker is left exactly as it is.
+  [ -e "${oldest%.json}.yield" ] && return 0
+  printf 'requested_by=%s\n' "$ck" > "${oldest%.json}.yield" 2>/dev/null || return 1
+  return 0
+}
+# br_yield_take <project> <rkey> <cap-key> <reason> <worktree> <where> — rc 0
+# when THIS round was asked to yield and just did, rc 1 when it was not.
+#
+# A YIELD GIVES BACK THE SLOT AND NOTHING ELSE. The worktree goes; brfix/<ck>
+# STAYS, so the reuse path above picks the work up next round and the tokens are
+# bought once. No counter is bumped, no attempt is written, no state row is
+# touched, no push and no PR comment happen — the ticket is exactly as pending
+# as it was. And the agent process is NEVER signalled: the marker is only ever
+# read between calls, so nothing is killed mid-write.
+br_yield_take() {
+  local p="$1" rkey="$2" ck="$3" reason="$4" wt="$5" where="$6" marker
+  [ -n "${BR_ROUND_FILE:-}" ] || return 1
+  marker="${BR_ROUND_FILE%.json}.yield"
+  [ -e "$marker" ] || return 1
+  [ -n "$wt" ] && br_wt_drop "the round yielded its slot" "$REPOS/$p" "$wt"
+  mc_git_auth_clear 2>/dev/null
+  # The EVENT line is written BEFORE the row and marker are removed: a crash
+  # between them costs a duplicate event line, never a silent yield.
+  br_event resolver_yield "$p" "$ck" "$reason" "gave its slot back to $(sed -n 's/^requested_by=//p' "$marker" 2>/dev/null | head -1 || true) at $where — brfix/$ck kept, no counter spent"
+  br_round_end
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Discovery. Each source prints TSV rows:
+#   src <TAB> project <TAB> rkey <TAB> reason <TAB> pr-url <TAB> record <TAB> ticket-key
+# "-" is the empty field everywhere, so a reader splitting on tabs never shifts.
+# ---------------------------------------------------------------------------
+
+# br_derive_ticket_key (bin/lib/br/keys.sh) sets these.
+BR_TICKET_KEY=""
+BR_KEY_SOURCE=""
+

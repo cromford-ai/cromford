@@ -1,0 +1,9 @@
+{
+  "env": "POOL_ENV_BUNDLE_CACHE_MAX_H",
+  "type": "int",
+  "default": 24,
+  "zero_means": "off",
+  "note": "BH-9889 (C0): the env fallback of the settings row pool.env_bundle_cache_max_h, which is what an operator sets (this is NOT the lane row lane.fly-pool.<project>.pool_env_bundle_cache_max_h; nothing reads that). Read by bin/fly-envbundle.sh --pool only, on the ssh branch: the row first, this env when there is no row, then 24. Hours a hub copy of the last good env bundle (state/bundle-cache/<project>.raw, mode 600) may serve a spawn when the owning box does not answer (ssh rc 255); the spawn logs 'env bundle from hub cache (box unreachable)'. 0..168; 0 = off (no read, no write); any other value reads 24 with one WARN. NOT settable from the control plane as a lane knob.",
+  "settable": false,
+  "read_in": "bin/fly-envbundle.sh"
+}

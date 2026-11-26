@@ -16,8 +16,8 @@
 #   C1  a fresh sync: rc 0, the rows in the file, the stamp in <file>.sync, no log line
 #   C2  PR_RECORD_LIST_MAX_AGE_S=0: off, 0 curl calls
 #   C3  the jobs read fails: unreadable       C4  {"ok":true}: malformed
-#   C5  sync null: no-sync                    C6  age 901: stale
-#   C6b age 900, knob unset (default 900): hit  C6c age -5: stale
+#   C5  sync null: no-sync                    C6  age 3901: stale
+#   C6b age 3900, knob unset (default 3900 since BH-9939): hit  C6c age -5: stale
 #   C7  truncated: truncated                  C8  missing title: field:title
 #   C9  body "" on a row and 0 rows with a fresh sync: hits
 #   C10 unknown 1 (the last sync marked a record unknown): unknown
@@ -182,9 +182,9 @@ fresh c3; rec 0; touch "$H/curl-fail"; miss_case C3 unreadable
 fresh c4; printf '{"ok":true}' > "$H/rec.json"; miss_case C4 malformed
 fresh c4b; rec 0 'del(.unknown)'; miss_case C4b malformed
 fresh c5; rec null; miss_case C5 no-sync
-fresh c6; rec 901; miss_case C6 stale
-fresh c6b; rec 900; list
-eq "C6b age 900 at the default knob rc" "$RC" 0; eq "C6b rows" "$ROWS" '[101,102,103]'
+fresh c6; rec 3901; miss_case C6 stale
+fresh c6b; rec 3900; list
+eq "C6b age 3900 at the default knob rc" "$RC" 0; eq "C6b rows" "$ROWS" '[101,102,103]'
 fresh c6c; rec -5; miss_case C6c stale
 fresh c6d; rec 30; miss_case C6d stale PR_RECORD_LIST_MAX_AGE_S=29
 fresh c7; rec 0 '.truncated = true'; miss_case C7 truncated
@@ -243,7 +243,7 @@ run
 eq "R1b pulls reads with a stale copy" "$(pulls)" 0
 eq "R1b verdicts" "$(verdicts)" "$V1"
 # The record miss words the lane can meet each fall back to GitHub.
-for M in 'stale:901' 'trunc:0:.truncated = true' 'field:0:.rows[1].title = null | .missing = "title"'; do
+for M in 'stale:3901' 'trunc:0:.truncated = true' 'field:0:.rows[1].title = null | .missing = "title"'; do
   fresh "r1-${M%%:*}"; A=${M#*:}; rec "${A%%:*}" "$( [ "$A" = "${A#*:}" ] && echo . || echo "${A#*:}")"
   run
   eq "R1 ${M%%:*} falls back: pulls reads" "$(pulls)" 1

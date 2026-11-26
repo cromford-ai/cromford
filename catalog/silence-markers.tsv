@@ -9,6 +9,8 @@
 # that starts with "!" must NOT match. The hunk ERE is read against the hunk
 # header (the enclosing definition). Each marker is written with one bracketed
 # letter so this file is no hit for its own rules.
+# gh-guard skips split fragments (config/<name>.d/NNNN-<slug>.txt|sh, BH-10227): a
+# fragment is a verbatim copy of its render, and the render line is scanned.
 known-fakes	human	^bin/share/	KNOWN_(FAKE|PUBLIC)_[A-Z_]+ *= *[{[(]	^[[:space:]]*["'][^"']+["'],?[[:space:]]*(#.*)?$	an entry added to a KNOWN_FAKE_* or KNOWN_PUBLIC_* set (the public-mirror leak check)
 known-fakes-set	human	^bin/share/	-	KNOWN_(FAKE|PUBLIC)_[A-Z_]+ *[=|]	a KNOWN_FAKE_* or KNOWN_PUBLIC_* set defined or widened
 gitleaks	human	!\.md$	-	gitleaks:allo[w]	a gitleaks marker
@@ -16,6 +18,6 @@ gitleaks-config	human	(^|/)\.gitleaks(ignore|\.toml)$	-	-	a line added to the gi
 leak-list	human	((leak|identif|known-?fake|gitleaks|secret)[^/]*(allow-?list|baseline)|(allow-?list|baseline)[^/]*(leak|identif|known-?fake|gitleaks|secret))[^/]*(/|\.(txt|tsv|json|example|conf)$)	-	-	a line added to a leak or identifier allow-list
 allow-list	lead	(allow-?list|baseline)[^/]*(/|\.(txt|tsv|json|example|conf)$)	-	-	a line added to an allow-list or ratchet baseline file
 scratch-closure	lead	!\.md$	-	scratch-closure-allo[w]	a scratch-closure lint marker
-gh-guard	lead	!\.md$	-	gh-guard-allo[w]	a gh guard marker
+gh-guard	lead	!(\.md$|^config/[a-z0-9-]+\.d/[0-9][0-9][0-9][0-9]-[a-z0-9-]+\.(txt|sh)$)	-	gh-guard-allo[w]	a gh guard marker
 determinism	lead	!\.md$	-	#[[:space:]]*determinism:[[:space:]]*o[k]	a determinism lint marker
 sql-ident	lead	!\.md$	-	sql-ident-o[k]:	a SQL identifier marker (BH-6514)

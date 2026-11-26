@@ -1,0 +1,259 @@
+# br_lead_review <slug> <num> <head> — br_lead_pick on a fresh reviews read.
+br_lead_review() {
+  local rows
+  rows=$(br_review_rows "$1" "$2") || return 2
+  br_lead_pick "$1" "$3" "$rows"
+}
+
+# br_review_newest <slug> <num> <head> [rows-file] — the review that parks this PR on
+# <head>, as ONE line of base64: a standing lead/human CHANGES_REQUESTED first
+# (framed with BR_LEAD_HDR; the lead's word outranks the lane's own verdict,
+# including a later lane APPROVE), else the lane's own footer review exactly as
+# before (BH-872). ONE reviews read for both; [rows-file] gets those rows (BH-8307).
+#   rc 0  one; its body, base64, on stdout
+#   rc 1  the list was READ and holds no such review
+#   rc 2  THE READ FAILED — the caller says so and consumes nothing. An
+#         unreadable ledger is never "no review" (D11).
+br_review_newest() {
+  local slug="$1" num="$2" head="$3" rows out rc=0
+  rows=$(br_review_rows "$slug" "$num") || return 2; [ -z "${4:-}" ] || { printf '%s\n' "$rows" > "$4"; } 2>/dev/null
+  out=$(br_lead_pick "$slug" "$head" "$rows") || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$out"; return 0 ;;
+    2) return 2 ;;
+  esac
+  br_review_harness_pick "$head" "$rows"
+}
+
+# br_open_prs <slug> -> this repo's open harness PRs, as the JSON array
+# harness_pr_list answers with, READ ONCE PER TICK.
+#
+# Two things in this lane want that list now — the review-verdict source below
+# (BH-872) and the contested hold's competitor scan (BH-579) — and each used to
+# buy its own `pulls?state=open` page. Same tick, same repo, same answer, so the
+# first read is kept in a process-global and the second is free; the hold's own
+# hoist out of its path loop is unchanged and still the reason two holds cost
+# one list. The field set is the UNION of what both callers ask for, and every
+# consumer picks its fields out of the row, so the extra ones cost nothing.
+#
+# ONLY A READ THAT WORKED IS REMEMBERED. A failed or non-array answer is not
+# cached, so the next caller asks GitHub again rather than inheriting a gap —
+# the same rule br_review_newest holds about an unreadable ledger.
+#
+# THE CACHE IS A FILE, NOT A VARIABLE. The candidate sources run inside
+# `RAW=$(br_candidates)`, and a command substitution takes every variable its
+# subshell set with it — so a shell-level memo would be gone by the time the
+# hold path asks, and the list would be bought twice anyway. The key is the
+# LANE'S PID (identical in every subshell of this tick) plus the slug, and a
+# cached answer is read back only while it is younger than BR_PRS_CACHE_SECS,
+# so a recycled PID can never hand a later tick a stale list. The directory is
+# removed by the tick's EXIT trap.
+br_open_prs() {
+  local slug="${1:-}" dir f age now mtime out
+  [ -n "$slug" ] || return 1
+  command -v harness_pr_list >/dev/null 2>&1 || return 1
+  dir="${TMPDIR:-/tmp}/br-open-prs.$$"
+  f="$dir/${slug//[^A-Za-z0-9]/_}.json"
+  if [ -s "$f" ]; then
+    now=$(date -u +%s); mtime=$(date -u -r "$f" +%s 2>/dev/null || echo 0)
+    age=$(( now - mtime ))
+    if [ "$age" -ge 0 ] && [ "$age" -le "${BR_PRS_CACHE_SECS:-300}" ]; then cat "$f"; return 0; fi
+  fi
+  out=$(harness_pr_list "$slug" open number,url,headRefOid,headRefName,baseRefName,isDraft,updatedAt 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+  mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$out" > "$f" 2>/dev/null
+  printf '%s\n' "$out"
+}
+
+br_from_reviews() {
+  # A box whose harness sync has not landed bin/lib/gh-pr-list.sh answers
+  # nothing here and keeps every other source exactly as it is.
+  command -v harness_pr_list >/dev/null 2>&1 || return 0
+  local p slug list rows row num head brn url draft upd upd_ep cutoff
+  local b64 body rkey tkey rc esc esc_rkey revf
+  if command -v gh_budget_low >/dev/null 2>&1 && gh_budget_low blocked-resolver >/dev/null 2>&1; then
+    say "the review-verdict source is skipped this tick — the GitHub API budget is low"
+    return 0
+  fi
+  cutoff=$(( $(date -u +%s) - ${BR_REVIEW_LOOKBACK_SECS:-172800} ))
+  while read -r p; do
+    [ -n "${p:-}" ] || continue
+    [ -z "$ONLY" ] || [ "$ONLY" = "$p" ] || continue
+    slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
+    [ -n "$slug" ] && [ "$slug" != "-" ] || continue
+    br_use_token "$slug"
+    list=$(br_open_prs "$slug") || list=""
+    # The rows are read into an array FIRST: gh inside the loop must never eat
+    # the loop's own stdin (the conductor learned this the expensive way).
+    rows=()
+    [ -n "$list" ] && mapfile -t rows < <(printf '%s' "$list" \
+      | jq -r '.[]? | [((.number // "") | tostring), (.headRefOid // ""), (.headRefName // ""), (.url // ""), ((.isDraft // false) | tostring), (.updatedAt // "")] | @tsv' 2>/dev/null)
+    for row in "${rows[@]:-}"; do
+      [ -n "${row:-}" ] || continue
+      IFS=$'\t' read -r num head brn url draft upd <<<"$row"
+      [ -n "${num:-}" ] && [ -n "${head:-}" ] || continue
+      # BH-9029: a PR the pre-pass already retired is not read again.
+      command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "${url:-https://github.com/$slug/pull/$num}" && continue
+      [ "${draft:-false}" = true ] && continue
+      [ -n "${upd:-}" ] || continue
+      upd_ep=$(date -u -d "${upd:-}" +%s 2>/dev/null) || continue
+      [ "$upd_ep" -ge "$cutoff" ] || continue
+      rkey=$(br_rkey "$slug#$num")
+      # br_ticket_key prints "<key>\t<source>" since BH-488; the source word
+      # belongs in a log line, not in the candidate's ticket-key column.
+      tkey=$(br_ticket_key "$p" "-" "${brn:-}" "" 2>/dev/null); tkey="${tkey%%	*}"
+      # A RECORD WRITTEN BEFORE BH-4149 MAY SAY ESCALATED, and it stays terminal
+      # for this source (#891 review, item 3). That verdict outlasted the cap
+      # and was handed to a person with one comment, and re-offering it every
+      # ten minutes would spend one reviews read, the merged-guard reads and one
+      # "already ran N of cap" log line per tick for nothing. The record is a
+      # file, so the escalated PR is skipped BEFORE the API call. No new record
+      # is stamped ESCALATED: the review terminal is ABANDONED now.
+      #
+      # TERMINAL FOR THE ESCALATED PR, NOT FOR THE TICKET (#891 round 1,
+      # Important 5). br_cap_key keys on the TICKET when the branch names one,
+      # so a SECOND PR opened by hand for the same ticket key inherited the
+      # escalation and could never be a candidate — the "no consumer" state,
+      # recreated for that ticket and silent. The escalating rung stamps the PR
+      # it escalated (`escalated_rkey`); only that PR is skipped here. A record
+      # written before this change carries no such field and stays terminal, so
+      # nothing already handed to a person is re-offered.
+      # A HEAD FROZEN BY fix-round-noop (BH-2200) is NOT skipped here any more
+      # (BH-4149): it reaches br_fix_round's frozen-head gate, which hands it to
+      # br_fix_terminal. Once that closes the PR, the open-PR list stops naming it.
+      esc=$(br_load "$p" "$(br_cap_key "$p" "$rkey" "$tkey")" \
+            | jq -r '(.outcome // "") + "|" + (.escalated_rkey // "")' 2>/dev/null)
+      if [ "${esc%%|*}" = ESCALATED ]; then
+        esc_rkey="${esc#*|}"
+        case "$esc_rkey" in
+          ''|-|"$rkey") continue ;;
+        esac
+      fi
+      rc=0; revf="${TMPDIR:-/tmp}/br-open-prs.$$/rev-${slug//\//_}-$num.json"; rm -f "$revf"; b64=$(br_review_newest "$slug" "$num" "$head" "$revf") || rc=$?
+      case "$rc" in
+        2) say "$p/$slug#$num: the reviews list would not read (GitHub answered nothing) — no verdict consumed this tick, unreadable is not 'no review'"
+           continue ;;
+        0) ;;
+        *) b64="" ;;
+      esac
+      body=$(printf '%s' "$b64" | base64 -d 2>/dev/null)
+      # A lead/human CHANGES_REQUESTED (BH-2200) carries no `VERDICT:` line: its
+      # review STATE is the verdict, and br_review_newest only returns one that
+      # stands, so the framed body is the candidate as it is.
+      case "$body" in
+        "$BR_LEAD_HDR"*) ;;
+        *) [ "$(br_review_verdict "$body")" = REQUEST_CHANGES ] || { command -v br_rsn_note >/dev/null 2>&1 && br_rsn_note "$p" "$slug" "$num" "$head" "$revf"; continue; } ;;
+      esac
+      [ -n "${url:-}" ] || url="https://github.com/$slug/pull/$num"
+      # The reason is the NORMALIZED word: br_one hands the row's reason straight
+      # to br_action, so a candidate carrying the detail too would classify as
+      # `none` and be left where it is. The head rides in the rung's own event
+      # line, where the (PR, head) key is the thing a reader wants.
+      printf 'reviews\t%s\t%s\treview-changes-requested\t%s\t-\t%s\t-\n' \
+        "$p" "$rkey" "$url" "${tkey:--}"
+    done
+    br_reset_token
+  done < <("$H/bin/fleet-conf.sh" --projects 2>/dev/null)
+}
+# <<< br-reviews
+
+# br_round_robin — the candidate TSV (SRC P RKEY REASON URL REC TKEY) on stdin,
+# the same lines out, interleaved by project: the project this lane looked at
+# LONGEST AGO goes first, ties keep first-appearance order, and the order WITHIN
+# one project is preserved.
+#
+# WHY (BH-870). Every source above emits in its own file order — pr-state.tsv
+# rows, the builds glob, the queue — so the fleet budget below was spent top to
+# bottom. One repo with four parked PRs took all four rungs, every ten minutes,
+# for as long as it stayed parked, and the other six were invisible to this lane
+# while nothing anywhere said so. This is the same answer BH-778 gave the merge
+# sweep (sweep_order, bin/merge-sweep.sh), in the same awk shape.
+#
+# WHY THE LEDGER (BH-980). BH-870 fixed the starvation INSIDE one tick. It could
+# not fix the one BETWEEN ticks, because first appearance is a DETERMINISTIC
+# order: the same rows, the same glob, the same queue, so every tick offered the
+# same first PER_TICK projects and the fifth project on a box with more parks
+# than rungs was never reached — tick after tick. On the hub that was project-5,
+# 14 hand-offs and not one resolver line in seven hours. The visit ledger
+# ($ST/.last-visited.tsv, written by br_visited_put) is the only memory the
+# rotation needs: a project this lane looked at is stamped, and the next tick
+# puts the ones it has not looked at first. NO LEDGER FILE = every stamp 0 = the
+# BH-870 order, byte for byte, which is what a box running this for the first
+# time gets. The sort is insertion sort and stable on purpose: np is one entry
+# per fleet project, and a stable sort is what makes "no ledger" identical to
+# today rather than merely similar.
+#
+# A line with an empty project field keeps its own bucket rather than joining
+# somebody else's: it is still a candidate and it is still emitted. It has no
+# ledger stamp, so it sorts with the never-visited projects, in its own slot.
+#
+# ONE EMISSION, EVER (BH-980). awk's output is captured and printed once. The
+# old fail-open printed the whole stream AFTER awk may already have printed part
+# of it, so an awk that died mid-write offered the head of the candidate list
+# twice — two rungs, two rebuilds, one ticket. A fail-open that duplicates work
+# is worse than the ordering it was protecting.
+br_round_robin() {
+  local stream out rc
+  stream=$(cat)
+  [ -n "$stream" ] || return 0
+  out=$(printf '%s\n' "$stream" \
+    | awk -F'\t' -v vf="${ST:-}/.last-visited.tsv" '
+        BEGIN { while ((getline ln < vf) > 0) {
+                  nf = split(ln, f, "\t")
+                  if (nf >= 2 && f[1] != "") lv[f[1]] = f[2] + 0 }
+                close(vf) }
+        { p = $2; r = ++n[p]; if (r == 1) ord[++np] = p
+          line[p, r] = $0; if (r > maxr) maxr = r }
+        END { for (i = 2; i <= np; i++) {
+                k = ord[i]; kv = lv[k] + 0; j = i - 1
+                while (j >= 1 && (lv[ord[j]] + 0) > kv) { ord[j+1] = ord[j]; j-- }
+                ord[j+1] = k }
+              for (r = 1; r <= maxr; r++) for (i = 1; i <= np; i++)
+                if ((ord[i], r) in line) print line[ord[i], r] }')
+  rc=$?
+  if [ "$rc" = 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return 0
+  fi
+  # FAIL OPEN. No awk, a broken awk, anything: print what we read, in the order
+  # we read it. A broken ordering must never be the reason a parked ticket is
+  # not looked at — the sweep's own rule. It says so out loud, and rc 2 puts
+  # `+ordering-fallback` on the tick line, because an ordering nobody can see
+  # fail is an ordering nobody fixes.
+  printf '%s\n' "$stream"
+  say "ordering fell back to source order (awk rc=$rc) — every candidate is still offered, in the order it was read"
+  return 2
+}
+
+# ---------------------------------------------------------------------------
+# THE DETERMINISTIC PRE-PASS (BH-1457). Everything below runs BEFORE any rung,
+# reads NOTHING but this lane's own state files, and calls no model, no gh, no
+# git and no jobs client. It answers two questions per candidate:
+#
+#   is this row FINISHED?  -> drop it from the list, and say so once
+#   what will its rung COST? -> a sort key, so the cheap rungs go first
+#
+# THE CENSUS IT IS FOR (hub, 2026-09-22 14:1xZ): candidates=785 every tick,
+# reason=budget every tick, and of the 586 state records 98 RESOLVED_MERGED and
+# 79 ABANDONED were FINISHED rows still being offered. An ABANDONED row already
+# answers rc 3 inside br_one, but it is still discovered, still counted, still
+# read from disk and still offered — every ten minutes, for ever. A
+# RESOLVED_MERGED row is worse: it spends a whole PER_TICK slot and a handful of
+# REST reads before br_already_merged answers what this lane already knew.
+#
+# THE CANDIDATE ROW IS EIGHT FIELDS, ALWAYS (BH-1457 review B1). Until this
+# ticket only br_conductor_emit filled the eighth (`parked`); queue, builds,
+# rebuilds and reviews emitted SEVEN, and there was nothing in the pipeline that
+# noticed — the tick loop's `read` with eight names simply left PARKED empty and
+# br_rank_rows' seven-name read absorbed the remainder into `tkey` and printed
+# it back. Appending a ninth column to a seven-field row put the COST in
+# `parked`: br_note_untouched reads an all-digit string as an epoch, so
+# oldest_untouched became ~29,000,000m on the tick line AND on the SATURATED
+# page, and `sort -k9,9n` keyed those rows 0 — which put the rebuild-shaped
+# sources (pool-died-twice, pool-deferred-max, build-dead, rebuild-*) FIRST and
+# let them eat the whole rebuild budget, the exact inverse of the ask. Every
+# source now pads its row to eight; br_prepass re-emits from PARSED FIELDS, nine
+# wide, so the width is a property of this function and not of eight call sites
+# staying right for ever.
+# ---------------------------------------------------------------------------
+

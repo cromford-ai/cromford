@@ -1,0 +1,388 @@
+# br_prov_promote <key> <row-head> — BH-3630. Prints `provenance-ci-red` when
+#   the conductor's own detail for this park (mc_prov_detail_get, written by the
+#   tick from the same words its page prints) is on the row's head and says
+#   verdict=APPROVE ci=red. rc 1 otherwise, and what it prints then is WHY
+#   (`verdict=- ci=pending`, `no conductor detail for head abc12345`).
+#   No GitHub read: the conductor already paid for these words.
+br_prov_promote() {
+  local key="$1" head="${2:-}" line dh dv dc
+  if ! command -v mc_prov_detail_get >/dev/null 2>&1 || ! line=$(mc_prov_detail_get "$key" 2>/dev/null); then
+    echo "no conductor detail for head ${head:0:8}"; return 1
+  fi
+  IFS=$'\t' read -r dh dv dc _ <<<"$line"
+  dh=$(printf '%s' "${dh:-}" | tr 'A-F' 'a-f'); head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+  if [ -z "$head" ] || [ "$head" = - ] || [ "${dh:0:12}" != "${head:0:12}" ]; then
+    echo "no conductor detail for head ${head:0:8}"; return 1
+  fi
+  if [ "${dv:-}" = APPROVE ] && [ "${dc:-}" = red ]; then
+    echo provenance-ci-red; return 0
+  fi
+  echo "verdict=${dv:--} ci=${dc:--}"
+  return 1
+}
+
+# br_unmapped <key> <raw-reason> <url> <unmapped|skip> [skip-why] — BH-3630. A
+#   BLOCKED_HUMAN/RED_TWICE row no rung maps says so: one log line per PR per
+#   BR_UNMAPPED_WINDOW_S and, for a reason nothing maps at all, ONE warn alert
+#   per reason family per window. `skip` is a provenance park that was not
+#   promoted: its line names why (br_prov_promote's words) and raises no alert, since
+#   the conductor's re-review owns those shapes. A `hotfix-migration-hold:` row
+#   is a skip too (BH-4149): the production-DB apply gate, which no agent rung
+#   can take because no box holds prod DB credentials. The stamps are written before
+#   the line and the alert (marked before sent). Always rc 0, observe mode
+#   included: this reports a fact and acts on no PR.
+br_unmapped() {
+  local key="${1:-}" raw="${2:-}" url="${3:--}" mode="${4:-unmapped}" swhy="${5:-}" fam win now f last
+  fam="${raw%%[: (]*}"; fam=$(br_rkey "$fam"); [ -n "$fam" ] || fam=unknown
+  win="${BR_UNMAPPED_WINDOW_S:-21600}"
+  case "$win" in ''|*[!0-9]*|0) win=21600 ;; esac
+  now=$(date -u +%s)
+  f="$ST/unmapped/$(br_rkey "$key").$fam"
+  mkdir -p "$ST/unmapped" "$ST/unmapped-family" 2>/dev/null
+  last=$(cat "$f" 2>/dev/null); case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ "$(( now - last ))" -ge "$win" ]; then
+    printf '%s\n' "$now" > "$f" 2>/dev/null
+    if [ "$mode" = skip ] && [ "$raw" = provenance ]; then
+      say "provenance-skip $key: ${swhy:-no promotable detail} — only verdict=APPROVE ci=red is the resolver's (ci-red ladder); left to the conductor's claude re-review: $url"
+    elif [ "$mode" = skip ]; then
+      say "$fam-skip $key: ${swhy:-no agent path} — no rung is offered and nothing is closed; the conductor keeps the row: $url"
+    else
+      say "unmapped-reason $fam $key: $raw — no rung maps this BLOCKED_HUMAN reason; the conductor still owns the page: $url"
+    fi
+  fi
+  [ "$mode" = unmapped ] || return 0
+  f="$ST/unmapped-family/$fam"
+  last=$(cat "$f" 2>/dev/null); case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ "$(( now - last ))" -ge "$win" ] || return 0
+  printf '%s\n' "$now" > "$f" 2>/dev/null
+  [ -x "$H/bin/lane-alert.sh" ] && "$H/bin/lane-alert.sh" --severity warn --id "br-unmapped-$fam" blocked-resolver \
+    "unmapped BLOCKED_HUMAN reason '$fam' (first seen on $key): bin/blocked-resolver.sh has no agent rung for it yet, so the conductor's page is its only owner until one is mapped in br_reason_of/br_ladder_class." \
+    >/dev/null 2>&1
+  return 0
+}
+
+# br_key_in_only's memo (bin/lib/br/keys.sh).
+declare -A _BR_ONLY_REPO=()
+
+# br_conductor_emit <key> <reason> <url> — the shared tail of both conductor
+# sources: resolve the project, the build record, the branch and the ticket key,
+# and print the candidate row. rc 1 when the key does not belong to a project
+# this tick is handling.
+# br_conductor_emit <key> <reason> <url> [parked-at]
+#   The 4th argument (BH-1122) is the epoch this PR was parked — the conductor
+#   row's own `since` field, or the hand-off record's timestamp on the recovery
+#   path — and it rides out as an 8th tuple field so the drain can say how old
+#   the oldest thing it did NOT reach is. Every other source prints 7 fields and
+#   an absent 8th reads as "unknown", which is never treated as 0 (D11).
+br_conductor_emit() {
+  local key="$1" reason="$2" url="$3" parked="${4:--}" project rec br tkey kr
+  # Conductor keys are owner/repository#PR, not fleet project names. Resolve
+  # the registered slug so differently named repositories cannot disappear.
+  project=$("$H/bin/project-of.sh" --repo "${key%#*}" 2>/dev/null) || project=""
+  [ -n "$project" ] || return 1
+  [ -z "$ONLY" ] || [ "$ONLY" = "$project" ] || return 1
+  rec=$(mc_record_for "$url" 2>/dev/null || true); [ -n "$rec" ] || rec="-"
+  br=$(br_pr_field "$url" .head.ref 'head branch'); [ -n "$br" ] || br=""
+  # Discovery asks for no TITLE: this runs before br_one installs the repo's own
+  # token, so a second gh call here buys an answer we may not be able to read
+  # anyway. br_one asks again, inside the token, across every source.
+  if kr=$(br_ticket_key "$project" "$rec" "$br" ""); then
+    tkey="${kr%%	*}"
+    say "$project/$(br_rkey "$key"): ticket key $tkey from $(br_key_source_phrase "${kr##*	}")"
+  else
+    tkey="-"
+  fi
+  tkey=$(br_tkey_sync "$project" "$(br_rkey "$key")" "$tkey")
+  printf 'conductor\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$project" "$(br_rkey "$key")" "$reason" "${url:--}" "$rec" "$tkey" "${parked:--}"
+}
+
+# br_handoff_rows — the hand-offs the ROWS hold (BH-1388, BH-1025.3).
+#
+#   rc 1  the pr-state-rows flag is off, or either read was an OUTAGE. The
+#         caller then greps the log, which is today's path exactly.
+#   rc 2  the rows answered and hold no hand-off. The log is NOT consulted:
+#         a real empty answer is an answer.
+#   rc 0  with TSV, one line per (repo, number):
+#           key <TAB> reason <TAB> url <TAB> head <TAB> since
+#
+# WHY IT EXISTS. logs/merge-conductor.log lives on ONE box. A rebuilt hub has
+# no log and no state/merge-conductor/handoff file, so every open hand-off is
+# forgotten and the parks sit until somebody notices. The rows outlive the box.
+#
+# WHY FIVE COLUMNS AND NOT THE LOG'S THREE. The recovery loop below needs the
+# head the hand-off named, and on a rebuilt hub neither mc_handoff_file nor the
+# pr-state.tsv row has one — so with three columns the loop's head guard would
+# `continue` on every rows-sourced hand-off and this source could never emit.
+# The head and the park's `since` ride along as columns 4 and 5; the log source
+# still prints three and every guard below reads them as absent, as today.
+#
+# WHICH EVENTS COUNT: the NEWEST BLOCKED_HUMAN event per PR, kept only when the
+# pr_state view says that PR's LATEST state is still BLOCKED_HUMAN (a park the
+# conductor has since re-classified is the conductor's again), when the raw
+# reason is one mc_handoff_owns — the same subset the conductor logs as "handed
+# to bin/blocked-resolver.sh" — and when it is inside BR_HANDOFF_MAX_AGE_SECS.
+# The reason is normalized through br_reason_of exactly as the row source above
+# does, so the ladder reads the word it knows and a `contested:` loser (which
+# br_reason_of answers empty for) is never offered a rung.
+#
+# TWO list GETs per tick, whatever the park count (D21).
+#
+# A FULL PAGE IS rc 1, NOT AN ANSWER (lead review N3). Each read is ONE page of
+# $page rows. When either page comes back full there may be rows on a page this
+# never read: an event for a PR, or (the dangerous one) the PR's latest state,
+# whose absence would read as "no longer parked" and, at rc 2, silence the log
+# too. So a full page is treated like an outage and the log answers, exactly
+# as today, until this reader pages.
+br_handoff_rows() {
+  local cutoff since ev cur rc key raw reason at atsec seen=" " page=1000 n
+  local repo num state esince ehead ereviewed eurl ealerted
+  type pr_rows_on >/dev/null 2>&1 || return 1
+  pr_rows_on || return 1
+  cutoff=$(( $(date -u +%s) - ${BR_HANDOFF_MAX_AGE_SECS:-172800} ))
+  since=$(date -u -d "@$cutoff" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || return 1
+  ev=$(pr_state_events_page BLOCKED_HUMAN "$since" "$page"); rc=$?
+  case "$rc" in 0) ;; 2) return 2 ;; *) return 1 ;; esac
+  n=$(grep -c . <<<"$ev")
+  [ "${n:-0}" -lt "$page" ] || return 1
+  # The CURRENT state of every PR. rc 2 here means no PR has any state at all,
+  # so none of them is still BLOCKED_HUMAN — a real empty answer, not an outage.
+  cur=$(pr_state_page "$page"); rc=$?
+  case "$rc" in 0) ;; 2) return 2 ;; *) return 1 ;; esac
+  n=$(printf '%s' "$cur" | jq -r '(.rows // []) | length' 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$n" -lt "$page" ] || return 1
+  local -A latest=()
+  while IFS=$'\t' read -r key state; do
+    [ -n "$key" ] && latest["$key"]="$state"
+  done < <(printf '%s' "$cur" | jq -r '(.rows // [])[] | "\(.repo)#\(.number)\t\(.state)"' 2>/dev/null)
+  while IFS=$'\t' read -r repo num state esince ehead ereviewed raw eurl ealerted at; do
+    [ -n "$repo" ] && [ -n "$num" ] || continue
+    key="$repo#$num"
+    # NEWEST FIRST is the verb's own ordering, so the first line per PR wins —
+    # and the guard is set before every filter below, or a PR whose newest event
+    # was re-classified away would be re-admitted by an older one.
+    case "$seen" in *" $key "*) continue ;; esac
+    seen="$seen$key "
+    [ "${latest[$key]:-}" = BLOCKED_HUMAN ] || continue
+    mc_handoff_owns "$raw" || continue
+    reason=$(br_reason_of "$raw"); [ -n "$reason" ] || continue
+    # A BELT ON THE AGE, in case the route ever filters `since` on a different
+    # column than the one it reports. An `at` nobody can parse is NOT treated as
+    # old — unknown is not out of range (D11).
+    case "$at" in
+      ''|-) ;;
+      *) atsec=$(date -u -d "$at" +%s 2>/dev/null || echo "")  # determinism: ok date-empty-stamp ''|-) arm above handles empty
+         [ -z "$atsec" ] || [ "$atsec" -ge "$cutoff" ] || continue ;;
+    esac
+    printf '%s\t%s\t%s\t%s\t%s\n' "$key" "$reason" "${eurl:--}" "${ehead:--}" "${esince:--}"
+  done <<<"$ev"
+}
+
+# br_handoff_lines — every hand-off the conductor has LOGGED, newest line per PR:
+#   "<key> BLOCKED_AGENT <reason>… — handed to bin/blocked-resolver.sh (…): <url>"
+#   (and, since 2026-09-15, the same line with RED_TWICE in place of the display
+#   word — a red-twice park is handed over in exactly this shape).
+#   TSV: key <TAB> reason <TAB> url.
+#
+# THE ROW IS NOT THE ONLY RECORD (2026-09-14). A hand-off the conductor writes
+# and then re-classifies away on its own next tick leaves a BLOCKED_HUMAN row for
+# as little as 22 seconds — project-5 #759 handed off at 16:30:30Z, back to
+# NEEDS_REBASE at 16:30:52Z; #749 handed off at 16:48:07Z, WAIT_CI at 16:50:26Z;
+# project-7#438 handed off at 11:37Z, HEAD_MOVED at 11:39:56Z — and a lane that
+# only reads rows misses all three. bin/merge-conductor.sh no longer re-flips a
+# hand-off (mc_handoff_sticky), but rows parked before that shipped need
+# recovering and a log line is the durable record of the hand-off.
+#
+# The `not paged` budget line is deliberately NOT matched: it is an age report on
+# a row that IS still BLOCKED_HUMAN, which the row source already sees.
+#
+# ONE PROCESS PER CALL, NOT TWO PER LINE (BH-6044). The age test used to fork
+# `date -d` for every matching line — 4,013 lines on 2026-10-11, in each of the
+# 13 project runs. A stamp is `YYYY-MM-DD HH:MM:SS` UTC, so it orders as a
+# string: the cutoff is rendered ONCE in that shape and awk compares. A stamp
+# that is not a valid time of day is dropped, as the failed `date -d` dropped it.
+br_handoff_lines() {
+  local f="$H/logs/merge-conductor.log" cutoff cutstr
+  [ -s "$f" ] || return 0
+  cutoff=$(( $(date -u +%s) - ${BR_HANDOFF_MAX_AGE_SECS:-172800} ))
+  cutstr=$(date -u -d "@$cutoff" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) || return 0
+  [ -n "$cutstr" ] || return 0
+  grep -F 'handed to bin/blocked-resolver.sh' "$f" 2>/dev/null \
+    | sed -nE 's#^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8})Z ([^ ]+) (BLOCKED_AGENT|RED_TWICE) ([^ :]+).*(https://github\.com/[^ ]+)$#\1\t\2\t\4\t\5#p' \
+    | awk -F'\t' -v c="$cutstr" '
+        $2 == "" || $4 == "" { next }
+        $1 !~ /^[0-9][0-9][0-9][0-9]-[01][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9]$/ { next }
+        $1 < c { next }
+        { last[$2] = $2 "\t" $3 "\t" $4 }
+        END { for (k in last) print last[k] }'
+}
+
+# br_rereview_inflight <key> <head> — rc 0 when the conductor is re-reviewing
+#   this PR right now, so the resolver must wait (BH-594): the row is back in
+#   HEAD_MOVED, or the head-bound job for <head> is running, or its prompt is on
+#   disk while the job file is not yet (the spawn window). A rung taken now
+#   races that verdict — the TK-1669 shape. Local files only, no gh call. A
+#   done, failed or stale job does not hold the park: the conductor has
+#   answered, or will fail it into its own no-verdict park.
+br_rereview_inflight() {
+  local key="$1" head="${2:-}" jf
+  [ "$(mc_row_field "$key" 2 2>/dev/null)" = HEAD_MOVED ] && return 0
+  case "$head" in ''|-) return 1 ;; esac
+  command -v mc_rr_file >/dev/null 2>&1 || return 1
+  jf=$(mc_rr_file "${key%#*}" "${key##*#}" "$head")
+  if [ -f "$jf" ]; then
+    [ "$(mc_rr_state "$jf")" = running ] && return 0
+    return 1
+  fi
+  [ -e "${jf%.json}.out.prompt" ] && return 0
+  return 1
+}
+
+br_from_conductor() {
+  local key st head rev al why url reason row seen=" " hhead
+  local since parked breached ttl ttlbh ttlrt now age _breached _rank
+  # The rows are read into an array FIRST: gh inside the loop must never eat the
+  # loop's own stdin (the conductor learned this the expensive way).
+  local rows=(); [ -s "$MC_ROWS" ] && mapfile -t rows < "$MC_ROWS"
+  # OLDEST HAND-OFF FIRST (BH-1122). pr-state.tsv is in whatever order the rows
+  # were written, so before this the park that had waited longest was whichever
+  # one happened to be near the top of the file — hub #679 sat 434 minutes past
+  # its TTL while younger rows took every rung of every tick. The rank is
+  # (TTL-breached first, then oldest park), and the TTL is read through mc_ttl so
+  # an MC_TTL_<STATE> override is honoured rather than hardcoded here.
+  #
+  # AN UNREADABLE `since` SORTS LAST, not first: a row whose park age nobody can
+  # read is unknown, and unknown is not oldest (D11).
+  local dec=() sorted=()
+  now=$(date -u +%s)
+  ttlbh=$(mc_ttl BLOCKED_HUMAN); ttlrt=$(mc_ttl RED_TWICE)
+  for row in "${rows[@]:-}"; do
+    [ -n "$row" ] || continue
+    IFS=$'\t' read -r key st since head rev al why url <<<"$row"
+    case "$st" in BLOCKED_HUMAN|RED_TWICE) ;; *) continue ;; esac
+    [ -n "$key" ] || continue
+    br_key_in_only "$key" || continue
+    command -v brmm_merged >/dev/null 2>&1 && brmm_merged "$key" && continue
+    case "$st" in RED_TWICE) ttl="$ttlrt" ;; *) ttl="$ttlbh" ;; esac
+    breached=1
+    case "$since" in
+      ''|*[!0-9]*) since=999999999999 ;;
+      *) age=$((now - since))
+         case "$ttl" in ''|-*|*[!0-9]*) ;; *) [ "$age" -ge "$ttl" ] && breached=0 ;; esac ;;
+    esac
+    dec+=("$breached	$since	$row")
+  done
+  if [ "${#dec[@]}" -gt 0 ]; then
+    # -s, and it matters: without it sort's last-resort comparison falls back to
+    # the whole LINE, so rows parked in the same second would be re-ordered by
+    # their text — a park order that changes when somebody renames a repo.
+    # Stable means "same age, same order as the file", which is what every
+    # reader of this source assumed before there was an order at all.
+    mapfile -t sorted < <(printf '%s\n' "${dec[@]}" | sort -s -t $'\t' -k1,1n -k2,2n)
+  fi
+  for row in "${sorted[@]:-}"; do
+    [ -n "$row" ] || continue
+    IFS=$'\t' read -r _breached _rank key st since head rev al why url <<<"$row"
+    # RED_TWICE is a park this lane owns exactly like BLOCKED_HUMAN (2026-09-15):
+    # the conductor cannot move a head whose CI is red after its one rerun, so
+    # the row is read here on the same terms as every other park.
+    case "$st" in BLOCKED_HUMAN|RED_TWICE) ;; *) continue ;; esac
+    [ -n "$key" ] || continue
+    br_key_in_only "$key" || continue
+    # BH-9029: a PR the pre-pass already retired is not discovered again.
+    command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
+    reason=$(br_reason_of "$why")
+    # A REASON NO RUNG MAPS IS SAID OUT LOUD (BH-3630). Before this a
+    # `provenance` park (example-org/project-7#530) was dropped here without a
+    # line. A provenance park the conductor saw APPROVE + ci=red on is promoted
+    # onto the ci-red ladder and claimed; every other provenance shape and every
+    # other unmapped reason logs why it was left to the conductor. A contested
+    # loser stays silent: the loser skip owns it (BH-579). A migration hold is
+    # logged and never alerted (BH-4149): it is the one gate that stays with a
+    # person, the production-DB apply this file's header names.
+    if [ -z "$reason" ]; then
+      case "$why" in
+        provenance)
+          if reason=$(br_prov_promote "$key" "$head"); then
+            [ "$OBSERVE" = 0 ] && command -v mc_resolver_claim >/dev/null 2>&1 \
+              && mc_resolver_claim "$key" "$head" provenance-ci-red
+          else
+            br_unmapped "$key" "$why" "$url" skip "$reason"; continue
+          fi ;;
+        contested*) continue ;;
+        hotfix-migration-hold*) br_unmapped "$key" "$why" "$url" skip "the production-DB migration gate (no agent path: no box holds prod DB credentials)"; continue ;;
+        *) br_unmapped "$key" "$why" "$url" unmapped; continue ;;
+      esac
+    fi
+    # DEDUPE BY (slug, num, head), the way every br_* source dedupes: one
+    # candidate per PR per head, whichever source found it first.
+    case "$seen" in *" $key@${head:--} "*) continue ;; esac
+    seen="$seen$key@${head:--} "
+    if br_rereview_inflight "$key" "$head"; then say "$key: re-review in flight on ${head:0:8}, resolver waits"; continue; fi
+    # The ROW's `since` is the durable park age. The hand-off file's timestamp is
+    # not: mc_handoff_record rewrites it on every re-kick, so a park that is
+    # re-offered past its TTL would read as brand new on the tick it is oldest.
+    case "$since" in ''|*[!0-9]*) parked="-" ;; *) parked="$since" ;; esac
+    br_conductor_emit "$key" "$reason" "$url" "$parked" || continue
+  done
+  # AND THE HAND-OFFS WHOSE ROW HAS SINCE MOVED ON. Three guards, because a
+  # rebuild is expensive and a wrong one is a duplicate build:
+  #   - the PR is still OPEN (a merged one is never rebuilt — br_already_merged
+  #     is the #304 guard and it still runs on every candidate below);
+  #   - it is still on the head the hand-off named, so work somebody has already
+  #     pushed on top of the refused head is left to the conductor's re-review;
+  #   - the row is not at a terminal the resolver itself wrote (ABANDONED) or
+  #     that says the work landed (MERGED).
+  #
+  # THE ROWS ARE READ FIRST (BH-1388). They outlive the box; the log does not.
+  # The log is consulted only when the rows source answered rc 1 — the flag is
+  # off, or a read was an outage — so a dark lane and an unreachable worker both
+  # behave exactly as this loop did yesterday.
+  local rowst prst parked hsrc hrc ehead esince
+  hsrc=$(br_handoff_rows); hrc=$?
+  case "$hrc" in
+    0) : ;;                          # the rows answered, and they hold hand-offs
+    2) hsrc="" ;;                    # the rows answered: there are none
+    *) hsrc=$(br_handoff_lines) ;;   # flag off / outage: the log, exactly today
+  esac
+  while IFS=$'\t' read -r key reason url ehead esince; do
+    [ -n "$key" ] && [ -n "$url" ] || continue
+    br_key_in_only "$key" || continue
+    command -v bdi_url_retired >/dev/null 2>&1 && bdi_url_retired "$url" && continue
+    command -v brmm_merged >/dev/null 2>&1 && brmm_merged "$key" && continue
+    rowst=$(mc_row_field "$key" 2)
+    case "$rowst" in MERGED|CLOSED|ABANDONED|BLOCKED_HUMAN|RED_TWICE) continue ;; esac
+    # A released review-block park is not recovered here (BH-9260, fragment bh-9260).
+    command -v br_rbp_skip >/dev/null 2>&1 && br_rbp_skip "$reason" "$key" && continue
+    # ONE REST read for both fields. A 75 leaves both empty, so this hand-off is
+    # simply skipped for the tick — never recovered on a state nobody read.
+    read -r prst hhead <<<"$(br_pr_field "$url" \
+      '"\(if .state=="closed" and .merged_at!=null then "merged" else .state end) \(.head.sha // "")"' \
+      'pr state and head')"
+    [ "${prst:-}" = open ] && [ -n "${hhead:-}" ] || continue
+    # The head the hand-off named: the conductor's own record when it has one,
+    # and otherwise the row's head field, which is the only head evidence a park
+    # made before mc_handoff_record shipped ever wrote down.
+    parked=$(cut -f2 "$(mc_handoff_file "$key")" 2>/dev/null)
+    [ -n "$parked" ] && [ "$parked" != "-" ] || parked=$(mc_row_field "$key" 4)
+    # ...and, on a rebuilt hub, neither of those exists: the EVENT ROW's own
+    # head is the head the hand-off named (BH-1388). Empty for the log source,
+    # which is why this is a third fallback and not a replacement.
+    [ -n "$parked" ] && [ "$parked" != "-" ] || parked="${ehead:-}"
+    [ -n "$parked" ] && [ "$parked" != "-" ] || continue
+    [ "$parked" = "$hhead" ] || continue
+    if br_rereview_inflight "$key" "$hhead"; then say "$key: re-review in flight on ${hhead:0:8}, resolver waits"; continue; fi
+    case "$seen" in *" $key@$hhead "*) continue ;; esac
+    seen="$seen$key@$hhead "
+    say "$key: the conductor handed this off ($reason) and its row has since moved to ${rowst:--} — recovered from the hand-off $([ "$hrc" = 0 ] && echo rows || echo log) at ${hhead:0:8}"
+    # The row this park came from has moved on, so the hand-off record's own
+    # timestamp is the only park age left to read. Unreadable stays "-".
+    parked=$(cut -f1 "$(mc_handoff_file "$key")" 2>/dev/null)
+    # ...and when that file is gone too, the event row's own `since` (BH-1388).
+    case "$parked" in ''|*[!0-9]*) parked="${esince:-}" ;; esac
+    case "$parked" in ''|*[!0-9]*) parked="-" ;; esac
+    br_conductor_emit "$key" "$reason" "$url" "$parked" || continue
+  done <<<"$hsrc"
+  local _brmm_rc=$?; command -v brmm_say >/dev/null 2>&1 && brmm_say; return "$_brmm_rc"
+}
+

@@ -1,0 +1,138 @@
+# RETRY THE ENQUEUE, AND NOTHING ELSE (BH-488). Reached from a state file whose
+# last attempt is `rebuild-fresh-failed`: rung 3 already ran, so the PR is
+# closed, the record is marked and the conductor row is released. The only thing
+# still owed is the queue row.
+#
+# It never calls br_close_pr and never re-marks the record — both were done once,
+# and doing them again is how one park turns into two closed PRs. The guards are
+# rung 3's, in rung 3's order: a PR somebody merged in the meantime resolves, a
+# HOLD on the ticket stops it, and the rebuild cap still ends the ladder.
+br_rebuild_retry() {
+  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" st n k cap ck mst mrc row jobid enq external inflight_rc erc=0
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  # Same three answers as rung 3's own guard: merged resolves, unreadable defers,
+  # and only a state somebody actually read lets the retry proceed.
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    mst=$(br_pr_state "$url"); mrc=$?
+    if [ "$mrc" = 75 ]; then
+      say "$p/$rkey [$reason]: the PR state is UNVERIFIABLE this tick — the enqueue retry is deferred, no counter spent"
+      return 0
+    fi
+    if [ "$mst" = merged ]; then
+      br_resolve_merged "$p" "$ck" "$reason" "$url" "$rec"
+      return 0
+    fi
+  fi
+  br_hold_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" || return 0
+  br_board_done_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" || return 0
+  st=$(br_load "$p" "$ck"); n=$(br_num "$st" rebuilds); k=$(br_num "$st" enqueue_failures)
+  n=$(br_cap_rows "$p" "$rkey" "$reason" "$n" "$url" rebuild rebuilds)
+  cap=$(br_jobs_count "$st")
+  # The larger of the two counters, for the reason br_rebuild_fresh spells out:
+  # a row parked before the ledger landed must not buy its ladder a second time.
+  case "$cap" in ''|null) cap=$n ;; *) [ "$cap" -ge "$n" ] 2>/dev/null || cap=$n ;; esac
+
+  row=$(br_rebuild_inflight "$p" "$tkey" 2>/dev/null) || inflight_rc=$?
+  inflight_rc=${inflight_rc:-0}
+  if [ "$inflight_rc" = 0 ]; then
+    # THE LEDGER IS KEYED ON enqueued_at, not on the id: the id this lane minted
+    # carries a ~rN suffix the worker's row has never seen, so matching on the
+    # whole string would read every one of our own builds as somebody else's.
+    enq=$(printf '%s' "$row" | cut -f2)
+    jobid=$(br_job_for_enq "$st" "$enq")
+    external=""; [ -n "$jobid" ] || { jobid="$tkey@${enq}"; external=external; }
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD wait for rebuild already in flight (job $jobid) — observe mode"
+      return 0
+    fi
+    br_rebuild_wait "$p" "$ck" "$jobid" "$external" "$row"
+    return 3
+  fi
+  if [ "$inflight_rc" = 2 ] && [ "$cap" -ge "$MAX_REBUILDS" ]; then
+    jobid=$(printf '%s' "$st" | jq -r '(.rebuild_jobs[-1].id // "unknown")' 2>/dev/null)
+    [ -n "$jobid" ] && [ "$jobid" != "null" ] || jobid="unknown"
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD hold at the rebuild cap — queue unreadable (last job $jobid) — observe mode"
+      return 0
+    fi
+    BR_REBUILD_WAITING=1
+    br_set_wait "$p" "$ck" "$jobid"
+    say "$p/$ck: cannot read the queue to tell whether job $jobid finished — holding, NOT abandoned"
+    return 3
+  fi
+  if [ "$cap" -ge "$MAX_REBUILDS" ]; then
+    if [ "$OBSERVE" = 1 ]; then
+      say "$p/$rkey [$reason]: WOULD abandon — rebuilt fresh $cap times and the ladder is exhausted — observe mode"
+      return 0
+    fi
+    br_abandon "$p" "$ck" "$reason" "$url" "$rec" "rebuilt fresh $cap times and the ladder is exhausted$(br_jobs_why "$st")" "$tkey"
+    return 0
+  fi
+  if [ "$OBSERVE" = 1 ]; then
+    say "$p/$rkey [$reason]: WOULD retry the enqueue (rebuild $((n+1)) of $MAX_REBUILDS, retry $((k+1))) — observe mode"
+    return 0
+  fi
+  br_enqueue_fresh "$p" "$tkey" "$n" "$reason rebuild $((n+1)) of $MAX_REBUILDS (enqueue retry $((k+1)))" "$rec" "$rkey" "$url" || erc=$?
+  case "$erc" in
+    3) br_enqueue_dup_race "$p" "$ck" "$tkey"; return 3 ;;
+    *)
+      br_rebuild_settle "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" "$n" "$erc" \
+        "rebuild $((n+1)) of $MAX_REBUILDS (enqueue retry $((k+1)))" ;;
+  esac
+}
+
+# br_setup_blocked <project> <cap-key> <rkey> <reason> <url> <what> [rung]
+#   THE RUNG COULD NOT START, WHICH IS NOT A RUNG THAT FAILED. `rung` is
+#   fix-round (the default, rung 2) or mechanical (rung 1); both reach here for
+#   the same class of reason and neither spends anything.
+#
+#   the operator, 2026-09-16: "We shouldn't have rules that kill PRs because of time; it
+#   should be event based." The same holds for a rule that kills a PR because of
+#   THIS BOX. cromford #489 (12:04:57Z) and #465 (01:44:26Z) were both
+#   CLOSED by the rebuild rung after `worktree add failed for origin/ticket/...`
+#   and `no repo/branch for <url>` — the hub has no /root/repos/cromford
+#   clone, so rung 2 could never run there, and rung 3 closed two finished PRs
+#   on a machine problem that had nothing to do with either branch.
+#
+#   A missing clone, an unresolvable remote ref and a failed `worktree add` are
+#   FACTS ABOUT THE MACHINE, not events about the PR. So this rung:
+#     * spends NO counter (br_record without a bump field), so the ladder does
+#       not walk toward the rebuild on a setup failure;
+#     * closes nothing and enqueues nothing;
+#     * pages ONCE per park, naming what is missing and who fixes it;
+#     * is retried on the next tick, on the SAME branch, as the same rung.
+#   The escalation to rung 3 stays exactly where it was: an agent that ran and
+#   did not produce a verified commit, a push the lease rejected, a fix-round cap
+#   that is spent. Those are events.
+#
+#   Rung 1 joins it (2026-09-16): `mc_rebase` rc 4 is the same sentence in the
+#   same place — no credential, no clone, a fetch that would not run — and it
+#   used to spend the mechanical rung, which walked a park one step closer to the
+#   rung that closes PRs for a reason that was never about the PR.
+br_setup_blocked() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="${5:--}" what="$6" rung="${7:-fix-round}" f name BR_SETUP_RATE_HELD=0
+  # What the page says is NEEDED (BH-594): a missing clone is the default, and a
+  # caller whose block is not about a clone says what it IS about.
+  local need="${8:-a working clone at $REPOS/$p and a credential that can fetch it}"
+  case "$rung" in
+    mechanical) name="the mechanical rung" ;;
+    regen)      name="the regenerate rung" ;;
+    *)          name="the fix round" ;;
+  esac
+  say "$p/$rkey [$reason]: $name could not START ($what) — a machine problem, not a failed rung: no rung spent, nothing closed, retried next tick"; br_setup_rate "$p" "$rung" "$rkey" "$what" "$need"
+  # ONE of everything per park, the way br_nokey_alert does it: this lane
+  # re-offers the same park every ten minutes, and a block that stands for a day
+  # would otherwise write 144 alerts, 144 beats and 144 attempt entries into a
+  # record whose whole job is to say what was TRIED. The log line above is the
+  # per-tick evidence; the record, the event and the page are per EPISODE, and
+  # the marker is deleted the moment a rung runs, so the next block says it all
+  # again, unless the project's rate alert holds it (br_setup_rate, #6315926752).
+  f="$ST/$p/$ck.setup-alerted"; mkdir -p "$(dirname "$f")" 2>/dev/null
+  [ -e "$f" ] && return 0
+  : > "$f"
+  br_record "$p" "$ck" "$rung-blocked" "$reason" "$name could not START: $what — no rung spent, nothing closed, retried next tick"
+  br_event resolver_setup_blocked "$p" "$ck" "$reason" "$name could not start: $what — no rung spent, no rebuild, no close"
+  [ "$BR_SETUP_RATE_HELD" = 1 ] || "$H/bin/lane-alert.sh" blocked-resolver "$p/$rkey [$reason]: the resolver's $rung rung cannot START on ${url:--no url} — $what. The PR is LEFT OPEN and nothing was rebuilt (an event-based ladder never closes a PR over a machine problem), so this park stands until somebody fixes the box. Needed on $(hostname 2>/dev/null || echo this box): $need." >/dev/null 2>&1 || true
+  return 0
+}
+

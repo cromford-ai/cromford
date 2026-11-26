@@ -1,0 +1,325 @@
+# ── THE SUPERSEDE GUARD (BH-1642) ─────────────────────────────────────────────
+# On 2026-09-23 the rebuild rung closed two PRs as "Superseded by a fresh build"
+# that nobody should have thrown away. #1559 was parked `red-twice` on the heads
+# BEFORE the lead force-pushed a reviewed fix; the rung closed it ten minutes
+# after that push, and the new head went green and was approved minutes later.
+# #1448 was closed `head-not-reapproved` six minutes after this lane's OWN fix
+# round pushed 3d02abc6, while the lead's MERGE stood on the head that round had
+# pushed over. Both were reopened by hand. So before the rung closes an OPEN PR
+# (the supersede, and the ABANDONED close at the cap) it asks, in this order:
+#
+#   head-unreadable     the PR's current head could not be read: nothing is
+#                       closed on a head nobody saw.
+#   green-at-head       (BH-1671) the park is for a CI reason (red-ci-twice,
+#                       red-twice, queue-ejected-twice) and mc_ci_state says the
+#                       current head is green: the red count is about code that
+#                       is gone, and the PR is the queue's. Read right after the
+#                       head, so it outranks head-moved; only an affirmative
+#                       green declines (pending, none and unavailable fall
+#                       through), it logs `SKIP green-at-head` and releases the
+#                       park. project-5 #3172/#3175 were closed green.
+#                       Its other half is in mc_classify: the conductor no
+#                       longer parks `red-ci-twice` (reds counted ACROSS
+#                       heads), so a red head reaches this rung only as
+#                       red-twice on that same head; red-ci-twice is a legacy
+#                       row's reason.
+#   park-moved-on       the conductor's row for the PR is no longer a park and
+#                       no open hand-off record names a head: the conductor is
+#                       judging the PR again (a recovered, non-sticky red-twice
+#                       hand-off after a force-push is the #1559 shape).
+#   head-moved          the conductor judged this park (red twice, not
+#                       re-approved) on a head the PR is no longer on. That
+#                       count is about code that is gone; it restarts on the new
+#                       head, which is the conductor's to judge.
+#   settle-window       a NEW head — one that replaced the head this lane last
+#                       recorded for the PR, one the conductor did not judge, or
+#                       this lane's own fix-round push — gets
+#                       BR_SUPERSEDE_SETTLE_SECS for CI and the head-bound review
+#                       to answer on it. The first sighting of a PR with no push
+#                       evidence starts no window, so "red twice on the head it
+#                       is on" is superseded exactly as before.
+#   verdict             a lead/human verdict row stands on the current head, or
+#                       a MERGE / MERGE-WITH-NOTES stands on the head this
+#                       lane's fix round pushed or the head that round pushed
+#                       OVER (the #1448 shape). Reviewed work is the lead's to
+#                       throw away, never this rung's.
+#   hold                the ticket is held (to_merge_hold: the HOLD, the
+#                       one-PR-per-ticket loser list).
+#
+# FAIL CLOSED on a read (the operator, #1642): a verdict or hold read that cannot be
+# made declines this tick, and so does an unreadable window while a window is
+# in force. A LIBRARY that is not on the box is not a read — it is the state
+# every lane in this file keeps for a half-synced box (br_hold_gate's rule), so
+# the guard says so in one line of its own and today's rung runs.
+#
+# A DECLINE IS ONE LINE, `SUPERSEDE DECLINED (<reason>): …`, and it spends
+# nothing: no close, no comment, no enqueue, no counter. The conductor's park is
+# KEPT only for `hold` and the fail-closed reads; every other decline RELEASES
+# it, so the conductor judges the head again (br_sup_decline). A decline that
+# lasts BR_SUPERSEDE_DECLINE_ALERT_SECS pages once (br_sup_alert). Nothing here
+# is a clock that kills: the window only ever DELAYS a close.
+br_is_sha() { [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]; }
+
+# br_judged_head <owner/repo> <num> — the full sha the conductor judged this
+#   park on. The hand-off record comes first (mc_handoff_sticky's own order).
+#   The row's head field counts ONLY while the row is still a park
+#   (BLOCKED_HUMAN / RED_TWICE). A row the conductor has moved on carries the
+#   head it is judging NOW, not the one it parked. A recovered hand-off with no
+#   record would otherwise read the new head as the parked one, which is exactly
+#   #1559. rc 1 when nothing names a full sha: unknown, never read as "moved".
+#   rc 3 when the conductor HAS a row for this PR, the row is no longer a park,
+#   and no unreleased hand-off record names a head: the conductor is judging
+#   this PR again, so no park of it is standing to supersede on.
+br_judged_head() {
+  local key="$1#$2" row h="" hf rel=""
+  hf=$(mc_handoff_file "$key" 2>/dev/null) || hf=""
+  command -v mc_handoff_rel_file >/dev/null 2>&1 && rel=$(mc_handoff_rel_file "$key" 2>/dev/null)
+  row=$(mc_row_get "$key" 2>/dev/null)
+  case "$(cut -f2 <<<"$row")" in
+    BLOCKED_HUMAN|RED_TWICE)
+      # A RELEASED record is not the park any more (review N2). mc_transition
+      # rewrites it only on a state CHANGE, so a BLOCKED_HUMAN -> BLOCKED_HUMAN
+      # re-park on a new head leaves the old head in it while the row carries
+      # the new one; read after the release, it would say head-moved until the
+      # TTL re-kick, and never while this lane is saturated.
+      if [ "$(cut -f2 <<<"$row")" = BLOCKED_HUMAN ] && command -v mc_handoff_owns >/dev/null 2>&1 \
+         && mc_handoff_owns "$(cut -f7 <<<"$row")" && [ -n "$hf" ] && [ -s "$hf" ] \
+         && { [ -z "$rel" ] || [ ! -e "$rel" ]; }; then
+        h=$(cut -f2 "$hf")
+      fi
+      case "$h" in ''|-) h=$(cut -f4 <<<"$row") ;; esac ;;
+    '') [ -n "$hf" ] && [ -s "$hf" ] && h=$(cut -f2 "$hf") ;;
+    *) if [ -n "$hf" ] && [ -s "$hf" ] && { [ -z "$rel" ] || [ ! -e "$rel" ]; }; then
+         h=$(cut -f2 "$hf")
+       else
+         return 3
+       fi ;;
+  esac
+  h=$(printf '%s' "$h" | tr 'A-F' 'a-f')
+  br_is_sha "$h" || return 1
+  printf '%s' "$h"
+}
+
+# br_sup_seen <project> <cap-key> <pr-url> <head> — a rung that READ the PR's
+#   head (mechanical, regenerate, fix round) records it, so the rebuild rung can
+#   tell a head it has seen before from one pushed since. A head that replaces a
+#   recorded one is a push this lane has now seen, and the window runs from here.
+#   The first sighting starts no window.
+br_sup_seen() {
+  local p="$1" ck="$2" url="$3" h prev
+  h=$(printf '%s' "${4:-}" | tr 'A-F' 'a-f')
+  br_is_sha "$h" && [ "$OBSERVE" = 0 ] || return 0
+  prev=$(br_load "$p" "$ck" | jq -r --arg u "$url" 'if .sup_pr == $u then (.sup_head // "") else "" end' 2>/dev/null)
+  [ "$prev" = "$h" ] && return 0
+  br_sup_write "$p" "$ck" \
+    '.sup_pr=$u | .sup_head=$h | .sup_at=($a|tonumber) | .sup_settle=($s == "true")' \
+    --arg u "$url" --arg h "$h" --arg a "$(date -u +%s)" --arg s "$([ -n "$prev" ] && echo true || echo false)"
+}
+
+# br_sup_write <project> <cap-key> <jq-filter> [jq args…] — one write of the
+#   guard's own fields on the ticket's record.
+br_sup_write() {
+  local p="$1" ck="$2" flt="$3" f cur; shift 3
+  f=$(br_file "$p" "$ck"); mkdir -p "$(dirname "$f")" 2>/dev/null
+  cur=$(br_load "$p" "$ck" | jq -c --arg t "$(STAMP)" "$@" "$flt | .updated=\$t" 2>/dev/null) || return 1
+  [ -n "$cur" ] && br_save "$p" "$ck" "$cur"
+}
+
+# br_fix_push_note <project> <cap-key> <pr-url> <pushed-sha> <base-sha> — the
+#   fix round's push, remembered: the head it pushed, the head it pushed OVER,
+#   and when. The pushed head is also the head this lane now knows the PR on,
+#   with a window in force from the push.
+br_fix_push_note() {
+  br_sup_write "$1" "$2" \
+    '.fix_pr=$u | .fix_head=$h | .fix_base=$b | .fix_at=($a|tonumber)
+     | .sup_pr=$u | .sup_head=$h | .sup_at=($a|tonumber) | .sup_settle=true' \
+    --arg u "$3" --arg h "$4" --arg b "${5:-}" --arg a "$(date -u +%s)"
+}
+
+# br_sup_decline <project> <cap-key> <rkey> <reason> <pr-url> <head> <kind> <why>
+#   The ONE line, and what the decline does with the conductor's park.
+#
+#   WHICH DECLINES KEEP THE PARK (review N3). `hold` is the ticket's own
+#   instruction, and the fail-closed reads (head-, verdict-, knob-unreadable)
+#   know nothing yet: those keep it (BR_HOLD_PARKED, br_hold_gate's contract).
+#   Every other decline says "this head is the conductor's to judge", so the
+#   park is RELEASED and the conductor classifies the PR again. For `verdict`
+#   that is the only way the lead's MERGE is ever read: a sticky park gets no
+#   verdict read in the conductor.
+br_sup_decline() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" head="$6" kind="$7" why="$8"
+  case "$kind" in hold|*-unreadable) BR_HOLD_PARKED=1 ;; esac
+  # green-at-head leads with the words the ticket asked the log to carry.
+  local skip=""; [ "$kind" = green-at-head ] && skip="SKIP green-at-head — "
+  say "$p/$rkey [$reason]: ${skip}SUPERSEDE DECLINED ($kind): $why — nothing closed, nothing enqueued, no counter spent; asked again next tick"
+  br_sup_alert "$p" "$ck" "$rkey" "$reason" "$url" "$head" "$kind" "$why"
+}
+
+# br_sup_alert <project> <cap-key> <rkey> <reason> <pr-url> <head> <kind> <why>
+#   A DECLINE THAT DOES NOT END PAGES, ONCE (review N1). A resolver-owned park
+#   is never paged by the conductor (mc_budget_check) and this lane alerts only
+#   on ABANDONED, which a declined PR never reaches, so a verdict or an
+#   unreadable read would strand the PR with nothing but a log line per tick.
+#   One lane-alert per (PR, head, reason) once the same decline has lasted
+#   BR_SUPERSEDE_DECLINE_ALERT_SECS; a new head or a new reason starts again.
+#   `hold` never pages: it is an instruction being obeyed. An unreadable knob
+#   pages on the first decline, which is the loud side of not knowing.
+br_sup_alert() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" head="$6" kind="$7" why="$8"
+  local key st since alerted now thr
+  [ "$kind" = hold ] && return 0
+  [ "$OBSERVE" = 1 ] && return 0
+  key="$url|${head:--}|$kind"; now=$(date -u +%s)
+  st=$(br_load "$p" "$ck")
+  if [ "$(jq -r '.decl_key // ""' <<<"$st" 2>/dev/null)" != "$key" ]; then
+    br_sup_write "$p" "$ck" '.decl_key=$k | .decl_since=($a|tonumber) | .decl_alerted=false' \
+      --arg k "$key" --arg a "$now"
+    since=$now; alerted=false
+  else
+    since=$(jq -r '.decl_since // ""' <<<"$st" 2>/dev/null)
+    alerted=$(jq -r '.decl_alerted // false' <<<"$st" 2>/dev/null)
+  fi
+  [ "$alerted" = true ] && return 0
+  case "$since" in ''|*[!0-9]*) since=$now ;; esac
+  thr="${BR_SUPERSEDE_DECLINE_ALERT_SECS:-}"
+  case "$thr" in ''|*[!0-9]*) thr=0 ;; esac
+  [ $(( now - since )) -ge "$thr" ] || return 0
+  "$H/bin/lane-alert.sh" blocked-resolver "$p/$rkey: SUPERSEDE DECLINED ($kind) for $(( now - since ))s on ${url:--} at head ${head:0:12} — $why. The rebuild rung will not close this PR while that stands, and nothing else pages about a resolver-owned park; decide it (merge, push, or close) or clear what the reason names." >/dev/null 2>&1 || true
+  br_sup_write "$p" "$ck" '.decl_alerted=true'
+}
+
+# br_supersede_guard <project> <cap-key> <rkey> <reason> <pr-url>
+#   rc 0 the rung may close this PR; rc 1 it may not (one line already said why).
+#   Only for an OPEN PR — the caller has already read its state.
+br_supersede_guard() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5"
+  local slug num cur rc st now judged prev supat settle start="" by="" win h seen=" " line v why lib=""
+  slug=$(br_slug_of_url "$url") || return 0
+  num=$(mc_num_of_url "$url"); [ -n "$num" ] || return 0
+  cur=$(br_pr_field "$url" '.head.sha' "pr head"); rc=$?
+  cur=$(printf '%s' "$cur" | tr 'A-F' 'a-f')
+  # GitHub did not answer: nothing is closed on a head nobody saw. A head that
+  # DID come back but is not a full sha is handed to vd_standing below, whose
+  # contract answers rc 2 for it, so it still declines (verdict-unreadable).
+  if [ "$rc" != 0 ]; then
+    br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" head-unreadable "the PR's current head could not be read (rc $rc), and nothing is closed on a head nobody saw"
+    return 1
+  fi
+  # GREEN AT HEAD (BH-1671): a CI-reason park whose current head is green is a
+  # count about code that is not there any more. Only an affirmative `green`
+  # declines; pending, none and an unreadable read fall through to the rest.
+  # A QUEUE EJECTION ON A QUEUE-ONLY REPO IS NOT ANSWERED BY THE HEAD (2026-09-24):
+  # the head runs the fast checks only, so only a green batch carrying the PR is.
+  if [ "$(br_ladder_class "$reason")" = ci-red ] && command -v mc_ci_state >/dev/null 2>&1 \
+     && [ "$(mc_ci_state "$slug" "$cur")" = green ] \
+     && { [ "$reason" != queue-ejected-twice ] || ! command -v mc_queue_batch_only >/dev/null 2>&1 \
+          || ! mc_queue_batch_only "$slug" || [ "$(br_queue_batch "$slug" "$num" | cut -d' ' -f1)" = success ]; }; then
+    br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" green-at-head "CI is green on the PR's current head ${cur:0:12} — the red count is about code that is not there any more; left for the queue"
+    return 1
+  fi
+  now=$(date -u +%s)
+  st=$(br_load "$p" "$ck")
+  judged=$(br_judged_head "$slug" "$num"); rc=$?
+  if [ "$rc" = 3 ]; then
+    br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" park-moved-on "the conductor's row for $slug#$num is $(mc_row_field "$slug#$num" 2 2>/dev/null) now, not a park, and no open hand-off names a head — no count of it stands on ${cur:0:12}"
+    return 1
+  fi
+  [ "$rc" = 0 ] || judged=""
+  # WHAT THIS LANE KNOWS ABOUT THE PR'S HEAD, brought up to date. A head that
+  # replaces the one recorded for THIS PR, or that the conductor did not judge,
+  # is a push this lane has now seen: the window runs from here.
+  prev=$(jq -r --arg u "$url" 'if .sup_pr == $u then (.sup_head // "") else "" end' <<<"$st" 2>/dev/null)
+  supat=$(jq -r --arg u "$url" 'if .sup_pr == $u then (.sup_at // "") else "" end' <<<"$st" 2>/dev/null)
+  settle=$(jq -r --arg u "$url" 'if .sup_pr == $u then (.sup_settle // false) else false end' <<<"$st" 2>/dev/null)
+  if [ "$prev" != "$cur" ]; then
+    settle=false
+    { [ -n "$prev" ] || { [ -n "$judged" ] && [ "$judged" != "$cur" ]; }; } && settle=true
+    supat=$now
+    [ "$OBSERVE" = 1 ] || br_sup_write "$p" "$ck" \
+      '.sup_pr=$u | .sup_head=$h | .sup_at=($a|tonumber) | .sup_settle=($s == "true")' \
+      --arg u "$url" --arg h "$cur" --arg a "$now" --arg s "$settle"
+  fi
+  if [ -n "$judged" ] && [ "$judged" != "$cur" ]; then
+    br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" head-moved "the park was judged on ${judged:0:12} and the PR is on ${cur:0:12} now — that count is about a head that is gone, and it restarts on the new one"
+    return 1
+  fi
+  [ "$settle" = true ] && case "$supat" in ''|*[!0-9]*) ;; *) start=$supat; by="a new head, ${cur:0:12}, first seen by this lane" ;; esac
+  v=$(jq -r --arg u "$url" 'if .fix_pr == $u then (.fix_at // "") else "" end' <<<"$st" 2>/dev/null)
+  case "$v" in ''|*[!0-9]*) ;; *)
+    if [ -z "$start" ] || [ "$v" -gt "$start" ]; then
+      start=$v; by="this lane's own fix round, which pushed $(jq -r '.fix_head // "?"' <<<"$st" | cut -c1-12)"
+    fi ;;
+  esac
+  if [ -n "$start" ]; then
+    win="${BR_SUPERSEDE_SETTLE_SECS:-}"
+    case "$win" in ''|*[!0-9]*)
+      br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" knob-unreadable "BR_SUPERSEDE_SETTLE_SECS is '${win:-unset}', so the settle window after $by cannot be measured"
+      return 1 ;;
+    esac
+    if [ $(( now - start )) -lt "$win" ]; then
+      br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" settle-window "$(( win - (now - start) ))s of the ${win}s window left after $by (PR head ${cur:0:12}) — CI and the head-bound review answer on it first"
+      return 1
+    fi
+  fi
+  # A LEAD/HUMAN VERDICT on the current head, the head this lane pushed, or the
+  # head its push replaced. Bound to the full sha, so a verdict on older code
+  # protects nothing it did not read.
+  if command -v vd_standing >/dev/null 2>&1; then
+    # The CURRENT head is always asked, whatever it looks like: the reader owns
+    # "is this a head a row can bind to" and fails closed on one that is not.
+    # ANY lead/human verdict standing on it keeps the PR (a BLOCK there is the
+    # lead's to act on, not this rung's) — with ONE exception (BH-4149): a BLOCK
+    # on a head frozen in noop_heads. This lane's fix round already ran on that
+    # head against the lead's own findings and answered none of them, so the
+    # BLOCK has been acted on and is the reason to rebuild, not to keep the PR.
+    # Declining there parked the PR for ever behind a "decide it" page.
+    line=$(vd_standing "$slug" "$num" "$cur"); rc=$?
+    if [ "$rc" = 0 ] && [ "$(cut -f1 <<<"$line")" = BLOCK ] && br_has_field_value "$st" noop_heads "$cur"; then
+      say "$p/$rkey [$reason]: a $(cut -f2 <<<"$line") BLOCK (row $(cut -f3 <<<"$line")) stands on ${cur:0:12}, and the fix round on that head answered none of its findings (fix-round-noop) — the BLOCK does not keep this PR"
+      rc=1
+    fi
+    case "$rc" in
+      0) why="a $(cut -f2 <<<"$line")/human $(cut -f1 <<<"$line") verdict (row $(cut -f3 <<<"$line")) stands on ${cur:0:12} — reviewed work is the lead's to throw away"
+         br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "$why"
+         # BH-9029: the next tick skips this row while the verdict stands.
+         command -v bdm_set >/dev/null 2>&1 && bdm_set "$p" "$ck" "$reason" "$url" "$cur" "$cur" verdict "$why"
+         return 1 ;;
+      1) ;;
+      *) br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict-unreadable "the verdicts table could not be read for ${cur:0:12} (logs/verdicts.log says why), so whether a lead verdict stands there is unknown"
+         return 1 ;;
+    esac
+    # The two REMEMBERED heads (the one this lane's fix round pushed, and the
+    # one it pushed over) are protected only by a CLEARANCE — MERGE or
+    # MERGE-WITH-NOTES, vd_clear_word's rule (review N4). A lead BLOCK on the
+    # head the fix round replaced says "do not merge that code", not "keep this
+    # PR", and must not hold the PR for the rest of its life.
+    seen=" $cur "
+    for h in "$(jq -r --arg u "$url" 'if .fix_pr == $u then (.fix_head // "") else "" end' <<<"$st" 2>/dev/null)" \
+             "$(jq -r --arg u "$url" 'if .fix_pr == $u then (.fix_base // "") else "" end' <<<"$st" 2>/dev/null)"; do
+      h=$(printf '%s' "$h" | tr 'A-F' 'a-f')
+      br_is_sha "$h" || continue
+      case "$seen" in *" $h "*) continue ;; esac
+      seen="$seen$h "
+      command -v vd_clear_word >/dev/null 2>&1 || break
+      if v=$(vd_clear_word "$slug" "$num" "$h"); then
+        why="a lead/human $v stands on ${h:0:12}, the head this lane's fix round pushed or pushed over — reviewed work is the lead's to throw away"
+        br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" verdict "$why"
+        command -v bdm_set >/dev/null 2>&1 && bdm_set "$p" "$ck" "$reason" "$url" "$cur" "$h" verdict "$why"
+        return 1
+      fi
+    done
+  else
+    lib="no verdict reader (bin/lib/verdicts.sh) on this box"
+  fi
+  if command -v to_merge_hold >/dev/null 2>&1; then
+    if why=$(to_merge_hold "$p" "$slug" "$num"); then
+      br_sup_decline "$p" "$ck" "$rkey" "$reason" "$url" "$cur" hold "${why:-the ticket is held}"
+      return 1
+    fi
+  else
+    lib="${lib:+$lib; }no ownership reader (bin/lib/ticket-ownership.sh) on this box"
+  fi
+  [ -z "$lib" ] || say "$p/$rkey [$reason]: supersede guard ran without every reader — $lib; the rung proceeds as it did before BH-1642"
+  return 0
+}
+

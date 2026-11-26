@@ -4,7 +4,7 @@
 # call. GitHub only through gh_rest, and only to close a rotated credential's
 # filed issue.
 #
-# Two checks:
+# Three checks:
 #
 #   history-secret  The git history of each fleet repo on this box
 #                   (bin/fleet-conf.sh --projects, each at
@@ -35,6 +35,17 @@
 #                   range; the WM_SCAN_FAIL_ALERT-th in a row is one warn beat.
 #                   Every tick prints every cached location that is not
 #                   allowlisted (below).
+#   chat-secret     BH-10122: the Archie chat log (WM_CHAT_LOG, default
+#                   /root/orchestrator/conversation-log.md, the record file of
+#                   bin/orc-context.sh). Runs first, once a tick. Each record
+#                   not in state/staff/watchman/chat/scanned is copied to a
+#                   private temp dir and ONE gitleaks `dir` run (--redact=100)
+#                   reads them. Only RuleID, File and StartLine are read. A
+#                   location {at, record (sha12), part message|reply, line,
+#                   rule} not in chat/leaks.jsonl is appended, then ONE beat
+#                   (staff-watchman-chat-<epoch>), then the records are marked
+#                   scanned. A failed scan marks nothing (`fails _chat`).
+#                   Empty WM_CHAT_LOG = off; sandbox with it unset = off.
 #   rotation-due    catalog/staff-rotations.d/<id>.json, one file per
 #                   credential: {id, where, owner, due} or {id, where, owner,
 #                   rotated_at, every_days}. `where` names the file and the
@@ -59,7 +70,7 @@
 # again; bin/staff-outcomes.sh also maps a closed issue to merged. Not filed
 # (digested, already closed) = the latch is deleted and nothing is posted.
 #
-# Print order: rotation-due by id, then history-baseline, then history-secret by the time each was
+# Print order: rotation-due by id, then history-baseline, then history-secret and chat-secret by the time each was
 # last in the first STAFF_MAX_ITEMS lines (state/staff/watchman/printed.tsv),
 # then by location. staff.sh claims only the first STAFF_MAX_ITEMS lines, so a
 # backlog cycles through the claim window and nothing is starved.
@@ -125,7 +136,18 @@ MAX_ITEMS="${STAFF_MAX_ITEMS:-20}"
 
 WMS="$H/state/staff/watchman"
 REGDIR="$H/catalog/staff-rotations.d"
-mkdir -p "$WMS/scan" "$WMS/leaks" "$WMS/due" 2>/dev/null || warn "cannot create $WMS; nothing is saved this tick"
+# The chat source (BH-10122). In the sandbox the chat scan is off unless the
+# suite names a log, so no suite reads a real hub log. CHAT_GO = scan this
+# tick; CHAT_WHY = the one log line when the scan is on but has no log.
+CHAT_LOG=""; CHAT_GO=""; CHAT_WHY=""
+if [ "${HARNESS_TEST_SANDBOX:-}" != 1 ] || [ -n "${WM_CHAT_LOG+x}" ]; then
+  CHAT_LOG="${WM_CHAT_LOG-/root/orchestrator/conversation-log.md}"
+  if [ -z "$CHAT_LOG" ]; then CHAT_WHY="WM_CHAT_LOG is empty"
+  elif [ -L "$CHAT_LOG" ] || { [ -e "$CHAT_LOG" ] && [ ! -f "$CHAT_LOG" ]; }; then CHAT_WHY="$CHAT_LOG is not a regular file"
+  elif [ ! -e "$CHAT_LOG" ]; then CHAT_WHY="no chat log at $CHAT_LOG"
+  else CHAT_GO=1; fi
+fi
+mkdir -p "$WMS/scan" "$WMS/leaks" "$WMS/due" ${CHAT_GO:+"$WMS/chat"} 2>/dev/null || warn "cannot create $WMS; nothing is saved this tick"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/wm-collect.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 # The path allowlist (BH-9423): an allowlisted location stays in the leak
@@ -353,20 +375,131 @@ scan() {
   return 3
 }
 
-# fails <name> <rc> <why>: count failed attempts in a row; the
-# WM_SCAN_FAIL_ALERT-th one is one warn beat (a repo that is not covered is
-# an alert, not a log line). Anything else resets the count.
+# fails <name> <rc> <why> [<what> <not covered>]: count failed attempts in a
+# row; the WM_SCAN_FAIL_ALERT-th one is one warn beat (a repo that is not
+# covered is an alert, not a log line). Anything else resets the count.
 fails() {
-  local f="$WMS/scan/$1.fail" c
+  local f="$WMS/scan/$1.fail" c what="${4:-the history scan of $1}" gap="${5:-its git history is not covered}"
   if [ "$2" != 1 ]; then rm -f "$f" 2>/dev/null; return 0; fi
   c=$(cat "$f" 2>/dev/null); [[ $c =~ ^[0-9]+$ ]] || c=0; c=$((c + 1))
   put "$f" "$c" || warn "cannot count the failures of $1"
   if [ "$c" = "$FAIL_ALERT" ]; then
     "$H/bin/lane-alert.sh" --id "staff-watchman-scanfail-$1-$NOW_S" --severity warn staff \
-      "Watchman: the history scan of $1 failed $c times in a row (last: $3); its git history is not covered. See logs/staff.log on $HOST" >/dev/null 2>&1
+      "Watchman: $what failed $c times in a row (last: $3); $gap. See logs/staff.log on $HOST" >/dev/null 2>&1
     log "scanfail $1 count=$c; one warn beat"
   fi
 }
+
+# ═════ chat-secret (BH-10122): keys pasted into the Archie chat ══════════════
+# The chat log is bin/orc-context.sh's record file: `### <iso> · <lane>`, then
+# `OPERATOR: <message>`, then `REPLY: <reply>`. A record is a valid header line up
+# to its last non-blank line before the next valid header. A `### ` line that
+# is not a valid header stays in its record. Text before the first valid
+# header is skipped. Each record is scanned once (chat/scanned holds the sha256
+# of each scanned record that is still in the log). gitleaks reads a copy of
+# each record body (the lines after its header) with --redact=100; only
+# RuleID, File and StartLine are read from its report.
+# No {n} interval in the regex: mawk has none.
+CHAT_RE='^### [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z · '
+JQ_CHAT='
+  if type != "array" then error("not a list") else . end
+  | .[] | {rule: .RuleID, file: .File, line: .StartLine}
+  | if (.rule | type) != "string" or (.rule | test("^[A-Za-z0-9_.-]{1,64}$") | not) then {bad: "rule"}
+    elif (.line | type) != "number" or .line < 1 or .line != (.line | floor) then {bad: "line"}
+    elif (.file | type) != "string" then {bad: "file"}
+    else (.file | split("/") | last) as $b
+      | if ($b | test("^r[0-9]+\\.txt$") | not) or ((.file == $b or .file == ($d + "/" + $b)) | not) or ($idx[0][$b] == null) then {bad: "file"}
+        else $idx[0][$b] as $i
+          | (if $i.reply > 0 and .line >= $i.reply then "reply" else "message" end) as $part
+          | {check: "chat-secret", at: $i.at, record: $i.record, part: $part,
+             line: (if $part == "reply" then .line - $i.reply + 1 else .line end), rule}
+        end
+    end'
+# wm_chat_scan <log>: rc 0 always; a failure goes through `fails _chat`.
+wm_chat_scan() {
+  local clog=$1 cd="$WMS/chat" all="$TMP/chatall" sd="$TMP/chat" pre n sha rf rl total=0 todo=0 grc=0 eff new rows why=""
+  [ -d "$cd" ] || { warn "cannot create $cd; no chat scan this tick"; return 0; }
+  mkdir -p "$all" "$sd" 2>/dev/null || { warn "cannot create a temp dir for the chat scan; no chat scan this tick"; return 0; }
+  # Split: a<N>.txt = the whole record (hashed), b<N>.txt = its body (scanned).
+  pre=$(awk -v d="$all" -v re="$CHAT_RE" '
+    function flush(  i, a, b) {
+      if (!n) return
+      while (k > 0 && buf[k] == "") k--
+      a = d "/a" n ".txt"; b = d "/b" n ".txt"
+      printf "%s\n", hdr > a
+      printf "" > b
+      for (i = 1; i <= k; i++) { printf "%s\n", buf[i] > a; printf "%s\n", buf[i] > b }
+      close(a); close(b)
+      print n "\t" at > (d "/index")
+    }
+    $0 ~ re { flush(); n++; hdr = $0; at = substr($0, 5, 20); k = 0; next }
+    { if (!n) { pre++; next } buf[++k] = $0 }
+    END { flush(); close(d "/index"); print pre + 0 }' "$clog") || { warn "cannot read the chat log $clog; no chat scan this tick"; return 0; }
+  [ "$pre" -gt 0 ] 2>/dev/null && log "chat: skipped $pre lines before the first record"
+  : > "$TMP/chat.cur"; : > "$TMP/chat.todo"; : > "$TMP/chat.idx"
+  if [ -s "$all/index" ]; then
+    while IFS=$'\t' read -r n at; do
+      sha=$(sha256sum "$all/a$n.txt" | cut -c1-64)
+      printf '%s\n' "$sha" >> "$TMP/chat.cur"; total=$((total + 1))
+      grep -qxF "$sha" "$cd/scanned" 2>/dev/null && continue
+      rf="$sd/r$n.txt"; cp "$all/b$n.txt" "$rf" || { warn "cannot copy a chat record; no chat scan this tick"; return 0; }
+      rl=$(grep -n -m1 '^REPLY: ' "$rf" | cut -d: -f1); [ -n "$rl" ] || rl=0
+      printf '%s\n' "$sha" >> "$TMP/chat.todo"; todo=$((todo + 1))
+      jq -cn --arg b "r$n.txt" --arg at "$at" --arg r "${sha:0:12}" --argjson rl "$rl" '{($b): {at: $at, record: $r, reply: $rl}}' >> "$TMP/chat.idx"
+    done < "$all/index"
+  fi
+  # The scanned set holds only records still in the log.
+  LC_ALL=C sort -u "$TMP/chat.cur" -o "$TMP/chat.cur"
+  if [ "$todo" = 0 ]; then
+    LC_ALL=C sort -u "$cd/scanned" 2>/dev/null | LC_ALL=C comm -12 - "$TMP/chat.cur" > "$TMP/chat.keep"
+    cmp -s "$TMP/chat.keep" <(LC_ALL=C sort -u "$cd/scanned" 2>/dev/null) || put "$cd/scanned" "$(cat "$TMP/chat.keep")" \
+      || warn "cannot prune $cd/scanned"
+    log "chat: scanned 0 new records ($total in the log)"; return 0
+  fi
+  gitleaks_bin || return 0
+  eff=$((DEADLINE - SECONDS)); [ "$eff" -gt "$FULL" ] && eff=$FULL
+  if [ "$eff" -lt 10 ]; then log "chat: $todo new records not scanned (the tick budget is spent); scanned next tick"; return 0; fi
+  rm -f "$TMP/chat.json"
+  timeout "$eff" "$GL" dir "$sd" --redact=100 --gitleaks-ignore-path "$sd" --report-format json \
+    --report-path "$TMP/chat.json" --exit-code 0 --no-banner >/dev/null 2>&1 || grc=$?
+  if [ "$grc" = 124 ]; then why="timeout after $eff s on $todo records"
+  elif [ "$grc" != 0 ]; then why="gitleaks rc=$grc"
+  elif ! jq -c --arg d "$sd" --slurpfile idx <(jq -s 'add // {}' "$TMP/chat.idx") "$JQ_CHAT" "$TMP/chat.json" > "$TMP/chat.rows" 2>/dev/null; then
+    why="the report is not a gitleaks report"
+  fi
+  rm -f "$TMP/chat.json"
+  if [ -n "$why" ]; then
+    log "chat scan failed ($why); nothing marked scanned"
+    fails _chat 1 "$why" "the chat scan" "the Archie chat is not covered"; return 0
+  fi
+  jq -r 'select(.bad) | .bad' "$TMP/chat.rows" | while IFS= read -r b; do log "chat: report row skipped ($b fails validation)"; done
+  jq -c 'select(.bad | not)' "$TMP/chat.rows" | LC_ALL=C sort -u > "$TMP/chat.found"
+  rows=$(grep -c . "$TMP/chat.found")
+  LC_ALL=C comm -23 "$TMP/chat.found" <(LC_ALL=C sort -u "$cd/leaks.jsonl" 2>/dev/null) > "$TMP/chat.new"
+  new=$(grep -c . "$TMP/chat.new")
+  if [ "$new" -gt 0 ]; then
+    if ! put "$cd/leaks.jsonl" "$(cat "$cd/leaks.jsonl" "$TMP/chat.new" 2>/dev/null | LC_ALL=C sort -u)"; then
+      log "chat scan failed (cannot write the chat cache); nothing marked scanned"
+      fails _chat 1 "cannot write the chat cache" "the chat scan" "the Archie chat is not covered"; return 0
+    fi
+    if [ "$SEV" != off ]; then
+      local firstt more=""
+      firstt=$(jq -s -r 'sort_by(.at, .part, .line, .rule) | .[0]
+        | "Critical: key-shaped value in the Archie chat: \(.rule) in the \(.part) of \(.at) line \(.line)"' "$TMP/chat.new")
+      [ "$new" -gt 1 ] && more=" (+$((new - 1)) more)"
+      beat "staff-watchman-chat-$NOW_S" "$firstt$more. Rotate it."
+      log "chat: beat severity $SEV new=$new"
+    fi
+  fi
+  if ! put "$cd/scanned" "$(cat "$cd/scanned" "$TMP/chat.todo" 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 - "$TMP/chat.cur")"; then
+    warn "cannot write $cd/scanned; the new records are scanned again next tick"
+  fi
+  fails _chat 0 ""
+  log "chat: scanned $todo records new=$new rows=$rows"
+}
+
+if [ -n "$CHAT_GO" ]; then wm_chat_scan "$CHAT_LOG"
+elif [ -n "$CHAT_WHY" ]; then log "chat: $CHAT_WHY; no chat scan"; fi
 
 SCANNED=0
 while IFS=$'\t' read -r at p; do
@@ -517,7 +650,22 @@ while IFS= read -r it; do
       source: {kind: "staff-security", url: (if $slug == "" then $url else "https://github.com/\($slug)/commit/\(.commit)" end), labels: []},
       observedAt: $obs, class: "history-secret"}}' <<<"$it" >> "$TMP/keyed"
 done < "$TMP/hist"
-jq -s -c 'sort_by(.st, .o.item.project, .o.item.commit, .o.item.file, .o.item.line, .o.item.rule) | .[]' "$TMP/keyed" > "$TMP/ordered"
+# chat-secret lines (BH-10122): every cached chat location, never allowlisted
+# (the allowlist is about repo paths). Same printed key and claim window.
+if [ -s "$WMS/chat/leaks.jsonl" ]; then
+  while IFS= read -r it; do
+    [ -n "$it" ] || continue
+    k=$(printf '%s' "$it" | sha256sum | cut -c1-64)
+    st=$(awk -F'\t' -v k="$k" '$1 == k {print $2; exit}' "$WMS/printed.tsv" 2>/dev/null)
+    [[ $st =~ ^[0-9]+$ ]] || st=0
+    jq -c --arg k "$k" --argjson st "$st" --arg url "$URL" --arg obs "$OBS" '
+      select(.check == "chat-secret")
+      | {k: $k, st: $st, o: {item: ., title: "Critical: key-shaped value pasted in the Archie chat: \(.rule) in the \(.part) of \(.at) line \(.line) (record \(.record)). Rotate the credential.",
+        source: {kind: "staff-security", url: $url, labels: []}, observedAt: $obs, class: "chat-secret"}}' <<<"$it" >> "$TMP/keyed" 2>/dev/null \
+      || log "chat: a line of chat/leaks.jsonl is not JSON; not printed"
+  done < "$WMS/chat/leaks.jsonl"
+fi
+jq -s -c 'sort_by(.st, .o.item.project, .o.item.commit, .o.item.file, .o.item.line, .o.item.rule, .o.item.at, .o.item.record, .o.item.part) | .[]' "$TMP/keyed" > "$TMP/ordered"
 
 ROTN=$(cat "$TMP/rot" "$TMP/basel" | grep -c .)
 WIN=$((MAX_ITEMS - ROTN)); [ "$WIN" -lt 0 ] && WIN=0

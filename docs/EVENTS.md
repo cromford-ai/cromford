@@ -925,6 +925,38 @@ Count one lane's mismatches: `grep -c 'PRR_SHADOW lane=<l>' logs/prr-shadow.log`
 
 Wave 1 moves one read: the open PR list of `tickets-snapshot-push.sh` (seam `bin/lib/prr-shadow.d/tickets-snapshot-push.sh`, row `lane.tickets-snapshot-push.gh_source`). The other files in `bin/lib/prr-shadow.d/` are empty seams for the later waves. Detail: [`notes/2026-11-24-BH-9933-prr-shadow-and-per-repo-metric.md`](notes/2026-11-24-BH-9933-prr-shadow-and-per-repo-metric.md).
 
+### 8.3 The slow safety sweep, and the reads that stay on a timer (BH-9939, BH-9926 wave 7)
+
+A webhook can be lost. Then the PR record holds a wrong field until a lane reads GitHub again. The hub lane `prr-sweep` (`bin/prr-sweep.sh tick`, `cron/lanes/787-prr-sweep.cron`) is that read. For each fleet repo it compares the record with GitHub for the open PRs at the interval `PRR_SWEEP_INTERVAL_MIN` (60 minutes). It writes each difference through the normal record write, so an older value never replaces a newer one. Each applied field logs one line in `logs/prr-shadow.log`:
+
+```
+<UTC> PRR_SWEEP_FIX repo=<r> n=<n> field=<f>
+<UTC> PRR_SWEEP_STALE repo=<r> n=<n> field=<f>
+<UTC> PRR_SWEEP_WINDOW window_s=<w> interval_s=<i> used_s=<u>
+<UTC> PRR_SWEEP_RAISE lane=<l> key=<k> from=<a> to=<b>
+```
+
+The sweep compares the PR fields and the labels (the open list), the `checks` field (the workflow runs since 2 intervals) and the `statuses` field (a bounded set of PRs in each sweep). It also writes the open list through `pr_record_list_sync`, so each sweep renews the list sync stamp of the repo. Count the fixes: `bin/prr-sweep.sh report`. Above `PRR_SWEEP_FIX_ALERT_24H` fixes for a repo in 24 hours, one alert fires (`prr-sweep-fixes:<repo>`), because a webhook of that repo is missing.
+
+Two knobs are one decision. `pr_record_list` trusts the record list only while the sync stamp is at most `PR_RECORD_LIST_MAX_AGE_S` old (default 3900 s). That window must be the sweep interval plus `PRR_SWEEP_LIST_SLACK_S` (300 s). If the window row is smaller, the sweep shortens its interval to the window minus the slack and logs `PRR_SWEEP_WINDOW`. `PR_RECORD_FIELD_MAX_AGE_S` (BH-9938) measures the age of the row (`refreshed_at`), not of one field. A write of the whole PR makes the row young and hides a lost `status` or check webhook. The sweep is the repair for that case.
+
+With a lane in step `record`, these GitHub reads stay on a timer. This is the final list of BH-9926.
+
+| Read | Timer | Reason |
+|---|---|---|
+| `prr-sweep`: the open list, the workflow runs and the status reads of each repo | 60 minutes for each repo (`PRR_SWEEP_INTERVAL_MIN`) | It is the repair for a lost webhook. 5 calls or less for a repo with 50 quiet PRs. |
+| A record miss in a `record` lane (`PRR_MISS ... fallback=github`) | the lane's own tick | A lane never acts on a record that is unknown, stale or cut. It reads GitHub and logs the miss. |
+| `prr_ci_state` guard: `actions/runs?head_sha=` for one head | after `PRR_CI_PENDING_MAX_S` (900 s) in `pending` | A lost `completed` event must not hold a PR. One read, then a write-back. |
+| `merge-conductor`: the reads that gate a write (combined status before an unqueue, a republish or a landing merge, `mc_pr_live_head`, the hold check before a rebase, reviews, comment bodies, the closed list, lead-authority files) | the full tick (`CADENCE_BACKSTOP_MIN_MERGE_CONDUCTOR`) and each keyed wake | A write must see the live value. The record does not store review ids or comment bodies. Detail: `notes/2026-11-26-BH-9938-c1-conductor-reads.md`. |
+| `main-red-pr-pair`: the stale-freeze re-read (BH-9890) | each tick | A freeze must not outlive its cause, so this read does not trust a quiet head. |
+| `tickets-snapshot-push`: `git/matching-refs/heads/`, the closed-PR lookup for a branch, `commits/<sha>` | `8,18,28,38,48,58` | The record holds PRs, not branches. The branch inventory needs `push` events for each branch. |
+| `fly-pool` reap, `claude-auth-check`, `pre-arm-guards` | their own lines | Each is a live probe of one moment ("does this PR exist now", "what can the token see"). No event answers that. |
+| `flaky-detect`, `outcome-metrics`, `reopen-metrics`, `rule-miner` | daily or weekly | Each reads a past window for a report. |
+| `dep-verify`, `triage-gate` | per pair, `*/10` | Each compares whole sets at one moment. Their caches are keyed on shas, not on a clock. |
+| The lanes in section 9.2 | their own lines | The reason for each is in section 9.2. |
+
+The cron lines of the moved lanes stay as the backstop. After 7 days with 0 sweep fixes, and with a completed sweep of each repo on each of those days, `bin/prr-sweep.sh raise` (the last step of each tick) raises the timed full tick interval of each lane in step `record` that has an interval row (`lib.cadence-backstop.cadence_backstop_min_<lane>`), by `PRR_SWEEP_RAISE_FACTOR`, to the knob's max at most. The wake path does not read that row. Detail: [`notes/2026-11-26-BH-9939-prr-sweep.md`](notes/2026-11-26-BH-9939-prr-sweep.md).
+
 ## 9. Arming the wake classes, and the lanes still on a timer (BH-4060)
 
 **No wake class is armed as of BH-4060's first slice.** On 2026-10-03 the hub had

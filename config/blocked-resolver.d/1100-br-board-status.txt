@@ -1,0 +1,301 @@
+# ---------------------------------------------------------------------------
+# THE BOARD-DONE GATE (BH-4438). br_hold_gate reads a GitHub issue and is a
+# no-op on every product-board project, so nothing on the rebuild path ever
+# read a board ticket's status: project-3 TK-231 was rebuilt after it was already
+# done on the board, and the rebuild ended PLAN_BLOCKED (alert 19435).
+# ---------------------------------------------------------------------------
+# br_board_status <project> <ticket-key> — the ticket's live board `.status`,
+# read the way br_ticket_id reads the board (bin/stale-owed-tickets.sh's read).
+#   rc 0  the board answered and lists the ticket (status printed, may be empty)
+#   rc 1  not a product-board project: nothing to read
+#   rc 2  UNREADABLE: no prod base, no token, no board id, a non-2xx, or a body
+#         that is not a ticket list (the BH-1007 rule: only 2xx WITH a list
+#         counts as the board answering). The reason is printed.
+#   rc 3  the board answered, and this ticket is not on it
+br_board_status() {
+  local p="$1" tkey="$2" prefix base token bid bodyf code body out
+  prefix=$("$H/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null)
+  [ -n "$prefix" ] && [ "$prefix" != "-" ] || return 1
+  base=$("$H/bin/fleet-conf.sh" "$p" prod 2>/dev/null); [ "$base" = "-" ] && base=""
+  [ -n "$base" ] || { printf 'no prod base'; return 2; }
+  token=$("$H/bin/internal-token-for.sh" "$p" 2>/dev/null) || token=""
+  [ -n "$token" ] || { printf 'no internal token'; return 2; }
+  bid=$(curl -s -m 20 -H "Authorization: Bearer $token" -H "User-Agent: curl/8" "$base$prefix/boards" 2>/dev/null \
+        | jq -r 'if type=="array" then (.[0].id // empty) else (.boards[0].id // empty) end' 2>/dev/null)
+  [ -n "$bid" ] || { printf 'no board id'; return 2; }
+  bodyf=$(mktemp) || { printf 'no temp file'; return 2; }
+  code=$(curl -s -m 30 -o "$bodyf" -w '%{http_code}' \
+        -H "Authorization: Bearer $token" -H "User-Agent: curl/8" \
+        "$base$prefix/boards/$bid/tickets" 2>/dev/null) || code=000
+  body=$(cat "$bodyf" 2>/dev/null); rm -f "$bodyf"
+  case "$code" in 2*) ;; *) printf 'HTTP %s' "${code:-000}"; return 2 ;; esac
+  printf '%s' "$body" | jq -e 'type=="array" or (type=="object" and has("tickets"))' >/dev/null 2>&1 \
+    || { printf 'HTTP %s, not a ticket list' "$code"; return 2; }
+  # S:<status> when listed (an absent status is an empty one), MISS when not.
+  out=$(printf '%s' "$body" | jq -r --arg k "$tkey" '
+    [(if type=="array" then . else (.tickets // []) end)[]
+     | select((.key // "") == $k or ((.number // -1) == ($k | split("-") | last | try tonumber catch -1)))]
+    | if length == 0 then "MISS" else "S:" + (.[0].status // "" | tostring) end' 2>/dev/null)
+  case "$out" in
+    S:*) printf '%s' "${out#S:}"; return 0 ;;
+    MISS) return 3 ;;
+  esac
+  printf 'HTTP %s, unparseable ticket list' "$code"
+  return 2
+}
+
+# br_board_done_gate <project> <rkey> <reason> <pr-url> <record> <ticket-key>
+#   rc 0 proceed, rc 1 STOP. Called in both rebuild rungs right after
+#   br_hold_gate, so before the cap check, the supersede close and the enqueue.
+#   done      (status in the closed set) the rebuild is dropped: one done-on-board
+#             attempt, outcome RESOLVED_DONE, the record marked superseded, the
+#             queue row closed done, one line. Nothing closed, nothing enqueued,
+#             no ALERTS line, no ticket comment. Said ONCE, never per tick.
+#   unreadable no rung spent, nothing enqueued or closed, no outcome: one log
+#             line per tick and ONE hold-board-unreadable attempt per episode
+#             (the hold-unreadable precedent). The `hold-` prefix keeps
+#             br_from_rebuilds reading past it, so a retry row stays offered.
+#   open      proceed; a RESOLVED_DONE left by an earlier tick (the ticket was
+#             reopened) is cleared with one done-lifted attempt.
+#   not a board project / not listed: proceed. A miss stays on the BH-1007
+#             board-miss ladder in br_enqueue_fresh.
+# The closed set is CLOSED_STATUSES in bin/triage-state.py, the fleet's one
+# definition of a closed in-app status.
+BR_BOARD_CLOSED=" done closed cancelled canceled archived rejected resolved completed wontfix "
+br_board_done_gate() {
+  local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}"
+  local ck out rc s uf msg
+  [ -n "$tkey" ] && [ "$tkey" != "-" ] || return 0
+  out=$(br_board_status "$p" "$tkey"); rc=$?
+  case "$rc" in 1|3) return 0 ;; esac
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  uf="$ST/$p/$ck.board-unreadable"
+  if [ "$rc" != 0 ]; then
+    BR_HOLD_PARKED=1
+    say "$p/$rkey [$reason]: board state for $tkey unreadable (${out:-unknown}) — no rebuild, no rung spent, retried next tick"
+    [ "$OBSERVE" = 1 ] && return 1
+    [ -e "$uf" ] && return 1
+    mkdir -p "$(dirname "$uf")" 2>/dev/null; : > "$uf"
+    br_record "$p" "$ck" hold-board-unreadable "$reason" "could not read $tkey on the board: ${out:-unknown}"
+    return 1
+  fi
+  s=$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  # An exact member of the set, never a substring: "not done" and "done-review"
+  # are open. An empty status is open too (the board answered with the ticket).
+  case "$s" in ''|*[[:space:]]*) s="" ;; esac
+  case "$BR_BOARD_CLOSED" in *" $s "*) ;; *) s="" ;; esac
+  if [ -z "$s" ]; then
+    [ "$OBSERVE" = 1 ] && return 0
+    rm -f "$uf"
+    if [ "$(br_load "$p" "$ck" | jq -r '.outcome // ""' 2>/dev/null)" = RESOLVED_DONE ]; then
+      br_set_outcome "$p" "$ck" ""
+      br_record "$p" "$ck" done-lifted "$reason" "$tkey reads '${out}' on the board again — rebuild allowed"
+      say "$p/$rkey [$reason]: $tkey is open on the board again ('${out}') — RESOLVED_DONE lifted"
+    fi
+    return 0
+  fi
+  BR_HOLD_PARKED=1
+  msg="$tkey reads '$out' on the board — rebuild dropped"
+  if [ "$OBSERVE" = 1 ]; then
+    say "$p/$rkey [$reason]: WOULD drop the rebuild — $msg — observe mode"
+    return 1
+  fi
+  rm -f "$uf"
+  [ "$(br_load "$p" "$ck" | jq -r '.outcome // ""' 2>/dev/null)" = RESOLVED_DONE ] && return 1
+  br_record "$p" "$ck" done-on-board "$reason" "$msg"
+  br_set_outcome "$p" "$ck" RESOLVED_DONE
+  br_set_field "$p" "$ck" done_status "$s"
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && { : > "$rec/.blocked-resolver-superseded"; touch "$rec/COMMENTED" 2>/dev/null; }
+  command -v queue_done >/dev/null 2>&1 \
+    && queue_done "$p" "$tkey" done "$msg" >/dev/null 2>&1
+  br_event resolver_done_on_board "$p" "$ck" "$reason" "$msg — no rebuild, no enqueue, no close"
+  say "[resolver] $tkey is $s on the board — rebuild dropped, PR ${url:--} left as it is"
+  return 1
+}
+
+# br_rung_hold_gate <project> <rkey> <reason> <pr-url> <record> <ticket-key>
+#   THE GATE IN FRONT OF EVERY OTHER RUNG (BH-2504): rc 0 run the rung, rc 1 the
+#   ticket is HELD (br_hold_gate did the bookkeeping: the one respected line,
+#   the HELD row the next tick re-reads, or the ABANDON close).
+#   AN UNREADABLE READ RUNS THE RUNG, which is where this differs from the
+#   rebuild gate, and on purpose: every rung that could write the branch pushes
+#   through hold_push, which re-reads the ticket AT the push and refuses on an
+#   unreadable answer. A read outage therefore cannot reach a branch, and
+#   parking every fix round in the fleet for its duration would be a stall
+#   bought for nothing. One line says so.
+br_rung_hold_gate() {
+  local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}" ref slug n out rc
+  command -v hold_check >/dev/null 2>&1 || return 0
+  ref=$(br_hold_issue "$p" "$tkey" "$rec") || return 0
+  read -r slug n <<<"$ref"
+  # hold_read (bin/lib/hold-push.sh) is hold_check's verdict over the REST
+  # contract this lane already speaks (BH-2504), so every gate here and the
+  # fix round's push read the ticket the same way.
+  if command -v hold_read >/dev/null 2>&1; then out=$(hold_read "$slug" "$n"); rc=$?
+  else out=$(hold_check "$slug" "$n"); rc=$?; fi
+  case "$rc" in
+    0) return 0 ;;
+    2) say "$p/$rkey [$reason]: the hold on $slug#$n could not be read before the rung ($(printf '%s' "$out" | cut -f2-)) — running it; its push re-reads the hold and refuses on the same answer"
+       return 0 ;;
+  esac
+  br_hold_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" && return 0
+  return 1
+}
+
+# br_hold_abandon <project> <cap-key> <rkey> <reason> <pr-url> <record>
+#                 <ticket-key> <slug#n> <why>
+#   The ABANDON word's rung. It closes the PR NAMING THE WORD, writes the
+#   ABANDONED terminal, and moves the rows that would otherwise re-offer the
+#   ticket for ever (the conductor's, the pool's).
+#
+#   NO ALERTS LINE, and that is the same rule a respected hold follows: this is
+#   an instruction being obeyed, not an incident somebody has to be paged about.
+#   br_abandon's alert exists because a ladder ran out on its own; here a person
+#   asked for it in writing, on the ticket, and the ticket already says so.
+#
+#   THE CLOSE COMES FIRST and a refusal defers the whole terminal (#783's
+#   lesson, verbatim from br_abandon): an ABANDONED stamp over a PR this lane
+#   could not close is the worst of both — the row reads terminal, the PR stays
+#   open, and nothing looks at it again.
+br_hold_abandon() {
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="${5:--}" rec="${6:--}" tkey="${7:--}"
+  local ref="${8:-the ticket}" why="${9:-}" ckey
+  # THE QUOTED LINE IS FLATTENED FIRST. `$why` is a line a person typed on the
+  # ticket, and it goes out inside a backtick span: one backtick in their
+  # comment closes the span early and the rest of the sentence renders as prose
+  # — or, worse, swallows the paragraph after it. hold_classify already caps and
+  # flattens the line; this takes the one character that is markup HERE.
+  why=${why//\`/\'}
+  local crc=0
+  br_close_pr "$url" "Closing this PR because ${ref} says ABANDON.
+
+The instruction read: \`${why}\`
+
+A \`HOLD\` on a ticket pauses this harness and leaves an open PR exactly as it is; \`ABANDON\` (or \`CLOSE-PR\`) is the word that closes one. The branch is left in place, so nothing here is lost — reopen this PR, or comment \`RESUME\` on the ticket for a fresh build." || crc=$?
+  if [ "$crc" = 3 ]; then
+    br_xpr_parked "$p/$rkey [$reason]: $url is an external author's PR — parked for the author, nothing recorded"
+    return 0
+  fi
+  if [ "$crc" != 0 ]; then
+    say "$p/$rkey [$reason]: ABANDON deferred — the PR could not be closed this tick, so the terminal was NOT recorded; retried next tick"
+    return 1
+  fi
+  br_record "$p" "$ck" abandoned "$reason" "$ref says ABANDON ($why)"
+  br_set_outcome "$p" "$ck" ABANDONED
+  br_row_closed "$p" "$tkey" "$rec" "$url" abandoned "closed unmerged: $ref says ABANDON" "$reason"
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && { : > "$rec/.blocked-resolver-abandoned"; touch "$rec/COMMENTED" 2>/dev/null; }
+  br_event resolver_abandoned "$p" "$ck" "$reason" "$ref says ABANDON ($why) — the PR was closed and the ticket left as it is"
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    ckey=$(mc_slug_of_url "$url")
+    [ -n "$ckey" ] && mc_transition "$ckey#$(mc_num_of_url "$url")" ABANDONED "blocked-resolver: the ticket says ABANDON" "-" "-" "$url" "-" "-" "${rec:--}" >/dev/null
+  fi
+  [ "$tkey" != "-" ] && command -v queue_done >/dev/null 2>&1 \
+    && queue_done "$p" "$tkey" failed "the ticket says ABANDON — the PR was closed by the blocked-resolver" >/dev/null 2>&1
+  say "[resolver] ABANDON respected ${tkey:--} ($why) — PR ${url:--} closed, the ticket left open for whatever comes next"
+  return 0
+}
+
+# br_hold_recheck <project> <rkey> <reason> <cap-key> <ticket-key> <record> <state-json>
+#   HELD IS TERMINAL FOR THE LADDER AND STILL RE-READ. rc 0 = the hold has
+#   lifted and this tick may run the ladder with its counters intact; rc 1 =
+#   still held, or unreadable, in which case the caller spends nothing and says
+#   nothing (the one line was written at the transition).
+#
+#   Nothing in this harness waits on a person to clear state by hand, so the
+#   lift needs no human plumbing: the issue itself says when the ladder resumes.
+#   The outcome is cleared and the marker removed BEFORE the ladder runs, so a
+#   crash between them leaves a clear row the next tick re-offers — never a held
+#   row with a build in flight.
+br_hold_recheck() {
+  local p="$1" rkey="$2" reason="$3" ck="$4" tkey="$5" rec="${6:--}" st="$7"
+  local ref slug n out rc why hrec
+  command -v hold_check >/dev/null 2>&1 || return 1
+  ref=$(br_hold_issue "$p" "$tkey" "$rec") || return 1
+  read -r slug n <<<"$ref"
+  # hold_read (bin/lib/hold-push.sh) is hold_check's verdict over the REST
+  # contract this lane already speaks (BH-2504), so every gate here and the
+  # fix round's push read the ticket the same way.
+  if command -v hold_read >/dev/null 2>&1; then out=$(hold_read "$slug" "$n"); rc=$?
+  else out=$(hold_check "$slug" "$n"); rc=$?; fi
+  why=$(printf '%s' "$out" | cut -f2-)
+  # A PARKED ROW CAN STILL BE ABANDONED (BH-1460). The newest word on a held
+  # ticket is allowed to be ABANDON, and a row that could only ever be lifted
+  # would sit HELD for ever while the ticket already said what to do with it.
+  # rc is still 1 (an abandon is "do not build" too), so this is asked before
+  # the lift test and answers 1 either way: the ladder does not run on the tick
+  # that closes the PR.
+  if [ "$rc" = 1 ] && command -v hold_is_abandon >/dev/null 2>&1 && hold_is_abandon "$out"; then
+    [ "$OBSERVE" = 1 ] && { say "$p/$rkey: WOULD abandon — $slug#$n says $why — observe mode"; return 1; }
+    br_hold_abandon "$p" "$ck" "$rkey" "$reason" "${8:--}" "$rec" "$tkey" "$slug#$n" "$why"
+    return 1
+  fi
+  # Still held is a quiet look (BH-5946); an unreadable read (rc 2) is not.
+  if [ "$rc" != 0 ]; then [ "$rc" = 1 ] && br_quiet held; return 1; fi
+  br_set_outcome "$p" "$ck" ""
+  # gh answered, so the unreadable episode (if there was one) is over.
+  rm -f "$ST/$p/$ck.hold-unreadable"
+  hrec=$(printf '%s' "$st" | jq -r '.held_rec // ""' 2>/dev/null)
+  [ -n "$hrec" ] && [ "$hrec" != "-" ] && rm -f "$hrec/.blocked-resolver-held"
+  [ -n "$rec" ] && [ "$rec" != "-" ] && rm -f "$rec/.blocked-resolver-held"
+  br_record "$p" "$ck" hold-lifted "$reason" "$slug#$n is clear ($why) — the ladder resumes"
+  br_event resolver_hold_lifted "$p" "$ck" "$reason" "$slug#$n is clear ($why)"
+  say "$p/$rkey: HOLD lifted on $slug#$n — the ladder resumes with its counters intact"
+  return 0
+}
+
+# br_needs_human_park <project> <rkey> <reason> <pr-url> <record> <ticket-key>
+#                     <cap-key> <state-json>
+#   A REVIEW BLOCK ONLY A PERSON CAN CLEAR IS PARKED ON THE TICKET, NOT REBUILT
+#   (BH-3443, slice 2 of BH-3433). BH-3348 paid $6.53 in rebuilds that each
+#   ended on the same step the hub had to take. The review stage appends
+#   ` NEEDS_HUMAN:<fp>:<action>` to such a RESULT line; this reads it, has
+#   bin/needs-human-hold.sh put the marker on the issue, and parks the row HELD
+#   through br_hold_gate, whose re-read on every tick (br_hold_recheck) is
+#   what lifts it when a person answers HUMAN-STEP-DONE:.
+#   rc 0  not a needs-human block, or nothing placed: the rung runs as today
+#   rc 3  parked (or the placer could not read the thread): no rung this tick
+#   rc 4  this exact RESULT was placed before and the ticket reads clear now:
+#         the human did the step, so the ticket re-enters as a fresh build
+#   `nh_placed` (<fp> <sha12 of the RESULT line>) is the only state this adds,
+#   and it only stops a second marker after the lift; the marker's own nh-fp
+#   tag is the placer's dedupe on GitHub.
+br_needs_human_park() {
+  local p="$1" rkey="$2" reason="$3" url="${4:--}" rec="${5:--}" tkey="${6:--}" ck="$7" st="$8"
+  local res="" fp act key ref slug n rc
+  [ "$reason" = rebuild-review-blocked ] && res=$(printf '%s' "$st" | jq -r '.rebuild_result // ""' 2>/dev/null)
+  [ "$res" = "-" ] && res=""
+  [ -z "$res" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && res=$(head -1 "$rec/RESULT" 2>/dev/null)
+  case "$res" in *" NEEDS_HUMAN:"*) ;; *) return 0 ;; esac
+  fp=$(printf '%s' "$res" | sed -nE 's/.* NEEDS_HUMAN:([0-9a-f]+):.*/\1/p')
+  [ -n "$fp" ] || return 0
+  act="${res#* NEEDS_HUMAN:"$fp":}"
+  [ -n "$act" ] && [ "$act" != "$res" ] || return 0
+  key="$fp $(printf '%s' "$res" | sha1sum | cut -c1-12)"
+  [ "$(printf '%s' "$st" | jq -r '.nh_placed // ""' 2>/dev/null)" = "$key" ] && return 4
+  ref=$(br_hold_issue "$p" "$tkey" "$rec") || return 0
+  read -r slug n <<<"$ref"
+  if [ "$OBSERVE" = 1 ]; then
+    say "$p/$rkey [$reason]: WOULD place a needs-human hold on $slug#$n ($act) — observe mode"
+    return 3
+  fi
+  HARNESS="$H" "$H/bin/needs-human-hold.sh" "$p" "$n" "$fp" "$act" resolver >>"$LOG" 2>&1; rc=$?
+  case "$rc" in
+    0) ;;
+    75) say "$p/$rkey [$reason]: needs-human hold on $slug#$n: thread unreadable — no rung spent, retried next tick"
+        return 3 ;;
+    *) say "$p/$rkey [$reason]: needs-human hold on $slug#$n was not placed (rc $rc) — the ladder runs as before"
+       return 0 ;;
+  esac
+  # Clear here means nothing was placed (the switch is on): today's rung.
+  br_hold_gate "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" && return 0
+  # Held: br_hold_gate parked the row and said so. An unreadable re-read or an
+  # ABANDON on the ticket is its own answer, and records nothing here, so the
+  # next tick asks again (the placer finds its fp and posts nothing twice).
+  [ "$(br_load "$p" "$ck" | jq -r '.outcome // ""' 2>/dev/null)" = HELD ] || return 3
+  br_set_field "$p" "$ck" nh_placed "$key"
+  br_record "$p" "$ck" hold-needs-human "$reason" "$slug#$n waits on a human step: $act"
+  return 3
+}
+
+# data-lane park (BH-4926): bin/lib/br/datalane.sh
+

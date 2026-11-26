@@ -1,0 +1,310 @@
+# br_finished <outcome> <resolved-url> <candidate-url> <reason> — rc 0 when this
+#   CANDIDATE's row is finished and may leave the list. The first two come from
+#   br_record_index's row for this candidate's cap key; `-` for either means the
+#   record does not carry it.
+#
+#   ABANDONED retires the PR it was about: bpr_retire (BH-8339) reads the url
+#   column, the record's abandoned_url. Its header says which candidates stay.
+#
+#   RESOLVED_MERGED IS NOT, AND THE URL-LESS ARM IS THE TRAP (review B2). The
+#   first cut retired any candidate carrying no url of its own. br_from_builds
+#   ALWAYS emits `-`, and br_from_rebuilds emits it whenever the record has no
+#   parked_url — so a ticket whose PR merged, and whose LATER rebuild then died
+#   in the pool, was retired for ever: no ABANDONED outcome, no ticket comment,
+#   no alert, silent after the first tick. A ticket can always acquire a new
+#   pull request, so RESOLVED_MERGED retires ONE thing: the park on the PR the
+#   resolve was actually about. Everything else keeps today's path.
+#
+#   THE LEGACY RECORDS ARE STILL SAVED, without guessing. `resolved_url` is new,
+#   so the 98 RESOLVED_MERGED rows the census counted carry none — but the
+#   `resolved-merged` ATTEMPT that wrote the outcome carries the url in its own
+#   detail string ("<url> is already MERGED — stale park, no rebuild"), and that
+#   is a fact on disk, not an inference. The caller extracts it into
+#   `resolved_url_eff`; a record with neither stays unretired (D11).
+#
+#   `rebuild-landed` is deliberately NOT finished. It is a finished ATTEMPT, not
+#   a finished ticket: the rebuild it records created a new PR, and that PR is a
+#   legitimate new candidate under the same cap key.
+br_finished() {
+  local oc="${1:-}" rurl="${2:-}" url="${3:--}" reason="${4:-}"
+  case "$oc" in
+    ABANDONED) command -v bpr_retire >/dev/null 2>&1 || return 0; bpr_retire "$rurl" "$url"; return $? ;;
+    RESOLVED_MERGED)
+      # A REBUILD'S OWN ENDING IS STILL OWED (review I3). These reasons ARE the
+      # rebuild this lane started reporting how it finished, and br_rebuild_*
+      # is what turns them into an ABANDONED outcome and one ticket comment.
+      # Dropping them here would delete the only consumer that record has.
+      case "$reason" in rebuild-*) return 1 ;; esac
+      case "$url" in ''|-) return 1 ;; esac
+      [ -n "$rurl" ] && [ "$rurl" != "-" ] && [ "$rurl" = "$url" ] && return 0
+      return 1 ;;
+  esac
+  return 1
+}
+
+# br_cost_rank <reason> <mechanicals> <fixrounds> <fixcap> -> 0|1|2|3, cheapest
+#   first.
+#
+#   0  mechanical / regen / abandon-rebuild / none   no model at all
+#   1  adjudicate / re-review                        one call
+#   2  fix-round                                     one execute-stage agent round
+#   3  rebuild-fresh / rebuild-retry                 a whole pool build
+#
+#   PURE AND FORK-FREE (review I6). The counters arrive as NUMBERS rather than as
+#   a json blob, because the first cut forked jq four more times per candidate —
+#   br_num twice and br_fix_cap's br_shape + br_num — record or no record, which
+#   at 785 candidates was thousands of forks spent BEFORE the first rung, in the
+#   one stretch of the tick the new wall bound deliberately cannot stop.
+#   br_action, br_ladder_class, br_ladder_rung and br_regen_ladder are already
+#   pure, so with the numbers in hand this whole function forks nothing.
+#
+#   It resolves the ladder exactly as br_one:5285 does, off THIS TICKET's own
+#   counters, so a conflict whose mechanical rung is already spent sorts as the
+#   fix round it is rather than as the free rung its reason word suggests.
+#
+#   ADVISORY, AND BLIND TO A KEYLESS ROW. br_one re-resolves under the per-key
+#   lock and its answer is the one that runs. A candidate that arrives with no
+#   ticket key is costed against the record under its RKEY, which is usually
+#   absent — br_one derives the key later and reads the ticket's record instead —
+#   so such a row is costed at zero counters and sorts as free work. It costs
+#   sort order and nothing else, and the rebuild cap is enforced at the dispatch,
+#   never in this sort.
+br_cost_rank() {
+  local reason="${1:-}" mech="${2:-0}" fix="${3:-0}" cap="${4:-}" act class rung
+  act=$(br_action "$reason")
+  case "$act" in
+    ladder)
+      class=$(br_ladder_class "$reason")
+      rung=$(br_ladder_rung "$class" "$mech" "$fix" "$cap")
+      rung=$(br_regen_ladder "$class" "$rung") ;;
+    *) rung="$act" ;;
+  esac
+  case "$rung" in
+    mechanical|regen|abandon-rebuild|none) printf '0' ;;
+    adjudicate|re-review)                  printf '1' ;;
+    fix-round)                             printf '2' ;;
+    rebuild-fresh|rebuild-retry)           printf '3' ;;
+    # An action this table does not know sorts with the agent rounds rather than
+    # with the free ones: a rung nobody has costed is not a rung to run first.
+    *)                                     printf '2' ;;
+  esac
+}
+
+# br_record_index — ONE jq pass over every record this lane holds, as
+#   `<project>\t<cap-key>\t<outcome>\t<outcome_url>\t<retired>\t<mechanicals>\t<fixrounds>\t<fixround_bonus>\t<conflict_lines>\t<age_days>\t<retired_aged>`,
+#   one row per record file. `age_days` is whole days since `.updated` (`-`
+#   when it does not read as a STAMP); `retired_aged` is 1 when the BH-9029
+#   aged arm retired the record (the bh-9029-discovery-index fragment). The glob is the one br_from_rebuilds already walks.
+#
+#   `outcome_url` is `.abandoned_url` for ABANDONED (BH-8339), else `.resolved_url`
+#   when the record has one and otherwise the url the `resolved-merged` attempt recorded in its detail — the legacy
+#   half of review B2, read off the record rather than guessed.
+#
+#   `-` for an absent scalar, never an empty field: a reader that cannot tell
+#   "absent" from "empty" is the D11 mistake one layer down.
+br_record_index() {
+  # ONE jq INVOCATION over the whole tree, not one per file (review I6). The
+  # first cut forked jq per record — 586 of them on the hub — in the stretch of
+  # the tick the wall bound deliberately cannot stop. `find | xargs` chunks the
+  # argument list so a fleet with tens of thousands of records cannot overflow
+  # argv; in practice that is one or two forks.
+  #
+  # AND IT IS TOLERANT PER RECORD, NOT PER CHUNK (review r2/I1). Handing jq the
+  # files as ARGUMENTS made it one input stream: a single unparseable record
+  # aborted the whole invocation, every record after it in that argv was never
+  # indexed, and the only symptom was `retired=` quietly reading 0 — for ever,
+  # since every record write in this file is a non-atomic `printf > "$f"`. So
+  # each record travels as ONE LINE prefixed with its path, `fromjson` is tried
+  # per line, and a record that will not parse costs only itself. It is emitted
+  # with the outcome `!PARSE`, which br_finished never matches (so nothing is
+  # wrongly retired) and which the caller COUNTS and says out loud.
+  #
+  # THE KEY IS THE FILE NAME, never the record's own `.rkey` field. br_load
+  # stamps `.rkey` with whatever key created the record and not every writer
+  # passes the cap key — br_abandon writes `br_set_outcome "$p" "$rkey"`, so an
+  # ABANDONED record can carry an `.rkey` that is not its own file name. The
+  # file name IS the key every reader here resolves (br_file), which is why
+  # br_from_rebuilds takes it the same way.
+  #
+  # FNR==1: a record is one line (`br_record` writes `jq -c` output). A file
+  # with more is malformed, and reading only its first line is what makes the
+  # path prefix unambiguous.
+  { find "$ST" -mindepth 2 -maxdepth 2 -name '*.json' -type f -print0 2>/dev/null \
+      | xargs -0 -r awk 'FNR==1 { printf "%s\t%s\n", FILENAME, $0 }' 2>/dev/null
+    # A ZERO-BYTE RECORD HAS NO FIRST LINE (BH-1512). awk runs its rule on
+    # RECORDS and an empty file contributes none, so FNR==1 never fires for it
+    # and the file was dropped from the index with no count, no line and no
+    # mark — the one degradation of this pre-pass that was still silent, and
+    # the one a non-atomic `printf > "$f"` produces every time it is
+    # interrupted. It is emitted here as `<path>\t`, a payload jq's
+    # `try fromjson` turns into null, i.e. the same `!PARSE` row a `not json`
+    # record gets. The two walks partition on -empty, so nothing is emitted
+    # twice; a record written BETWEEN them can be (the last row wins, which is
+    # `!PARSE`: counted, marked, nothing retired — the safe direction — and it
+    # heals next tick).
+    find "$ST" -mindepth 2 -maxdepth 2 -name '*.json' -type f -empty -printf '%p\t\n' 2>/dev/null
+  } | jq -R -r '
+        (index("\t")) as $i |
+        if $i == null then empty else
+          (.[:$i] | split("/")) as $seg |
+          (.[$i+1:]) as $raw |
+          ((try ($raw | fromjson) catch null)) as $r |
+          def d(x): (x // "") | tostring | if . == "" or . == "null" then "-" else . end;
+          def n(x): (x // 0) | if type == "number" then . else 0 end;
+          $seg[-2] + "\t" + ($seg[-1] | sub("\\.json$"; "")) + "\t"
+          + ( if $r == null then "!PARSE\t-\t0\t0\t0\t0\t-\t-\t0"
+              else
+                d($r.outcome) + "\t"
+                + d( if ($r.outcome // "") == "ABANDONED" then $r.abandoned_url else $r.resolved_url //
+                     ( [ $r.attempts[]? | select((.action // "") == "resolved-merged")
+                                        | (.detail // "")
+                                        | capture("^(?<u>https://github\\.com/[^ ]+) is already MERGED") .u ] | last ) end ) + "\t"
+                + ( if ($r.retired // false) == true then "1" else "0" end ) + "\t"
+                + (n($r.mechanicals)|tostring) + "\t"
+                + (n($r.fixrounds)|tostring) + "\t"
+                + (n($r.fixround_bonus)|tostring) + "\t"
+                + d($r.conflict_lines) + "\t"
+                + ( (try (((now - ($r.updated | strptime("%Y-%m-%d %H:%M:%SZ") | mktime)) / 86400) | floor | tostring) catch "-")
+                    | if test("^[0-9]+$") then . else "-" end ) + "\t"
+                + ( if ($r.retired_aged // false) == true then "1" else "0" end )
+              end )
+        end
+      ' 2>/dev/null
+  return 0
+}
+
+# br_prepass <count-file> — the candidate TSV on stdin; the same rows out, NINE
+#   fields wide with the cost appended, finished rows dropped, and the number
+#   dropped written to <count-file>.
+#
+#   THE COUNT TRAVELS IN A FILE because this runs inside a command substitution
+#   and a variable set here dies with the subshell (br_pr_ref's lesson). The
+#   event lines and the record flag are ordinary file writes and do survive.
+#
+#   THE ROW IS RE-EMITTED FROM PARSED FIELDS, not appended to `$line` (review
+#   B1): the width is then this function's property rather than a promise eight
+#   printfs in five source functions have to keep for ever.
+#
+#   THE RECORDS ARE READ ONCE, NOT ONCE PER CANDIDATE (review I6). br_record_index
+#   is one jq pass over the record tree; the candidates then index into it and
+#   the per-candidate loop forks NOTHING.
+br_prepass() {
+  local cf="${1:-/dev/null}" line src p rkey reason url rec tkey parked
+  local ck n=0 bad=0 rp rck roc rurl rret rmech rfix rbonus rconf rage raged key cap cost
+  local badpaths=() newbad="" rtext
+  declare -A _BRIDX=()
+  while IFS=$'\t' read -r rp rck roc rurl rret rmech rfix rbonus rconf rage raged; do
+    [ -n "${rp:-}" ] && [ -n "${rck:-}" ] || continue
+    # A RECORD THAT WOULD NOT PARSE IS COUNTED AND KEPT (review r2/I1). It is
+    # indexed under its own key with an outcome br_finished never matches, so
+    # its rows are not retired and are costed off zero counters — the safe
+    # direction — and the count rides out on line 2 of the count file so the
+    # tick line can carry `+index-short`. Silence here would be a permanent,
+    # invisible regression of the number this ticket is about.
+    if [ "$roc" = "!PARSE" ]; then bad=$((bad+1)); badpaths+=("$ST/$rp/$rck.json"); fi
+    _BRIDX["$rp/$rck"]="$roc	$rurl	$rret	$rmech	$rfix	$rbonus	$rconf	${rage:--}	${raged:-0}"
+  done < <(br_record_index)
+  [ "$bad" = 0 ] || say "$bad state record(s) could not be parsed and were not indexed — their parks are neither retired nor costed this tick"
+  # BH-9029: the bad paths are named once per episode and quarantined (fragment).
+  command -v bdi_bad_records >/dev/null 2>&1 && newbad=$(bdi_bad_records "${badpaths[@]}" </dev/null)
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    IFS=$'\t' read -r src p rkey reason url rec tkey parked <<<"$line"
+    if [ -z "${rkey:-}" ]; then
+      # A row with no key is not costable and not retirable; it is re-emitted at
+      # the same width as every other row so the strip below is uniform.
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t2\n' \
+        "$src" "${p:-}" "" "${reason:-}" "${url:--}" "${rec:--}" "${tkey:--}" "${parked:--}"
+      continue
+    fi
+    # ONE SPELLING OF THE PROJECT, on the lookup and on every write below
+    # (review M8): br_round_robin deliberately keeps a candidate whose project
+    # field is empty, and reading it as "" while writing it as "-" meant the
+    # retired flag never took and the event fired every tick, for ever — inside
+    # the very block whose comment says "ONE LINE PER ROW, EVER".
+    key="${p:--}"
+    ck=$(br_cap_key "$key" "$rkey" "${tkey:--}")
+    roc="-"; rurl="-"; rret=0; rmech=0; rfix=0; rbonus=0; rconf="-"; rage="-"; raged=0
+    if [ -n "${_BRIDX["$key/$ck"]:-}" ]; then
+      IFS=$'\t' read -r roc rurl rret rmech rfix rbonus rconf rage raged <<<"${_BRIDX["$key/$ck"]}"
+    fi
+    command -v bcr_prepass_row >/dev/null 2>&1 && bcr_prepass_row && continue  # BH-9369: a closed or merged PR's row leaves the list
+    command -v bra_prepass_row >/dev/null 2>&1 && bra_prepass_row && continue  # BH-9467: no open PR, older than BR_RECORD_MAX_AGE_DAYS
+    rtext=""
+    if ! br_finished "$roc" "$rurl" "${url:--}" "$reason" \
+       && command -v bdi_aged_finished >/dev/null 2>&1 \
+       && bdi_aged_finished "$roc" "${url:--}" "$reason" "$rage" "$raged"; then
+      rtext="finished with no PR url, untouched for ${rage} days (BR_FINISHED_RECORD_RETIRE_DAYS=$_BDI_DAYS)"
+      [ "$raged" = 1 ] && rtext="finished with no PR url, retired by age before"
+    fi
+    if [ -n "$rtext" ] || br_finished "$roc" "$rurl" "${url:--}" "$reason"; then
+      n=$((n+1))
+      # BH-9029: a finished build row has no PR url, so its dir carries the retire.
+      command -v bdi_mark_build >/dev/null 2>&1 && bdi_mark_build "$src" "$rec" "$roc" </dev/null
+      # ONE LINE PER ROW, EVER. 177 retirements a tick, every ten minutes, is
+      # the noise the lane's own "one line per episode" rule forbids; the tick
+      # line's `retired=` is the standing number. Observe mode writes no flag,
+      # so it keeps saying WOULD — it took no action to remember.
+      if [ "$rret" != 1 ]; then
+        if [ "$OBSERVE" = 1 ]; then
+          say "$key/$rkey [$reason]: WOULD retire — the record is $roc — observe mode"
+        else
+          # </dev/null: this is the first br_event call site inside a
+          # stdin-consuming loop, at up to 177 invocations a tick, and a child
+          # that read one byte of stdin would make candidate rows vanish.
+          br_event resolver_retired "$key" "$ck" "$reason" \
+            "${rtext:-finished: the record is $roc — dropped from the candidate list, no rung}" </dev/null
+          # THE FLAG IS WHAT MAKES THE LINE ABOVE FIRE ONCE. A write that failed
+          # and said nothing would repeat it every tick for ever (D16).
+          br_set_flag "$key" "$ck" retired \
+            || say "$key/$rkey: the retire flag was not written — this line will repeat next tick"
+          # The aged arm remembers itself: the flag write above moved .updated.
+          [ -n "$rtext" ] && { br_set_flag "$key" "$ck" retired_aged \
+            || say "$key/$rkey: the retired_aged flag was not written — this row comes back once its age resets"; }
+        fi
+      fi
+      continue
+    fi
+    # THE FIX CAP, computed here the way br_fix_cap computes it, from numbers
+    # already in hand. Its two arms are the review-verdict cap and the
+    # shape-driven one; `conflict_lines` of `-`, `0` or a non-number is LARGE,
+    # exactly as br_shape reads it.
+    case "$reason" in
+      # The review cap is the settings row (BH-7123 wave B), memoised per
+      # project inside br_review_fix_cap, so this loop still forks nothing new
+      # after the first row of a project.
+      review-changes-requested) br_review_fix_cap "${p:-}" >/dev/null; cap="$_BR_REVIEW_CAP_OUT" ;;
+      *)
+        case "$rconf" in
+          ''|-|0|*[!0-9]*) cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}" ;;
+          *) if [ "$rconf" -le "${SMALL_CONFLICT_LINES:-300}" ]
+             then cap="${MAX_FIXROUNDS_SMALL:-${BR_CONFLICT_FIX_ROUNDS:-${BR_MAX_FIXROUNDS_SMALL:-2}}}"
+             else cap="${MAX_FIXROUNDS:-${BR_MAX_FIXROUNDS:-1}}"; fi ;;
+        esac
+        case "$cap" in ''|*[!0-9]*) cap=1 ;; esac
+        cap=$(( cap + rbonus )) ;;
+    esac
+    cost=$(br_cost_rank "$reason" "$rmech" "$rfix" "$cap")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$src" "${p:-}" "$rkey" "${reason:-}" "${url:--}" "${rec:--}" "${tkey:--}" "${parked:--}" "$cost"
+  done
+  printf '%s\n%s\n%s\n' "$n" "$bad" "$newbad" > "$cf" 2>/dev/null
+  return 0
+}
+
+# THE VISIT LEDGER (BH-980), one row per project:
+#
+#   <project>\t<last_visited>\t<first_seen>\t<last_alerted>   unix epochs, 0 = never
+#
+# last_visited is what br_round_robin sorts on. first_seen is the starvation
+# clock for a project this lane has never reached at all (it has no last visit to
+# measure from). last_alerted is the "one line per episode" guard: a later visit
+# moves last_visited past it and re-arms the alert.
+#
+# A DOTFILE on purpose: br_from_rebuilds globs "$ST"/*/*.json and the per-project
+# state directories live here, so a visible file is one more thing those globs
+# have to know to skip. Bounded by fleet.conf (D21): only a project that reached
+# the candidate stream is ever written, and the stream can only name a project
+# bin/project-of.sh resolved.
+BR_VISITED_FILE="$ST/.last-visited.tsv"
+

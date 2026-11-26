@@ -6038,8 +6038,10 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   if [ "$PULL" = 1 ]; then
     pool_pull_skeleton "$TMP"
   else
+  # ENVBUNDLE_HUB_CACHE=1 (BH-9889): only this spawn path may use the hub cache
+  # of the bundle when the owning box is dark (ssh rc 255).
   EB_ERR=$(exec 3>&1; LOG=/dev/fd/3
-           "$HARNESS/bin/fly-envbundle.sh" "$P" "$TMP" --pool >/dev/null 2>>"$LOG") || EB_RC=$?
+           ENVBUNDLE_HUB_CACHE=1 "$HARNESS/bin/fly-envbundle.sh" "$P" "$TMP" --pool >/dev/null 2>>"$LOG") || EB_RC=$?
   fi
   if [ "$EB_RC" = 0 ]; then
     [ -z "$EB_ERR" ] || printf '%s\n' "$EB_ERR" >> "$LOG"

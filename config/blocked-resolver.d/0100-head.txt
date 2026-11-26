@@ -1,0 +1,481 @@
+#!/bin/bash
+# bin/blocked-resolver.sh — hub cron (*/10, offset from the merge conductor):
+# NOTHING IN THIS HARNESS WAITS ON A HUMAN REVIEW.
+#
+# the operator, 2026-09-13 22:54Z: "Can we change all these definitions that require a
+# human / the reality is I will never do a human review."
+#
+# Every lane in this fleet had the same escape hatch. A rebase that conflicts, a
+# merge queue that ejects twice, a re-review that BLOCKs, an iron-law scan that
+# fires, a test-tamper gate that refuses, a pool machine that dies, a rescue that
+# gives up — each of them parked the work and wrote a line asking a person to
+# look. Nobody was ever going to. So the park became the terminal, and a ticket
+# that reached one was finished in the only sense that matters: it never shipped
+# and nothing said so out loud.
+#
+# This lane drains those parks on an AGENT ladder and, when the ladder runs out,
+# records an OUTCOME rather than a request:
+#
+#   MECHANICAL      rung 1 for a branch problem: merge origin/main into the
+#                   branch in the authed clone (mc_rebase — gate, lease, push),
+#                   or, when there is nothing to merge, re-run the failed CI
+#                   runs once. No model, no tokens, seconds of wall clock.
+#   REGENERATE      rung 1b for a red CI (BH-950.2): one more free merge of
+#                   origin/main before any agent call is bought. That merge is
+#                   what will regenerate the generated-files table ONCE #969
+#                   lands (it teaches mc_rebase to run mc_regen_table); until
+#                   then it is a plain re-merge, and a park with nothing to
+#                   merge records regen-noop and takes the ladder's own answer in
+#                   the same tick. Once per head; BR_REGEN_RUNG=0 turns it off.
+#   FIX ROUND       one execute-stage agent call in a worktree of the PR branch:
+#                   merge origin/main, apply whatever evidence exists — the
+#                   reviewer's posted findings, the conflict the merge leaves in
+#                   the tree, the failing job's log — run the project's
+#                   typecheck + unit IN THE FOREGROUND, push with
+#                   --force-with-lease. The conductor's head-bound re-review
+#                   then re-judges it.
+#   REBUILD FRESH   close the stale PR, enqueue a new build of the same ticket
+#                   against CURRENT main. Three of these, maximum, per ticket.
+#                   AND THE RUNG FINISHES (2026-09-16, BH-530): br_from_rebuilds
+#                   reads how that build ENDED and acts on it — a PR_CREATED is
+#                   left to the conductor, a BUILD_DEAD spends the next rebuild,
+#                   and a DECOMPOSE_FAILED / PLAN_BLOCKED / REVIEW_BLOCKED is a
+#                   TICKET-level stop that abandons the park and tells the ticket
+#                   once (br_ticket_comment). A refusal this rung cannot fix — no
+#                   ticket key on the branch, the title or any record — is a
+#                   SPENT attempt (br_enqueue_fresh rc 2), capped like every
+#                   other, rather than the same refusal every ten minutes.
+#                   A RUNNING REBUILD IS NOT A NEW ONE (BH-487.1). Before this
+#                   rung spends anything it asks the worker whether a build of
+#                   this ticket is already queued or claimed, and if one is it
+#                   writes wait=REBUILD_WAIT and holds: no event, no PR closed,
+#                   no counter bumped, and no PER_TICK slot. The cap counts the
+#                   DISTINCT job ids this lane bought (rebuild_jobs[]), not the
+#                   ticks that asked, so a worker answering `duplicate` can no
+#                   longer burn the ladder in three ticks while the one real
+#                   build is still executing. An unreadable queue at the cap
+#                   holds too — an outage is never "the build finished".
+#   ADJUDICATE      one review-stage agent call over the flagged lines (iron-law
+#                   scan hits, test-tamper blocks) with 30 lines of context, the
+#                   plan, and the iron laws. It answers ACCEPT or REJECT and
+#                   nothing else. ACCEPT writes a marker the merge sweep and the
+#                   conductor both honor; REJECT drops to FIX ROUND or REBUILD.
+#   ABANDONED       the ladder is exhausted. The PR is closed, the row moves to
+#                   a terminal state called ABANDONED, and ONE alert lists every
+#                   attempt and why it failed. That alert is a record of what was
+#                   tried, not a request for a review.
+#
+# AND THE LADDER CLIMBS IN THAT ORDER (2026-09-15, the operator: "plan and launch all
+# 10 upgrades"). 24 hours of blocked-resolver.log: 121 rebuild-fresh outcomes,
+# ZERO fix rounds, one ABANDONED. A rebuild is the most expensive rung on the
+# board — plan + execute + review, $20-40 — and it was the DEFAULT answer to a
+# rebase conflict and to red CI, which are the two cheapest things in this
+# harness to actually fix. So for the three reason classes that are about a
+# BRANCH rather than about a dead machine (br_ladder_class: rebase-conflict,
+# ci-red, review-blocked) the rungs are now
+#
+#   rung 1  MECHANICAL     merge main / re-run CI            (free)
+#   rung 2  FIX ROUND      one agent call on the EXISTING branch
+#   rung 3  REBUILD FRESH  only after rung 2 did not land it
+#
+# AND THE CAPS COME IN TWO SHAPES, DECIDED BY THE SIZE OF THE CONFLICT (BH-579,
+# 2026-09-17). conflict_lines is MEASURED — the conductor's sidecar for the
+# parked PR (mc_conflict_size_file) and the fix round's own tree
+# (mc_conflict_lines), whichever is bigger:
+#
+#   shape  conflict_lines           mechanical  fix rounds  rebuilds
+#   large  unknown, 0, or > 300     1           1           3   (today, unchanged)
+#   small  1..300                   1           2           1
+#
+# Unknown is LARGE, never small: an unmeasured conflict keeps today's ladder —
+# and a measured 0 is unknown, because a delete/modify conflict leaves no
+# `<<<<<<<` markers to count (br_shape).
+#
+# A CONFLICT THAT KEEPS COMING BACK IS CONTESTED. When the same path conflicts
+# again under a DIFFERENT (pr, head) of one ticket and the next rung would be
+# the rebuild, this lane writes a contested hold instead: the ticket wins the
+# path, every open harness PR and planned ticket touching it is parked
+# BLOCKED_HUMAN `contested:<path> (winner <KEY>)`, and the winner gets ONE bonus
+# fix round to land. The same PR on the same head re-offered is the same
+# occurrence, not a recurrence. A hold ends when the winner merges, is abandoned
+# or its ttl runs out — a release UNPARKS the losers and closes nothing, and a
+# loser named by two holds is released by the LAST of them.
+#
+# WHAT THE HOLD BINDS, TODAY: THIS LANE. `contested*` is not a sticky hand-off
+# reason, so until #589 lands the conductor re-derives a loser's row from GitHub
+# on its next tick and may rebase it, or merge it if it is clean and approved.
+# What the hold buys now is that this lane spends no rung, no rebuild and no API
+# call on a held PR, and that the winner gets its bonus round uncontested by the
+# ladder. Long form: docs/MERGE-CONDUCTOR.md section 12.
+#
+# each rung capped per TICKET and each transition recorded as an event line
+# (br_event -> `EVENT resolver_rung …` in this log and a fleet_event beat).
+#
+# EVERY RUNG TRANSITION IS AN EVENT, NEVER A CLOCK (the operator, 2026-09-16: "We
+# shouldn't have rules that kill PRs because of time; it should be event
+# based"). Nothing in this lane closes or abandons a PR because it has been
+# parked a while: rung 2 is reached because rung 1 reported conflict / gate-red /
+# nothing-to-do, rung 3 because the fix round RAN and did not produce a verified
+# commit (or its push lost the lease, or the cap is spent), and ABANDONED
+# because the rebuild cap is spent. Time is allowed to PAGE and never to kill —
+# the conductor's mc_ttl fires one stuck alert and a re-kick, which is why a
+# NEEDS_REBASE PR past 30m gets an alert and another rebase attempt, not a
+# close. Anything that stops a rung BEFORE it runs (a missing clone, a dead
+# credential, a failed worktree add) is a fact about the box, not an event about
+# the PR: br_setup_blocked pages once and the next tick tries the same rung
+# again. See docs/MERGE-CONDUCTOR.md, "No time kills, and a setup failure is
+# not an event".
+# build-dead and the pool's deaths keep going straight to REBUILD FRESH: there
+# is no branch to fix, the machine went away with the work.
+#
+# NO RUNG IS SPENT ON A PR THIS LANE COULD NOT READ (2026-09-16). br_pr_ref
+# answers rc 2 when GitHub did not answer at all — gh non-zero, an empty body, a
+# rate limit, a 5xx — as opposed to rc 1, which means the PR WAS read and really
+# has no branch. On rc 2 both branch rungs log `PR read FAILED (<gh error>) —
+# retrying next tick, no rung spent` and return: no counter moves, no state is
+# written, and the park is re-offered on the next tick. The read itself is REST
+# (`gh api repos/…/pulls/N`) rather than the GraphQL `gh pr view`, because the
+# GraphQL bucket is the one the whole hub shares and the one that ran out.
+#
+# THE ONE GATE THAT STAYS WITH A PERSON is a production DB migration apply where
+# the app has no /api/internal/migrations endpoint: no box in this fleet holds
+# prod DB credentials (the operator, 2026-07-24), so there is no agent path to give it.
+# Those messages say "needs the app's migrations endpoint (orchestrator judged
+# apply)" — they do not say "needs a human", because the distinction is the
+# whole point: one is a missing capability, the other was a missing owner.
+#
+# IDEMPOTENT, ONE ACTION PER KEY PER TICK. Attempt counters live in
+# state/blocked-resolver/<project>/<rkey>.json and every action is taken under a
+# PER-KEY flock — never one global lock, because a fix round holds its lock for
+# up to 90 minutes and a global one would stop the whole fleet's drain behind a
+# single slow build.
+#
+# THE REVIEW LANE'S VERDICT HAS A CONSUMER (BH-872, 2026-09-18). bin/review-prs.sh
+# reviewed harness PRs and asked for changes, and NOTHING read that verdict: the
+# PR sat with a blocking review, Mergify dequeued it on `github-review-approved`,
+# and the lane re-posted the same findings on the same head every tick. So a
+# CHANGES_REQUESTED verdict from that lane, on the CURRENT head of a
+# harness-authored PR, is now a candidate here (br_from_reviews) and routes
+# straight to the FIX ROUND with the review body as the brief — keyed on
+# (PR, head sha) so a second verdict on the same head buys nothing, capped, and
+# then ABANDONED (br_fix_terminal -> br_abandon, BH-4149): the PR is closed with
+# what was tried and the ticket is re-filed through the board. No rebuild,
+# because a hand-made harness PR may have no ticket to rebuild. Before BH-4149
+# this terminal was an ESCALATED park that waited for a person to push; records
+# stamped ESCALATED then stay terminal and are never backfilled.
+#
+# KNOBS (code constants are the documented fallback, env/global.env overrides):
+#   BR_REVIEW_FIX_ROUNDS      2       fix rounds per TICKET for a review verdict;
+#                                     since BH-7123 wave B the settings row
+#                                     review.fix_rounds_max[.<project>] outranks
+#                                     it (br_review_fix_cap), review.mode
+#                                     cowboy/off reads 0, and the terminal is
+#                                     br_cap_notes (merge with notes) unless an
+#                                     ALWAYS-BLOCK finding stands (br_abandon)
+#                                     (every other reason keeps BR_MAX_FIXROUNDS)
+#   BR_CONFLICT_FIX_ROUNDS    2       fix rounds per TICKET for a SMALL measured
+#                                     conflict before rebuild-fresh (BH-6964);
+#                                     unset, BR_MAX_FIXROUNDS_SMALL is the cap
+#   BR_CONFLICT_BRIEF_BYTES   6000    bytes of the merged-in side's diff and of
+#                                     the plan in a conflict round's brief (0 off)
+#   BR_REVIEW_LOOKBACK_SECS   172800  how far back a PR must have been updated
+#                                     for its reviews to be read at all (48h)
+#   BR_VERDICT_BLOCK          1       a standing human/lead BLOCK verdict row
+#                                     (or an autopilot box BLOCK) on a PR's
+#                                     live head is a review-reason candidate,
+#                                     whatever the PR's age (BH-9905,
+#                                     the bh-9905-verdict-block fragment);
+#                                     with BR_VERDICT_BLOCK_LOOKBACK_DAYS (30)
+#                                     and BR_VERDICT_BLOCK_LIMIT (500)
+#   BR_SUPERSEDE_SETTLE_SECS  (registry, required) the window after a new head
+#                                     — including this lane's own fix-round
+#                                     push — before the rebuild rung may close
+#                                     the PR (br_supersede_guard, BH-1642)
+#   BR_SUPERSEDE_DECLINE_ALERT_SECS (registry, required) how long one
+#                                     (PR, head, reason) decline may last before
+#                                     it raises ONE lane-alert (br_sup_alert)
+#   (no knob) a CI-reason park whose current head is green is never closed
+#                                     by the rebuild rung: `SKIP green-at-head`
+#                                     (br_supersede_guard, BH-1671)
+# See docs/MERGE-CONDUCTOR.md, section 12 ("The review lane's verdict is an
+# event with a consumer").
+#
+# FLAGS
+#   flags/blocked-resolver-disabled   kill switch: this lane does nothing
+#   flags/blocked-resolver-observe    classify and log, take no action
+#   flags/automerge-disabled          the fleet kill switch, honored here too
+# usage: blocked-resolver.sh [project]      (no argument = every fleet project)
+#
+# EVERY DECISION READ, SEARCH, COMMENT AND CLOSE IN THIS FILE IS REST (#783).
+# The marker below opts this file into
+# tests/gh-no-graphql-decision-guard-test.sh: no `gh pr`, `gh issue` or `gh run`
+# call may survive here except a line that carries its own `# gh-guard-allow:`
+# reason (there is exactly one, in br_ci_log). The rc 0/44/75 contract the reads
+# obey lives in bin/lib/gh-rest.sh; the helpers they go through are the br-rest
+# block below br_slug_of_url.
+# gh-rest: no-graphql
+set -uo pipefail
+# BH-2303: every model call this lane makes names the lane, so its cost rows
+# carry lane_id and its LLM_* knobs (on/off, runners, daily cap) bind it alone.
+export AGENT_CALL_LANE=blocked-resolver
+H="${HARNESS:-/root/harness}"
+. "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
+# NOT EXPORTED (#463). Exporting it handed a live harness root to every child of
+# this lane, including the agent sessions it starts and whatever those run —
+# which is the 2026-09-15 hub wipe one layer up (#388, root cause #404). The
+# children that genuinely need it get `HARNESS="$H"` on their own command line.
+# BH-452's env-dir lookup above keeps its own `${HARNESS:-...}` default, which
+# resolves the same value without pushing it into the environment.
+[ -f "$H/fleet.conf" ] && export FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}"
+mkdir -p "$H/logs" "$H/locks" "$H/state" "$H/flags" "$H/builds" 2>/dev/null
+if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
+  . "$HENV/global.env"; set +a; fi
+# shellcheck source=/dev/null
+[ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+# shellcheck source=bin/lib/comment-mark.sh
+[ -r "$H/bin/lib/comment-mark.sh" ] && . "$H/bin/lib/comment-mark.sh"
+# shellcheck source=bin/lib/fix-round-queue.sh
+[ -r "$H/bin/lib/fix-round-queue.sh" ] && . "$H/bin/lib/fix-round-queue.sh"
+# shellcheck source=bin/lib/model-route.sh
+[ -r "$H/bin/lib/model-route.sh" ] && . "$H/bin/lib/model-route.sh"
+# BH-5003: build notes are also ledger rows (bn_put below). Fail-open: no lib,
+# no bn_put, and every note is written to the hub file exactly as before.
+# shellcheck source=bin/lib/build-note-db.sh
+{ [ -r "$H/bin/lib/build-note-db.sh" ] && . "$H/bin/lib/build-note-db.sh"; } || true
+# BH-6128: a run on a Fly lane machine (LANE_RUN_ID set) fetched its hub inputs
+# through this lib and writes its changes back through it. Fail-open on the hub:
+# no lib, no write-back and no pre-apply, and a tick runs exactly as before.
+# shellcheck source=bin/lib/lane-run-inputs.sh
+{ [ -r "$H/bin/lib/lane-run-inputs.sh" ] && . "$H/bin/lib/lane-run-inputs.sh"; } || true
+
+# --- BH-594: the owning box's entry ------------------------------------------
+# `blocked-resolver.sh --fix-here <project> <rkey> <reason> <url> <record> <tkey>`
+# is how a fix round the HUB queued runs on the box that owns the project: the
+# hub writes a fix_round_jobs row (br_fix_remote, BH-2674), and this box's
+# bin/fix-round-claim.sh claims it and invokes this entry with the row's record
+# on stdin, then reads the FIX_RESULT / FIX_RECORD lines back into the row's
+# finish. It is not a tick: no cron single-flight, no heartbeat.
+# THE BOX'S OFF-SWITCHES STILL HOLD (BH-2038): all-off, lane-off-blocked-resolver,
+# lane-off-blocked-resolver-<project> and blocked-resolver-disabled each answer
+# one `FIX_RESULT box-paused <base64 why>` and run nothing — the hub admitted
+# the round, but an operator who switched this box off has the last word.
+BR_FIX_HERE=0; BR_FIX_ARGS=()
+if [ "${1:-}" = --fix-here ]; then BR_FIX_HERE=1; shift; BR_FIX_ARGS=("$@"); set --; fi
+# --- BH-5913: the cron entry is a DISPATCHER ---------------------------------
+# `blocked-resolver.sh --dispatch` scans nothing. It starts one detached
+# `blocked-resolver.sh <project>` per project, each on
+# its own lock, at its own stable offset, and exits (bin/lib/project-lanes.sh).
+# One project's 55-minute run never delays another's.
+BR_DISPATCH=0
+if [ "${1:-}" = --dispatch ]; then BR_DISPATCH=1; shift; set --; fi
+
+# --- BH-1132: the lane's one off-switch -------------------------------------
+# flags/all-off, flags/lane-off-blocked-resolver, or the D1 pause_flags row of the
+# same name stops this tick (exit 0 — a paused lane is not a failure). With no
+# flag and no row this returns immediately and the lane behaves exactly as it
+# always has, and an unreachable worker fails OPEN to the last cached answer.
+# Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off blocked-resolver.
+# shellcheck disable=SC1091
+. "${H}/bin/lib/lane-gate.sh" 2>/dev/null || true
+# BH-2435: blocked-resolver-disabled is a settings row before it is a file.
+. "${H}/bin/lib/lane-switch.sh" 2>/dev/null || true
+command -v lane_switch >/dev/null 2>&1 || lane_switch() { [ -f "${H}/flags/$1" ]; }
+# THE BUILDS OF RECORD, FROM THE LEDGER (BH-2349). Missing, bor_union is
+# undefined and br_from_builds / br_from_rebuilds read builds/ as they always have.
+. "${H}/bin/lib/builds-of-record.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/builds-of-record.sh" 2>/dev/null || true
+# The ONE verdict reader (bin/lib/verdict-parse.sh, BH-1625). Missing, every
+# verdict reads unknown — never APPROVE.
+. "${H}/bin/lib/verdict-parse.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/verdict-parse.sh" 2>/dev/null || true
+# THE CONFIGURED COMMIT IDENTITY (BH-1134): the fix round's git writes run under
+# it and nothing else is pushed. Missing, there is no pin and br_fix_round's
+# author check answers "could not run" — the round is refused, never pushed.
+. "${H}/bin/lib/git-identity.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/git-identity.sh" 2>/dev/null || true
+# THE ACCEPT'S HIT FINGERPRINTS (BH-4474): an iron-law ACCEPT records them in
+# the jobs ledger so the next head with the same hits is not re-adjudicated.
+# Missing, nothing is recorded and every new head is adjudicated as before.
+. "${H}/bin/lib/ironlaw-carry.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/ironlaw-carry.sh" 2>/dev/null || true
+# ARCHIE FIRST (BH-4585): afm_first says whether Archie's rebase-repair playbook
+# is still working a park and hands over its diagnosis. Missing, afm_first is
+# undefined and every park gets its fix round exactly as before.
+{ . "${H}/bin/lib/archie-fm.sh" && . "${H}/bin/lib/archie-fm-repair.sh"; } 2>/dev/null || true
+if [ "$BR_FIX_HERE" != 1 ]; then
+  command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit blocked-resolver
+elif command -v lane_paused >/dev/null 2>&1 && lane_paused blocked-resolver "${BR_FIX_ARGS[0]:-}"; then
+  # The predicate, not lane_gate_or_exit: that exits with no protocol line and
+  # posts a liveness tick for a hub lane from a box. Before stdin is read and
+  # before any write, so a paused box cannot do half a round.
+  echo "FIX_RESULT box-paused $(printf '%s on %s' "$LANE_PAUSED_WHY" "$(hostname 2>/dev/null || echo the owning box)" | base64 -w0)"
+  exit 0
+fi
+# THE KNOBS, BELOW THE ENV LOAD (BH-1165). The gate above stops this lane; this
+# is what lets a settings row reach its own unmodified ${KNOB:-default} reads.
+# It is BELOW `set -a; . env/global.env` on purpose: above it, the env file
+# re-assigns every name and the row silently loses. Fails open — with no row,
+# nothing is exported and the lane behaves byte-for-byte as it does today.
+command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    blocked-resolver
+
+
+# The per-repo App token, and then the "which PAT can see this repo" probe that
+# is still the fallback. Both guarded: a box whose harness sync has not landed
+# gh-app-auth.sh yet runs today's code instead of dying on an unset function.
+# shellcheck source=bin/lib/gh-app-auth.sh
+[ -r "$H/bin/lib/gh-app-auth.sh" ] && . "$H/bin/lib/gh-app-auth.sh"
+# WHICH IDENTITY GOT REFUSED, AND HOW MANY CALLS THIS LANE MAKES (BH-426). The
+# tag gh-app-auth.sh sets above is only worth setting if something writes it
+# down; this lane was one of two on the merge path that never sourced the writer,
+# so a rate-limit 403 here named nothing. Guarded and fail-open, like every
+# source in this block.
+# shellcheck source=bin/lib/gh-limit-logger.sh
+[ -r "$H/bin/lib/gh-limit-logger.sh" ] && . "$H/bin/lib/gh-limit-logger.sh"
+# shellcheck source=bin/lib/gh-repo-token.sh
+[ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh"
+# THE REVIEW-VERDICT SOURCE's two libs (BH-872), guarded the same way: the
+# harness-author PR list (which is also the "is this one of ours" test) and the
+# shared rate-limit budget that bounds its extra reads. A box whose sync has not
+# landed them runs every other source exactly as before — br_from_reviews asks
+# `command -v harness_pr_list` and answers nothing when it is missing.
+# shellcheck source=bin/lib/gh-pr-list.sh
+[ -r "$H/bin/lib/gh-pr-list.sh" ] && . "$H/bin/lib/gh-pr-list.sh"
+# shellcheck source=bin/lib/gh-budget.sh
+[ -r "$H/bin/lib/gh-budget.sh" ] && . "$H/bin/lib/gh-budget.sh"
+# IS THIS TICKET HELD? The one shared reading (bin/lib/hold.sh), and the same
+# guard as the two libs above: a box whose harness sync has not landed it runs
+# today's code rather than dying on an unset function. br_hold_gate answers
+# "proceed" when the lib is absent, which is exactly the pre-2026-09-18
+# behaviour.
+# shellcheck source=bin/lib/hold.sh
+[ -r "$H/bin/lib/hold.sh" ] && . "$H/bin/lib/hold.sh"
+# THE REVIEW LEVELS (BH-7123 wave B): rl_mode / rl_knob read the review cap row
+# (bin/lib/br/record.sh br_review_fix_cap) and rl_line_blocks says whether a
+# standing finding is on the ALWAYS-BLOCK floor (br_cap_notes). Guarded like
+# the libs above: without it the cap is the registry knob and every review
+# terminal is today's abandon.
+# shellcheck source=bin/lib/review-level.sh
+[ -r "$H/bin/lib/review-level.sh" ] && . "$H/bin/lib/review-level.sh"
+# A HAND-OFF ACTS, SAYS WHY NOT, OR PAGES (BH-5125): the claim/ack/sweep record
+# the main loop keeps for every candidate. The ticket thread reader and the
+# untrusted-input wrapper are what br_fix_round's DIRECTIVE reads and wraps the
+# newest principal comment with. All three guarded like the libs above: a box
+# without them runs today's tick and today's brief.
+# shellcheck source=bin/lib/handoff-watch.sh
+[ -r "$H/bin/lib/handoff-watch.sh" ] && . "$H/bin/lib/handoff-watch.sh"
+# shellcheck source=bin/lib/prebuild-repro/thread.sh
+[ -r "$H/bin/lib/prebuild-repro/thread.sh" ] && . "$H/bin/lib/prebuild-repro/thread.sh"
+# shellcheck source=bin/lib/untrusted-input.sh
+command -v ui_wrap >/dev/null 2>&1 || { [ -r "$H/bin/lib/untrusted-input.sh" ] && . "$H/bin/lib/untrusted-input.sh"; }
+# THE ONE PUSH (BH-2504): the fix round re-reads the ticket's hold right before
+# it pushes, and pushes under a lease on the head it started from. NOT guarded
+# like the libs above, on purpose: a box without it has no hold_push, so the
+# fix round's push fails and nothing is written — an unchecked push onto a
+# held branch is the incident, and "no push this tick" is not.
+# shellcheck source=bin/lib/hold-push.sh
+[ -r "$H/bin/lib/hold-push.sh" ] && . "$H/bin/lib/hold-push.sh"
+# THE DATA LANE'S CONTRACT (BH-4926): dl_candidate & co. Absent, every
+# br_data_lane_route call site asks `command -v dl_candidate` and runs today's code.
+# shellcheck source=bin/lib/data-lane.sh
+[ -r "$H/bin/lib/data-lane.sh" ] && . "$H/bin/lib/data-lane.sh"
+# BH-6467: a data-lane-only BLOCK whose draft PR waits on the apply (dlp_pending).
+# shellcheck source=bin/lib/data-lane-pending.sh
+[ -r "$H/bin/lib/data-lane-pending.sh" ] && . "$H/bin/lib/data-lane-pending.sh"
+# WHO HAS SPOKEN ON THIS HEAD, AND DOES ITS TICKET SAY STOP (BH-1642). The
+# rebuild rung's supersede guard (br_supersede_guard) asks both before it closes
+# a PR: bin/lib/verdicts.sh, the ONE reader of the verdicts table (the
+# conductor lib usually brings it through block-gate.sh already), and
+# bin/lib/ticket-ownership.sh's to_merge_hold, the one answer every merge lane
+# gives to "is this ticket held". Guarded like the libs above: a box whose sync
+# has not landed them says so on the guard's own line and keeps today's rung.
+# shellcheck source=bin/lib/verdicts.sh
+command -v vd_standing >/dev/null 2>&1 || { [ -r "$H/bin/lib/verdicts.sh" ] && . "$H/bin/lib/verdicts.sh"; }
+# shellcheck source=bin/lib/ticket-ownership.sh
+[ -r "$H/bin/lib/ticket-ownership.sh" ] && . "$H/bin/lib/ticket-ownership.sh"
+# The "already bought?" read (BH-3930). Guarded like the two above; without it
+# every re-review is bought as before.
+# review_bought's outputs, empty when the library is absent (BH-4134).
+RB_SOURCE=""; RB_WORD=""; RB_CLASS=""; RB_SERVED=""
+# shellcheck source=bin/lib/review-bought.sh
+[ -r "$H/bin/lib/review-bought.sh" ] && . "$H/bin/lib/review-bought.sh"
+# WHO OUR PRs ARE, and the one list call that finds all of them: the contested
+# hold has to know which OPEN pull requests touch the path it is about to hold,
+# and a hardcoded --author is how eleven consumers went blind to App-authored
+# PRs. Guarded like the two above; without it br_competitors answers "cannot
+# read" and the ladder takes today's rung.
+# shellcheck source=bin/lib/gh-pr-list.sh
+[ -r "$H/bin/lib/gh-pr-list.sh" ] && . "$H/bin/lib/gh-pr-list.sh"
+# The priority contract (#644) and the scheduler knobs. Same guarded shape as
+# bin/run-build.sh:113,156: a box whose harness sync has not landed either file
+# runs today's code — discovery order and no slot cap — instead of dying on an
+# unset function.
+# shellcheck source=bin/lib/hotfix-lib.sh
+[ -r "$H/bin/lib/hotfix-lib.sh" ] && . "$H/bin/lib/hotfix-lib.sh"
+# shellcheck source=bin/lib/scheduler-conf.sh
+[ -r "$H/bin/lib/scheduler-conf.sh" ] && . "$H/bin/lib/scheduler-conf.sh"
+# The conductor's lib gives us MC_ROWS, mc_transition, mc_rereview, mc_git_auth
+# and mc_record_for. Sourced, never re-implemented: a second answer to "which
+# build record belongs to this PR" that drifted would resolve the wrong build.
+# shellcheck source=bin/lib/merge-conductor-lib.sh
+if [ -r "$H/bin/lib/merge-conductor-lib.sh" ]; then . "$H/bin/lib/merge-conductor-lib.sh"; mc_init
+else echo "blocked-resolver: bin/lib/merge-conductor-lib.sh missing — cannot read PR state" >&2; exit 1; fi
+# The fix-round brief's red-checks reader (BH-7241). Optional; MC_FIX_NOW_ON stays unset.
+# shellcheck source=bin/lib/mc-stuck-timers.sh
+[ -r "$H/bin/lib/mc-stuck-timers.sh" ] && . "$H/bin/lib/mc-stuck-timers.sh"
+# THE REBUILD LEDGER (BH-487.0). HARD, like the conductor's lib above and for
+# the same reason: a resolver whose ledger functions are undefined does not
+# refuse, it silently counts rebuilds on the bare `rebuilds` counter again once
+# the rung reads them — a ladder that looks bounded and is not.
+# shellcheck source=bin/lib/rebuild-ledger.sh
+if [ -r "$H/bin/lib/rebuild-ledger.sh" ]; then . "$H/bin/lib/rebuild-ledger.sh"
+else echo "blocked-resolver: bin/lib/rebuild-ledger.sh missing — cannot read the rebuild ledger" >&2; exit 1; fi
+# THE REST CONTRACT every decision read below goes through: rc 0 act on the
+# body, rc 44 the thing is ABSENT, rc 75 GitHub did not answer and the tick ends
+# with the park exactly as it was. HARD-required, like the two libs above and
+# for the same reason: a resolver whose reads are undefined functions answers rc
+# 127 on every one of them, which is neither 44 nor 75 and would be read as "not
+# open, nothing to close" — the #768 bug with a different empty answer.
+# shellcheck source=bin/lib/gh-rest.sh
+if [ -r "$H/bin/lib/gh-rest.sh" ]; then . "$H/bin/lib/gh-rest.sh"
+else echo "blocked-resolver: bin/lib/gh-rest.sh missing — cannot read PR state" >&2; exit 1; fi
+# MAIN ONLY ON A CONFLICT (BH-7042): the mechanical rung's "does this PR need a
+# merge of main?" gate. Absent, br_mechanical merges as before.
+# shellcheck source=bin/lib/br-main-merge.sh
+[ -r "$H/bin/lib/br-main-merge.sh" ] && . "$H/bin/lib/br-main-merge.sh"
+# The review poster (BH-641) and the guard-silencing classifier. Both degrade on
+# a box mid-sync that carries this script with the old bin/lib: rp_post falls
+# back to the pre-BH-641 comment, and an absent gs_classify classifies nothing
+# and refuses nothing — a gate's own absence never blocks work here.
+# shellcheck source=bin/lib/review-post.sh
+[ -r "$H/bin/lib/review-post.sh" ] && . "$H/bin/lib/review-post.sh"
+# The fallback posts through br_pr_comment for the same reason every other
+# comment on this lane does (BH-783): `gh pr comment` wraps GraphQL, which is
+# the credential that rate-limits first and answers with silence.
+command -v rp_post >/dev/null 2>&1 || rp_post() {
+  printf -- '-\n'
+  br_pr_comment "$4" "$(printf '%s\n\n---\n%s' "$(cat "$3" 2>/dev/null)" "$5")" >/dev/null 2>&1
+}
+# shellcheck source=bin/lib/guard-silenced.sh
+[ -r "$H/bin/lib/guard-silenced.sh" ] && . "$H/bin/lib/guard-silenced.sh"
+# WHO THIS BOX IS (BH-594): the hub runs no agent build work, so its fix rounds
+# hop to the owning box. A box without the lib runs every round where it is,
+# which is exactly the behaviour before the hop existed.
+# shellcheck source=bin/lib/hub-box.sh
+[ -r "$H/bin/lib/hub-box.sh" ] && . "$H/bin/lib/hub-box.sh"
+command -v hub_box_builds_here >/dev/null 2>&1 || hub_box_builds_here() { return 0; }
+command -v is_hub_box >/dev/null 2>&1 || is_hub_box() { [ "${1:-}" = local ]; }
+# The fix-round preflight (BH-1794). Guarded like the two above: a box whose
+# sync has not landed it runs every fix round exactly as before (br_preflight
+# answers "proceed" when frp_ci does not exist).
+# shellcheck source=bin/lib/fixround-preflight.sh
+[ -r "$H/bin/lib/fixround-preflight.sh" ] && . "$H/bin/lib/fixround-preflight.sh"
+# The fix-round scratch-closure gate (BH-5064). Guarded: a box whose sync has not
+# landed it runs every fix round exactly as before.
+# shellcheck source=bin/lib/fixround-closure-lint.sh
+[ -r "$H/bin/lib/fixround-closure-lint.sh" ] && . "$H/bin/lib/fixround-closure-lint.sh"
+# The fix-round CI lint run (BH-6897), guarded the same way.
+# shellcheck source=bin/lib/ci-local-verify.sh
+[ -r "$H/bin/lib/ci-local-verify.sh" ] && . "$H/bin/lib/ci-local-verify.sh"
+# shellcheck source=bin/lib/br-pool-terminals.sh
+[ -r "$H/bin/lib/br-pool-terminals.sh" ] && . "$H/bin/lib/br-pool-terminals.sh"
+

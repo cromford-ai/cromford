@@ -15,6 +15,7 @@ import { waveFileApi } from './lib/roadmap-api/wave-file.js';
 import { firstRunApi } from './api-first-run.js';
 import { flyApi } from './api-fly.js';
 import { aiAccountsApi } from './lib/ai-accounts.js';
+import { periodQuery } from './lib/period.js';
 
 export class AuthError extends Error {
   constructor() {
@@ -237,6 +238,9 @@ export const api = {
     if (opts.kind) q.set('kind', opts.kind);
     // One ticket's rows (BH-4990, the /t/<KEY> page). The worker filters on it.
     if (opts.ticket_id) q.set('ticket_id', opts.ticket_id);
+    // BH-9304: jobs created in [from, to). No from/to = the same URL as before.
+    if (opts.from) q.set('from', opts.from);
+    if (opts.to) q.set('to', opts.to);
     q.set('limit', String(opts.limit || 100));
     return get(`/api/coord/jobs?${q.toString()}`);
   },
@@ -837,8 +841,28 @@ export const api = {
   ...firstRunApi({ get, post, coordPath }),
   ...flyApi({ get, post, coordPath }),
   // BH-7966: the AI account rows and the envelope status (lib/ai-accounts.js).
-  ...aiAccountsApi({ get, post, coordPath })
+  ...aiAccountsApi({ get, post, coordPath }),
+  // BH-9304: the four mc.period.* knobs, read once per page load. A failed
+  // read is not kept, so the next call asks again.
+  periodKnobs: () => {
+    if (!periodKnobsMemo) {
+      periodKnobsMemo = get('/api/coord/period/knobs').catch((e) => { periodKnobsMemo = null; throw e; });
+    }
+    return periodKnobsMemo;
+  },
+  // BH-9304: a period read for the report screens of #9120: path plus
+  // periodQuery(query, query.keep). Same-origin /api/ paths only.
+  periodGet: (path, query) => {
+    if (typeof path !== 'string' || !path.startsWith('/api/')) throw new Error(`periodGet: ${path} is not an /api/ path`);
+    const qs = periodQuery(query, query && query.keep);
+    return get(qs ? `${path}?${qs}` : path);
+  }
 };
+
+// The api.periodKnobs memo. It holds no token and dies with the page.
+// resetPeriodKnobs() drops it (tests; a screen never needs to).
+let periodKnobsMemo = null;
+export function resetPeriodKnobs() { periodKnobsMemo = null; }
 
 // `project` is mandatory on both fetches and there is no default: an empty or
 // unregistered one comes back as a refused beat, i.e. a pane that never fills.

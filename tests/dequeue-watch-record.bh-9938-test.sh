@@ -212,7 +212,7 @@ seam dqw_labels_record "$T/s.rec2" "$SLUG"
 [ "$(norm dqw_labels_norm "$T/s.rec2")" != "$NG" ] && ok || bad "S1 a changed number left the norm equal"
 
 CASE=S2
-echo 901 > "$F/records/list.age"
+echo 3901 > "$F/records/list.age"   # one second past the default list trust window (3900 since BH-9939)
 seam dqw_labels_record "$T/s.rec" "$SLUG";  eq "S2 stale" "$(src):$(out)" "1:stale"
 rm -f "$F/records/list-open.json"
 seam dqw_labels_record "$T/s.rec" "$SLUG";  eq "S2 no-sync" "$(src):$(out)" "1:no-sync"

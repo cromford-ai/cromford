@@ -59,6 +59,8 @@ EB_TOKEN="ghp_$(printf 'a1B2c3D4e5F6g7H8i9J0%.0s' 1 2)"
 cat > "$H/bin/fly-envbundle.sh" <<'EB'
 #!/bin/bash
 echo "bundle $*" >> "${EB_SINK:-/dev/null}"
+# BH-9889: the spawn path opts in to the hub cache of the bundle; record it.
+[ -z "${EB_SINK:-}" ] || echo "hubcache=${ENVBUNDLE_HUB_CACHE:-}" >> "$EB_SINK.hub"
 mkdir -p "$2"; : > "$2/global.env"; : > "$2/$1.env"
 printf '%s\n' "${EB_MARK:-}" > "$2/.bh4859-marker"
 case "${EB_MODE:-ok}" in
@@ -207,7 +209,7 @@ reset_case() {
     [ -e "$p" ] && scratch_rm "$p"
   done
   : > "$ROWS"; rm -f "$ROWS.lastreason"
-  : > "$T/req.txt"; : > "$T/fly.txt"; : > "$T/eb.txt"
+  : > "$T/req.txt"; : > "$T/fly.txt"; : > "$T/eb.txt"; : > "$T/eb.txt.hub"
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"
   return 0
 }
@@ -235,6 +237,8 @@ queue_file
 printf '%s\n%s\n' "$OLD1" "$OLD2" > "$SP"; cp "$SP" "$T/spawns.before"
 run_pool EB_MODE=fail
 [ -s "$T/eb.txt" ] && ok || bad "A1 precondition: the bundler was never called: $(log)"
+grep -qx 'hubcache=1' "$T/eb.txt.hub" && ok \
+  || bad "A1 (BH-9889): spawn_one must call the bundler with ENVBUNDLE_HUB_CACHE=1, got: $(cat "$T/eb.txt.hub" 2>/dev/null)"
 [ "$(machine_runs)" = 0 ] && ok \
   || bad "A1: a failed bundle must buy no machine — fly calls: $(cat "$T/fly.txt")"
 grep -qF 'env bundle FAILED for BH-1016: ssh env extract from 10.0.0.13 failed (ssh rc 255) — no machine spawned, job stays queued' "$H/logs/fly-pool.log" \

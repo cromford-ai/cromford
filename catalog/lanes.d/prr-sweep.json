@@ -1,0 +1,130 @@
+{
+  "id": "prr-sweep",
+  "name": "PR record slow safety sweep",
+  "scope": "hub",
+  "script": "bin/prr-sweep.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-prr-sweep",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "PRR_SWEEP_INTERVAL_MIN",
+      "type": "int",
+      "default": 60,
+      "min": 0,
+      "max": 1440,
+      "unit": "minutes",
+      "zero_means": "off",
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939 (BH-9926 wave 7): minutes between two sweeps of one repo. The cron line fires every 5 minutes and this row decides. A sweep compares the PR record with GitHub for the repo's open PRs (fields, labels, workflow runs, commit statuses), writes each difference through pr_record_put, and renews the list sync stamp. The list trust window (lib pr-record, PR_RECORD_LIST_MAX_AGE_S) must be this interval plus PRR_SWEEP_LIST_SLACK_S; with a smaller window the sweep uses the window minus the slack. Read as ${PRR_SWEEP_INTERVAL_MIN:-60}. 0 = off: off: no repo is swept."
+    },
+    {
+      "env": "PRR_SWEEP_FIX_ALERT_24H",
+      "type": "int",
+      "default": 20,
+      "min": 0,
+      "max": 100000,
+      "unit": "fixes",
+      "zero_means": "off",
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the limit of sweep fixes for one repo in 24 hours. Above it one alert fires (lane-alert id prr-sweep-fixes:<repo>), because a webhook of that repo is missing; the first sweep that counts the limit or less resolves it. A fix is one record field the sweep replaced (one PRR_SWEEP_FIX line in logs/prr-shadow.log, one row in state/prr-sweep/fixes.tsv). 0 = off: no alert."
+    },
+    {
+      "env": "PRR_SWEEP_PR_READS_MAX",
+      "type": "int",
+      "default": 10,
+      "min": 0,
+      "max": 1000,
+      "unit": "reads",
+      "zero_means": "off",
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the most per-PR GitHub reads one sweep makes for one repo: pulls/<n> for a PR the record calls open and GitHub's list does not hold, and commits/<head>/status for the status compare. The list read and the workflow-run pages are not counted here. 0 = off: no per-PR read: no status compare and no state read of a PR that left the open list."
+    },
+    {
+      "env": "PRR_SWEEP_STATUS_ROTATE",
+      "type": "int",
+      "default": 2,
+      "min": 0,
+      "max": 1000,
+      "unit": "PRs",
+      "zero_means": "off",
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: GitHub has no list read for commit statuses. Each sweep reads commits/<head>/status for the PRs with a reason (a pending record status, a change since the last sweep) and then for this many other open PRs by rotation, inside PRR_SWEEP_PR_READS_MAX. With 2, a repo of 50 quiet PRs costs 5 GitHub calls a sweep (1 list, 1 runs page, 2 status reads, 1 rate_limit read of a cold budget memo) and each PR is read once in 25 sweeps. 0 = off: no rotation: only PRs with a reason get a status read."
+    },
+    {
+      "env": "PRR_SWEEP_RUNS_PAGES",
+      "type": "int",
+      "default": 3,
+      "min": 0,
+      "max": 10,
+      "unit": "pages",
+      "zero_means": "off",
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the most pages (100 workflow runs each) of actions/runs?created=>=<2 intervals ago> one sweep reads for one repo. The newest run of each workflow on an open PR head is compared with the record's checks entry workflow:<name>. 0 = off: no checks compare."
+    },
+    {
+      "env": "PRR_SWEEP_LIST_SLACK_S",
+      "type": "int",
+      "default": 300,
+      "min": 0,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the list trust window (PR_RECORD_LIST_MAX_AGE_S) must be the sweep interval plus this many seconds. It covers cron start jitter and the time a tick spends on the repos before this one. With 0 the trust window may equal the interval."
+    },
+    {
+      "env": "PRR_SWEEP_QUIET_DAYS",
+      "type": "int",
+      "default": 7,
+      "min": 1,
+      "max": 90,
+      "unit": "days",
+      "zero_means": null,
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the window of the raise rule. bin/prr-sweep.sh raise sets the timed full tick interval row (lib.cadence-backstop.cadence_backstop_min_<lane>) of each lane in step record to its value times PRR_SWEEP_RAISE_FACTOR, at most the knob's max, one time in the window. It does so only when the fix ledger holds 0 rows for this many days, the first sweep on the box is that old, and each repo the lane tried has a completed sweep in each 24-hour window of those days (state/prr-sweep/sweeps.tsv): 0 fixes from a sweep that did not run is not evidence. The ledger keeps this many days plus one."
+    },
+    {
+      "env": "PRR_SWEEP_RAISE_FACTOR",
+      "type": "int",
+      "default": 2,
+      "min": 1,
+      "max": 10,
+      "unit": "x",
+      "zero_means": null,
+      "required": false,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939: the multiplier of one raise of a lane's timed full tick interval. 1 = no raise."
+    },
+    {
+      "env": "PRR_SWEEP_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/prr-sweep.sh",
+      "note": "BH-9939 test seam: epoch seconds used as the clock. Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/prr-sweep.log"
+  }
+}

@@ -2,11 +2,11 @@
   "env": "PR_RECORD_LIST_MAX_AGE_S",
   "read_in": "bin/lib/pr-record.sh",
   "type": "int",
-  "default": 900,
+  "default": 3900,
   "min": 0,
   "max": 86400,
   "unit": "seconds",
   "zero_means": "off: every list read goes to GitHub as before",
   "required": false,
-  "note": "BH-8452. pr_record_list trusts the PR record's list of a repo's open PRs (GET /api/pr-records?repo=&state=, no GitHub call) only while the last full GitHub list write (POST /api/pr-record-lists, its sync stamp) is at most this many seconds old on the worker's clock, the page is not truncated and no needed field is null. Else the caller reads GitHub as before. bin/orphan-reconcile.sh uses it before its BH-8271 file copy. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 900 and one logs/pr-record.log line names it."
+  "note": "BH-8452. pr_record_list trusts the PR record's list of a repo's open PRs (GET /api/pr-records?repo=&state=, no GitHub call) only while the last full GitHub list write (POST /api/pr-record-lists, its sync stamp) is at most this many seconds old on the worker's clock, the page is not truncated and no needed field is null. Else the caller reads GitHub as before. bin/orphan-reconcile.sh uses it before its BH-8271 file copy. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 3900 and one logs/pr-record.log line names it. BH-9939: the default is 3900 s (65 minutes), the interval of the slow safety sweep (lane prr-sweep, PRR_SWEEP_INTERVAL_MIN, 60 minutes) plus PRR_SWEEP_LIST_SLACK_S (300 s). bin/prr-sweep.sh writes the full open list of each repo at that interval, so the stamp is always inside the window and a lane in step record does not read GitHub between two sweeps. Keep this value at or above the sweep interval plus the slack. With a smaller row the sweep shortens its own interval to the window minus the slack and logs one PRR_SWEEP_WINDOW line."
 }

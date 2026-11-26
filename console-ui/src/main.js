@@ -13,6 +13,7 @@ import './ai-accounts.css';
 import './onboard.css';
 import './project-ready.css';
 import './signals.css';
+import './period-picker.css';
 
 // Off unless VITE_SENTRY_DSN was set at build time (BH-5619).
 initSentry(import.meta.env);

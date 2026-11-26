@@ -1,0 +1,313 @@
+# br_resolve_merged <project> <cap-key> <reason> <url> <record> — the park points
+# at a PR that is ALREADY MERGED: the work landed and the row is just stale.
+# br_close_pr returns silently on anything that is not OPEN, so a rebuild from
+# here would sail past the close and enqueue a DUPLICATE build of merged work.
+# This is the resolved path: record it, mark the record so no sweep re-handles
+# it, move the conductor row to its MERGED terminal, and take no other rung.
+br_resolve_merged() {
+  local p="$1" ck="$2" reason="$3" url="$4" rec="$5" ckey
+  if [ "$OBSERVE" = 1 ]; then say "$p/$ck [$reason]: WOULD resolve — $url is already MERGED — observe mode"; return 0; fi
+  br_record "$p" "$ck" resolved-merged "$reason" "$url is already MERGED — stale park, no rebuild"
+  br_set_outcome "$p" "$ck" RESOLVED_MERGED
+  # WHICH PR THIS RESOLVED (BH-1457). The outcome alone is a TICKET-level fact
+  # and a ticket can acquire a new PR (a rebuild's), so the pre-pass that
+  # retires finished rows needs to know which url the resolve was about. A
+  # record written before this shipped carries none, and br_prepass reads an
+  # absent url as "not the same PR" rather than as a match (D11).
+  br_set_field "$p" "$ck" resolved_url "$url"
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && { : > "$rec/.blocked-resolver-superseded"; touch "$rec/COMMENTED" 2>/dev/null; }
+  ckey=$(mc_slug_of_url "$url")
+  [ -n "$ckey" ] && mc_transition "$ckey#$(mc_num_of_url "$url")" MERGED \
+    "blocked-resolver: already merged, the $reason park is stale" "-" "-" "$url" "-" "-" "${rec:--}" >/dev/null
+  say "$p/$ck [$reason]: RESOLVED — $url is already merged, nothing rebuilt"
+}
+
+# THE TICKET-MERGED CHECK. It runs FIRST, before any rung, for every park.
+#
+# 2026-09-14, 03:00-03:37Z: this lane rebuilt SEVEN tickets that had merged days
+# earlier (project-3 TK-53/TK-131/TK-135, project-4 TK-1587/TK-791, project-1 TK-115/TK-202).
+# Every one of them was a stale POOL record — a test-tamper block, a rescue that
+# gave up — carrying NO PR url, and the only merged-guard there was sat at the
+# REBUILD rung and asked about the url. So the guard never fired: three duplicate
+# builds ran to PLAN_BLOCKED and the rest were quarantined by bin/fly-pool.sh.
+#
+# The lesson is that the park's url is the WRONG question. The question is
+# whether the TICKET landed, and the repo answers that whether or not this park
+# ever knew a PR number.
+
+# br_park_time <project> <cap-key> <ticket-key> <record> — when this park was
+# recorded, in epoch seconds. The record's own terminal first (it is the fact),
+# then the queue row the pool left behind, then this lane's state file. NOTHING
+# is guessed: with no dated evidence the caller keeps today's behaviour rather
+# than resolving a park it cannot place in time.
+#
+# A LEDGER-ONLY park (BH-2349) has no RESULT, and a build that never touched
+# this box has no queue row or state file either. Its date is the ledger row's
+# updated_at, the newest for the ticket, asked before the state file (whose
+# mtime is this lane's own write, not the park). A ledger that does not answer
+# (rc 1) for a park with no record is rc 2: UNKNOWN, never "no merged PR" —
+# the 2026-09-14 wave was exactly a park nothing could date, rebuilt anyway.
+br_park_time() {
+  local p="$1" ck="$2" tkey="$3" rec="$4" f rows brc bdir bupd bep newest=""
+  for f in "$rec/RESULT" "$H/state/build-queue/$p/$tkey.failed.json" \
+           "$H/state/build-queue/$p/$tkey.json"; do
+    [ -e "$f" ] || continue
+    date -u -r "$f" +%s 2>/dev/null && return 0
+  done
+  if [ "${rec:--}" = - ] && command -v bor_union >/dev/null 2>&1; then
+    rows=$(bor_union "$p" 2>/dev/null); brc=$?
+    [ "$brc" = 1 ] && return 2
+    while IFS=$'\t' read -r _ bdir _ bupd _ _ _; do
+      # The trailing dash keeps BH-23 from answering for BH-234.
+      case "$bdir" in "$p-$tkey-"*) ;; *) continue ;; esac
+      [ -n "$bupd" ] || continue
+      bep=$(date -u -d "$bupd" +%s 2>/dev/null) || continue
+      [ -z "$newest" ] || [ "$bep" -gt "$newest" ] && newest="$bep"
+    done <<<"$rows"
+    [ -n "$newest" ] && { printf '%s\n' "$newest"; return 0; }
+  fi
+  f=$(br_file "$p" "$ck")
+  [ -e "$f" ] && date -u -r "$f" +%s 2>/dev/null && return 0
+  return 1
+}
+
+# br_merged_prs_for <owner/repo> <ticket-key> — TSV of the repo's MERGED PRs for
+# this ticket: url, mergedAt, branch. Two searches, because a PR names its ticket
+# in one of two places and neither is reliable alone: the TITLE and the BRANCH
+# this pipeline always builds on (`ticket/<key>`, lowercased, sometimes with an
+# -rN rebuild suffix). Each arm is capped at 20 hits.
+# GitHub's search tokenises on the hyphen, so TK-53 can come back with TK-531's
+# PR — every row is re-checked HERE against the whole key before it counts.
+#
+#   rc 0   the searches answered; the TSV (possibly empty) is the answer.
+#   rc 75  a search or a per-hit read did not answer. THERE IS NO PARTIAL
+#          ANSWER: an incomplete list read as "this ticket never merged" is how
+#          seven already-merged tickets were rebuilt on 2026-09-14, and how #768
+#          rebuilt PRs it could not read. The caller takes its unknown path.
+#
+# Search items carry no head branch, so each unique hit costs one REST read of
+# the PR itself (<= 40 worst case, typically 0-3) to keep the whole-key filter
+# exactly as strict as it was.
+br_merged_prs_for() {
+  local slug="$1" tkey="$2" lk q hits f u n at brn ti rc
+  lk=$(printf '%s' "$tkey" | tr '[:upper:]' '[:lower:]')
+  hits=$(mktemp) || return 75
+  f=$(mktemp) || { rm -f "$hits"; return 75; }
+  for q in "repo:$slug is:pr is:merged \"$tkey\" in:title" \
+           "repo:$slug is:pr is:merged head:ticket/$lk"; do
+    gh_rest GET search/issues -f "q=$q" -F per_page=20 > "$f" 2>/dev/null || {
+      say "$slug: the merged-PR search for $tkey is UNVERIFIABLE (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON}) — nothing decided from it this tick"
+      rm -f "$hits" "$f"; return 75
+    }
+    jq -r '.items[]?.html_url // empty' "$f" 2>/dev/null >> "$hits"
+  done
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    n=$(mc_num_of_url "$u"); [ -n "$n" ] || continue
+    gh_rest GET "repos/$slug/pulls/$n" > "$f" 2>/dev/null; rc=$?
+    case "$rc" in
+      0)  ;;
+      44) continue ;;
+      *)  say "$slug#$n: a merged-search hit for $tkey could not be read (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON}) — nothing decided from the search this tick"
+          rm -f "$hits" "$f"; return 75 ;;
+    esac
+    at=$(jq -r '.merged_at // "-"' "$f" 2>/dev/null)
+    [ "$at" = "-" ] && continue
+    brn=$(jq -r '.head.ref // "-"' "$f" 2>/dev/null)
+    ti=$(jq -r '.title // "-"' "$f" 2>/dev/null)
+    case "$brn" in
+      "ticket/$lk"|"ticket/$lk-"*) ;;
+      *) printf '%s' "$ti" | tr '[:lower:]' '[:upper:]' \
+           | grep -qE "(^|[^A-Z0-9])$tkey([^0-9]|\$)" || continue ;;
+    esac
+    printf '%s\t%s\t%s\n' "$u" "$at" "$brn"
+  done < <(sort -u "$hits")
+  rm -f "$hits" "$f"
+  return 0
+}
+
+# br_resolve_ticket_merged <project> <cap-key> <reason> <ticket-key> <merged-url>
+#                          <record> — the TICKET landed; this park is scenery.
+br_resolve_ticket_merged() {
+  local p="$1" ck="$2" reason="$3" tkey="$4" murl="$5" rec="$6" msg d dres dname
+  msg="ticket $tkey already merged via $murl, park is stale, nothing rebuilt"
+  if [ "$OBSERVE" = 1 ]; then say "$p/$ck [$reason]: WOULD resolve — $msg — observe mode"; return 0; fi
+  br_record "$p" "$ck" resolved-merged "$reason" "$msg"
+  br_set_outcome "$p" "$ck" RESOLVED_MERGED
+  [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ] && touch "$rec/COMMENTED" 2>/dev/null
+  # EVERY record of this ticket is stale now, not just the one that was parked:
+  # the duplicate builds the 2026-09-14 wave produced left their own PLAN_BLOCKED
+  # records behind, and an unmarked one is a candidate again on the next tick.
+  for d in "$H"/builds/"$p"-"$tkey"-*/ "$H"/builds/pool-"$p"-"$tkey"-*/; do
+    [ -d "$d" ] || continue
+    : > "${d%/}/.blocked-resolver-superseded"
+    # Its ledger row ends at `superseded` too (BH-3481.1), except the dir that
+    # merged, and a hub mirror of a pool build: its basename is no row's bkey
+    # (the real row is under the BUILD_DIR:/BUILT_AS: name), so a beat there
+    # would invent a phantom row.
+    dres="${d%/}/RESULT"; dname=$(basename "${d%/}")
+    head -1 "$dres" 2>/dev/null | grep -q '^PR_MERGED' && continue
+    [ -n "$murl" ] && grep -qF -- "$murl" "$dres" 2>/dev/null && continue
+    sed -n 's/^\(BUILT_AS\|BUILD_DIR\): *//p' "$dres" 2>/dev/null | sed 's#/*[[:space:]]*$##; s#.*/##; /^$/d' \
+      | grep -qvxF -- "$dname" && continue
+    br_row_closed "$p" "$tkey" "${d%/}" - superseded "superseded: $tkey already merged via $murl" resolved-merged
+  done
+  # The queue row too, so the pool never re-offers a ticket that has landed.
+  command -v queue_done >/dev/null 2>&1 \
+    && queue_done "$p" "$tkey" done "$msg" >/dev/null 2>&1
+  say "$p/$ck [$reason]: RESOLVED — $msg"
+}
+
+# br_already_merged <project> <rkey> <reason> <pr-url> <record> <ticket-key> <slug>
+#   rc 0 = this park is stale because the work is already merged; the caller
+#   takes NO rung at all (no adjudication, no fix round, no rebuild).
+#   rc 2 = GitHub did not answer, so whether the work merged is UNKNOWN. The
+#   caller takes no rung either — "we could not read it" must never be walked
+#   down the ladder as "it did not merge, rebuild it" (#783).
+br_already_merged() {
+  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" slug="$7"
+  local ck park u at brn ep newest newest_at older mst mrc rows
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  # Already answered on an earlier tick. Terminal, and costs nothing to re-read.
+  [ "$(br_load "$p" "$ck" | jq -r '.outcome // ""' 2>/dev/null)" = RESOLVED_MERGED ] && return 0
+  # (a) the park carries a PR and that PR is MERGED. This is the guard that
+  #     already existed, hoisted out of the rebuild rung so that an adjudication
+  #     of merged code is never bought either.
+  #     AND A STATE WE COULD NOT READ IS NOT "not merged" (BH-642, shipped as
+  #     #783). The old read was `gh pr view … -q .state`, which prints nothing
+  #     and exits non-zero when GitHub rate-limits us — an empty string matched
+  #     no arm here, this function answered 1, and the ladder walked on to close
+  #     and rebuild a PR whose real state nobody had read. br_pr_state answers
+  #     rc 75 instead: this returns 2, spends nothing, and the next tick asks.
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    mst=$(br_pr_state "$url"); mrc=$?
+    [ "$mrc" = 75 ] && return 2
+    [ "$mst" = merged ] && { br_resolve_merged "$p" "$ck" "$reason" "$url" "$rec"; return 0; }
+  fi
+  # (b) and, url or no url, whether the TICKET itself has a merged PR.
+  [ -n "$tkey" ] && [ "$tkey" != "-" ] && [ -n "$slug" ] || return 1
+  case "$tkey" in [A-Za-z]*-[0-9]*) ;; *) return 1 ;; esac
+  # rc 2 from the dating is UNKNOWN too: a ledger-only park the ledger could not
+  # date is never read as "nothing merged after it" (BH-2349).
+  park=$(br_park_time "$p" "$ck" "$tkey" "$rec"); mrc=$?
+  [ "$mrc" = 2 ] && return 2
+  [ "$mrc" = 0 ] || return 1
+  newest=""; newest_at=""; older=""
+  # A TEMP FILE, NOT `< <( )`: the search's rc has to be readable, and a process
+  # substitution hides it. An unreadable search is rc 2 — unknown, not "this
+  # ticket has no merged PR".
+  rows=$(mktemp) || return 2
+  br_merged_prs_for "$slug" "$tkey" > "$rows"; mrc=$?
+  [ "$mrc" = 75 ] && { rm -f "$rows"; return 2; }
+  while IFS=$'\t' read -r u at brn; do
+    [ -n "$u" ] || continue
+    [ -n "$at" ] || continue
+    ep=$(date -u -d "$at" +%s 2>/dev/null) || continue
+    if [ "$ep" -gt "$park" ]; then
+      [ -z "$newest_at" ] || [ "$ep" -gt "$newest_at" ] || continue
+      newest="$u"; newest_at="$ep"
+    else
+      older="$u"
+    fi
+  done < "$rows"
+  rm -f "$rows"
+  if [ -n "$newest" ]; then
+    br_resolve_ticket_merged "$p" "$ck" "$reason" "$tkey" "$newest" "$rec"
+    return 0
+  fi
+  # A merge OLDER than the park is not this park's answer — the ticket can
+  # legitimately have a follow-up. One line so the decision is readable later.
+  [ -n "$older" ] && say "$p/$rkey [$reason]: $tkey has a merged PR ($older) but it predates this park — continuing the ladder"
+  return 1
+}
+
+# br_ticket_id <project> <ticket-key> <record> — the TICKET ID a queue row needs,
+# resolved the way the producers that own the row resolve it.
+#
+# A ROW WITHOUT ONE IS NOT A BUILD. bin/fly-pool.sh quarantines it ("malformed
+# queue entry (ticket='')") and bin/run-build.sh refuses it, so the enqueue this
+# lane thought it had made was a loud nothing — four of the seven rebuilds in the
+# 2026-09-14 wave died exactly there, having already closed their PR and spent a
+# rebuild counter. Sources in order of authority: the build record the pipeline
+# itself wrote, the queue row still on disk, the key's own number on a
+# GitHub-Issues lane, and the product board as the last word.
+br_ticket_id() {
+  local p="$1" tkey="$2" rec="${3:--}" tid="" f prefix base token bid tickets_json bodyf code
+  [ -n "$tkey" ] && [ "$tkey" != "-" ] || return 1
+  if [ -n "$rec" ] && [ "$rec" != "-" ] && [ -d "$rec" ]; then
+    tid=$(jq -r '.ticket_id // ""' "$rec/job.json" 2>/dev/null)
+    case "$tid" in ''|null) tid=$(sed -n 's/^TICKET_ID: //p' "$rec/RESULT" 2>/dev/null | head -1) ;; esac
+  fi
+  if [ -z "$tid" ] && command -v queue_list >/dev/null 2>&1; then
+    tid=$(queue_list "$p" 2>/dev/null | awk -F'\t' -v k="$tkey" '$2==k && $3!="-" && $3!="" {print $3; exit}')
+  fi
+  if [ -z "$tid" ]; then
+    for f in "$H/state/build-queue/$p/$tkey.json" "$H/state/build-queue/$p/$tkey.failed.json"; do
+      [ -s "$f" ] || continue
+      tid=$(jq -r '.ticket_id // ""' "$f" 2>/dev/null)
+      case "$tid" in ''|null) tid="" ;; *) break ;; esac
+    done
+  fi
+  prefix=$("$H/bin/fleet-conf.sh" "$p" board_prefix 2>/dev/null)
+  # A GitHub-Issues lane has no id of its own: the issue number IS the key's tail
+  # (the same reading bin/run-build.sh's resume path makes).
+  if [ -z "$tid" ] && [ "$prefix" = "-" ]; then
+    case "${tkey##*-}" in ''|*[!0-9]*) ;; *) tid="${tkey##*-}" ;; esac
+  fi
+  # The product board itself, read exactly as bin/stale-owed-tickets.sh reads it.
+  if [ -z "$tid" ] && [ -n "$prefix" ] && [ "$prefix" != "-" ]; then
+    base=$("$H/bin/fleet-conf.sh" "$p" prod 2>/dev/null); [ "$base" = "-" ] && base=""
+    token=$("$H/bin/internal-token-for.sh" "$p" 2>/dev/null) || token=""
+    if [ -n "$base" ] && [ -n "$token" ]; then
+      bid=$(curl -s -m 20 -H "Authorization: Bearer $token" -H "User-Agent: curl/8" "$base$prefix/boards" 2>/dev/null \
+            | jq -r 'if type=="array" then (.[0].id // empty) else (.boards[0].id // empty) end' 2>/dev/null)
+      if [ -n "$bid" ]; then
+        # The STATUS is part of the answer (bin/board-fetch.sh:61 makes the same
+        # read). `{"error":"Unauthorized"}` is valid JSON and parses, so a gate
+        # of "the body is JSON" alone turns a rotated PROJECT_4_INTERNAL_API_TOKEN —
+        # or any 5xx that renders JSON — into a terminal ABANDONED + page for
+        # EVERY parked PR on the project inside three ticks. A credential is a
+        # fact about the machine, not an event about the PR (br_setup_blocked),
+        # so only 2xx WITH a ticket-list shape counts as the board answering.
+        bodyf=$(mktemp) || return 1
+        code=$(curl -s -m 30 -o "$bodyf" -w '%{http_code}' \
+              -H "Authorization: Bearer $token" -H "User-Agent: curl/8" \
+              "$base$prefix/boards/$bid/tickets" 2>/dev/null) || code=000
+        tickets_json=$(cat "$bodyf" 2>/dev/null); rm -f "$bodyf"
+        # A board that answered WITH A TICKET LIST but does not list this ticket
+        # is a DETERMINISTIC miss (rc 2). Everything else — a non-2xx, an error
+        # object, an empty body, unparseable JSON, no board id — stays rc 1 and
+        # is retried for free.
+        case "$code" in
+          2*)
+            if printf '%s' "$tickets_json" | jq -e 'type=="array" or (type=="object" and has("tickets"))' >/dev/null 2>&1; then
+              tid=$(printf '%s' "$tickets_json" | jq -r --arg k "$tkey" 'first((if type=="array" then . else (.tickets // []) end)[] | select((.key // "") == $k or ((.number // -1) == ($k | split("-") | last | try tonumber catch -1))) | (.id // empty)) // empty' 2>/dev/null)
+              [ -n "$tid" ] || return 2
+            fi ;;
+        esac
+      fi
+    fi
+  fi
+
+  case "$tid" in ''|null) return 1 ;; esac
+  printf '%s' "$tid"
+}
+
+# br_enqueue_fresh <project> <ticket-key> <attempt-label> <note> [record] [rkey] [pr-url]
+#   Pool project: the queue ROW is the enqueue (bin/fly-dispatch.sh materialises
+#   the directory from rows and claims as it goes), at attempt 0 — a fresh build
+#   has no deaths and no deferrals behind it, and lying about that is precisely
+#   the bug this change also fixes in bin/fly-pool.sh.
+#   Box project: the box's own triage tick re-claims the ticket once the marker
+#   that says "this one is finished" is gone. That marker is the blocked stamp
+#   bin/run-build.sh writes plus the build dir's RESULT, both of which live on
+#   the BOX, so the hub reaches it through the stamp's D1 `commented` row.
+#
+#   BR_ENQUEUE_WHY carries the rc-1 reason out to the caller, so the STALLED
+#   alert at BR_ENQUEUE_FAIL_MAX failures can name what is actually broken rather
+#   than "the enqueue failed" — and so the streak can tell IDENTICAL failures
+#   apart from a new one (br_rebuild_settle compares it against the stored
+#   enqueue_why). A plain global, read by a caller that does NOT use `$( )`
+#   (br_rebuild_fresh and br_rebuild_retry both call this directly), for the
+#   reason br_pr_ref documents.
+BR_ENQUEUE_WHY=""

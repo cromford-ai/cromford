@@ -1,0 +1,353 @@
+br_enqueue_fresh() {
+  local p="$1" tkey="$2" n="$3" note="$4" rec="${5:--}" rkey="${6:--}" url="${7:--}" meta box rc tid trc
+  BR_ENQUEUE_WHY=""
+  # CLEARED ON ENTRY, not inside the pool branch (BH-947 review N2). Both are
+  # plain globals a caller reads after this returns, so a rung that refuses
+  # before either branch is reached (no ticket key) must not leave the PREVIOUS
+  # park's job id standing for br_rebuild_settle to record.
+  BR_JOB_ID=""; BR_JOB_ENQ=""
+  if [ -z "$tkey" ] || [ "$tkey" = "-" ]; then
+    # NEVER SILENT. The PR is closed by the time this runs, so a ticket with no
+    # derivable key has no owner at all — that is an alert, not a log line.
+    #
+    # AND NEVER FREE (2026-09-16, project-5 #1634). rc 2, not 1: this refusal is
+    # DETERMINISTIC — the branch, the title and the record will read the same on
+    # the next tick and on every tick after it — so the caller counts it as a
+    # spent rung attempt and caps it. rc 1 stays what it has always been: an
+    # enqueue that could not be made THIS time (no ticket id, a box that would
+    # not answer), which is worth retrying for free.
+    say "$p/$rkey: no ticket key — cannot enqueue a fresh build (${url:--no url}, record ${rec:--none})"
+    br_nokey_alert "$p" "$rkey" "$url" "$rec"
+    return 2
+  fi
+  meta=$(jq -nc --argjson d 0 --argjson x 0 --arg s "-r$((n+1))" --arg w "$note" \
+    '{deferrals:$d,deaths:$x,branch_suffix:$s,blocked_resolver:$w}' 2>/dev/null)
+  if br_pool_routed "$p"; then
+    if ! command -v queue_put >/dev/null 2>&1; then
+      BR_ENQUEUE_WHY="no jobs client on this box"
+      say "$p/$tkey: no jobs client — cannot enqueue"; return 1
+    fi
+    # NEVER a blank ticket id. An enqueue that cannot name the ticket is refused
+    # here, so the caller records rebuild-fresh-failed and spends no counter,
+    # instead of buying a quarantine.
+    tid=$(br_ticket_id "$p" "$tkey" "$rec"); trc=$?
+    case "$trc" in
+      # BOARD ANSWERED BUT THE TICKET IS NOT ON IT (BH-1007). Deterministic, so
+      # it is not the free rc-1 retry: rc 4 carries it to br_rebuild_settle,
+      # which counts it as a miss and caps the ladder. BR_ENQUEUE_WHY is still
+      # set so a STALLED page can name it if this ever reaches that arm.
+      #
+      # 4, NOT 3: rc 3 out of this function is BH-947's `duplicate` answer, and
+      # both rungs route that to br_enqueue_dup_race and hold. A board miss
+      # sharing the code would be parked as REBUILD_WAIT on a job that was never
+      # enqueued, and the miss would never be counted or capped.
+      2) BR_ENQUEUE_WHY="the board answered but no ticket id matched $tkey"
+         say "$p/$tkey: board answered but ticket id unresolved — cannot enqueue"; return 4 ;;
+      0) ;;
+      *) tid="" ;;
+    esac
+    [ -n "$tid" ] || { BR_ENQUEUE_WHY="no ticket id could be resolved for $tkey"
+                       say "$p/$tkey: no ticket id — cannot enqueue"; return 1; }
+    rc=$(queue_put "$p" "$tkey" "$tid" fly 0 "$meta" 2>/dev/null)
+    if [ "$rc" = "queued" ]; then
+      local enq
+      # THE STAMP IS READ BACK FROM THE WORKER whenever it can be (D26): that is
+      # the only value a later queue_row will agree with. A local clock is the
+      # fallback and says so, so a ledger entry that can never match a live row
+      # is readable as such instead of looking like a stamp the worker gave us.
+      local lmark=""
+      enq=$(br_queue_enq "$p" "$tkey" 2>/dev/null) || enq=""
+      [ -n "$enq" ] || { enq=$(date -u '+%Y-%m-%dT%H:%M:%SZ'); lmark="~local"; }
+      BR_JOB_ID="$tkey@${enq}~r$((n+1))$lmark"
+      BR_JOB_ENQ="$enq"
+      say "$p/$tkey: fresh pool build enqueued (attempt 0, $note) -> queued (job $BR_JOB_ID)"
+      command -v br_phase_uneject >/dev/null 2>&1 && ! br_phase_uneject "$p" "$tkey" "$note" && { BR_ENQUEUE_WHY="$PU_WHY"; return 1; } # BH-9943
+      return 0
+    fi
+    if [ "$rc" = "duplicate" ]; then
+      say "$p/$tkey: fresh pool build REFUSED as duplicate — a live build already covers this key (no rung spent, $note)"
+      command -v br_phase_uneject >/dev/null 2>&1 && ! br_phase_uneject "$p" "$tkey" "$note" && { BR_ENQUEUE_WHY="$PU_WHY"; return 1; } # BH-9943
+      return 3
+    fi
+    if [ -z "$rc" ]; then
+      BR_ENQUEUE_WHY="the jobs queue took no row for $tkey"
+      say "$p/$tkey: fresh pool build NOT enqueued — the jobs queue took no row ($note)"
+    else
+      BR_ENQUEUE_WHY="the jobs queue answered '$rc' for $tkey"
+      say "$p/$tkey: fresh pool build NOT enqueued — unexpected answer '$rc' ($note)"
+    fi
+    return 1
+  fi
+  box=$("$H/bin/box-for.sh" "$p" 2>/dev/null)
+  # THE ROW IS THE RE-OFFER (BH-2317, BH-2674). The blocked stamp is a D1
+  # `commented` row as well as a file on the owning box, and a `cleared` row
+  # outvotes any file left there (bin/lib/comment-mark.sh), so clearing the row
+  # IS the re-offer, wherever the box is. cm_clear also removes this box's own
+  # files through the glob, DB or no DB. A row the DB did not take is a failed
+  # re-offer (rc 1, the caller's re-offer/alert path): there is no other box
+  # this lane reaches into any more.
+  local crc=1
+  cm_clear "blocked $p $tkey" "$H/state/blocked-commented-$p-$tkey-*" 2>/dev/null && crc=0
+  if [ "$box" = local ] || [ "$(hostname)" = "$box" ]; then
+    BR_JOB_ID="$tkey@reoffer-$(date -u +%s)~r$((n+1))"
+    say "$p/$tkey: cleared the local blocked stamps — the next triage tick re-claims it ($note)"
+    return 0
+  fi
+  if [ "$crc" = 0 ]; then
+    BR_JOB_ID="$tkey@reoffer-$(date -u +%s)~r$((n+1))"
+    say "$p/$tkey: cleared row commented 'blocked $p $tkey' — $box's stamps no longer count, its next triage tick re-claims it ($note)"
+    return 0
+  fi
+  BR_ENQUEUE_WHY="the jobs DB did not take the cleared row for $tkey"
+  say "$p/$tkey: the jobs DB did not take the cleared row for $tkey — $box's blocked stamp still stands, re-offered next tick ($note)"
+  return 1
+}
+
+# br_failed_runs <owner/repo> <head> — the ids of the FAILING workflow runs on
+# this head, bounded by BR_CI_LOG_RUNS. Same endpoint mc_ci_state reads, so the
+# two can never disagree about which runs are red.
+br_failed_runs() {
+  gh api "repos/$1/actions/runs?head_sha=$2&per_page=50" \
+    -q '.workflow_runs[]? | select(.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="startup_failure") | .id' \
+    2>/dev/null | head -"${CI_LOG_RUNS:-3}"
+}
+
+# br_rerun_ci <owner/repo> <head> — re-run the failed jobs of every failing run
+# on this head, over REST. The failed jobs re-run INSIDE the same run, so the
+# run's own conclusion flips and the conductor's next mc_ci_state read sees the
+# answer with no special case.
+#
+#   rc 0  at least one re-run was DISPATCHED (the API answered 2xx).
+#   rc 1  there was nothing to re-run: no failing run on this head.
+#   rc 2  there were runs to re-run and GitHub refused every dispatch. That is
+#         not "the mechanical rung had nothing to do" — nothing was spent and the
+#         same rung is tried again next tick.
+br_rerun_ci() {
+  local slug="$1" head="$2" id n=0 u=0
+  for id in $(br_failed_runs "$slug" "$head"); do
+    if gh_rest POST "repos/$slug/actions/runs/$id/rerun-failed-jobs" >/dev/null 2>&1; then
+      n=$((n+1))
+    else
+      u=1
+      say "$slug: could not re-run the failed jobs of run $id (HTTP $GH_REST_STATUS${GH_REST_REASON:+ $GH_REST_REASON})"
+    fi
+  done
+  [ "$n" -gt 0 ] && return 0
+  [ "$u" = 1 ] && return 2
+  return 1
+}
+
+# br_queue_batch <owner/repo> <pr#> — "<conclusion> <run-id>" of the NEWEST
+# completed merge-queue batch run (head mergify/merge-queue/*) whose title names
+# #<pr#>; nothing when there is none or the read failed (2026-09-24). On a repo
+# that tests only in its queue that batch is the ONLY place the PR's corpus ran:
+# its head runs the fast checks and reads green through any test failure.
+br_queue_batch() {
+  local raw
+  raw=$(gh api "repos/$1/actions/runs?event=pull_request&per_page=100" 2>/dev/null) || return 0
+  jq -r --arg n "$2" '[.workflow_runs[]? | select((.head_branch // "") | startswith("mergify/merge-queue/"))
+      | select(.status == "completed") | select((.display_title // "") | test("#" + $n + "([^0-9]|$)"))]
+      | sort_by(.created_at) | last // empty | "\(.conclusion) \(.id)"' <<<"$raw" 2>/dev/null
+}
+
+# br_queue_red_batch <owner/repo> <pr#> — "<conclusion> <run-id>" of the RED
+# merge-queue batch that is this PR's own log: failure or timed_out only (a newer
+# cancelled draft is Mergify re-embarking, not a verdict, and must not hide the
+# red one), newer than the newest green batch naming the PR (a later green
+# answers it), and a batch whose title has no "stacked on" first — a batch
+# stacked on someone else's can fail on what it stood on. Only stacked reds:
+# the newest of those. Nothing on no match or a failed read (review round 3).
+br_queue_red_batch() {
+  local raw
+  raw=$(gh api "repos/$1/actions/runs?event=pull_request&per_page=100" 2>/dev/null) || return 0
+  jq -r --arg n "$2" '[.workflow_runs[]? | select((.head_branch // "") | startswith("mergify/merge-queue/"))
+      | select(.status == "completed") | select((.display_title // "") | test("#" + $n + "([^0-9]|$)"))] as $b
+      | ([$b[] | select(.conclusion == "success") | .created_at] | max // "") as $g
+      | [$b[] | select(.conclusion == "failure" or .conclusion == "timed_out") | select(.created_at > $g)]
+      | sort_by([((.display_title // "") | test("stacked on") | not), .created_at]) | last // empty
+      | "\(.conclusion) \(.id)"' <<<"$raw" 2>/dev/null
+}
+
+# br_ci_log <owner/repo> <head> [pr#] — the tail of each failing job's log. This
+# is what makes a fix round possible on a red CI at all: without it the agent is
+# told "CI is red" and has to go and find out what failed, which is a build's
+# worth of turns spent re-discovering a fact the API hands over in one call.
+# With no failing run on the head and a PR number, the newest RED merge-queue
+# batch carrying that PR is the log (a queue-only repo's corpus runs there).
+br_ci_log() {
+  local slug="$1" head="$2" num="${3:-}" id out="" qb
+  for id in $(br_failed_runs "$slug" "$head"); do
+    out="$out"$'\n'"--- failing run $id of $slug @ ${head:0:8} ---"$'\n'"$(gh run view "$id" -R "$slug" --log-failed 2>/dev/null | tail -c "${CI_LOG_BYTES:-6000}")"  # gh-guard-allow: non-decision read, feeds the agent brief only — the REST equivalent is a zip download
+  done
+  if [ -z "$out" ] && [ -n "$num" ]; then
+    qb=$(br_queue_red_batch "$slug" "$num")
+    case "$qb" in failure\ *|timed_out\ *)
+      id=${qb#* }
+      out=$'\n'"--- failing MERGE-QUEUE batch run $id of $slug carrying #$num (the PR's own head runs only the fast checks; its tests ran here) ---"$'\n'"$(gh run view "$id" -R "$slug" --log-failed 2>/dev/null | tail -c "${CI_LOG_BYTES:-6000}")"  # gh-guard-allow: non-decision read, feeds the agent brief only
+    esac
+  fi
+  printf '%s' "$out"
+}
+
+# RUNG 1: MECHANICAL. No model, no tokens, seconds of wall clock — merge current
+# main into the branch in the authed clone (mc_rebase: deterministic conflict
+# resolution, the hub's typecheck/unit gate, an explicit lease, the approval
+# rebind) and, when there is nothing to merge, re-run the failed CI runs once.
+#
+# IT IS RUNG 1 BECAUSE MAIN MOVES. A conflict the conductor could not resolve an
+# hour ago is often a conflict against a main that has since taken the very
+# commit the branch was fighting, and a red CI on a branch that is 40 commits
+# behind is frequently main's fix missing rather than the branch's bug. Both
+# cost nothing to ask again.
+br_mechanical() {
+  local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6"
+  local ck st n slug br head out rc ref ckey rvw rrc=0 mbase="" mark=0 why=""
+  ck=$(br_cap_key "$p" "$rkey" "$tkey")
+  st=$(br_load "$p" "$ck"); n=$(br_num "$st" mechanicals)
+  if [ "$n" -ge "$MAX_MECHANICAL" ]; then
+    say "$p/$rkey [$reason]: the mechanical rung has already run $n time(s) — FIX ROUND"
+    br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0
+  fi
+  if [ "$OBSERVE" = 1 ]; then say "$p/$rkey [$reason]: WOULD take the mechanical rung (merge origin/main, else re-run CI) — observe mode"; return 0; fi
+  slug=$("$H/bin/fleet-conf.sh" "$p" repo 2>/dev/null)
+  [ -n "$slug" ] || slug=$(br_slug_of_url "$url") || slug=""
+  # THE PR URL IS THE SLUG. fleet-conf is asked first (it is the project's own
+  # answer) but it is no longer the only one: br_pr_ref falls back to the owner/
+  # repo in the URL and re-reads under the repo's token. See br_slug_of_url for
+  # what this cost before.
+  br=""; head=""
+  if [ -n "$url" ] && [ "$url" != "-" ]; then
+    # Assigned only on success: a failed read must not clobber fleet-conf's slug.
+    ref=$(br_pr_ref "$url" "$slug"); rc=$?
+    # rc 2 IS "GITHUB DID NOT ANSWER", NOT "THIS PR HAS NO BRANCH". It costs no
+    # rung, writes no state and takes no cascade — the park is simply re-offered
+    # on the next tick. See br_pr_ref for the 2026-09-16 rate-limit incident.
+    if [ "$rc" = 2 ]; then
+      say "$p/$rkey [$reason]: PR read FAILED (${ref:-no detail}) — retrying next tick, no rung spent"
+      return 0
+    fi
+    [ "$rc" = 0 ] && read -r slug br head <<<"$ref"
+    # The head this rung read is the head this lane now knows the PR on (BH-1642).
+    [ "$rc" = 0 ] && br_sup_seen "$p" "$ck" "$url" "$head"
+    # The derived slug's token is installed for THIS shell too: br_pr_ref's own
+    # retry happened inside a command substitution, and mc_rebase's clone and
+    # every gh read after it want the same credential.
+    [ -n "${slug:-}" ] && br_use_token "$slug"
+  fi
+  if [ -z "$slug" ] || [ -z "${br:-}" ] || [ -z "${head:-}" ]; then
+    # Down here the slug came from the URL as well as from fleet-conf and the
+    # read was re-tried under the repo's own token, so this really is a park
+    # with no branch to merge into — a dead pool machine, a BUILD_DEAD record.
+    say "$p/$rkey [$reason]: no branch/head for ${url:--} even after re-reading it under ${slug:-no repo}'s own token — nothing mechanical to try, FIX ROUND"
+    br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0
+  fi
+  # A STACKED CHILD'S RUNG 1 MERGES ITS OWN BASE (BH-5796), as its fix round
+  # does: main's diff must not ride into a PR read against the parent branch.
+  # mc_rebase answers rc 5 for a pushed parent merge (no approval rebind).
+  mbase=$(br_pr_field "$url" .base.ref 'base branch' 2>/dev/null) || mbase=""
+  case "$mbase" in ''|main) mbase=main ;; esac
+  # MAIN ONLY ON A CONFLICT (BH-7042): bin/lib/br-main-merge.sh. rc 0 =
+  # the gate answered this park (queued, or a conflict park that is gone);
+  # rc 1 = merge as before; rc 3 = clean, so the "nothing to merge" arm runs.
+  rc=1; [ "$mbase" = main ] && command -v br_main_merge_gate >/dev/null 2>&1 \
+    && { br_main_merge_gate "$p" "$ck" "$rkey" "$reason" "$slug" "$br" "$head" "$url"; rc=$?; }
+  [ "$rc" = 0 ] && return 0
+  if [ "$rc" = 3 ]; then out=$head; rc=0
+  else br_lane_hop_mech "$p" "$rkey" "$reason" "$url" "$rec" "$tkey" && return 0
+  br_event resolver_rung "$p" "$ck" "$reason" "rung 1 mechanical: merging origin/$mbase into $br at ${head:0:8}"
+  [ -f "${MC_LOG:-}" ] && mark=$(wc -l < "$MC_LOG" | tr -d ' ')   # BH-8003: this call's own log lines
+  if [ "$mbase" = main ]; then out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url"); rc=$?
+  else out=$(mc_rebase "$slug" "$p" "$br" "$head" "$url" "$mbase"); rc=$?; fi
+  fi
+  # The setup alert is cleared the moment the rung actually RAN, exactly as the
+  # fix round clears it: a LATER box problem on this park is a new fact and pages
+  # again. rc 4 is the setup arm below and must NOT clear it, or a permanently
+  # broken credential pages every ten minutes for ever.
+  case "$rc" in 0|1|2|3|5|6) rm -f "$ST/$p/$ck.setup-alerted" 2>/dev/null ;; esac
+  case "$rc" in
+    0|5)
+      if [ -n "$out" ] && [ "$out" != "$head" ]; then
+        br_record "$p" "$ck" mechanical "$reason" "merged origin/$mbase into $br and pushed ${out:0:8} (mc_rebase rc=$rc)" mechanicals
+        say "$p/$rkey [$reason]: MECHANICAL — pushed ${out:0:8} over ${head:0:8}; CI runs on the new head and the conductor judges it"
+        return 0
+      fi
+      # Nothing to merge: the branch already carries main, so the only mechanical
+      # move left is to re-run the CI that failed on this exact tree.
+      br_rerun_ci "$slug" "$head"; rrc=$?
+      if [ "$rrc" = 0 ]; then
+        br_record "$p" "$ck" mechanical "$reason" "nothing to merge from main; re-ran the failed CI runs on ${head:0:8}" mechanicals
+        say "$p/$rkey [$reason]: MECHANICAL — $br already carries main, so the failed runs on ${head:0:8} were re-run once"
+        return 0
+      fi
+      if [ "$rrc" = 2 ]; then
+        # There WERE failing runs and GitHub refused every dispatch. A rung that
+        # never ran is not a rung that failed: nothing is recorded, nothing is
+        # spent and the ladder does not walk toward the rebuild on it.
+        say "$p/$rkey [$reason]: the CI re-run is UNVERIFIABLE (GitHub refused the dispatch) — nothing spent, retried next tick"
+        return 0
+      fi
+      br_record "$p" "$ck" mechanical-failed "$reason" "nothing to merge from main and no failing run could be re-run" mechanicals
+      say "$p/$rkey [$reason]: mechanical rung had nothing to do (branch carries main, no failing run to re-run) — FIX ROUND"
+      br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0 ;;
+    1)
+      # The conflicting paths are on stdout. They are kept for rung 2's prompt:
+      # the fix round re-does the merge and leaves the markers IN the tree, and
+      # the agent is told which files the machine could not resolve.
+      mkdir -p "$ST/$p" 2>/dev/null
+      printf '%s\n' "$out" > "$ST/$p/$ck.conflict.txt"
+      # And they are remembered on the TICKET, per (pr, head): a path that
+      # conflicts again on a later head is the recurrence br_one acts on.
+      br_conflict_note "$p" "$ck" "$(mc_num_of_url "$url")" "$head" "$out"
+      br_record "$p" "$ck" mechanical-failed "$reason" "origin/main still conflicts with $br in: $(tr '\n' ' ' <<<"$out")" mechanicals
+      say "$p/$rkey [$reason]: mechanical rung still conflicts ($(tr '\n' ' ' <<<"$out")) — FIX ROUND with the conflict in its prompt"
+      br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0 ;;
+    2)
+      br_record "$p" "$ck" mechanical-failed "$reason" "merged with main the branch fails the hub's typecheck/unit gate" mechanicals
+      say "$p/$rkey [$reason]: mechanical rung merged cleanly but the gate is RED — FIX ROUND"
+      br_fix_round "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"; return 0 ;;
+    3)
+      # The head moved between the read and the push: somebody (a build, another
+      # lane) is working on this branch right now. Nothing is spent and nothing
+      # is said twice — the next tick reads the new head.
+      say "$p/$rkey [$reason]: mechanical rung's lease was rejected — the head moved under it; no rung spent, retried next tick"
+      return 0 ;;
+    6)
+      # THE POOL TOOK IT (BH-486). The rung RAN — a queue row exists and a pool
+      # machine is rebasing this branch — so it counts, and the conductor row
+      # leaves the park for REBASING: a park left BLOCKED_HUMAN would have the
+      # next tick of this lane start a fix round on top of a running rebase.
+      # The conductor key is derived from the url the same way the rest of this
+      # file derives it, and the reviewed sha is copied off the row so the
+      # approval binding is untouched by the move.
+      #
+      # AND THE PARK COMES BACK. mc_pool_rebase_enqueue forgets this head's
+      # previous `rebasedone` line, so the machine's answer is read like any
+      # other: a second conflict parks the row again, the ladder is at
+      # mechanicals=MAX, and the next offer is rung 2 (the fix round).
+      ckey="$(mc_slug_of_url "$url")#$(mc_num_of_url "$url")"; rvw=$(mc_row_field "$ckey" 5)
+      br_record "$p" "$ck" mechanical "$reason" \
+        "queued a pool rebase of $br at ${head:0:8} ($(mc_pool_rebase_key "$(mc_num_of_url "$url")" "$head")); the conductor reads the pool's result" mechanicals
+      mc_transition "$ckey" REBASING "pool rebase queued by the resolver" "$head" "${rvw:--}" "$url" "-" "-" "${rec:--}" >/dev/null
+      say "$p/$rkey [$reason]: MECHANICAL — pool rebase queued for ${head:0:8}; the row leaves the park and the conductor reads the result"
+      return 0 ;;
+    7)
+      # The queue refused it and nothing was spent, which is the rc-3 shape: no
+      # rung, no state, the park is simply re-offered on the next tick.
+      say "$p/$rkey [$reason]: pool queue unreachable — no rung spent, retried next tick"
+      return 0 ;;
+    *)
+      # SETUP FAILED (rc 4: a credential, fetch, clone or merge that would not
+      # run; the alert names the reason mc_rebase logged, BH-8003) — and any rc
+      # mc_rebase does not document. It does NOT cascade inside the tick: the
+      # fix round needs the SAME clone and the same credential, so falling
+      # through would walk a machine problem down to a fresh rebuild in one go.
+      # Since 2026-09-16 it SPENDS NOTHING either (br_setup_blocked): parking it,
+      # out loud and with one alert, is the right answer; spending walked the
+      # ladder toward the rung that CLOSES PRs on a fact about this box.
+      command -v mc_rebase_reason >/dev/null 2>&1 && why=$(mc_rebase_reason "$url" "$mark")
+      if [ -n "$why" ]; then br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — $why (merge-conductor.log)" mechanical "the cause in that merge-conductor.log line fixed"
+      else br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "mc_rebase rc=$rc on $slug — a setup failure that logged no reason (credential, clone or fetch); see merge-conductor.log" mechanical; fi
+      return 0 ;;
+  esac
+}
+

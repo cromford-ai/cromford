@@ -7,7 +7,9 @@
 # S3-compatible bucket (R2). WHAT GOES IN: env/ encrypted with age (the ONLY way
 # env/ leaves the box — the tarball is checked for plaintext env/ entries before
 # any upload), state/ (minus state/scratch/, which is operator scratch a restore
-# does not want back), logs/, flags/, the builds/ summaries, the orchestrator
+# does not want back, and minus state/bundle-cache/, the hub's plaintext copy of
+# each pool project's env bundle (BH-9889): env content, so it never leaves the
+# box, and the leak check refuses it like a plaintext env/ entry), logs/, flags/, the builds/ summaries, the orchestrator
 # checkout minus node_modules/.git, meta/. HOW IT FAILS: ONE actionable
 # ALERTS.log line naming the stage and the key NAMES, never a value, then exit
 # 1; state/backup-last.json is written only after head-object confirms the
@@ -289,7 +291,7 @@ bk_manifest() {
     [ -d "$HENV" ] && (cd "$HENV/" && "${LOWPRI[@]}" find . -mindepth 1 $(bk_lines env)) 2>/dev/null
     # shellcheck disable=SC2046
     (cd "$H" 2>/dev/null && "${LOWPRI[@]}" find state logs flags -mindepth 1 \
-      \( -path state/scratch -o -path state/backup-last.json -o -path state/backup-last.json.tmp \
+      \( -path state/scratch -o -path state/bundle-cache -o -path state/backup-last.json -o -path state/backup-last.json.tmp \
          -o -path 'state/state-backup-unconfigured-*' -o -path state/lane-gate \
          -o -path state/settings-cache.json -o -path state/flags-cache \
          -o -path logs/state-backup.log \) -prune -o $(bk_lines in)) 2>/dev/null
@@ -399,9 +401,13 @@ fi
 # restore does not want them back. --anchored around it on purpose: a bare
 # pattern also matches any suffix, so an orchestrator checkout that happened to
 # carry a state/scratch would be dropped from the backup without a word.
+# state/bundle-cache/ stays behind too (BH-9889): it holds plaintext env values
+# copied from other boxes, and a restore does not need it (a missing file costs
+# one dark-box spawn that fails as before). The leak check below refuses it.
 "${LOWPRI[@]}" tar -I "zstd -$ZLVL -T1" --warning=no-file-changed -cf "$STAGE/backup.tar.zst" \
   -C "$STAGE" env.tar.age meta \
-  --anchored --exclude=state/scratch --exclude='state/scratch/*' --no-anchored \
+  --anchored --exclude=state/scratch --exclude='state/scratch/*' \
+  --exclude=state/bundle-cache --exclude='state/bundle-cache/*' --no-anchored \
   -C "$H" -T "$STAGE/list" \
   ${ORCH_ARGS[@]+"${ORCH_ARGS[@]}"} 2>"$STAGE/tar.err"
 TRC=$?
@@ -417,7 +423,8 @@ if [ "$LRC" -ne 0 ] || ! grep -qx 'env.tar.age' <<<"$ENTRIES"; then
   alert leak-check "cannot list the tarball back (rc=$LRC) or env.tar.age is not in it"
   exit 1
 fi
-LEAKED=$(printf '%s\n' "$ENTRIES" | grep -Ec '^env(/|$)')
+# state/bundle-cache/ is env content in plaintext (BH-9889): the same refusal.
+LEAKED=$(printf '%s\n' "$ENTRIES" | grep -Ec '^(env|state/bundle-cache)(/|$)')
 if [ "$LEAKED" -ne 0 ]; then
   alert leak-check "$LEAKED plaintext env entries in the tarball - nothing uploaded"
   exit 1

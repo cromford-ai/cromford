@@ -1,0 +1,263 @@
+# br_rank_rows — the 7-column candidate TSV with the PRIORITY RANK prepended as
+# a new first column, every other byte passed through untouched. The rank comes
+# from the build record's own ticket-meta.json, which bin/run-build.sh already
+# saved, so ordering the tick costs no GitHub call. A row with no record (the
+# queue shape, rec '-') ranks 2: absent is not zero, and asking GitHub for the
+# labels of every candidate every ten minutes is the API bill this lane already
+# paid once.
+#
+# Fail-open: no hotfix-lib on the box and this is `cat`, which is discovery
+# order — exactly today's behaviour.
+#
+# THE RANK IS priority_rank_meta's DOUBLED: 0 hotfix, 2 main-red, 4 plain. The
+# odd value 3 is a BLOCKed parent with approved stacked children (BH-5741,
+# bin/lib/br/opt/parentprio.sh): above every plain row, below main-red. Only a
+# plain row is promoted. The column is stripped before anything else reads the
+# row, so no other reader sees these values.
+br_rank_rows() {
+  command -v priority_rank_meta >/dev/null 2>&1 || { cat; return 0; }
+  local src p rkey reason url rec tkey rank pn pnums
+  while IFS=$'\t' read -r src p rkey reason url rec tkey; do
+    [ -n "${rkey:-}" ] || continue
+    rank=2
+    case "${rec:--}" in
+      -|'') ;;
+      *) rank=$(priority_rank_meta "$rec/ticket-meta.json" "$H") ;;
+    esac
+    case "$rank" in ''|*[!0-9]*) rank=2 ;; esac
+    rank=$((rank * 2))
+    # An eight-wide row puts "tkey<TAB>parked" in tkey; the hook wants the key.
+    if [ "$rank" = 4 ] && command -v br_opt_parent_children >/dev/null 2>&1; then
+      IFS=$'\t' read -r pn pnums <<<"$(br_opt_parent_children "$p" "$rkey" "$reason" "$url" "${tkey%%$'\t'*}" </dev/null)"
+      case "${pn:-}" in ''|*[!0-9]*) pn=0 ;; esac
+      if [ "$pn" -gt 0 ]; then
+        rank=3
+        say "$p/$rkey [$reason]: PRIORITY parent — $pn approved child PR(s) wait on its branch ($pnums); ranked above ordinary rows, below main-red"
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$rank" "$src" "$p" "$rkey" "$reason" "$url" "$rec" "$tkey"
+  done
+}
+
+
+# >>> br-reviews
+# THE REVIEW LANE'S VERDICT, READ FROM GITHUB (BH-872) — the fifth source.
+#
+# bin/review-prs.sh reviews every open harness PR and posts its verdict as a
+# review carrying one footer line. Until this source existed nothing consumed a
+# REQUEST_CHANGES: the findings were posted, the PR was blocked, Mergify
+# dequeued it because `github-review-approved` was false, and the next tick
+# posted the same findings again. project-5 #2367 collected four of them.
+#
+# GITHUB IS THE LEDGER, not a state file: the review row carries the head it was
+# submitted against (`commit_id`), so "is there a standing verdict on THIS head"
+# is a question the API answers and no local cache can lose. The row must satisfy
+# all three of:
+#   * a harness VERDICT author (harness_verdict_author_match — any spelling; the
+#     builders App opens pool PRs but never issues a verdict, BH-1668),
+#   * the lane's own footer (a human's changes-requested is for a human),
+#   * `commit_id` == the PR's current head (an older one has been answered by
+#     whatever was pushed since).
+# and then the BODY's own `VERDICT:` line must say REQUEST_CHANGES. The newest
+# matching row wins, so an APPROVE posted after a block ends the park.
+#
+# BOUNDED (D21): behind gh_budget_low, and only PRs updated within
+# BR_REVIEW_LOOKBACK_SECS (48h) have their reviews read at all. It is the LAST
+# source in br_candidates, so conductor, queue and build parks are never starved
+# out of PER_TICK by review candidates.
+BR_REVIEW_FOOTER='Automated harness review (Fable) of '
+
+# br_review_verdict <body> -> APPROVE|REQUEST_CHANGES|"" — the one shared reader
+# bin/review-prs.sh uses on the same body (bin/lib/verdict-parse.sh, BH-1625):
+# the anchored VERDICT line in the review's final block, the lane's footer
+# (after the last `---`) dropped first. A body that quotes another verdict, or
+# carries none, is "" — never APPROVE.
+br_review_verdict() {
+  local v
+  v=$(printf '%s\n' "${1:-}" | verdict_parse -c -w 'APPROVE|REQUEST_CHANGES' 2>/dev/null) || return 0
+  printf '%s\n' "$v"
+}
+
+# THE REVIEWS LIST, READ ONCE (BH-2200). The PR's reviews over the REST
+# contract (bin/lib/gh-rest.sh; a plain call into a file, never `$( )`), 100 a
+# page, oldest first (GitHub's order), as a compact JSON array of
+# {l login, t user type, a author_association, c commit_id, s state, b body,
+# id review id (BH-7123 wave B: br_cap_notes dismisses by it)}.
+# Both pickers below read this one answer, so finding the lane's own verdict AND
+# a lead's costs the same read the lane always made.
+#   rc 0 the array on stdout ([] when the PR has none, or is gone: 404)
+#   rc 2 THE READ FAILED (75, a non-array page, past 1000 reviews) — never "no review"
+br_review_rows() {
+  local slug="$1" num="$2" f acc='[]' page grc len
+  f=$(mktemp "${TMPDIR:-/tmp}/br-reviews.XXXXXX") || return 2
+  for page in 1 2 3 4 5 6 7 8 9 10; do
+    grc=0; gh_rest GET "repos/$slug/pulls/$num/reviews?per_page=100&page=$page" > "$f" 2>/dev/null || grc=$?
+    [ "$grc" = 44 ] && break
+    if [ "$grc" != 0 ] || ! jq -e 'type == "array"' "$f" >/dev/null 2>&1; then rm -f "$f"; return 2; fi
+    acc=$(jq -c --argjson acc "$acc" '$acc + [ .[] | {l:(.user.login // ""), t:(.user.type // ""), a:(.author_association // ""), c:(.commit_id // ""), s:(.state // ""), b:(.body // ""), id:(.id // 0)} ]' "$f" 2>/dev/null) \
+      || { rm -f "$f"; return 2; }
+    len=$(jq 'length' "$f" 2>/dev/null)
+    [ "${len:-0}" -lt 100 ] && break
+    [ "$page" = 10 ] && { rm -f "$f"; return 2; }
+  done
+  rm -f "$f"
+  printf '%s\n' "$acc"
+}
+
+# br_review_harness_pick <head> <rows-json> — the NEWEST harness-footer review on
+# <head>, printed as ONE line of base64 (a review body is multi-line, and a
+# multi-line answer inside a $() in a while-read loop is how a parser starts
+# guessing).
+#   rc 0  there is one; its body, base64, on stdout
+#   rc 1  the list holds no such review
+#
+# The review STATE is read for exactly ONE thing: a DISMISSED row is a review
+# GitHub no longer counts — bin/review-prs.sh's rp_dismiss_own retracts the
+# lane's own legacy CHANGES_REQUESTED exactly this way on a pipeline-built PR
+# whose current head it approved — so it must not brief a fix round either
+# (#891 review, item 2: a fix round pushed under a queued PR unbinds its
+# approval and ejects it). Beyond that the state deliberately decides nothing:
+# the body's own `VERDICT:` line is what this lane acts on, and a COMMENT-state
+# review carrying REQUEST_CHANGES is exactly what bin/review-prs.sh posts on a
+# harness PR since BH-872.
+br_review_harness_pick() {
+  local head="$1" rows="$2" login cid rstate b64 pick=""
+  # Oldest first, which is the order GitHub lists reviews in, so the last row
+  # that matches is the newest one. The operator login is a PAT post (BH-8466).
+  while IFS=$'\t' read -r login cid rstate b64; do
+    [ -n "${login:-}" ] && [ -n "${b64:-}" ] || continue
+    [ "${cid:-}" = "$head" ] || continue
+    [ "${rstate:-}" != DISMISSED ] || continue
+    harness_verdict_author_match "$login" || harness_own_review_match "$login" 2>/dev/null || continue
+    printf '%s' "$b64" | base64 -d 2>/dev/null | grep -qF "$BR_REVIEW_FOOTER" || continue
+    pick="$b64"
+  done < <(printf '%s' "$rows" | jq -r '.[]? | [.l, .c, .s, (.b | @base64)] | @tsv' 2>/dev/null)
+  [ -n "$pick" ] || return 1
+  printf '%s\n' "$pick"
+}
+
+# br_review_harness_newest <slug> <num> <head> — the lane's own verdict on
+# <head>, exactly as br_review_newest answered it before BH-2200: rc 0 base64
+# body / rc 1 none / rc 2 the read failed.
+br_review_harness_newest() {
+  local rows
+  rows=$(br_review_rows "$1" "$2") || return 2
+  br_review_harness_pick "$3" "$rows"
+}
+
+# A LEAD'S (OR A HUMAN'S) CHANGES_REQUESTED IS A BRIEF (BH-2200).
+#
+# Until this, only a review carrying the review lane's footer from a harness
+# verdict author could brief a fix round. The lead's REQUEST_CHANGES — operator,
+# no footer, the findings ARE the body — was invisible, so the rounds on #2045,
+# #2051 and #2065 pushed main merges and nothing else, and #2158 merged over the
+# lead's unfixed BLOCK. The picker below takes the NEWEST STANDING one:
+#   * STANDING: per reviewer, the latest of APPROVED / CHANGES_REQUESTED /
+#     DISMISSED decides (a COMMENTED review changes nothing, as on GitHub), and
+#     only a reviewer whose latest decisive review is CHANGES_REQUESTED counts.
+#   * A LEAD OR A HUMAN WITH WRITE ACCESS: never a bot (`user.type` Bot or a
+#     `[bot]` login), never a body carrying the lane's footer (that is the review
+#     lane's own verdict, picked above), and write access proved, never assumed:
+#     author_association OWNER / MEMBER / COLLABORATOR, or CONTRIBUTOR plus a
+#     collaborator-permission read answering admin / maintain / write. Anything
+#     else — NONE, or no association at all — is not trusted to brief an agent.
+#   * ON THIS HEAD, or on an older head followed only by merge commits
+#     (br_lead_merges_only): a real commit after the review means the lead has to
+#     look again, which is not a fix round.
+#   * THE LEAD-REVIEW LANE'S OWN FINDINGS REVIEW (BH-3780). bin/lead-review-land.sh
+#     posts a lead BLOCK as a REQUEST_CHANGES whose body opens with
+#     `<!-- lead-review:<id> -->`, under the hub's default gh identity: the App,
+#     so `cromford[bot]`, user.type Bot, author_association NONE. The bot
+#     and association rules above dropped every one of them, so a lead BLOCK
+#     never briefed a round (#3722). A row that is BOTH a bot and carries that
+#     marker is its own reviewer (`<login>#lead-review`, so the App's review-lane
+#     APPROVE never lifts it, nor its DISMISS hide one) and is trusted on
+#     harness_verdict_author_match instead of the association: the builders App
+#     or an outsider pasting the marker is never a brief, and a lifted copy with
+#     no trust set skips these rows. A marker row from a person (the hub on a
+#     PAT) takes the association path as before.
+#   * NEVER A `needs-human` FINDING. A marker row with a `- [BLOCK needs-human]`
+#     line is a question only a person can settle; the land lane holds the
+#     ticket for it, and no agent is briefed from it whatever the hold did.
+# The body goes out framed, so the agent and every reader know whose it is:
+BR_LEAD_HDR='LEAD FINDINGS — every item must be addressed in code'
+
+# br_lead_merges_only <slug> <old-head> <head> — rc 0 when every commit the
+# branch gained after <old-head> is a merge commit (main merged in, nothing
+# else); rc 1 when there is a real commit, or history was rewritten; rc 2 when
+# GitHub would not answer. Two compare reads: <old>...<head> is everything
+# <head> gained, main...<head> is what is the branch's own; a commit in both
+# with a single parent is somebody's real change.
+br_lead_merges_only() {
+  local slug="$1" old="$2" head="$3" f grc status gained own s
+  f=$(mktemp "${TMPDIR:-/tmp}/br-compare.XXXXXX") || return 2
+  grc=0; gh_rest GET "repos/$slug/compare/$old...$head" > "$f" 2>/dev/null || grc=$?
+  # 404: the old head is gone (history rewritten) — not "followed only by merges".
+  case "$grc" in 0) ;; 44) rm -f "$f"; return 1 ;; *) rm -f "$f"; return 2 ;; esac
+  status=$(jq -r '.status // ""' "$f" 2>/dev/null)
+  gained=$(jq -r '[.commits[]? | .sha] | join(" ")' "$f" 2>/dev/null)
+  [ "$status" = ahead ] || { rm -f "$f"; return 1; }
+  grc=0; gh_rest GET "repos/$slug/compare/main...$head" > "$f" 2>/dev/null || grc=$?
+  [ "$grc" = 0 ] || { rm -f "$f"; return 2; }
+  own=$(jq -r '[.commits[]? | select((.parents | length) < 2) | .sha] | join(" ")' "$f" 2>/dev/null) || { rm -f "$f"; return 2; }
+  rm -f "$f"
+  for s in $gained; do
+    case " $own " in *" $s "*) return 1 ;; esac
+  done
+  return 0
+}
+
+# br_lead_pick <slug> <head> <rows-json> — the newest standing lead/human
+# CHANGES_REQUESTED that speaks for <head>, FRAMED, as one line of base64.
+#   rc 0 found   rc 1 none   rc 2 a read it needed failed (permission, compare)
+# BH-5909: a lead review whose body has `- [BLOCK console-qa]` (the console QA
+# gate, bin/lib/console-qa-gate.sh) briefs no fix round: no code change answers
+# it. A QA: PASS comment on the head does, and the hub then reviews it again.
+br_lead_pick() {
+  local slug="$1" head="$2" rows="$3" login assoc cid b64 lr nh perm hrc pf grc
+  while IFS=$'\t' read -r login assoc cid b64 lr nh; do
+    [ -n "${login:-}" ] || continue
+    [ "$nh" = true ] && continue
+    if [ "$lr" = true ]; then
+      command -v harness_verdict_author_match >/dev/null 2>&1 || continue
+      harness_verdict_author_match "$login" || continue
+    else
+      case "$assoc" in
+        OWNER|MEMBER|COLLABORATOR) ;;
+        CONTRIBUTOR)
+          # Write access is READ, never assumed (the REST contract, into a file).
+          # 404 is "not a collaborator": no write access, not an unknown.
+          pf=$(mktemp "${TMPDIR:-/tmp}/br-perm.XXXXXX") || return 2
+          grc=0; gh_rest GET "repos/$slug/collaborators/$login/permission" > "$pf" 2>/dev/null || grc=$?
+          case "$grc" in
+            0)  perm=$(jq -r '.permission // ""' "$pf" 2>/dev/null) ;;
+            44) perm="" ;;
+            *)  rm -f "$pf"; return 2 ;;
+          esac
+          rm -f "$pf"
+          case "$perm" in admin|maintain|write) ;; *) continue ;; esac ;;
+        *) continue ;;
+      esac
+    fi
+    if [ "$cid" != "$head" ]; then
+      hrc=0; br_lead_merges_only "$slug" "$cid" "$head" || hrc=$?
+      [ "$hrc" = 2 ] && return 2
+      [ "$hrc" = 0 ] || continue
+    fi
+    printf '%s\n(CHANGES_REQUESTED by %s on %s)\n\n%s\n' "$BR_LEAD_HDR" "$login" "${cid:0:12}" \
+      "$(printf '%s' "$b64" | base64 -d 2>/dev/null)" | base64 | tr -d '\n'
+    printf '\n'
+    return 0
+  done < <(printf '%s' "$rows" | jq -r --arg f "$BR_REVIEW_FOOTER" '
+      [ to_entries[] | .value + {i: .key}
+        | (.b // "") as $b | ($b | startswith("<!-- lead-review:")) as $m
+        | . + {lr: ($m and (.t == "Bot" or (.l | endswith("[bot]")))),
+               nh: ($m and ($b | test("(^|\n)- \\[BLOCK needs-human\\]")))}
+        | select(.s == "APPROVED" or .s == "CHANGES_REQUESTED" or .s == "DISMISSED") ]
+      | group_by(.l + (if .lr then "#lead-review" else "" end)) | map(last) | map(select(.s == "CHANGES_REQUESTED"))
+      | map(select((.lr and (.b | test("(^|\n)- \\[BLOCK console-qa\\]"))) | not))
+      | map(select((.lr or (.t != "Bot" and ((.l | endswith("[bot]")) | not))) and ((.b | contains($f)) | not)))
+      | sort_by(.i) | reverse | .[] | [.l, .a, .c, (.b | @base64), .lr, .nh] | @tsv' 2>/dev/null)
+  return 1
+}
+
