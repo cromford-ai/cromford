@@ -747,6 +747,7 @@ _br_sources() {
   $_t queue "$_s0"
   _s0=$SECONDS; [ -n "$_one" ] || br_from_builds; $_t builds "$_s0"
   _s0=$SECONDS; br_from_reviews;   $_t reviews "$_s0"
+  _s0=$SECONDS; ! command -v bvb_candidates >/dev/null 2>&1 || bvb_candidates; $_t verdict-blocks "$_s0"   # BH-9905
   # BH-4664: an external PR source, when bin/lib/br/opt/external.sh is installed.
   _s0=$SECONDS
   ! command -v br_opt_external_candidates >/dev/null 2>&1 || br_opt_external_candidates

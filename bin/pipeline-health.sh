@@ -138,6 +138,21 @@ for _P in "$(dirname "$0")/lib/ph-pr-record.sh" "$H/bin/lib/ph-pr-record.sh"; do
   # shellcheck source=bin/lib/ph-pr-record.sh
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-9938: the open lists, the stale-dequeue reads and the lead-unqueued status
+# go through prr_read pipeline-health (step: settings row
+# lane.pipeline-health.gh_source). Seam: bin/lib/prr-shadow.d/pipeline-health.sh.
+# With the lib or the seam missing, each read runs its inline GitHub body.
+for _P in "$(dirname "$0")/lib/prr-shadow.sh" "$H/bin/lib/prr-shadow.sh"; do
+  # shellcheck source=bin/lib/prr-shadow.sh
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
+command -v prr_seam_load >/dev/null 2>&1 && prr_seam_load pipeline-health
+# lane_env_apply above sets GH_SOURCE when the row exists. Unset here means no
+# row, so the step is resolved once (the default), and prr_step makes no
+# setting_get read on each prr_read. Not exported: a child lane resolves its own.
+if [ -z "${GH_SOURCE+x}" ] && command -v lane_env_apply >/dev/null 2>&1 && declare -F prr_step >/dev/null; then
+  GH_SOURCE=$(GH_SOURCE='' prr_step pipeline-health)
+fi
 # BH-1585: the paged REST issue/PR lists the starved-project check reads.
 for _P in "$(dirname "$0")/lib/gh-rest-list.sh" "$H/bin/lib/gh-rest-list.sh"; do
   # shellcheck source=bin/lib/gh-rest-list.sh
@@ -166,8 +181,15 @@ if [ -z "$PH_SECTIONS" ] && command -v prs_open_list >/dev/null 2>&1 && command 
 else
   unset HPL_SNAPSHOT
 fi
+# BH-9938: with the prr-shadow seam loaded, both helpers read through
+# prr_read pipeline-health (keys <slug>#open and <slug>#open:<max>); the record
+# window is PH_OPEN_CAP for ph_open_list and <max> for ph_open_rows. Without it,
+# the inline body below is the read.
 ph_open_list() { # ph_open_list <slug> — the raw REST open-PR rows on stdout; rc is the read's
   local f rc=0
+  if command -v prr_read >/dev/null 2>&1 && command -v ph_prr >/dev/null 2>&1; then
+    ph_prr "$1#open" open "$1" "${PH_OPEN_CAP:-100}" list; return
+  fi
   if [ "${HPL_SNAPSHOT:-}" != 1 ]; then gh api "repos/$1/pulls?state=open&per_page=100"; return; fi
   f=$(mktemp "${TMPDIR:-/tmp}/ph-open.XXXXXX") || return 75
   prs_open_list "$1" "$f" || rc=$?
@@ -177,6 +199,9 @@ ph_open_list() { # ph_open_list <slug> — the raw REST open-PR rows on stdout; 
 }
 ph_open_rows() { # ph_open_rows <slug> <max> — the first <max> open-PR rows, gh_rest_pr_list_all's shape; rc is the read's
   local f rc=0
+  if command -v prr_read >/dev/null 2>&1 && command -v ph_prr >/dev/null 2>&1; then
+    ph_prr "$1#open:$2" open "$1" "$2" rows; return
+  fi
   if [ "${HPL_SNAPSHOT:-}" != 1 ]; then gh_rest_pr_list_all "$1" open "$2"; return; fi
   f=$(mktemp "${TMPDIR:-/tmp}/ph-open.XXXXXX") || return 75
   prs_open_list "$1" "$f" || rc=$?
@@ -1307,6 +1332,12 @@ done
 # skips that PR or repo; it is never read as clean. Runs every tick, so it is
 # in RETRACT_NS and a requeued or merged PR retracts its page.
 # >>> stale dequeue (BH-3480)
+# BH-9938: the label list, the payload and the head commit time go through
+# prr_read pipeline-health when the seam is loaded (ph_prr; keys
+# <slug>#labels:merge-queue, <slug>#<n>:payload, <slug>#<n>@<sha12>:hct), else
+# the inline GitHub read runs. ph_sdl_list is the label list's GitHub read.
+ph_sdl_list() { gh api "repos/$1/issues?labels=merge-queue&state=open&per_page=100" 2>/dev/null; }
+sd_prr() { command -v prr_read >/dev/null 2>&1 && command -v ph_prr >/dev/null 2>&1; }
 if ! gh_budget_low pipeline-health && [ -r "$H/bin/lib/mc-stale-dequeue.sh" ]; then
   # shellcheck source=bin/lib/mc-stale-dequeue.sh
   . "$H/bin/lib/mc-stale-dequeue.sh"
@@ -1318,7 +1349,11 @@ if ! gh_budget_low pipeline-health && [ -r "$H/bin/lib/mc-stale-dequeue.sh" ]; t
     # The repo's own identity, as the stalepr block arms it; a repo the token
     # cannot see is skipped here (stalepr already pages that).
     if command -v gh_repo_use_token >/dev/null 2>&1; then gh_repo_use_token "$SLUG" || continue; fi
-    SDLIST=$(gh api "repos/$SLUG/issues?labels=merge-queue&state=open&per_page=100" 2>/dev/null) || continue
+    if sd_prr; then
+      SDLIST=$(ph_prr "$SLUG#labels:merge-queue" sdl "$SLUG") || continue
+    else
+      SDLIST=$(ph_sdl_list "$SLUG") || continue
+    fi
     SDNUMS=$(printf '%s' "$SDLIST" | jq -r 'if type == "array" then .[] else error("not a list") end
       | select(.pull_request != null)
       | select([.labels[]?.name] | any(. == "queued" or . == "checking") | not) | .number' 2>/dev/null) || continue
@@ -1330,7 +1365,11 @@ if ! gh_budget_low pipeline-health && [ -r "$H/bin/lib/mc-stale-dequeue.sh" ]; t
           "$P: the stale-dequeue check has more than 30 labelled PRs to read; PRs past the 30th were not judged this tick"
         break
       fi
-      SDPL=$(sdq_payload_last "$SLUG" "$NUM") || continue
+      if sd_prr; then
+        SDPL=$(ph_prr "$SLUG#$NUM:payload" payload "$SLUG" "$NUM") || continue
+      else
+        SDPL=$(sdq_payload_last "$SLUG" "$NUM") || continue
+      fi
       IFS=$'\t' read -r SDST SDT _ <<<"$SDPL"
       [ "$SDST" = dequeued ] || continue
       SDAGE=$(( NOW - SDT ))
@@ -1342,7 +1381,11 @@ if ! gh_budget_low pipeline-health && [ -r "$H/bin/lib/mc-stale-dequeue.sh" ]; t
         SDHEAD=$(gh api "repos/$SLUG/pulls/$NUM" --jq '.head.sha' 2>/dev/null) || continue
       fi
       [ -n "$SDHEAD" ] || continue
-      SDHE=$(sdq_head_pushed_epoch "$SLUG" "$SDHEAD") || continue
+      if sd_prr; then
+        SDHE=$(ph_prr "$SLUG#$NUM@${SDHEAD:0:12}:hct" hct "$SLUG" "$NUM" "$SDHEAD") || continue
+      else
+        SDHE=$(sdq_head_pushed_epoch "$SLUG" "$SDHEAD") || continue
+      fi
       [ "$SDHE" -le "$SDT" ] || continue
       alert 7200 "staledequeue:$P:$NUM" \
         "$P #$NUM dequeued by Mergify $((SDAGE/60))m ago (payload updated $(date -u -d "@$SDT" +%Y-%m-%dT%H:%M:%SZ)) with no new head since; the conductor requeues a head once when a fresh verdict binds it — push a fix or requeue by hand: https://github.com/$SLUG/pull/$NUM"
@@ -1605,7 +1648,13 @@ else
         lu_carry "leadunqueued:$SLUG#$NUM:"
         continue
       fi
-      LUST=$(gh api "repos/$SLUG/commits/$LUHEAD/status" 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
+      # BH-9938: through prr_read pipeline-health (key <slug>#<n>@<sha12>:status)
+      # when the seam is loaded, else the inline GitHub read.
+      if command -v prr_read >/dev/null 2>&1 && command -v ph_prr >/dev/null 2>&1; then
+        LUST=$(ph_prr "$SLUG#$NUM@${LUHEAD:0:12}:status" status "$SLUG" "$NUM" "$LUHEAD") || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
+      else
+        LUST=$(gh api "repos/$SLUG/commits/$LUHEAD/status" 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
+      fi
       LUAT=$(printf '%s' "$LUST" | jq -r 'if type == "object" then . else error("not a status") end
         | ([.statuses[]? | select(.context == "lead-verdict")] | first) as $l
         | ([.statuses[]? | select(.context == "harness-verdict")] | first) as $b

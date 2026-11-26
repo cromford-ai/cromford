@@ -203,7 +203,7 @@ test('M1 a Mergify payload comment stores code, draft PR, failing checks, left s
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196632, createdAt: ago(600), body }));
   assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue'), {
     state: 'dequeued', code: 'CHECKS_FAILED', draft_pr: 8165, failing_checks: ['lint'],
-    left_sha: C.slice(0, 12), comment_id: 6366196632, at: ago(600),
+    left_sha: C.slice(0, 12), comment_id: 6366196632, at: ago(600), run_id: null,
   });
   // P9 of the BH-8186 suite: no checks in the payload, the Failing checks bullets.
   const noChecks = mergifyBody(JSON.stringify({ state: 'dequeued', dequeue_reason: { code: 'CHECKS_FAILED' } }), 900, C, 'Jobs worker — routes');
@@ -217,7 +217,7 @@ test('M1 a Mergify payload comment stores code, draft PR, failing checks, left s
   const queued = '-*- Mergify Payload -*-\n{"state":"queued"}\n-*- Mergify Payload End -*-\nQueued';
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196702, createdAt: ago(300), body: queued }));
   assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue'), {
-    state: 'queued', code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: 6366196702, at: ago(300),
+    state: 'queued', code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: 6366196702, at: ago(300), run_id: null,
   });
 });
 

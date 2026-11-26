@@ -253,7 +253,7 @@ cmp -s "$T/raw-old.txt" "$T/raw-new2.txt" && ok || { bad "S2: tick 2 rows (cache
 for part in builds.union builds.ledger builds.glob rebuilds.union rebuilds.queue rebuilds.walk; do
   grep -qE "discovery_sub=([^ ]*,)?${part//./\\.}:[0-9]+" <<<"$P2" && ok || bad "S3: discovery_sub= names $part (prof: $P2)"
 done
-grep -qE ' discovery_src=rebuilds:[0-9]+,conductor:[0-9]+,queue:[0-9]+,builds:[0-9]+,reviews:[0-9]+,external:[0-9]+ project=p1 ' <<<"$P2" && ok \
+grep -qE ' discovery_src=rebuilds:[0-9]+,conductor:[0-9]+,queue:[0-9]+,builds:[0-9]+,reviews:[0-9]+,verdict-blocks:[0-9]+,external:[0-9]+ project=p1 ' <<<"$P2" && ok \
   || bad "S3: discovery_src= keeps the whole sources only, in order (prof: $P2)"
 grep -qE ' top=\[[^]]*\]$' <<<"$P2" && ok || bad "S3: top=[...] stays last (prof: $P2)"
 

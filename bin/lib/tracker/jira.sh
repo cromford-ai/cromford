@@ -19,6 +19,7 @@
 #     waiting_on_field      customfield_<n> holding waitingOn (none: null)
 #     triage_verdict_field  customfield_<n> holding triageVerdict (none: null)
 #     status_map            alias=Jira Status;alias=Jira Status
+#     issue_type            the issue type tracker_create files (Task)
 # No row is the fallback, never a widening: no write row means no writes. A
 # malformed row or a worker that did not answer fails the whole context (rc 1),
 # and with no context every verb answers 1 before any request.
@@ -48,6 +49,7 @@ _trk_jira_blank() {
   TRK_JIRA_TOKEN_VAR=JIRA_API_TOKEN
   TRK_JIRA_WRITE_PROJECTS=""; TRK_JIRA_COMMENT_PROJECTS=""; TRK_JIRA_READ_PROJECTS=""
   TRK_JIRA_LABEL=""; TRK_JIRA_WAITING_FIELD=""; TRK_JIRA_VERDICT_FIELD=""; TRK_JIRA_STATUS_MAP=""
+  TRK_JIRA_ISSUE_TYPE=""
 }
 
 _trk_jira_in() { # _trk_jira_in <word> <list…> — exact member
@@ -61,7 +63,7 @@ _trk_jira_in() { # _trk_jira_in <word> <list…> — exact member
 # TRK_JIRA_* blank and one stderr line saying why.
 trk_jira_context() {
   local p="${1:-}" root="${HARNESS:-${H:-}}" d ep envd ef jc rows k v n
-  local base email tok site wp="" cp="" rp="" label=ai-build wf="" vf="" smap=""
+  local base email tok site wp="" cp="" rp="" label=ai-build wf="" vf="" smap="" itype=""
   local creds=()
   _trk_jira_blank
   [[ "$p" =~ ^[a-z0-9_.-]+$ ]] || { printf 'jira: %s is not a project name\n' "$(_trk_sq "$p")" >&2; return 1; }
@@ -93,7 +95,7 @@ trk_jira_context() {
   # nothing; the first outage stops the rest and fails the read.
   # shellcheck source=/dev/null
   rows=$( HARNESS="$root"; . "$jc" >/dev/null 2>&1 || exit 1
-          for n in write_projects comment_projects read_projects label waiting_on_field triage_verdict_field status_map; do
+          for n in write_projects comment_projects read_projects label waiting_on_field triage_verdict_field status_map issue_type; do
             r=0; v=$(JOBS_ALERT=0 setting_get "tracker_jira.$p.$n" 2>/dev/null) || r=$?
             case "$r" in
               0) printf '%s\t%s\n' "$n" "$(printf '%s' "$v" | tr '\t\n' '  ')" ;;
@@ -125,12 +127,16 @@ trk_jira_context() {
       status_map)
         _trk_jira_smap_ok "$v" || { printf 'jira: settings row tracker_jira.%s.status_map is not alias=Status;alias=Status\n' "$p" >&2; return 1; }
         smap="$v" ;;
+      issue_type)
+        [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9\ _-]{0,59}$ ]] || { printf 'jira: settings row tracker_jira.%s.issue_type is not an issue type name\n' "$p" >&2; return 1; }
+        itype="$v" ;;
     esac
   done <<<"$rows"
 
   TRK_JIRA_PROJECT="$p"; TRK_JIRA_BASE="$base"; TRK_JIRA_EMAIL="$email"; TRK_JIRA_TOKEN="$tok"; TRK_JIRA_SITE="$site"
   TRK_JIRA_WRITE_PROJECTS="$wp"; TRK_JIRA_COMMENT_PROJECTS="$cp"; TRK_JIRA_READ_PROJECTS="$rp"
   TRK_JIRA_LABEL="$label"; TRK_JIRA_WAITING_FIELD="$wf"; TRK_JIRA_VERDICT_FIELD="$vf"; TRK_JIRA_STATUS_MAP="$smap"
+  TRK_JIRA_ISSUE_TYPE="$itype"
   return 0
 }
 
@@ -580,4 +586,119 @@ trk_jira_close_out() {
   pick=$(_trk_jira_pick "$key" "$want") || return $?
   _trk_jira_post_comment "$key" "$f" || return 1
   _trk_jira_move "$key" "${pick%%$'\t'*}" "${pick#*$'\t'}"
+}
+
+# _trk_jira_readable — the readable project keys (write + comment + read),
+# space-separated, each once.
+_trk_jira_readable() {
+  local keys="" k
+  for k in ${TRK_JIRA_WRITE_PROJECTS:-} ${TRK_JIRA_COMMENT_PROJECTS:-} ${TRK_JIRA_READ_PROJECTS:-}; do
+    case " $keys " in *" $k "*) ;; *) keys="${keys:+$keys }$k" ;; esac
+  done
+  printf '%s' "$keys"
+}
+
+# trk_jira_create_ticket — the new tracker_create form (bin/lib/tracker.sh,
+# BH-7922). The new issue goes to the FIRST write_projects key (the rule
+# tracker_key_prefix uses). Before any request: the parent must be on the
+# write allowlist and every blocker on the read allowlist (a `#N` ref is
+# refused). Then reads: the parent's guard GET, the project's issue type
+# (settings row tracker_jira.<p>.issue_type, fallback Task) from createmeta,
+# and, with a parent, that type's fields: `parent` is sent only when the
+# project has the field, else a relationErrors entry says the text footer
+# carries it. Then ONE POST /rest/api/3/issue, then one issueLink "Blocks"
+# per blocker. Prints {id, key, url, relationErrors}.
+trk_jira_create_ticket() {
+  local proj itype tid meta req resp rc=0 key rel='[]' b hasp=0 desc
+  local -a bl=()
+  [ -n "${TRK_JIRA_BASE:-}" ] && [ -n "${TRK_CREATE_TITLE:-}" ] && [ -r "${TRK_CREATE_BODY:-}" ] || { printf 'jira: no context loaded (trk_jira_context)\n' >&2; return 1; }
+  # shellcheck disable=SC2086 # validated Jira keys, split on purpose
+  set -- ${TRK_JIRA_WRITE_PROJECTS:-}
+  [ $# -gt 0 ] || { printf 'jira: %s has no write project to create in\n' "${TRK_JIRA_PROJECT:-}" >&2; return 1; }
+  proj="$1"
+  [ -z "${TRK_CREATE_PARENT:-}" ] || _trk_jira_guard "$TRK_CREATE_PARENT" write || return 1
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    _trk_jira_guard "$b" read || return 1
+    bl+=("$b")
+  done <<<"${TRK_CREATE_BLOCKED:-}"
+  if [ -n "${TRK_CREATE_PARENT:-}" ]; then _trk_jira_write_guard "$TRK_CREATE_PARENT" write || return $?; fi
+  itype="${TRK_JIRA_ISSUE_TYPE:-Task}"   # fallback of settings row tracker_jira.<project>.issue_type
+  meta=$(_trk_jira_http GET "/rest/api/3/issue/createmeta/$proj/issuetypes") || return $?
+  tid=$(printf '%s' "$meta" | jq -r --arg n "$itype" '[(.issueTypes // .values // [])[] | select(((.name // "") | ascii_downcase) == ($n | ascii_downcase)) | .id | tostring] | .[0] // empty' 2>/dev/null)
+  [[ "$tid" =~ ^[0-9]+$ ]] || { printf 'jira: project %s has no issue type %s (tracker_jira.%s.issue_type)\n' "$proj" "$(_trk_sq "$itype")" "${TRK_JIRA_PROJECT:-}" >&2; return 1; }
+  if [ -n "${TRK_CREATE_PARENT:-}" ]; then
+    meta=$(_trk_jira_http GET "/rest/api/3/issue/createmeta/$proj/issuetypes/$tid") || return $?
+    if printf '%s' "$meta" | jq -e 'any((.fields // .values // [])[]?; (.fieldId // .key) == "parent")' >/dev/null 2>&1; then hasp=1
+    else rel=$(jq -c --arg e "parent $TRK_CREATE_PARENT: project has no parent field (text footer only)" '. + [$e]' <<<"$rel"); fi
+  fi
+  req=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1
+  desc=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || { rm -f "$req"; return 1; }
+  _trk_jira_adf "$TRK_CREATE_BODY" "$desc" || printf '{}' > "$desc"
+  jq -n --arg p "$proj" --arg s "$TRK_CREATE_TITLE" --arg t "$tid" --arg l "${TRK_CREATE_LABELS:-}" \
+        --arg par "$([ "$hasp" = 1 ] && printf '%s' "$TRK_CREATE_PARENT")" --slurpfile d "$desc" \
+    '{fields: ({project: {key: $p}, summary: $s, issuetype: {id: $t},
+               labels: ($l | split("\n") | map(select(. != "") | gsub(" "; "_")))}
+              + (if $d[0].body == null then {} else {description: $d[0].body} end)
+              + (if $par == "" then {} else {parent: {key: $par}} end))}' > "$req" 2>/dev/null \
+    || { rm -f "$req" "$desc"; return 1; }
+  rm -f "$desc"
+  _trk_jira_logw POST /rest/api/3/issue
+  for b in "${bl[@]}"; do _trk_jira_logw POST "/rest/api/3/issueLink Blocks $b -> new"; done
+  if _trk_dry; then rm -f "$req"; return 0; fi
+  resp=$(_trk_jira_http POST /rest/api/3/issue "$req") || rc=$?
+  rm -f "$req"
+  [ "$rc" = 0 ] || return "$rc"
+  key=$(printf '%s' "$resp" | jq -r '.key // empty' 2>/dev/null)
+  if ! [[ "$key" =~ ^${proj}-[1-9][0-9]*$ ]]; then
+    printf 'jira: POST /rest/api/3/issue answered with no %s key; the ticket may exist\n' "$proj" >&2
+    return 1
+  fi
+  # Blocks: the blocker is the outward issue ("blocks"), the new issue the
+  # inward one ("is blocked by"). The live sandbox proof of the direction is
+  # owned by the C2 lane (BH-7922 plan A6).
+  for b in "${bl[@]}"; do
+    rc=0
+    req=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1
+    jq -n --arg o "$b" --arg i "$key" '{type: {name: "Blocks"}, outwardIssue: {key: $o}, inwardIssue: {key: $i}}' > "$req"
+    _trk_jira_http POST /rest/api/3/issueLink "$req" >/dev/null || rc=$?
+    rm -f "$req"
+    [ "$rc" = 0 ] || rel=$(jq -c --arg e "blocked-by $b: rc $rc" '. + [$e]' <<<"$rel")
+  done
+  jq -nc --arg k "$key" --arg site "${TRK_JIRA_SITE:-}" --argjson r "$rel" \
+    '{id: $k, key: $k, url: (if $site == "" then null else "\($site)/browse/\($k)" end), relationErrors: $r}'
+}
+
+# trk_jira_search — tracker_search on Jira: one page of
+# `project in (<readable>) AND summary ~ "<query>" ORDER BY updated DESC`,
+# maxResults TRK_SEARCH_MAX, every state, as tracker_list rows. The query
+# reaches the JQL with `"`, `\` and Lucene's operator characters replaced by
+# spaces (bin/lib/tracker.sh's title check is the exact match). A row outside
+# the readable projects fails the search, as in trk_jira_list.
+trk_jira_search() {
+  local keys q jql req page n rc=0 fields
+  [ -n "${TRK_JIRA_BASE:-}" ] && [ -n "${TRK_SEARCH_Q:-}" ] || return 1
+  keys=$(_trk_jira_readable)
+  [ -n "$keys" ] || { printf 'jira: %s has no readable project keys\n' "${TRK_JIRA_PROJECT:-}" >&2; return 1; }
+  n="${TRK_SEARCH_MAX:-50}"   # fallback of settings row trk_search.max_rows (bin/lib/tracker.sh)
+  [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -ge 1 ] && [ "$n" -le 100 ] || return 1
+  q=$(printf '%s' "$TRK_SEARCH_Q" | tr '"\\+&|!(){}[]^~*?:/-' ' ' | tr -s ' ' | sed 's/^ //; s/ $//')
+  [ -n "$q" ] || { printf 'jira: search query %s has no word to search\n' "$(_trk_sq "$TRK_SEARCH_Q")" >&2; return 1; }
+  # shellcheck disable=SC2086
+  jql="project in ($(printf '"%s",' $keys | sed 's/,$//')) AND summary ~ \"$q\" ORDER BY updated DESC"
+  fields="$(_trk_jira_fields),updated,comment"
+  req=$(mktemp "${TMPDIR:-/tmp}/trk-jira.XXXXXX") || return 1
+  jq -n --arg jql "$jql" --arg f "$fields" --argjson n "$n" '{jql: $jql, maxResults: $n, fields: ($f | split(","))}' > "$req" || { rm -f "$req"; return 1; }
+  page=$(_trk_jira_http POST /rest/api/3/search/jql "$req") || rc=$?
+  rm -f "$req"
+  [ "$rc" = 0 ] || return "$rc"
+  printf '%s' "$page" | jq -e --arg ks " $keys " '(.issues | type) == "array" and all(.issues[]; ((.key // "") | split("-")[0]) as $p | ($ks | contains(" " + $p + " ")))' >/dev/null 2>&1 \
+    || { printf 'jira: the search answered no list or an issue outside %s\n' "$keys" >&2; return 1; }
+  printf '%s' "$page" | jq -c --arg wf "${TRK_JIRA_WAITING_FIELD:-}" --arg vf "${TRK_JIRA_VERDICT_FIELD:-}" \
+      --arg site "${TRK_JIRA_SITE:-}" "${_TRK_ISO_JQ:-}$_TRK_JIRA_JQ"'
+    [.issues[] | {id: .key, key: .key, title: (.fields.summary // null), status: (.fields.status.name // null),
+            labels: [(.fields.labels // [])[] | tostring], waitingOn: fld($wf), triageVerdict: fld($vf),
+            url: jurl($site; .key), updatedAt: (.fields.updated | trk_iso),
+            state: (if .fields.status.statusCategory.key == "done" then "closed" else "open" end),
+            commentCount: (.fields.comment.total | if type == "number" then . else null end)}]' 2>/dev/null
 }

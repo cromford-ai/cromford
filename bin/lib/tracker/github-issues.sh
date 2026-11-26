@@ -273,3 +273,55 @@ trk_gh_close_out() {
   trk_gh_transition "${1:-}" "${3:-closed}" || rc=$?
   return "$rc"
 }
+
+# trk_gh_create_ticket — the new tracker_create form (bin/lib/tracker.sh,
+# BH-7922). One POST of {title, body, labels} built by jq (the body, footers
+# included, from TRK_CREATE_BODY). GitHub's relations are the text footers.
+# Prints {id, key, url, relationErrors: []}; rc 1 and one stderr line for a
+# 2xx that named no issue number; the call's rc otherwise.
+trk_gh_create_ticket() {
+  local req resp rc=0 n url
+  command -v gh_rest >/dev/null 2>&1 && [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+    && [ -n "${TRK_CREATE_TITLE:-}" ] && [ -r "${TRK_CREATE_BODY:-}" ] || return 1
+  req="${TRK_REQ_FILE:-}"
+  [ -n "$req" ] || { req=$(mktemp "${TMPDIR:-/tmp}/trk-gh.XXXXXX") || return 1; }
+  jq -n --arg t "$TRK_CREATE_TITLE" --rawfile b "$TRK_CREATE_BODY" --arg l "${TRK_CREATE_LABELS:-}" \
+    '{title: $t, body: $b, labels: ($l | split("\n") | map(select(. != "")))}' > "$req" 2>/dev/null \
+    || { [ -n "${TRK_REQ_FILE:-}" ] || rm -f "$req"; return 1; }
+  _trk_logw "gh api -X POST repos/$TRK_SLUG/issues --input $req"
+  if _trk_dry; then [ -n "${TRK_REQ_FILE:-}" ] || rm -f "$req"; return 0; fi
+  # Not in a subshell: _trk_gh_fail reads GH_REST_STATUS / GH_REST_REASON.
+  resp=$(mktemp "${TMPDIR:-/tmp}/trk-gh.XXXXXX") || { [ -n "${TRK_REQ_FILE:-}" ] || rm -f "$req"; return 1; }
+  gh_rest POST "repos/$TRK_SLUG/issues" --input "$req" > "$resp" || rc=$?
+  [ -n "${TRK_REQ_FILE:-}" ] || rm -f "$req"
+  if [ "$rc" != 0 ]; then rm -f "$resp"; _trk_gh_fail "$rc"; return $?; fi
+  n=$(jq -r '.number // empty | tostring' "$resp" 2>/dev/null)
+  url=$(jq -r '.html_url // empty' "$resp" 2>/dev/null)
+  rm -f "$resp"
+  if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+    printf 'tracker: github-issues create answered HTTP %s with no issue number; the ticket may exist\n' "${GH_REST_STATUS:-2xx}" >&2
+    return 1
+  fi
+  jq -nc --arg n "$n" --arg u "$url" '{id: $n, key: ("#" + $n), url: (if $u == "" then null else $u end), relationErrors: []}'
+}
+
+# trk_gh_search — tracker_search on GitHub: one page of search/issues for
+# `repo:<slug> is:issue in:title "<query>"` (all states; a `"` in the query is
+# dropped), as tracker_list rows. bin/lib/tracker.sh keeps the title matches.
+trk_gh_search() {
+  local q raw rc=0
+  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ -n "${TRK_SEARCH_Q:-}" ] || return 1
+  q="${TRK_SEARCH_Q//\"/}"
+  [ -n "${q//[[:space:]]/}" ] || { printf 'tracker: github-issues search query has no word to search\n' >&2; return 1; }
+  raw=$(mktemp "${TMPDIR:-/tmp}/trk-gh.XXXXXX") || return 1
+  trk_gh_search_issues "repo:$TRK_SLUG is:issue in:title \"$q\"" > "$raw" || rc=$?
+  if [ "$rc" != 0 ]; then rm -f "$raw"; _trk_gh_fail "$rc"; return $?; fi
+  jq -c "${_TRK_ISO_JQ:-} if (.items | type) != \"array\" then error(\"no items\") else . end
+    | [.items[] | select(.pull_request == null) | {id: (.number | tostring), key: (\"#\" + (.number | tostring)), title: (.title // null),
+      status: (.state // null), labels: $_TRK_GH_LABELS, waitingOn: null, triageVerdict: null,
+      url: (.html_url // null), updatedAt: (.updated_at | trk_iso),
+      state: (if .state == \"closed\" then \"closed\" else \"open\" end),
+      commentCount: (.comments | if type == \"number\" then . else null end)}]" "$raw" 2>/dev/null || rc=1
+  rm -f "$raw"
+  return "$rc"
+}

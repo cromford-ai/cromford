@@ -75,13 +75,20 @@ _vd_worker_404() {
 
 # _vd_route_missing — the 404 line, once per lane (the script that sourced this)
 #   per UTC hour, keyed by a stamp file so every subshell of one tick shares it.
+#   An optional route other than /api/verdicts (BH-9905: /api/verdict-blocks)
+#   gets its own stamp and names itself in the line.
 _vd_route_missing() {
-  local lane stamp
+  local lane stamp route="${1:-/api/verdicts}" sfx=""
   lane=$(basename "${0:-lane}" .sh | tr -c 'A-Za-z0-9._-' '_')
-  stamp="$(_vd_home)/state/verdicts/route-missing-$lane-$(date -u +%Y%m%d%H)"
+  [ "$route" = /api/verdicts ] || sfx="-$(printf '%s' "${route##*/}" | tr -c 'A-Za-z0-9._-' '_')"
+  stamp="$(_vd_home)/state/verdicts/route-missing-$lane$sfx-$(date -u +%Y%m%d%H)"
   [ -e "$stamp" ] && return 0
   mkdir -p "${stamp%/*}" 2>/dev/null && : > "$stamp" 2>/dev/null
-  _vd_log "GET /api/verdicts is not deployed on ${JOBS_URL:-the jobs worker} (HTTP 404) — lane $lane treats every PR as having no standing verdict until the worker ships BH-1525; said once per lane per hour"
+  if [ -n "$sfx" ]; then
+    _vd_log "GET $route is not deployed on ${JOBS_URL:-the jobs worker} (HTTP 404) — lane $lane reads no rows from it until the worker ships it; said once per lane per hour"
+  else
+    _vd_log "GET /api/verdicts is not deployed on ${JOBS_URL:-the jobs worker} (HTTP 404) — lane $lane treats every PR as having no standing verdict until the worker ships BH-1525; said once per lane per hour"
+  fi
 }
 
 # _vd_client <label> — load the jobs client if the caller did not; rc 1 (logged)
@@ -119,7 +126,7 @@ _vd_get() {
   # OWN unknown-endpoint body is "not deployed" — see the header.
   if [ "$rc" -eq 2 ]; then
     rm -f "$tmp"
-    if [ "${JOBS_HTTP:-}" = 404 ] && _vd_worker_404 "${JOBS_BODY:-}"; then _vd_route_missing; return 1; fi
+    if [ "${JOBS_HTTP:-}" = 404 ] && _vd_worker_404 "${JOBS_BODY:-}"; then _vd_route_missing "${2%%\?*}"; return 1; fi
     _vd_log "$label: HTTP 404 that is not the jobs worker's own answer (body: $(printf '%s' "${JOBS_BODY:-}" | tr -d '\n' | head -c 80)) — unverifiable; check JOBS_URL"
     return 2
   fi
@@ -151,6 +158,60 @@ vd_standing() {
     || { _vd_log "$slug#$num ${head:0:8}: unparseable verdicts answer — unverifiable"; return 2; }
   [ -n "$line" ] || return 1
   printf '%s\n' "$line"
+}
+
+# vd_standing_note <owner/repo> <num> <head-sha> — BH-9905: the standing row
+#   with its note, for the fix round's brief and the blocked-resolver's
+#   verdict-block source. The same request vd_standing makes (one GET).
+#   rc 0 -> line 1: verdict, id, source, report_url|- (TSV); the note follows
+#           on the next lines (none when the row has no note)
+#   rc 1 -> nothing stands on this head (or no client, or the worker's own 404)
+#   rc 2 -> could not ask (the vd_standing contract)
+vd_standing_note() {
+  local slug="$1" num="$2" head resp rc line
+  head=$(printf '%s' "${3:-}" | tr 'A-F' 'a-f')
+  case "$slug" in */*) ;; *) return 1 ;; esac
+  case "$num" in ''|*[!0-9]*) return 1 ;; esac
+  _vd_client "$slug#$num" || return 1
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { _vd_log "$slug#$num: head '${head:-<unread>}' is not a full sha — unverifiable"; return 2; }
+  resp=$(_vd_get "$slug#$num ${head:0:8}" "/api/verdicts?repo=$slug&pr=$num&head=$head&standing_only=1"); rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  line=$(printf '%s' "$resp" | jq -r '.standing // empty
+    | [.verdict, (.id|tostring), .source, (.report_url // "-")] | @tsv' 2>/dev/null) \
+    || { _vd_log "$slug#$num ${head:0:8}: unparseable verdicts answer — unverifiable"; return 2; }
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line"
+  printf '%s' "$resp" | jq -r '.standing.note // empty' 2>/dev/null
+}
+
+# vd_repo_blocks <owner/repo> <since-iso> <limit> — BH-9905: ONE read of the
+#   repo's BLOCK rows created at or after <since> (GET /api/verdict-blocks,
+#   retracted rows dropped by the worker, newest first, at most <limit>). It is
+#   the blocked-resolver's per-project batch: one read per project per tick,
+#   not one per open PR. A row here is history, not standing: the caller
+#   confirms each match with vd_standing_note / vd_box_word on the live head.
+#   rc 0 -> TSV lines: pr, head (lower case), id, source, created_at (none = no rows)
+#   rc 1 -> no client, or the worker's own 404 (route not deployed; said once
+#           per lane per hour)
+#   rc 2 -> unreadable (logged), or an argument that is not a slug, an ISO
+#           stamp or a positive count (nothing is sent)
+vd_repo_blocks() {
+  local slug="$1" since="${2:-}" lim="${3:-}" resp rc out
+  [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { _vd_log "blocks: '$slug' is not owner/repo — not asked"; return 2; }
+  [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { _vd_log "$slug blocks: since '$since' is not an ISO stamp — not asked"; return 2; }
+  [[ "$lim" =~ ^[1-9][0-9]*$ ]] || { _vd_log "$slug blocks: limit '$lim' is not a positive count — not asked"; return 2; }
+  _vd_client "$slug blocks" || return 1
+  resp=$(_vd_get "$slug blocks" "/api/verdict-blocks?repo=$slug&since=$since&limit=$lim"); rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  printf '%s' "$resp" | jq -e '.rows | type == "array"' >/dev/null 2>&1 \
+    || { _vd_log "$slug blocks: unparseable verdict-blocks answer — unverifiable"; return 2; }
+  out=$(printf '%s' "$resp" | jq -r '.rows[]
+    | [((.pr // "") | tostring), ((.head_sha // "") | ascii_downcase), ((.id // "") | tostring), (.source // ""), (.created_at // "")] | @tsv' 2>/dev/null) \
+    || { _vd_log "$slug blocks: unparseable verdict-blocks rows — unverifiable"; return 2; }
+  [ "$(printf '%s' "$resp" | jq -r '.truncated // false' 2>/dev/null)" = true ] \
+    && _vd_log "$slug blocks: the answer is truncated at $lim rows (BR_VERDICT_BLOCK_LIMIT / verdict_blocks.max_rows) — older BLOCK rows in the window were not read this tick"
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
 }
 
 # vd_clear_word <owner/repo> <num> <head> — prints MERGE or MERGE-WITH-NOTES when

@@ -180,6 +180,13 @@
 #                                     the plan in a conflict round's brief (0 off)
 #   BR_REVIEW_LOOKBACK_SECS   172800  how far back a PR must have been updated
 #                                     for its reviews to be read at all (48h)
+#   BR_VERDICT_BLOCK          1       a standing human/lead BLOCK verdict row
+#                                     (or an autopilot box BLOCK) on a PR's
+#                                     live head is a review-reason candidate,
+#                                     whatever the PR's age (BH-9905,
+#                                     the bh-9905-verdict-block fragment);
+#                                     with BR_VERDICT_BLOCK_LOOKBACK_DAYS (30)
+#                                     and BR_VERDICT_BLOCK_LIMIT (500)
 #   BR_SUPERSEDE_SETTLE_SECS  (registry, required) the window after a new head
 #                                     — including this lane's own fix-round
 #                                     push — before the rebuild rung may close
@@ -5644,6 +5651,8 @@ br_fix_round() {
   fi
   # BH-9282: a BLOCK head's round reads the lead's review (bh-9282-decline-next).
   if [ "$frc" != 75 ] && command -v bdn_brief >/dev/null 2>&1; then local bdnf; bdnf=$(bdn_brief "$url" "${head:-}" "$st" "$findings") && findings="$bdnf" || frc=$?; fi
+  # BH-9905: a standing BLOCK row's note, or the autopilot BLOCK comment (bh-9905-verdict-block).
+  if [ "$frc" != 75 ] && command -v bvb_brief >/dev/null 2>&1; then findings=$(bvb_brief "$url" "${head:-}" "$findings" "$reason"); fi
   if [ "$frc" = 75 ]; then
     say "$p/$rkey [$reason]: the posted findings could not be read this tick — fix round not started, no rung spent, retried next tick"
     return 0
@@ -6758,7 +6767,7 @@ br_rereview() {
   # the migration was applied, and the evidence is what this read is for.
   if [ "${kind:-}" != data-lane ] && command -v review_bought >/dev/null 2>&1 && command -v review_dedupe_on >/dev/null 2>&1 \
      && review_dedupe_on && review_bought "$slug" "$num" "$head" >/dev/null 2>&1; then
-    reused="${RB_SOURCE:-}"
+    command -v mc_hnr_reuse >/dev/null 2>&1 && mc_hnr_reuse "$(printf '%s#%s' "$slug" "$num")" "$head" "$p/$rkey [$tag]" || reused="${RB_SOURCE:-}"
     if [ "${RB_CLASS:-}" = approve ]; then
       case "$(review_bought_prov 2>/dev/null || echo unknown)" in
         unknown|fallback)

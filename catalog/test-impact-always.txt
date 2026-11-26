@@ -52,6 +52,13 @@ tests/pr-scoped-test-lint.bh-5684-test.sh
 # (its G7 asserts it).
 tests/generated-not-tracked.bh-5518-test.sh
 #
+# BH-10006: tests/tracker-direct-calls-ratchet.bh-7919-test.sh R1 scans every
+# script under bin/ through its tdc_scan function on "$SRC", which no signal
+# reads as a whole-tree walk. A NEW bin/ script with a direct tracker call
+# does not select it, so three batches went green and main went red on R1
+# (push runs 43215964570, 43411675307, 45403416838; nightly 45350302739).
+tests/tracker-direct-calls-ratchet.bh-7919-test.sh
+#
 # BH-4551: the detector now reads only text that runs, and only an unscoped
 # `git … ls-files` (no pathspec, or `.`). The suites below were in the set at
 # c84de0d and the narrowed detector no longer sees them. They are pinned here so

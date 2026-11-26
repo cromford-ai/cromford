@@ -228,6 +228,62 @@ settings call.
 different project name keeps the GitHub arm. A Linear project with no
 `LINEAR_API_KEY` in its env file also keeps the GitHub arm.
 
+## Create and search verbs, the ticket-ref regex (BH-7922)
+
+**`tracker_create`, two forms.** The LEGACY form `tracker_create
+<payload-json> <out>` (BH-8706, github-issues only) is chosen when the call
+has exactly two args and the first is a readable file holding a JSON object.
+`bin/main-red-breaker.sh` and `bin/lib/suite-quarantine-hub.sh` use it, and it
+is unchanged. Every other call is the NEW form, on all four adapters:
+
+```bash
+tracker_create <titlefile> <bodyfile> [--label <l>]... [--parent <id>] [--blocked-by <id>]...
+```
+
+Each `<id>` is a ticket ref (`#N` or `KEY-N`, `bin/lib/ticket-ref.sh`). The
+body gets `Part of <parent>` and one `Blocked-by: <id>` per blocker, only for
+a line it does not already carry. GitHub and the board carry the relations
+as those text footers only (the board: the children route with a
+content-hash `Idempotency-Key`, and each `--label` is a `relationErrors`
+entry). Linear sends `issueCreate` with `parentId`, then one
+`issueRelationCreate type: blocks` per blocker (blocker -> new). Jira files in
+the first `write_projects` key, with the issue type from the row
+`tracker_jira.<p>.issue_type` (fallback `Task`), `fields.parent` only when
+the project's createmeta has a `parent` field, then one `issueLink` "Blocks"
+per blocker (outward = blocker). A Linear ref on another team, a Jira parent
+outside `write_projects` or a blocker outside the readable projects is rc 1
+and sends nothing.
+
+rc 0 means the ticket exists: stdout is its `tracker_read` plus
+`relationErrors` (strings). A relation that fails after the create stays rc 0
+with an entry. A read-back that fails prints `{id, key, url, relationErrors,
+readBack: false}`. rc 1 is no ticket, except the line `... the ticket may
+exist` (a 2xx with no key): search before a retry. rc 75 is rate-limited on
+the create. A dry run prints DRYRUN lines only.
+
+**`tracker_search <query>`.** 1..200 characters, no control character. GitHub
+`search/issues` `repo:<slug> is:issue in:title "<q>"`; the board's ticket
+list; Jira `summary ~ "<q>"` (quotes and Lucene characters become spaces);
+Linear `title: { containsIgnoreCase }`. All states. One check in
+`bin/lib/tracker.sh` keeps the rows whose title holds the query
+(case-insensitive), at most the row `trk_search.max_rows` (1..100, seed
+and fallback 50, read once per process, a dry run reads no row).
+
+**`bin/lib/ticket-ref.sh`.** `TICKET_REF_ERE`, `ticket_ref_valid`,
+`ticket_ref_blocked_by` (stdin; `(hard)`/`(soft)` and a comma list),
+`ticket_ref_part_of`, `ticket_ref_num`. Line-anchored and strict. No footer
+parser uses it yet (slice C1).
+
+| what | how |
+|---|---|
+| C13 / C14 on the four adapters, the legacy dispatch, guards, exit paths, the knob | `HARNESS_TEST_SANDBOX=1 bash tests/tracker-create-search.bh-7922-test.sh` (cases in `tests/lib/tracker-contract-c13.bh-7922.sh`) |
+| the ref regex and the two line parsers | `HARNESS_TEST_SANDBOX=1 bash tests/ticket-ref-regex.bh-7922-test.sh` |
+
+**What usually lies:** the stubs are written to the vendors' documented
+schemas, not recorded. The Jira `issueLink` direction (outward = blocker) and
+Linear's `issueRelationCreate` argument order have no live proof in this
+slice; the C2 lane's sandbox run is that proof.
+
 ## Wake and scope on the contract (BH-8449)
 
 **The read's `state`.** `tracker_read` prints an 11th key, `state`

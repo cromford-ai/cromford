@@ -131,9 +131,14 @@ decisions() {
     grep -F 'WOULD_' "$LOG" | sed -E 's/^[^ ]+ [^ ]+ //'
   } | sed -E "s/#$P1\b/#P1/g; s/#$P2\b/#P2/g; s/#$P3\b/#P3/g"
 }
+# GH_SOURCE=off: this suite pins the BH-8269 pulls/<n> read. The label lists,
+# the payload and the status go through prr_read dequeue-watch since BH-9938,
+# and off keeps them on today's GitHub reads, so the record GET counts here
+# are the pulls path's alone (tests/dequeue-watch-record.bh-9938-test.sh pins
+# the other steps).
 run_lane() {
   env -i PATH="$T/shim:$PATH" HOME="$T" HARNESS="$H" JOBS_URL= HARNESS_SECRET=test-secret-fixture \
-    HARNESS_TEST_SANDBOX=1 DEQUEUE_WATCH_FIXTURE="$SEAM" DQW_FIX_DIR="$F" DEQUEUE_WATCH_ACT=1 "$@" \
+    HARNESS_TEST_SANDBOX=1 DEQUEUE_WATCH_FIXTURE="$SEAM" DQW_FIX_DIR="$F" DEQUEUE_WATCH_ACT=1 GH_SOURCE=off "$@" \
     bash "$H/bin/dequeue-watch.sh" > "$T/lane.out" 2> "$T/lane.err"
   RC=$?
   [ "$RC" = 0 ] && ok || bad "the lane exited $RC: $(head -c 600 "$T/lane.err")"

@@ -69,6 +69,15 @@ _ghb_now() { date -u +%s; }
 # GH_BUDGET_TTL_S (0 when it is not a number: no cache is trusted), so TTL 0
 # ("no cache: every refresh reads") still reads.
 _GHB_RL_RAW=""; _GHB_RL_AT=""; _GHB_RL_OUT=""
+# gh_budget_rl_interval — the memo interval _ghb_rl_read uses, in seconds: the
+# resolved GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S, else the same fallback 60. A
+# lane that hands one rate_limit judgment to its children bounds the handoff
+# with it (bin/dequeue-watch.sh, BH-9938).
+gh_budget_rl_interval() {
+  local iv="${GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S:-}"
+  _ghb_num "$iv" || iv=60
+  printf '%s\n' "$iv"
+}
 _ghb_rl_read() {
   local iv="${GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S:-}" cap="${1:-}" now raw
   # Fallback only: the knob is GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S.

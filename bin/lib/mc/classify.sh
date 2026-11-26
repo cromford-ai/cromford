@@ -3209,7 +3209,7 @@ hb_block_park() {
 headbound_review() {
   local mode="$1" key="$2" slug="$3" num="$4" proj="$5" url="$6" rec="$7" head="$8"
   local reviewed="$9" verdict="${10}" mstate="${11}" ci="${12}"
-  local jobf jobst rrwhat v outf rc run why n ep apv rr_acct rrpool=""
+  local jobf jobst rrwhat v outf rc run why n ep apv rr_acct rrpool="" hnr hnrwhy
   jobf=$(mc_rr_file "$slug" "$num" "$head"); jobst=$(mc_rr_state "$jobf")
   # A POOL RE-REVIEW IN FLIGHT (BH-7674). On a lane-run machine the read is an
   # RR-<pr>-<head8> row and no job file; while the row is queued or claimed
@@ -3392,12 +3392,24 @@ headbound_review() {
               return 1
             fi ;;
           BLOCK)
-            mc_attempt_put "apverdict $key $head"
-            mc_log "$key AUTOPILOT_VERDICT consumed: BLOCK on ${head:0:8} — the >12h review autopilot has already read this exact head; parking it rather than buying a second read"
-            hb_block_park "$key" "$url" "$rec" "$head" "$reviewed" "$mstate" \
-              "$(printf '_Merge conductor: the >12h autopilot review of %s verdicted BLOCK, bound to this exact head. Parked as head-not-reapproved and handed to bin/blocked-resolver.sh, which runs a fix round against the findings above. No second review was bought._' "${head:0:12}")" \
-              "the >12h autopilot review of ${head:0:12} verdicted BLOCK on this exact head and nothing has re-approved it"
-            return 1 ;;
+            # ANOTHER LANE'S BLOCK BUYS OUR OWN READ FIRST (BH-9693): while the
+            # PR's budget has room, buy/wait fall out of this case to the spawn
+            # path below. mc_hnr_decide is bin/lib/hnr-rereview.sh.
+            hnr=park; hnrwhy=""
+            command -v mc_hnr_decide >/dev/null 2>&1 \
+              && IFS=$'\t' read -r hnr hnrwhy < <(mc_hnr_decide "$key" "$head" autopilot "$ci" "$mstate")
+            case "$hnrwhy" in off\ *) hnrwhy="" ;; esac   # knob 0: today's text, byte for byte
+            case "$hnr" in
+              buy|wait)
+                [ -n "$hnrwhy" ] && [ "$hnr" = buy ] && mc_log "$key HNR_REREVIEW $key ${head:0:8} — autopilot BLOCK; the conductor buys its own head-bound read ($hnrwhy); no park" ;;
+              *)
+                mc_attempt_put "apverdict $key $head"
+                mc_log "$key AUTOPILOT_VERDICT consumed: BLOCK on ${head:0:8} — the >12h review autopilot has already read this exact head; parking it rather than buying a second read${hnrwhy:+; $hnrwhy}"
+                hb_block_park "$key" "$url" "$rec" "$head" "$reviewed" "$mstate" \
+                  "$(printf '_Merge conductor: the >12h autopilot review of %s verdicted BLOCK, bound to this exact head. Parked as head-not-reapproved and handed to bin/blocked-resolver.sh, which runs a fix round against the findings above. No second review was bought%s._' "${head:0:12}" "${hnrwhy:+ ($hnrwhy)}")" \
+                  "the >12h autopilot review of ${head:0:12} verdicted BLOCK on this exact head and nothing has re-approved it${hnrwhy:+; $hnrwhy}"
+                return 1 ;;
+            esac ;;
         esac
       fi
       # A LEAD/HUMAN BLOCK ROW ON THIS HEAD IS THE READ ALREADY BOUGHT (BH-1525):
@@ -3443,13 +3455,24 @@ headbound_review() {
                 ;;
             esac ;;
           block)
-            mc_attempt_put "rbverdict $key $head"
-            review_skip_log "$MC_LOG" "$slug" "$num" "$head" merge-conductor
-            mc_log "$key BOUND_VERDICT consumed: $RB_SOURCE verdicted $RB_WORD on ${head:0:8} — already paid for on this exact head; parking it rather than buying a second read"
-            hb_block_park "$key" "$url" "$rec" "$head" "$reviewed" "$mstate" \
-              "$(printf '_Merge conductor: %s already verdicted %s on this exact head (%s). Parked as head-not-reapproved and handed to bin/blocked-resolver.sh. No second review was bought._' "$RB_SOURCE" "$RB_WORD" "${head:0:12}")" \
-              "$RB_SOURCE verdicted $RB_WORD on ${head:0:12} and nothing has re-approved it"
-            return 1 ;;
+            # BH-9693: a block from another machine lane buys our own read
+            # first, as the autopilot BLOCK above does.
+            hnr=park; hnrwhy=""
+            command -v mc_hnr_decide >/dev/null 2>&1 \
+              && IFS=$'\t' read -r hnr hnrwhy < <(mc_hnr_decide "$key" "$head" "${RB_SOURCE:-}" "$ci" "$mstate")
+            case "$hnrwhy" in off\ *) hnrwhy="" ;; esac
+            case "$hnr" in
+              buy|wait)
+                [ -n "$hnrwhy" ] && [ "$hnr" = buy ] && mc_log "$key HNR_REREVIEW $key ${head:0:8} — $RB_SOURCE BLOCK; the conductor buys its own head-bound read ($hnrwhy); no park" ;;
+              *)
+                mc_attempt_put "rbverdict $key $head"
+                review_skip_log "$MC_LOG" "$slug" "$num" "$head" merge-conductor
+                mc_log "$key BOUND_VERDICT consumed: $RB_SOURCE verdicted $RB_WORD on ${head:0:8} — already paid for on this exact head; parking it rather than buying a second read${hnrwhy:+; $hnrwhy}"
+                hb_block_park "$key" "$url" "$rec" "$head" "$reviewed" "$mstate" \
+                  "$(printf '_Merge conductor: %s already verdicted %s on this exact head (%s). Parked as head-not-reapproved and handed to bin/blocked-resolver.sh. No second review was bought%s._' "$RB_SOURCE" "$RB_WORD" "${head:0:12}" "${hnrwhy:+ ($hnrwhy)}")" \
+                  "$RB_SOURCE verdicted $RB_WORD on ${head:0:12} and nothing has re-approved it${hnrwhy:+; $hnrwhy}"
+                return 1 ;;
+            esac ;;
         esac
       fi
       # <<< conductor bound-verdict consume

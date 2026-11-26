@@ -1,0 +1,44 @@
+{
+  "libs": [
+    {
+      "id": "review-probe",
+      "file": "bin/lib/review-probe.sh",
+      "note": "BH-9987: a ticket reaches review only after a live probe of its primary screen. bin/board-closeout.sh moves an in-app PR_CREATED to in_progress, not review. bin/merged-ticket-advance.sh moves a client-filed ticket to review after the deploy audit; when the audit is not PASS it first makes one unauthenticated GET of <prod> + the first static route of the plan's QA screens (else /), and holds the ticket (no comment, no move, skip reason no-live-probe, one alert per ticket and token) unless the answer is served or signin. Applied through lib_env_apply review-probe. Doc: docs/notes/2026-11-24-BH-9987-review-needs-live-probe.md.",
+      "knobs": [
+        {
+          "env": "REVIEW_PROBE_REQUIRE",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "flag",
+          "zero_means": "today's behavior: review at PR open, and review after a merge with no screen opened",
+          "required": false,
+          "note": "1 turns the gate on. Anything but 0 reads 1. Read as ${REVIEW_PROBE_REQUIRE:-1} in rp_required."
+        },
+        {
+          "env": "REVIEW_PROBE_TIMEOUT_S",
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "The --max-time of the one probe GET. A primary screen slower than this is a hold, not a pass. A non-number reads 20; values are clamped to 1..120. Read as ${REVIEW_PROBE_TIMEOUT_S:-20} in rp_probe."
+        },
+        {
+          "env": "REVIEW_PROBE_MAX_REDIRS",
+          "type": "int",
+          "default": 5,
+          "min": 0,
+          "max": 20,
+          "unit": "redirects",
+          "zero_means": "no redirect is followed: any 3xx answer is an error (a hold)",
+          "required": false,
+          "note": "The --max-redirs of the one probe GET. A chain longer than this comes back as error, which holds the ticket. A non-number reads 5. Read as ${REVIEW_PROBE_MAX_REDIRS:-5} in rp_probe."
+        }
+      ]
+    }
+  ]
+}

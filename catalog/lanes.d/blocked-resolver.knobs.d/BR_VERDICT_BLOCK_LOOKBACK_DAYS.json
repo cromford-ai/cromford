@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERDICT_BLOCK_LOOKBACK_DAYS",
+  "type": "int",
+  "default": 30,
+  "min": 1,
+  "max": 365,
+  "unit": "days",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9905-verdict-block.sh",
+  "note": "BH-9905: the window of the verdict-block source's one batch read per project per tick (GET /api/verdict-blocks): BLOCK rows created in the last N days. A BLOCK row older than this on a still-open live head is not read. Settings row lane.blocked-resolver.br_verdict_block_lookback_days; code fallback 30."
+}

@@ -173,3 +173,43 @@ trk_board_close_out() {
   trk_board_comment "${1:-}" "${2:-}" || return 1
   trk_board_transition "${1:-}" "${3:-review}"
 }
+
+# trk_board_create_ticket — the new tracker_create form (bin/lib/tracker.sh,
+# BH-7922) on the board's children route: POST <base>/boards/<first board
+# id>/tickets with {title, description} (the body, footers included), and the
+# idempotency key `create-<sha256 of title and body>`, so a retried create is
+# collapsed by the board. Relations are the text footers. The board takes no
+# labels: each --label is a relationErrors entry and the ticket is still
+# created. Prints {id, key, url, relationErrors}.
+trk_board_create_ticket() {
+  local boards bid req resp rc=0 idem id key url rel
+  [ -n "${TRK_BOARD_BASE:-}" ] && [ -n "${TRK_CREATE_TITLE:-}" ] && [ -r "${TRK_CREATE_BODY:-}" ] || return 1
+  boards=$(TRK_DRY=0 _trk_board_curl GET "$TRK_BOARD_BASE/boards") || return 1
+  bid=$(printf '%s' "$boards" | jq -r '(.boards? // .) | if type == "array" then (.[0].id // empty | tostring) else empty end' 2>/dev/null)
+  [[ "$bid" =~ ^[A-Za-z0-9_.:-]+$ ]] || { printf 'tracker: board answered no board id\n' >&2; return 1; }
+  idem="create-$( { printf '%s\n' "$TRK_CREATE_TITLE"; cat "$TRK_CREATE_BODY"; } | sha256sum | cut -c1-64)"
+  rel=$(printf '%s' "${TRK_CREATE_LABELS:-}" | jq -Rsc 'split("\n") | map(select(. != "") | "label \(.): board has no labels")')
+  req=$(_trk_board_req) || return 1
+  jq -n --arg t "$TRK_CREATE_TITLE" --rawfile d "$TRK_CREATE_BODY" '{title: $t, description: $d}' > "$req" 2>/dev/null \
+    || { _trk_board_req_done "$req"; return 1; }
+  if _trk_dry; then
+    _trk_board_curl POST "$TRK_BOARD_BASE/boards/$bid/tickets" "$req" "$idem"
+    _trk_board_req_done "$req"; return 0
+  fi
+  resp=$(_trk_board_curl POST "$TRK_BOARD_BASE/boards/$bid/tickets" "$req" "$idem") || rc=$?
+  _trk_board_req_done "$req"
+  [ "$rc" = 0 ] || { printf 'tracker: board create failed (curl rc %s)\n' "$rc" >&2; return 1; }
+  id=$(printf '%s' "$resp" | jq -r '(.ticket // .) | .id // empty | tostring' 2>/dev/null)
+  key=$(printf '%s' "$resp" | jq -r '(.ticket // .) | .key // empty | tostring' 2>/dev/null)
+  url=$(printf '%s' "$resp" | jq -r '(.ticket // .) | (.url // .href // empty) | tostring' 2>/dev/null)
+  if ! [[ "$id" =~ ^[A-Za-z0-9_.:-]+$ ]] || [ -z "$key" ]; then
+    printf 'tracker: board create answered with no ticket id or key; the ticket may exist\n' >&2
+    return 1
+  fi
+  jq -nc --arg i "$id" --arg k "$key" --arg u "$url" --argjson r "$rel" \
+    '{id: $i, key: $k, url: (if $u == "" then null else $u end), relationErrors: $r}'
+}
+
+# trk_board_search — tracker_search on the board: the ticket list of every
+# state (trk_board_list); bin/lib/tracker.sh keeps the title matches.
+trk_board_search() { trk_board_list; }

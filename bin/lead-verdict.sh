@@ -500,6 +500,8 @@ lv_post() {
     echo "lead-verdict: status withheld on ${sha:0:12}: human verdict $hfin is final on this head; this lead row is advice" >&2
     exit 5
   fi
+  # BH-9905: a lead/human BLOCK says whether the blocked-resolver offers a fix round.
+  [ "$verdict" = BLOCK ] && lv_fix_offer "$repo" "$pr" "$sha"
   if [ -n "$withhold" ]; then
     echo "lead-verdict: status withheld on ${sha:0:12}: $withhold; a --source human verdict publishes it (bin/lead-verdict.sh post $repo $pr $sha $verdict --source human)" >&2
     exit 5
@@ -524,6 +526,19 @@ lv_post() {
   fi
   echo "lead-verdict: row recorded, $(vs_context) status NOT published on ${sha:0:12}; Mergify will not queue this head until it is (re-run this post, or publish it by hand)" >&2
   exit 4
+}
+
+# lv_fix_offer <repo> <pr> <sha> — BH-9905: one stderr line from
+#   bin/lib/fix-round-offer.sh (fro_offer_line), run in a subshell so the
+#   lane env it reads stays out of this one. A missing lib prints nothing;
+#   stdout and the exit code never change.
+lv_fix_offer() {
+  local line
+  [ -r "$SELF_DIR/lib/fix-round-offer.sh" ] || return 0
+  # shellcheck source=bin/lib/fix-round-offer.sh
+  line=$( . "$SELF_DIR/lib/fix-round-offer.sh" 2>/dev/null && fro_offer_line "$@" 2>/dev/null ) || line=""
+  [ -n "$line" ] && echo "lead-verdict: $line" >&2
+  return 0
 }
 
 lv_show() {

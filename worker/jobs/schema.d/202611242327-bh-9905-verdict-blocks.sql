@@ -1,0 +1,25 @@
+-- ── BH-9905: the index and the cap of GET /api/verdict-blocks ───────────────
+-- Reader: worker/jobs/src/routes/verdict-blocks.js. The blocked-resolver's
+-- verdict-block candidate source (bin/lib/verdicts.sh vd_repo_blocks) reads
+-- the BLOCK rows of one repo since a time, once per project per tick:
+--   SELECT id, pr, head_sha, source, created_at FROM verdicts
+--    WHERE repo=?1 AND verdict='BLOCK' AND created_at >= ?2
+--      AND id NOT IN (SELECT verdict_id FROM verdict_retractions)
+--    ORDER BY created_at DESC LIMIT ?3
+-- idx_verdicts_repo_verdict_created serves the WHERE (repo, verdict equality,
+-- created_at range) and the ORDER BY. The verdicts table is created in
+-- 0002-base-rest.sql; idx_verdicts_pr_head and idx_verdicts_created
+-- (202610161105-bh-5808-lessons.sql) serve neither the filter nor the order.
+-- EXPLAIN QUERY PLAN at 20,000 seeded rows over 20 repos
+-- (test/verdict-blocks.bh-9905.test.js W4):
+--   SEARCH verdicts USING INDEX idx_verdicts_repo_verdict_created (repo=? AND verdict=? AND created_at>?)
+--   USING ROWID SEARCH ON TABLE verdict_retractions FOR IN-OPERATOR
+-- No SCAN of verdicts and no temp b-tree for the ORDER BY.
+-- Additive: no CREATE TABLE, so no RLS or retention change here. The verdicts
+-- table is append-only history (its retention is unchanged).
+CREATE INDEX IF NOT EXISTS idx_verdicts_repo_verdict_created ON verdicts(repo, verdict, created_at);
+-- The most rows one GET /api/verdict-blocks answers, and its default limit. A
+-- larger limit is clamped to it. Code fallback VERDICT_BLOCKS_MAX_ROWS_FALLBACK
+-- (1000) in routes/verdict-blocks.js; the seed equals it, so a deploy changes
+-- nothing. INSERT OR IGNORE: a re-apply changes nothing and an operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('verdict_blocks.max_rows','1000','BH-9905: the most rows one GET /api/verdict-blocks answers, and its default limit (positive whole number; a larger limit is clamped; code default 1000).','seed','2026-11-24T23:27:00Z');

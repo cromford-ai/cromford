@@ -28,6 +28,8 @@ export const CREATED_TABLE_OVERRIDES = {
     "CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id)",
     // BH-5808: the lessons window reads (schema.d/202610161105-bh-5808-lessons.sql).
     "CREATE INDEX IF NOT EXISTS idx_verdicts_created ON verdicts(created_at)",
+    // BH-9905: GET /api/verdict-blocks (schema.d/202611242327-bh-9905-verdict-blocks.sql).
+    "CREATE INDEX IF NOT EXISTS idx_verdicts_repo_verdict_created ON verdicts(repo, verdict, created_at)",
     "CREATE TRIGGER IF NOT EXISTS verdicts_no_update BEFORE UPDATE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END",
     "CREATE TRIGGER IF NOT EXISTS verdicts_no_delete BEFORE DELETE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END",
   ],

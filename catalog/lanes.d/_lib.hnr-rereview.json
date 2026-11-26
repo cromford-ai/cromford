@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "hnr-rereview",
+      "file": "bin/lib/hnr-rereview.sh",
+      "note": "BH-9693. A BLOCK from another review lane (the >12h autopilot, review-prs, a box, run-build) on a moved head buys the merge conductor's own head-bound read before a head-not-reapproved park, at most MC_HNR_REREVIEW_MAX heads per PR. The blocked-resolver's re-review rung does not reuse such a BLOCK while the budget has room. Counted by the attempts line `hnrbuy <key> <head>`, written before the spend. Read by mc_hnr_max through lib_env_apply hnr-rereview.",
+      "knobs": [
+        {
+          "env": "MC_HNR_REREVIEW_MAX",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 10,
+          "zero_means": "off",
+          "required": false,
+          "note": "Heads per PR on which another lane's BLOCK buys the conductor's own read instead of a park. 0 = every such BLOCK parks head-not-reapproved on sight (the behaviour before BH-9693). Past the budget the park names it: `re-review budget used (<used> of <max>)`. Read as ${MC_HNR_REREVIEW_MAX:-1}; not a number reads as 1."
+        }
+      ]
+    }
+  ]
+}

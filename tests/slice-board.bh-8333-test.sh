@@ -438,7 +438,9 @@ cbody | grep -q 'not filed yet' && ok || bad "B6: the comment says the rest is n
 
 case_dir B7; brec b7 "PR_CREATED $PRURL"
 closeout "$REC"
-[ "$BRC" = 0 ] && [ "$(moved_to)" = review ] && ok || bad "B7: PR_CREATED + SLICE stays review (rc $BRC, $(moved_to))"
+# BH-9987: any in-app PR open moves to in_progress; review waits for the merge
+# and a live probe (bin/merged-ticket-advance.sh).
+[ "$BRC" = 0 ] && [ "$(moved_to)" = in_progress ] && ok || bad "B7: PR_CREATED + SLICE goes to in_progress (rc $BRC, $(moved_to))"
 cbody | grep -q 'This PR is slice C0 of the plan. When it merges, we file the remaining slices' && ok || bad "B7: the comment says the rest is filed at merge"
 [ "$(creates)" = 0 ] && ok || bad "B7: nothing is filed before the merge"
 

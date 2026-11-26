@@ -368,7 +368,7 @@ apps (`bin/post-proposal.sh:61-70`); nothing requires it.
 |---|---|
 | `todo` | Untriaged or not started. `todo` with a null verdict is the untriaged alarm (`bin/untriaged-sweep.sh:22`) |
 | `in_progress` | A build owns it. Excluded from the anti-rot sweep |
-| `review` | Built, awaiting the customer. **The default terminal state for the harness** — built work goes to `review`, never straight to `done` (`prompts/TEMPLATE.md:37`) |
+| `review` | Merged, served in production, and its main screen probed, awaiting the customer. **The default terminal state for the harness** — built work goes to `review`, never straight to `done` (`prompts/TEMPLATE.md:37`). A PR open leaves an in-app ticket in `in_progress`; `bin/merged-ticket-advance.sh` moves it to `review` after the deploy audit and a live probe of its primary screen (`bin/lib/review-probe.sh`, BH-9987) |
 | `done` | **Means merged.** A `done` ticket with an open PR raises an invariant alert (`bin/board-invariants.sh:9-11`) |
 
 ### waitingOn

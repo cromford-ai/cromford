@@ -1,0 +1,9 @@
+{
+  "env": "DQW_NOW",
+  "type": "string",
+  "default": "",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9938 test seam: the epoch seconds bin/dequeue-watch.sh uses for the dispatch budget handoff age (DQW_GH_BUDGET_AT). It is read only when HARNESS_TEST_SANDBOX=1. Production always uses the clock. NOT settable from the control plane.",
+  "settable": false
+}

@@ -61,6 +61,7 @@
     "CREATE TABLE IF NOT EXISTS verdicts (\n       id INTEGER PRIMARY KEY AUTOINCREMENT,\n       repo TEXT NOT NULL,\n       pr INTEGER NOT NULL,\n       head_sha TEXT NOT NULL,\n       verdict TEXT NOT NULL,\n       source TEXT NOT NULL,\n       reviewer_model TEXT,\n       reviewer TEXT,\n       report_url TEXT,\n       note TEXT,\n       created_at TEXT NOT NULL,\n       auth TEXT,\n       human_sig TEXT,\n       review_tier TEXT,\n       review_mode TEXT,\n       break_it TEXT\n     )",
     "CREATE INDEX IF NOT EXISTS idx_verdicts_pr_head ON verdicts(repo, pr, head_sha, id)",
     "CREATE INDEX IF NOT EXISTS idx_verdicts_created ON verdicts(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_verdicts_repo_verdict_created ON verdicts(repo, verdict, created_at)",
     "CREATE TRIGGER IF NOT EXISTS verdicts_no_update BEFORE UPDATE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END",
     "CREATE TRIGGER IF NOT EXISTS verdicts_no_delete BEFORE DELETE ON verdicts BEGIN SELECT RAISE(ABORT, 'verdicts is append-only'); END"
   ],

@@ -9,9 +9,12 @@
 //   statuses       {<context>: {state, description, sha, at}}, one entry per
 //                  status context, from `status` deliveries (STATUS_MERGE_SQL)
 //   mergify_queue  {state, code, draft_pr, failing_checks, left_sha, comment_id,
-//                  at}: the newest mergify[bot] payload comment by (created_at,
+//                  at, run_id}: the newest mergify[bot] payload comment by (created_at,
 //                  id), never by updated_at (Mergify edits old comments). The
-//                  comment body is never stored.
+//                  comment body is never stored. run_id is the first
+//                  /actions/runs/<id> link of the body, or null; a row
+//                  written before BH-9938 has no run_id key, and a PUT may
+//                  leave it out.
 //   head_commit    {sha, at}: the commit time of a pushed head (push deliveries,
 //                  HEAD_PUSH_SQL; or bin/lib/pr-record.sh after a GitHub read)
 //   files          {sha, paths}: the changed paths of head `sha`, sorted and
@@ -73,7 +76,9 @@ function statusEntry(v) {
 
 function mergifyEntry(v, checksMax) {
   const keys = ["state", "code", "draft_pr", "failing_checks", "left_sha", "comment_id", "at"];
-  if (!keysOnly(v, keys)) return undefined;
+  // run_id (BH-9938) is optional: a row written before it has no such key.
+  const hasRun = isObj(v) && Object.hasOwn(v, "run_id");
+  if (!keysOnly(v, hasRun ? [...keys, "run_id"] : keys)) return undefined;
   const state = nullable(v.state, (x) => (typeof x === "string" && MQ_STATE_RE.test(x) ? x : undefined));
   const code = nullable(v.code, (x) => (typeof x === "string" && MQ_CODE_RE.test(x) ? x : undefined));
   const draft = nullable(v.draft_pr, (x) => (Number.isSafeInteger(x) && x > 0 ? x : undefined));
@@ -82,8 +87,10 @@ function mergifyEntry(v, checksMax) {
     && v.failing_checks.every((x) => typeof x === "string" && NAME_RE.test(x)) ? v.failing_checks : undefined;
   const id = Number.isSafeInteger(v.comment_id) && v.comment_id > 0 ? v.comment_id : undefined;
   const at = isoAt(v.at);
-  if ([state, code, draft, left, checks, id, at].includes(undefined)) return undefined;
-  return { state, code, draft_pr: draft, failing_checks: checks, left_sha: left, comment_id: id, at };
+  const run = hasRun ? nullable(v.run_id, (x) => (Number.isSafeInteger(x) && x > 0 ? x : undefined)) : null;
+  if ([state, code, draft, left, checks, id, at, run].includes(undefined)) return undefined;
+  const out = { state, code, draft_pr: draft, failing_checks: checks, left_sha: left, comment_id: id, at };
+  return hasRun ? { ...out, run_id: run } : out;
 }
 
 // fieldValues(checksMax) — column -> check, the VALUE_FIELDS form: the JSON
@@ -143,6 +150,10 @@ function mergifyValueOf(body, id, at, checksMax) {
   const last = (re) => { let v = null; for (const x of body.matchAll(re)) v = x[1]; return v; };
   const draft = last(/on draft #([0-9]+)/g);
   const left = last(/Left the queue\*\*[^\n]*? at `([0-9a-fA-F]{7,40})`/g);
+  // The FIRST run link, the one dqw_parse_payload_md (bin/lib/dequeue-watch/attribute.sh)
+  // keys the dequeue-watch event row on.
+  const runM = /\/actions\/runs\/([0-9]+)/.exec(body);
+  const runN = runM ? Number(runM[1]) : null;
   const value = {
     state: typeof p.state === "string" && MQ_STATE_RE.test(p.state) ? p.state : null,
     code: typeof reason.code === "string" && MQ_CODE_RE.test(reason.code) ? reason.code : null,
@@ -153,6 +164,7 @@ function mergifyValueOf(body, id, at, checksMax) {
     left_sha: left === null ? null : left.toLowerCase(),
     comment_id: id,
     at,
+    run_id: runN !== null && Number.isSafeInteger(runN) && runN > 0 ? runN : null,
   };
   return mergifyEntry(value, checksMax) === undefined ? null : value;
 }

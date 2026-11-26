@@ -142,7 +142,7 @@ for N in $(seq 1001 1100); do [ "$(GHNUM "$N")" = 0 ] || hits=$((hits+1)); done
 #     per-source seconds are named in the order br_candidates runs them.
 #     `top=[...]` stays the last field (BH-5946's pin).
 # ============================================================================
-if LASTPROF | grep -qE ' discovery_rows=100 retired_skipped=100 discovery_src=rebuilds:[0-9]+,conductor:[0-9]+,queue:[0-9]+,builds:[0-9]+,reviews:[0-9]+,external:[0-9]+ project='; then ok
+if LASTPROF | grep -qE ' discovery_rows=100 retired_skipped=100 discovery_src=rebuilds:[0-9]+,conductor:[0-9]+,queue:[0-9]+,builds:[0-9]+,reviews:[0-9]+,verdict-blocks:[0-9]+,external:[0-9]+ project='; then ok
 else bad "D7: the prof line must carry discovery_rows, retired_skipped and discovery_src before project= (prof: $(LASTPROF))"; fi
 LASTPROF | grep -qE ' top=\[[^]]*\]$' && ok || bad "D7: top=[...] must stay last (prof: $(LASTPROF))"
 [ "$(PFIELD discovery_rows)" = "$(LFIELD candidates)" ] && ok || bad "D7: discovery_rows must equal candidates"

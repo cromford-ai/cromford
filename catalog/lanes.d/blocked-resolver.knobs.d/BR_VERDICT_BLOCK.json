@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERDICT_BLOCK",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9905-verdict-block.sh",
+  "note": "BH-9905: a standing human/lead BLOCK verdict row on an open harness PR's live head (or a review-autopilot box BLOCK whose comment has a [BLOCK <class>] finding) is a fix-round candidate with the review reason, and the round's brief carries the row note or the autopilot comment. 0 = no verdict-block source and no brief addition, as before BH-9905. bin/lead-verdict.sh post reads it too (bin/lib/fix-round-offer.sh)."
+}

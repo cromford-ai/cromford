@@ -24,6 +24,14 @@
 # `done` ticket with an open PR is an invariant alert in bin/board-invariants.sh.
 # So PR_CREATED -> review, PR_MERGED -> done, and nothing else moves a status.
 #
+# NO `review` WITHOUT A LIVE PROBE (BH-9987). `review` asks the client to check
+# the work in production, and at PR open nothing is merged or deployed. So with
+# the gate on (bin/lib/review-probe.sh rp_required, row
+# lib.review-probe.review_probe_require, default 1) an in-app PR_CREATED moves
+# the ticket to `in_progress`. bin/merged-ticket-advance.sh moves it to `review`
+# after the merge, once its main screen answers in production. Gate off, or no
+# lib on the box: `review` at PR open, as before (the stderr line says why).
+#
 # A SLICE BUILD IS NEVER `done` (BH-8333). A board build whose plan says
 # `SLICE: C<k> of #<this ticket>` shipped one slice of a split plan. On
 # PR_MERGED this files the remaining slices as child tickets FIRST
@@ -31,8 +39,8 @@
 # what is not live yet, then moves the master to `in_progress`.
 # bin/decompose-parent-close.sh closes it when every child is done. A filer
 # that cannot answer now (deferred) exits 1 with nothing posted, so the sweep
-# carries it. On PR_CREATED the status stays `review` and the comment says the
-# rest is filed at merge.
+# carries it. On PR_CREATED the status is the one any PR open gets (below) and
+# the comment says the rest is filed at merge.
 # BH-10080: a weak slice marker (slice_board_marker: `SLICE: C0` with no
 # `of #`, a SLICE-REASON line) is a slice too. The comment states what the
 # filing step returned: `filed:` names the children, `exists:` names the
@@ -74,6 +82,8 @@ command -v builder_direct_on >/dev/null 2>&1 || { say "bin/lib/builder-direct.sh
 [ -r "$BIN/lib/prod-red-defer.sh" ] && . "$BIN/lib/prod-red-defer.sh"
 # shellcheck source=bin/lib/release-model.sh
 [ -r "$BIN/lib/release-model.sh" ] && . "$BIN/lib/release-model.sh"
+# shellcheck source=bin/lib/review-probe.sh
+[ -r "$BIN/lib/review-probe.sh" ] && . "$BIN/lib/review-probe.sh"
 [ "$(builder_direct_on "$HARNESS")" = 1 ] || { say "builder-direct is off"; exit 3; }
 [ -s "$BUILD/RESULT" ] || { say "no RESULT in $BUILD"; exit 4; }
 
@@ -259,8 +269,19 @@ if [ -n "$SLICE_TOKEN" ]; then
   fi
 fi
 
+# >>> review probe (BH-9987): an in-app PR open goes to in_progress, not review.
+RP_HOLD=0
+if [ "$TO_STATUS" = review ] && [ -z "$STAGING_BASE" ]; then
+  if ! command -v rp_required >/dev/null 2>&1; then
+    say "bin/lib/review-probe.sh missing: the ticket goes to review at PR open, as before"
+  elif [ "$(rp_required "$PROJECT")" = 1 ]; then
+    RP_HOLD=1
+  fi
+fi
+# <<< review probe
 LINKS_HTML=""
 SEE_LEAD="Where to see it:"
+[ "$RP_HOLD" = 1 ] && SEE_LEAD="Where to see it after this merges:"
 if [ -n "$STAGING_BASE" ]; then
   SEE_LEAD="Where to see it on staging:"
   [ "$TO_STATUS" = review ] && SEE_LEAD="Where to see it on staging after this merges:"
@@ -295,6 +316,10 @@ if [ -n "$STAGING_BASE" ]; then
   esac
 fi
 # <<< release model
+if [ "$RP_HOLD" = 1 ]; then
+  TO_STATUS=in_progress
+  LEAD="This is built and the PR is open. It moves to review after it merges and its main screen answers in production."
+fi
 BODY_HTML="<p>$(esc "$LEAD")</p>${WHAT_HTML}${SLICE_HTML}${LINKS_HTML}<p>Code: <a href=\"$(esc "$PR_URL")\">$(esc "$PR_URL")</a></p><p>$(esc "$VERIFIED")</p>"
 
 RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \

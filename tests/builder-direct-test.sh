@@ -33,6 +33,8 @@ command -v jq >/dev/null || { echo "jq missing — skipping"; exit 0; }
 
 mkdir -p "$T/h/bin/lib" "$T/h/env" "$T/h/flags" "$T/h/logs" "$T/h/state" "$T/h/builds" "$T/fakebin"
 cp "$DIR/bin/lib/builder-direct.sh" "$DIR/bin/lib/gh-rest.sh" "$DIR/bin/lib/gh-rest-var.sh" "$T/h/bin/lib/"
+# BH-9987: the close-out reads the review-probe gate (default on) from its own lib.
+scratch_install_closure bin/lib/review-probe.sh "$T/h" >/dev/null || exit 1
 cp "$DIR/bin/jobs-client.sh" "$T/h/bin/"
 cp "$DIR/bin/alert-line.sh" "$T/h/bin/"
 mkdir -p "$T/h/bin/lib/jobs" && cp "$DIR"/bin/lib/jobs/*.sh "$T/h/bin/lib/jobs/"
@@ -229,7 +231,7 @@ case "$URL" in
   */comments) [ "${BOARD_MODE:-ok}" = refuse ] && { echo '{"error":"nope"}'; exit 0; }
               echo '{"comment":{"id":"c1"}}' ;;
   */move)     [ "${BOARD_MODE:-ok}" = nomove ] && { echo '{"error":"nope"}'; exit 0; }
-              echo "{\"ticket\":{\"status\":\"$(sed -n 's/.*"toStatus":"\([a-z]*\)".*/\1/p' <<<"$BODY")\"}}" ;;
+              echo "{\"ticket\":{\"status\":\"$(sed -n 's/.*"toStatus":"\([a-z_]*\)".*/\1/p' <<<"$BODY")\"}}" ;;
 esac
 STUB
 chmod +x "$T/fakebin/curl"
@@ -248,11 +250,13 @@ closeout() { ( export HARNESS="$T/h" BOARD_SINK="$T/board.txt" GH_SINK="$T/gh.tx
 : > "$T/board.txt"; seed_build "PR_CREATED https://github.com/o/r/pull/9"
 OUT=$(closeout); RC=$?
 [ "$RC" = 0 ] && ok || bad "a PR_CREATED close-out must post (rc $RC; $(tail -2 "$T/closeout.err"))"
-[ "$OUT" = "POSTED project-3/TK-9 -> review" ] && ok || bad "the caller needs to be told where it landed (got '$OUT')"
+[ "$OUT" = "POSTED project-3/TK-9 -> in_progress" ] && ok || bad "the caller needs to be told where it landed (got '$OUT')"
 grep -q 'tickets/T1/comments' "$T/board.txt" && ok || bad "it must POST a comment"
-# BUILT WORK GOES TO review; `done` MEANS MERGED (docs/BOARD-API-CONTRACT.md) —
-# a `done` ticket with an open PR is an invariant alert in board-invariants.sh.
-grep -q '"toStatus":"review"' "$T/board.txt" && ok || bad "PR_CREATED must move the ticket to review, never done"
+# AN OPEN PR GOES TO in_progress; `review` WAITS FOR THE MERGE AND A LIVE PROBE
+# (BH-9987); `done` MEANS MERGED (docs/BOARD-API-CONTRACT.md) — a `done` ticket
+# with an open PR is an invariant alert in board-invariants.sh.
+grep -q '"toStatus":"in_progress"' "$T/board.txt" && ok || bad "PR_CREATED must move the ticket to in_progress, never done"
+grep -q '"toStatus":"done"' "$T/board.txt" && bad "PR_CREATED must never move the ticket to done" || ok
 grep -q 'app.example/clients' "$T/board.txt" \
   && ok || bad "the comment must carry DIRECT production links, taken from the plan's own QA screens"
 grep -q 'add the export button' "$T/board.txt" \

@@ -22,7 +22,10 @@
 #   tracker_transition <id> <status>
 #   tracker_label_add <id> <label>
 #   tracker_label_remove <id> <label>
-#   tracker_create <payload-json> <out>   github-issues only: POST a new issue, GitHub's answer in <out>
+#   tracker_create <payload-json> <out>   LEGACY, github-issues only: POST a new issue, GitHub's answer in <out>
+#   tracker_create <titlefile> <bodyfile> [--label <l>]... [--parent <id>] [--blocked-by <id>]...
+#                                       every adapter: the new ticket's normalized object (below)
+#   tracker_search <query>              JSON array of list rows whose TITLE holds <query>
 #   tracker_link_pr <id> <pr-url>
 #   tracker_close_out <id> <bodyfile> [<status>]   comment, THEN the terminal status
 #   tracker_waiting_on <project> <id>   OK | BLOCKED <reason>, from bin/triage-gate.sh
@@ -75,6 +78,46 @@
 #   updatedAt     the last change, UTC `YYYY-MM-DDTHH:MM:SSZ` (no fraction,
 #                 no offset), or null when the tracker gave none
 #   commentCount  an integer, or null when the tracker gave no exact count
+#
+# TRACKER_CREATE, the two forms (BH-7922). The LEGACY form is chosen when the
+# call has exactly two args and the first is a readable file holding a JSON
+# object: it is trk_<adapter>_create as BH-8706 shipped it (github-issues
+# only). Every other call is the NEW form:
+#   <titlefile>   its first line, trimmed, 1..256 characters, no control char
+#   <bodyfile>    the body; the adapter appends `Part of <parent>` and one
+#                 `Blocked-by: <id>` per blocker, only for a line the body does
+#                 not already carry (bin/lib/ticket-ref.sh reads them)
+#   --label       repeatable, the tracker_list label charset
+#   --parent      once; --blocked-by repeatable. Each <id> is a ticket ref
+#                 (`#N` or `KEY-N`, bin/lib/ticket-ref.sh); a bare N is refused
+# A bad argument is rc 1 with one stderr line, and nothing is sent. Each
+# adapter's trk_<pre>_create_ticket reads TRK_CREATE_TITLE, TRK_CREATE_BODY (a
+# file, footers included), TRK_CREATE_LABELS, TRK_CREATE_PARENT and
+# TRK_CREATE_BLOCKED (newline lists), set for that one call. Relations:
+# GitHub and the board carry them as the text footers only; Linear also sends
+# parentId and one issueRelationCreate type blocks per blocker; Jira sends
+# fields.parent where the project has a parent field and one issueLink
+# "Blocks" per blocker.
+# OUTPUT. rc 0 means the ticket EXISTS, and stdout is one JSON object: the
+# tracker_read of the new ticket plus `relationErrors`, a list of strings (a
+# label the tracker does not have, a parent field the project lacks, a
+# relation that did not take). A relation that failed after the create is
+# never rc 1: rc 1 would make a caller create the ticket again. A read-back
+# that fails after the create prints {id, key, url, relationErrors,
+# readBack: false}, still rc 0. rc 1 = no ticket was created, except the one
+# line `<adapter> create answered with no key; the ticket may exist` (a 2xx
+# that named no ticket): a caller must tracker_search before it retries.
+# rc 75 = rate-limited or no answer on the create. A dry run prints its
+# DRYRUN lines and no object, rc 0.
+#
+# TRACKER_SEARCH <query>, 1..200 characters after trim, no control char (else
+# rc 1, nothing sent). The adapter asks its own search (GitHub search/issues
+# `repo:<slug> is:issue in:title`, the board's ticket list, Jira JQL
+# `summary ~`, Linear `title containsIgnoreCase`), all states, with
+# TRK_SEARCH_Q and TRK_SEARCH_MAX. Then ONE check here keeps the rows whose
+# title holds the query (case-insensitive) and at most TRK_SEARCH_MAX of them:
+# the settings row trk_search.max_rows (1..100, read once per process; a
+# dry run reads no row), fallback 50. The rows are tracker_list rows.
 #
 # THE LIST FILTERS. With no flag every adapter sends the request it always
 # sent (GitHub and Jira and Linear: open + the build label; the board: every
@@ -423,9 +466,170 @@ tracker_comment()      { _trk_call comment "$@"; }
 tracker_transition()   { _trk_call transition "$@"; }
 tracker_label_add()    { _trk_call label_add "$@"; }
 tracker_label_remove() { _trk_call label_remove "$@"; }
-tracker_create()       { _trk_call create "$@"; }
+tracker_create()       {
+  # The legacy form (BH-8706): exactly two args and the first is a readable
+  # file holding a JSON OBJECT (the payload). Anything else is the new form.
+  if [ $# -eq 2 ] && [ -f "$1" ] && [ -r "$1" ] && jq -e 'type == "object"' "$1" >/dev/null 2>&1; then
+    _trk_call create "$@"
+    return $?
+  fi
+  _trk_create_new "$@"
+}
 tracker_link_pr()      { _trk_call link_pr "$@"; }
 tracker_close_out()    { _trk_call close_out "$@"; }
+
+# _trk_ref_load — bin/lib/ticket-ref.sh, beside this file or under $HARNESS.
+_trk_ref_load() {
+  command -v ticket_ref_valid >/dev/null 2>&1 && return 0
+  local root="${HARNESS:-${H:-}}" f
+  f="$(_trk_dir)/ticket-ref.sh"
+  [ -r "$f" ] || f="${root:+$root/bin/lib/ticket-ref.sh}"
+  [ -n "$f" ] && [ -r "$f" ] || { printf 'tracker: bin/lib/ticket-ref.sh is missing\n' >&2; return 1; }
+  # shellcheck source=bin/lib/ticket-ref.sh
+  . "$f"
+}
+
+# _trk_create_footers <bodyfile> <out> — <out> is the body plus the text
+# footers every adapter sends: `Part of $TRK_CREATE_PARENT` and one
+# `Blocked-by: <id>` per line of $TRK_CREATE_BLOCKED, each only when the body
+# does not already carry it (read with the ticket-ref parsers). The footer
+# text is what the harness's footer parsers read on every tracker.
+_trk_create_footers() {
+  local bf="$1" o="$2" have_p have_b add="" b
+  cat "$bf" > "$o" 2>/dev/null || return 1
+  have_p=$(ticket_ref_part_of < "$bf")
+  have_b=$(ticket_ref_blocked_by < "$bf")
+  if [ -n "${TRK_CREATE_PARENT:-}" ] && ! grep -qxF -- "$TRK_CREATE_PARENT" <<<"$have_p"; then
+    add="Part of $TRK_CREATE_PARENT"$'\n'
+  fi
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    grep -qxF -- "$b" <<<"$have_b" && continue
+    add="${add}Blocked-by: $b"$'\n'
+    have_b="$have_b"$'\n'"$b"
+  done <<<"${TRK_CREATE_BLOCKED:-}"
+  [ -n "$add" ] || return 0
+  if [ -s "$o" ]; then
+    [ "$(tail -c1 "$o" | od -An -tx1 | tr -d ' ')" = 0a ] || printf '\n' >> "$o"
+    printf '\n' >> "$o"
+  fi
+  printf '%s' "$add" >> "$o"
+}
+
+# _trk_create_new <titlefile> <bodyfile> [--label <l>]... [--parent <id>]
+# [--blocked-by <id>]... — the new tracker_create form (see the header).
+_trk_create_new() {
+  local tf="${1:-}" bf="${2:-}" title out rc=0 key id full body
+  local lre='^[A-Za-z0-9_.: -]{1,100}$'
+  local TRK_CREATE_TITLE="" TRK_CREATE_BODY="" TRK_CREATE_LABELS="" TRK_CREATE_PARENT="" TRK_CREATE_BLOCKED=""
+  _trk_ref_load || return 1
+  [ $# -ge 2 ] || { printf 'tracker: tracker_create needs <titlefile> <bodyfile>\n' >&2; return 1; }
+  [ -f "$tf" ] && [ -r "$tf" ] || { printf 'tracker: tracker_create title file %s is not readable\n' "$(_trk_sq "$tf")" >&2; return 1; }
+  [ -f "$bf" ] && [ -r "$bf" ] || { printf 'tracker: tracker_create body file %s is not readable\n' "$(_trk_sq "$bf")" >&2; return 1; }
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --label|--parent|--blocked-by)
+        [ $# -ge 2 ] || { printf 'tracker: tracker_create %s needs a value\n' "$1" >&2; return 1; } ;;
+      *) printf 'tracker: tracker_create does not take %s\n' "$(_trk_sq "$1")" >&2; return 1 ;;
+    esac
+    case "$1" in
+      --label)
+        [[ "$2" =~ $lre ]] || { printf 'tracker: tracker_create --label %s is not a label\n' "$(_trk_sq "$2")" >&2; return 1; }
+        TRK_CREATE_LABELS="${TRK_CREATE_LABELS}${TRK_CREATE_LABELS:+$'\n'}$2" ;;
+      --parent)
+        [ -z "$TRK_CREATE_PARENT" ] || { printf 'tracker: tracker_create takes one --parent\n' >&2; return 1; }
+        ticket_ref_valid "$2" || { printf 'tracker: tracker_create --parent %s is not a ticket ref (#N or KEY-N)\n' "$(_trk_sq "$2")" >&2; return 1; }
+        TRK_CREATE_PARENT="$2" ;;
+      --blocked-by)
+        ticket_ref_valid "$2" || { printf 'tracker: tracker_create --blocked-by %s is not a ticket ref (#N or KEY-N)\n' "$(_trk_sq "$2")" >&2; return 1; }
+        TRK_CREATE_BLOCKED="${TRK_CREATE_BLOCKED}${TRK_CREATE_BLOCKED:+$'\n'}$2" ;;
+    esac
+    shift 2
+  done
+  TRK_CREATE_BLOCKED=$(printf '%s\n' "$TRK_CREATE_BLOCKED" | awk 'NF && !seen[$0]++')
+  title=$(head -n 1 "$tf"); title="${title%$'\r'}"
+  title="${title#"${title%%[![:space:]]*}"}"; title="${title%"${title##*[![:space:]]}"}"
+  if [ -z "$title" ] || [ "${#title}" -gt 256 ] || [[ "$title" =~ [[:cntrl:]] ]]; then
+    printf 'tracker: tracker_create title must be 1..256 characters with no control character\n' >&2
+    return 1
+  fi
+  TRK_CREATE_TITLE="$title"
+  body=$(mktemp "${TMPDIR:-/tmp}/trk-create.XXXXXX") || return 1
+  _trk_create_footers "$bf" "$body" || { rm -f "$body"; printf 'tracker: tracker_create could not build the body\n' >&2; return 1; }
+  TRK_CREATE_BODY="$body"
+  out=$(_trk_call create_ticket) || rc=$?
+  rm -f "$body"
+  if _trk_dry; then
+    [ -n "$out" ] && printf '%s\n' "$out"
+    return "$rc"
+  fi
+  [ "$rc" = 0 ] || return "$rc"
+  key=$(printf '%s' "$out" | jq -r 'if type == "object" and (.key | type == "string") then .key else empty end' 2>/dev/null)
+  id=$(printf '%s' "$out" | jq -r 'if type == "object" and (.id | type == "string") then .id else empty end' 2>/dev/null)
+  if [ -z "$key" ] || [ -z "$id" ]; then
+    printf 'tracker: %s create answered with no key; the ticket may exist\n' "${TRK_ADAPTER:-?}" >&2
+    return 1
+  fi
+  # The read-back. A failed read never turns a created ticket into rc 1: the
+  # caller would create it again.
+  if full=$(tracker_read "$id" 2>/dev/null) && printf '%s' "$full" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    printf '%s' "$full" | jq -c --argjson m "$out" '. + {relationErrors: ($m.relationErrors // [])}'
+  else
+    printf '%s' "$out" | jq -c '{id, key, url: (.url // null), relationErrors: (.relationErrors // []), readBack: false}'
+  fi
+  return 0
+}
+
+# _TRK_SEARCH_BELT — the one check tracker_search runs on every adapter's
+# answer: a list, every title holds the query (case-insensitive), at most $max
+# rows. A server that also matched bodies, or stemmed, cannot widen it.
+# shellcheck disable=SC2016
+_TRK_SEARCH_BELT='if type != "array" then error("not a list") else . end
+  | [.[] | select((.title | type) == "string" and ((.title | ascii_downcase) | contains($q | ascii_downcase)))]
+  | .[:$max]'
+
+# _trk_search_max — the row cap of tracker_search: settings row
+# trk_search.max_rows (1..100), read once per process into
+# _TRK_SEARCH_MAX_CACHE. Fallback 50 (the seed of trk_search.max_rows)
+# for no row, a worker that did not answer, a dry run (it reads no row), or a
+# bad value (one stderr line).
+_trk_search_max() {
+  local root="${HARNESS:-${H:-}}" jc v rc=0 fb=50
+  if _trk_dry; then printf '%s' "$fb"; return 0; fi
+  [ -n "${_TRK_SEARCH_MAX_CACHE:-}" ] && { printf '%s' "$_TRK_SEARCH_MAX_CACHE"; return 0; }
+  jc="$(_trk_dir)/../jobs-client.sh"
+  [ -r "$jc" ] || jc="${root:+$root/bin/jobs-client.sh}"
+  if [ -n "$root" ] && [ -n "$jc" ] && [ -r "$jc" ]; then
+    # shellcheck source=/dev/null
+    v=$( HARNESS="$root"; . "$jc" >/dev/null 2>&1 || exit 1; JOBS_ALERT=0 setting_get trk_search.max_rows 2>/dev/null ) || rc=$?
+  else
+    rc=1
+  fi
+  if [ "$rc" = 0 ]; then
+    if [[ "$v" =~ ^[0-9]{1,3}$ ]] && [ "$v" -ge 1 ] && [ "$v" -le 100 ]; then fb="$v"
+    else printf 'tracker: settings row trk_search.max_rows is %s, not 1..100; using %s\n' "$(_trk_sq "$v")" "$fb" >&2; fi
+  fi
+  _TRK_SEARCH_MAX_CACHE="$fb"
+  printf '%s' "$fb"
+}
+
+# tracker_search <query> — see the header.
+tracker_search() {
+  local q="${1:-}" out max rc=0
+  [ $# -eq 1 ] || { printf 'tracker: tracker_search takes one <query>\n' >&2; return 1; }
+  q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
+  if [ -z "$q" ] || [ "${#q}" -gt 200 ] || [[ "$q" =~ [[:cntrl:]] ]]; then
+    printf 'tracker: tracker_search query must be 1..200 characters with no control character\n' >&2
+    return 1
+  fi
+  _trk_search_max >/dev/null
+  max=$(_trk_search_max 2>/dev/null)
+  local TRK_SEARCH_Q="$q" TRK_SEARCH_MAX="$max"
+  out=$(_trk_call search) || return $?
+  printf '%s' "$out" | jq -ce --arg q "$q" --argjson max "$max" "$_TRK_SEARCH_BELT" 2>/dev/null \
+    || { printf 'tracker: %s search answered no list\n' "${TRK_ADAPTER:-?}" >&2; return 1; }
+}
 
 # tracker_waiting_on <project> <id> — ONE implementation for every adapter: the
 # answer bin/triage-gate.sh --buildable gives (--buildable-strict when

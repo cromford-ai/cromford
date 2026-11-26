@@ -122,6 +122,7 @@ on = wf.get(True, wf.get("on"))
 open(out + "/meta", "w").write("\n".join([
     "concurrency=%s" % (wf.get("concurrency") or {}).get("group", ""),
     "push_main=%s" % ("main" in ((on or {}).get("push") or {}).get("branches", [])),
+    "schedule=%s" % bool((on or {}).get("schedule")),
     "dispatch=%s" % ("workflow_dispatch" in (on or {})),
 ]) + "\n")
 jobs = list(wf["jobs"].values())
@@ -144,8 +145,11 @@ for s in steps:
 PY
   if [ -f "$T/wf/gate.sh" ]; then
     grep -qx 'concurrency=publish-cromford' "$T/wf/meta" && ok || bad "W1 concurrency group must be publish-cromford: $(cat "$T/wf/meta" | tr '\n' ' ')"
-    grep -qx 'push_main=True' "$T/wf/meta" && grep -qx 'dispatch=True' "$T/wf/meta" && ok \
-      || bad "W2 triggers must be push to main and workflow_dispatch"
+    # TEST-CHANGE BH-10006: the publish runs on a schedule and on dispatch, not
+    # on every push to main (approved CI audit 2026-11-24). Its premise here is
+    # unchanged: the public push runs only from main's own triggers.
+    grep -qx 'push_main=False' "$T/wf/meta" && grep -qx 'schedule=True' "$T/wf/meta" && grep -qx 'dispatch=True' "$T/wf/meta" && ok \
+      || bad "W2 triggers must be the schedule and workflow_dispatch, with no push: $(tr '\n' ' ' < "$T/wf/meta")"
     grep -qx 'CROMFORD_DEPLOY_KEY' "$T/wf/gate.env" && ok || bad "W3 the gate step must read CROMFORD_DEPLOY_KEY"
     # W4: no secret. The gate says so, exits 0, and records armed=false.
     : > "$T/wf/out-empty"

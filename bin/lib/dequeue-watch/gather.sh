@@ -6,7 +6,10 @@
 # Sourced by the lane, never run; nothing here runs on source.
 #
 # The pulls/<n> read goes to the PR record first (ph_prr_read, BH-8269) and
-# to GitHub only on a miss. Every other read is `gh_rest GET` except the batch log. An unread answer (rc 75,
+# to GitHub only on a miss. The label lists, the Mergify payload and the
+# lead-verdict status go through prr_read dequeue-watch (BH-9938; the step is
+# the GH_SOURCE knob, the reads are bin/lib/prr-shadow.d/dequeue-watch.sh).
+# Every other read is `gh_rest GET` except the batch log. An unread answer (rc 75,
 # non-2xx) is never an empty one: a list that was not read skips the project,
 # and an input attribution needs that was not read leaves it `unknown`, never
 # `bystander` (D9/D11).
@@ -42,42 +45,48 @@ _dqw_g_log() {
   echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') gather: $*" >> "$h/logs/dequeue-watch.log" 2>/dev/null || true
 }
 
+# dqw_gh_label_list <slug> <label> / dqw_gh_comment <slug> <comment-id> — the
+# two GitHub reads the seam's github side makes (dqw_labels_github,
+# dqw_payload_github), kept here beside the lane's other GitHub reads. Each is
+# one gh_rest GET to stdout with its rc; call it as `> file`, never in $( ).
+dqw_gh_label_list() { gh_rest GET "repos/$1/issues?labels=$2&state=open&per_page=100"; }
+dqw_gh_comment() { gh_rest GET "repos/$1/issues/comments/$2"; }
+
 dqw_gather_dequeued() {
-  local slug="$1" l f
+  local slug="$1" f
   [ -n "$(_dqw_g_root)" ] && [ -d "${DQW_TMP:-}" ] || return 1
-  for l in merge-queue dequeued; do
-    f="$DQW_TMP/list-${slug//\//_}-$l.json"
-    gh_rest GET "repos/$slug/issues?labels=$l&state=open&per_page=100" > "$f" || return 1
-    jq -e 'type == "array"' "$f" >/dev/null 2>&1 || return 1
-    [ "$(jq length "$f")" -lt 100 ] || _dqw_g_log "$slug label $l answered 100 issues, the rest are not read this tick"
-  done
+  f="$DQW_TMP/list-${slug//\//_}.json"
+  # The record or GitHub (bin/lib/prr-shadow.d/dequeue-watch.sh): one file of
+  # issue-list arrays either way. A miss in step record reads GitHub.
+  prr_read dequeue-watch "$slug#labels" "$f" dqw_labels_record dqw_labels_github dqw_labels_norm "$slug" || return 1
   jq -rs 'add | map(select(.pull_request != null)
                     | select([.labels[]?.name] | (index("queued") or index("checking")) | not))
-          | unique_by(.number) | .[].number' \
-    "$DQW_TMP/list-${slug//\//_}-merge-queue.json" "$DQW_TMP/list-${slug//\//_}-dequeued.json"
+          | unique_by(.number) | .[].number' "$f"
 }
 
 dqw_gather_pr() {
-  local P="$1" slug="$2" num="$3" h line state epoch cid body tsv draft run left checks pr
+  local P="$1" slug="$2" num="$3" h line state epoch cid tsv draft run left checks pr
   local head ref mergeable url age dir runs title rerun=0 log suite members m word how vline verdict="" stale=0 main_red=0 run_url
   local ev evcls own prow
   DQW_G_WATCH="" DQW_G_STALE="" DQW_G_RECORDED="" DQW_G_CLASS=""
   h=$(_dqw_g_root)
   [ -n "$h" ] && [ -d "${DQW_TMP:-}" ] || return 1
   url="https://github.com/$slug/pull/$num"
-  line=$(sdq_payload_last "$slug" "$num"); case $? in
+  # The payload from the record or GitHub (bin/lib/prr-shadow.d/dequeue-watch.sh):
+  # one TSV line, state epoch cid draft run left checks.
+  line="$DQW_TMP/payload-${slug//\//_}-$num.tsv"
+  DQW_PAYLOAD_CID=""
+  prr_read dequeue-watch "$slug#$num:payload" "$line" dqw_payload_record dqw_payload_github dqw_payload_norm "$slug" "$num"
+  case $? in
     0) ;;
     1) _dqw_g_log "$slug#$num no Mergify payload, skipped"; return 1 ;;
+    3) _dqw_g_log "$slug#$num payload comment $DQW_PAYLOAD_CID unread, skipped"; return 1 ;;
+    4) _dqw_g_log "$slug#$num payload comment $DQW_PAYLOAD_CID does not parse as dequeued, skipped"; return 1 ;;
     *) _dqw_g_log "$slug#$num payload-unread, skipped"; return 1 ;;
   esac
-  IFS=$'\t' read -r state epoch cid <<<"$line"
+  IFS=$'\t' read -r state epoch cid draft run left checks < "$line"
   [ "$state" = dequeued ] || { _dqw_g_log "$slug#$num payload says '$state', not dequeued"; return 1; }
-  # `> file`, never `$(gh_rest …)`: GH_REST_STATUS must survive (gh-rest-no-subshell-lint).
-  gh_rest GET "repos/$slug/issues/comments/$cid" > "$DQW_TMP/comment-${slug//\//_}-$num.json" 2>/dev/null \
-    && body=$(jq -er '.body | strings' "$DQW_TMP/comment-${slug//\//_}-$num.json" 2>/dev/null) \
-    || { _dqw_g_log "$slug#$num payload comment $cid unread, skipped"; return 1; }
-  tsv=$(dqw_parse_payload_md "$body") || { _dqw_g_log "$slug#$num payload comment $cid does not parse as dequeued, skipped"; return 1; }
-  IFS=$'\t' read -r draft run left checks <<<"$tsv"
+  tsv=$(printf '%s\t%s\t%s\t%s' "$draft" "$run" "$left" "$checks")
   # The PR record first (bin/lib/ph-pr-record.sh). A miss logs one PRR_MISS
   # line here and runs the GitHub read below, then writes its answer back.
   # A null mergeable_state is a miss, never "-": classify reads that field.
@@ -186,7 +195,8 @@ dqw_gather_pr() {
   esac
   case "$verdict" in
     MERGE|MERGE-WITH-NOTES)
-      gh_rest GET "repos/$slug/commits/$head/status" > "$dir/status" \
+      prr_read dequeue-watch "$slug#$num@${head:0:12}:status" "$dir/status" \
+          dqw_status_record dqw_status_github dqw_status_norm "$slug" "$num" "$head" \
         && jq -e --arg c "$(vs_context 2>/dev/null || echo lead-verdict)" \
              '(.statuses | type == "array") and (any(.statuses[]; .context == $c and .state == "success") | not)' \
              "$dir/status" >/dev/null 2>&1 && stale=1 ;;

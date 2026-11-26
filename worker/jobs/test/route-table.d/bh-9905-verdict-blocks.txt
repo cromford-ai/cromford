@@ -1,0 +1,4 @@
+# VERDICT BLOCKS (BH-9905): the standing BLOCK rows of one repo since a time,
+# in one read. The blocked-resolver's verdict-block candidate source reads one
+# batch per project per tick. Bearer-gated.
+GET /api/verdict-blocks

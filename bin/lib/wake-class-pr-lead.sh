@@ -30,6 +30,16 @@
 # get one say line. Every miss (a read that fails, a ring the worker refuses,
 # no repo list) is one say line; the */15 cron is the backstop.
 #
+# THE PR RECORD (BH-9938, BH-9926 wave 6). The PR read goes through
+# prr_read wake-loop (bin/lib/prr-shadow.sh) and the seam
+# bin/lib/prr-shadow.d/wake-loop.sh (wl_pr_record, wl_pr_github, wl_pr_norm),
+# step row lane.wake-loop.gh_source (env GH_SOURCE): off = GitHub only, shadow
+# = both and act on GitHub, record = the record, GitHub on a miss. The cap
+# counts GitHub reads only: a read the record served (PRR_SOURCE=record) does
+# not spend it. Over the cap, step record still asks the record (no PRR_MISS
+# line on a miss there) and only a record miss counts as over the cap. With no
+# prr-shadow lib or no seam, the read is the inline GitHub read as before.
+#
 # SOURCE-TIME RULE. wake-loop.sh sources this file BEFORE it defines say(), so
 # nothing here runs at source time except the accumulator below.
 # shellcheck shell=bash
@@ -67,7 +77,7 @@ wc_pr_lead_row() {
 # wc_pr_lead_dispatch — once per non-empty drain. Always rc 0, and the
 # accumulator is empty on every return.
 wc_pr_lead_dispatch() {
-  local q="$WC_PR_LEAD_PRS" v repos cap e slug n body f state draft head rc read=0 left=0
+  local q="$WC_PR_LEAD_PRS" v repos cap e slug n body f state draft head rc read=0 left=0 prr=0 step=off tmpf=""
   WC_PR_LEAD_PRS=""
   [ -n "$q" ] || return 0
   # Kill row. Fallback 1 (on) when there is no row, an outage, or another value:
@@ -100,18 +110,52 @@ wc_pr_lead_dispatch() {
     # shellcheck source=bin/lib/gh-rest.sh
     . "$(dirname "${BASH_SOURCE[0]}")/gh-rest.sh" 2>/dev/null || true
   fi
+  # The PR record (BH-9938): prr_read and the wake-loop seam, from this lib's
+  # own dir. Either one absent = the inline read below, as before.
+  if ! declare -F prr_read >/dev/null 2>&1 && [ -r "$(dirname "${BASH_SOURCE[0]}")/prr-shadow.sh" ]; then
+    # shellcheck source=bin/lib/prr-shadow.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/prr-shadow.sh" 2>/dev/null || true
+  fi
+  if declare -F prr_read >/dev/null 2>&1 \
+     && { declare -F wl_pr_record >/dev/null 2>&1 || prr_seam_load wake-loop 2>/dev/null; } \
+     && declare -F wl_pr_record >/dev/null 2>&1 && declare -F wl_pr_github >/dev/null 2>&1 \
+     && declare -F wl_pr_norm >/dev/null 2>&1 \
+     && tmpf=$(mktemp "${TMPDIR:-/tmp}/wc-pr-lead.XXXXXX" 2>/dev/null); then
+    prr=1; step=$(prr_step wake-loop)
+  fi
   for e in $q; do
     slug="${e%#*}"; n="${e##*#}"
     case "$repos" in *" $slug "*) ;; *) continue ;; esac
-    if [ "$read" -ge "$cap" ]; then left=$((left + 1)); continue; fi
-    read=$((read + 1))
     body=""
-    # gh_rest_var, never $(gh_rest ...): a command substitution drops the
-    # GH_REST_STATUS the helper sets (gh-rest-no-subshell-lint).
-    if declare -F gh_rest_var >/dev/null 2>&1 && gh_rest_var body GET "repos/$slug/pulls/$n"; then
-      f=$(jq -r '[(.state // ""), ((.draft // false) | tostring), (.head.sha // "")] | join("|")' <<<"$body" 2>/dev/null) || f=""
+    if [ "$prr" = 1 ]; then
+      if [ "$read" -ge "$cap" ]; then
+        # Over the cap: no GitHub read. Step record still rings on a record hit.
+        if [ "$step" = record ] && wl_pr_record "$tmpf" "$slug" "$n" >/dev/null 2>&1; then
+          body=$(cat "$tmpf" 2>/dev/null)
+        else
+          left=$((left + 1)); continue
+        fi
+      else
+        rc=0; PRR_SOURCE=github
+        prr_read wake-loop "$slug#$n" "$tmpf" wl_pr_record wl_pr_github wl_pr_norm "$slug" "$n" || rc=$?
+        [ "${PRR_SOURCE:-github}" = record ] || read=$((read + 1))
+        [ "$rc" = 0 ] && body=$(cat "$tmpf" 2>/dev/null)
+      fi
+      if [ -n "$body" ]; then
+        f=$(jq -r '[(.state // ""), ((.draft // false) | tostring), (.head.sha // "")] | join("|")' <<<"$body" 2>/dev/null) || f=""
+      else
+        f=""
+      fi
     else
-      f=""
+      if [ "$read" -ge "$cap" ]; then left=$((left + 1)); continue; fi
+      read=$((read + 1))
+      # gh_rest_var, never $(gh_rest ...): a command substitution drops the
+      # GH_REST_STATUS the helper sets (gh-rest-no-subshell-lint).
+      if declare -F gh_rest_var >/dev/null 2>&1 && gh_rest_var body GET "repos/$slug/pulls/$n"; then
+        f=$(jq -r '[(.state // ""), ((.draft // false) | tostring), (.head.sha // "")] | join("|")' <<<"$body" 2>/dev/null) || f=""
+      else
+        f=""
+      fi
     fi
     IFS='|' read -r state draft head <<<"$f"
     head=$(printf '%s' "${head:-}" | tr 'A-F' 'a-f')
@@ -128,6 +172,7 @@ wc_pr_lead_dispatch() {
       _wc_pr_lead_say "pr-lead: $slug#$n @${head:0:12}: doorbell not rung (rc $rc); the */15 cron covers it"
     fi
   done
+  [ -n "$tmpf" ] && rm -f "$tmpf"
   [ "$left" -gt 0 ] && _wc_pr_lead_say "pr-lead: $left PR(s) over the read cap of $cap; the */15 cron covers them"
   return 0
 }

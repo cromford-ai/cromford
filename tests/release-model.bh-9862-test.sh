@@ -7,7 +7,8 @@
 #   C1-C4  the real bin/board-closeout.sh against a stub board:
 #          staging + PR_CREATED  comment, staging link, move to in_progress
 #          staging + PR_MERGED   "on staging", "not live on production", in_progress
-#          no row  + PR_CREATED  move to review, production link (unchanged)
+#          no row  + PR_CREATED  move to in_progress, production link (BH-9987:
+#                                review needs a live probe after the merge)
 #          no row  + PR_MERGED   move to done (unchanged)
 #   M1-M2  the real bin/migration-autopilot.sh: a staging project stops before
 #          any request; a project with no row still reaches its own wiring
@@ -110,8 +111,8 @@ grep -q 'on its way to production' "$T/c.curl.bodies" && bad "C2 a staging merge
 grep -q 'stg.example.test/clients' "$T/c.curl.bodies" && ok || bad "C2 the comment must link staging"
 
 closeout ctl "PR_CREATED https://github.com/o/r/pull/9"
-[ "$RC" = 0 ] && [ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = review ] && grep -q 'app.example.test/clients' "$T/c.curl.bodies" && ok \
-  || bad "C3 no row + PR_CREATED is unchanged: review, production link (rc $RC; $(cat "$T/c.curl.moves"))"
+[ "$RC" = 0 ] && [ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = in_progress ] && grep -q 'app.example.test/clients' "$T/c.curl.bodies" && ok \
+  || bad "C3 no row + PR_CREATED: in_progress (BH-9987), production link (rc $RC; $(cat "$T/c.curl.moves"))"
 grep -q 'staging' "$T/c.curl.bodies" && bad "C3 a project with no row must not mention staging" || ok
 closeout ctl "PR_MERGED https://github.com/o/r/pull/9"
 [ "$RC" = 0 ] && [ "$(jq -r .toStatus "$T/c.curl.moves" 2>/dev/null)" = done ] && grep -q 'on its way to production' "$T/c.curl.bodies" && ok \

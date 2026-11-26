@@ -103,12 +103,31 @@ summary() { printf '%s%s\n' "$(date -u +%FT%TZ)" "${1:+ $1}" >> "$LOG"; }
 note() { echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') $*" >> "$LOG"; }
 warn() { "$H/bin/lane-alert.sh" --severity warn --id "$1" dequeue-watch "$2" >/dev/null 2>&1 || true; }
 
+# dqw_now — the clock in epoch seconds. DQW_NOW is a sandbox-only test seam.
+dqw_now() {
+  if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ "${DQW_NOW:-}" =~ ^[0-9]+$ ]]; then printf '%s\n' "$DQW_NOW"; else date -u +%s; fi
+}
+
 if lane_switch dequeue-watch-off file; then summary off; exit 0; fi
 [ "${DEQUEUE_WATCH:-1}" = 0 ] && { summary disabled; exit 0; }
 if [ "$RUN_MODE" = dispatch ]; then
   if ! command -v pl_lane_dispatch >/dev/null 2>&1; then
     echo "$(date -u +%FT%TZ) dequeue-watch dispatch: bin/lib/project-lanes.sh is not loaded — no project run started"
     exit 1
+  fi
+  # ONE rate_limit judgment per dispatch (BH-9938): the project runs take it
+  # from DQW_GH_BUDGET_RC/AT while it is younger than the BH-8334 memo knob
+  # GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S, in place of one gh_budget_low each.
+  # No project in fleet.conf, no read.
+  unset DQW_GH_BUDGET_RC DQW_GH_BUDGET_AT
+  if awk '$1 !~ /^#/ && NF >= 2 { f = 1 } END { exit !f }' "$H/fleet.conf" 2>/dev/null; then
+    # shellcheck disable=SC1091
+    . "$SELF/lib/gh-budget.sh" 2>/dev/null || true
+    if declare -F gh_budget_low >/dev/null; then
+      gh_budget_low dequeue-watch; DQW_GH_BUDGET_RC=$?
+      DQW_GH_BUDGET_AT=$(dqw_now)
+      export DQW_GH_BUDGET_RC DQW_GH_BUDGET_AT
+    fi
   fi
   rc=0; line=$(pl_lane_dispatch dequeue-watch 50 "$H/bin/dequeue-watch.sh") || rc=$?
   echo "$(date -u +%FT%TZ) $line"
@@ -138,6 +157,13 @@ export HARNESS="$H"
 {
   . "$SELF/lib/gh-budget.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest.sh" 2>/dev/null || true
+  . "$SELF/lib/prr-shadow.sh" 2>/dev/null && prr_seam_load dequeue-watch 2>/dev/null
+  # lane_env_apply above exports GH_SOURCE when a settings row (live or the box
+  # cache) holds lane.dequeue-watch.gh_source. Unset after it = no row: the
+  # knob's default, resolved once here, not by one settings read per prr_read.
+  if [ -z "${GH_SOURCE+x}" ] && command -v lane_env_apply >/dev/null 2>&1 && declare -F prr_step >/dev/null; then
+    GH_SOURCE=$(GH_SOURCE='' prr_step dequeue-watch); export GH_SOURCE
+  fi
   [ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh" 2>/dev/null
   for _l in verdicts mc-stale-dequeue fix-round-queue needs-human hub-box ph-pr-record \
             dequeue-watch/attribute dequeue-watch/classify dequeue-watch/act dequeue-watch/llm dequeue-watch/gather; do
@@ -155,7 +181,9 @@ fi
 MISSING=""
 for f in gh_rest sdq_payload_last vd_standing mc_queue_provider dqw_event_record dqw_event_state \
          dqw_parse_payload_md dqw_attribute dqw_classify dqw_parse_log dqw_brief dqw_hint dqw_act \
-         dqw_watchdog dqw_mainred_recheck dqw_llm_classify dqw_gather_dequeued dqw_gather_pr dqw_gather_resolve; do
+         dqw_watchdog dqw_mainred_recheck dqw_llm_classify dqw_gather_dequeued dqw_gather_pr dqw_gather_resolve \
+         prr_read dqw_labels_record dqw_labels_github dqw_labels_norm dqw_payload_record dqw_payload_github \
+         dqw_payload_norm dqw_status_record dqw_status_github dqw_status_norm; do
   declare -F "$f" >/dev/null || MISSING="$MISSING $f"
 done
 if [ -n "$MISSING" ]; then
@@ -164,9 +192,20 @@ if [ -n "$MISSING" ]; then
   exit 0
 fi
 PROJECTS=$(awk -v only="$ONLY_P" '$1 !~ /^#/ && NF >= 2 && (only == "" || $1 == only) { print $1, $2 }' "$H/fleet.conf" 2>/dev/null)
-# No project, no GitHub read at all, the budget probe included.
+# No project, no GitHub read at all, the budget probe included. A project run
+# of a dispatch takes the dispatch's judgment while it is fresh (BH-9938):
+# both values digits, rc 0..2, and 0 <= age < GH_BUDGET_RATE_LIMIT_MIN_INTERVAL_S
+# (the BH-8334 memo knob; 0 = every process reads). Else its own read.
 if [ -n "$PROJECTS" ] && declare -F gh_budget_low >/dev/null; then
-  gh_budget_low dequeue-watch; [ $? = 0 ] && { summary gh-budget; exit 0; }
+  BRC="" BIV=0
+  declare -F gh_budget_rl_interval >/dev/null && BIV=$(gh_budget_rl_interval)
+  [[ "$BIV" =~ ^[0-9]+$ ]] || BIV=0
+  if [ "$RUN_MODE" = project ] && [[ "${DQW_GH_BUDGET_RC:-}" =~ ^[012]$ ]] && [[ "${DQW_GH_BUDGET_AT:-}" =~ ^[0-9]+$ ]]; then
+    BAGE=$(( $(dqw_now) - DQW_GH_BUDGET_AT ))
+    [ "$BAGE" -ge 0 ] && [ "$BAGE" -lt "$((10#$BIV))" ] && BRC="$DQW_GH_BUDGET_RC"
+  fi
+  if [ -z "$BRC" ]; then gh_budget_low dequeue-watch; BRC=$?; fi
+  [ "$BRC" = 0 ] && { summary "gh-budget${ONLY_P:+ project=$ONLY_P}"; exit 0; }
 fi
 
 DQW_TMP=$(mktemp -d "${TMPDIR:-/tmp}/dequeue-watch.XXXXXX") || { summary "tick projects=0 dequeued=0 recorded=0 acted=0 would=0 owned=0 unread=0 stale=0 skipped=0 err=mktemp"; exit 0; }

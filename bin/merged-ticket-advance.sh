@@ -102,13 +102,27 @@
 # MERGED_ADVANCE_SLICE_SETTLE <KEY> <pr> line each, counted `slice-settle`.
 # MERGED_ADVANCE_MAX bounds it, and --dry-run spawns nothing.
 #
+# A LIVE PROBE BEFORE `review` (BH-9987). A client-filed move to `review`
+# whose audit is not PASS (NOT_COVERED_NO_QA_ENV, or a peer build) first makes
+# ONE unauthenticated GET of the ticket's primary screen in production
+# (bin/lib/review-probe.sh): <prod-url.sh> + the first static route of the
+# plan's `## QA screens`, else `/` (always `/` on the peer path). `served` or
+# `signin` adds one paragraph with the probed URL to the comment and the move
+# goes on. Anything else is a hold: no comment, no marker, no move, no .tries
+# bump, one MERGED_ADVANCE_PROBE_HOLD line, counted `no-live-probe`, and one
+# alert per ticket and audit token (cm_put: a `commented` ledger row, then state/<…>.probe-alerted). The next run
+# probes again. PASS (a signed-in QA drive), a move to `done`, a staging hold
+# and a move retry (our comment is already there) make no probe. Row
+# lib.review-probe.review_probe_require at 0 turns it off; no lib on the box
+# (mid-sync) makes no probe, as before.
+#
 # THE TURN. After an echoed move to `review` (either path) the lane gives the
 # turn to the client: POST /tickets/<id>/turn {"to":"client"}. A move does not
 # change the turn. A failed turn is one MERGED_ADVANCE_TURN_FAILED line; the
 # move still counts.
 #
 # One log line per run that read the board:
-#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N slice-plan=N slice-settle=N
+#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N no-live-probe=N slice-plan=N slice-settle=N
 # plus MERGED_ADVANCE_CAPPED when MERGED_ADVANCE_MAX stopped the loop early.
 #
 # Called from inapp_released_lines (bin/lib/rt/scope.sh) right before the
@@ -230,6 +244,15 @@ declare -F cm_put >/dev/null 2>&1 || cm_put() { mkdir -p "$(dirname "$3")" 2>/de
 [ -r "$SELF/lib/slice-board.sh" ] && . "$SELF/lib/slice-board.sh" 2>/dev/null
 declare -F slice_board_token >/dev/null 2>&1 || slice_board_token() { return 1; }
 declare -F slice_board_marker >/dev/null 2>&1 || slice_board_marker() { return 1; }
+# The live probe before `review` (BH-9987). Its knobs are applied HERE, in this
+# shell, so REVIEW_PROBE_TIMEOUT_S reaches rp_probe. No lib: no probe.
+# shellcheck source=bin/lib/review-probe.sh
+[ -r "$SELF/lib/review-probe.sh" ] && . "$SELF/lib/review-probe.sh" 2>/dev/null
+RP_ON=0
+if command -v rp_required >/dev/null 2>&1; then
+  command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply review-probe "$PROJECT" 2>/dev/null
+  RP_ON=$(rp_required "$PROJECT")
+fi
 SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || SLUG=""
 PROD=$("$SELF/prod-url.sh" "$PROJECT" 2>/dev/null) || PROD=""
 
@@ -453,7 +476,7 @@ if [ -n "$nid" ]; then
 fi
 
 MOVED=0; CONLY=0; S_NOAUDIT=0; S_AUDITFAIL=0; S_NEWER=0; S_SPOKE=0; S_CREVIEW=0; S_BACK=0; S_GAVEUP=0
-S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLICE=0; S_SETTLE=0
+S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLICE=0; S_SETTLE=0; S_NOPROBE=0
 EXAMINED=0; LEFT=0; IDX=0; STOPAT=""
 NCANDS=$(grep -c . "$TMP/cands.tsv" 2>/dev/null) || NCANDS=0
 
@@ -652,6 +675,35 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     esac
   fi
 
+  # 6p. a live probe of the primary screen before `review` (BH-9987, header).
+  probe_html=""
+  if [ "$RP_ON" = 1 ] && [ "$to" = review ] && [ "$stg_hold" = 0 ] && [ "$already" = 0 ] \
+     && [ "$verdict" != PASS ]; then
+    proute=/; [ "$PEER" = 0 ] && proute=$(rp_primary_route "$splan")
+    purl="${PROD%/}$proute"
+    rp_probe "$PROD" "$proute" >/dev/null
+    [ "$DRY" = 1 ] && printf 'DRYRUN PROBE %s %s %s\n' "$purl" "$RP_OUTCOME" "$RP_CODE" >&2
+    if ! rp_passes "$RP_OUTCOME"; then
+      S_NOPROBE=$((S_NOPROBE + 1))
+      [ "$DRY" = 1 ] && continue
+      MA_LOG "MERGED_ADVANCE_PROBE_HOLD $tkey $purl $RP_OUTCOME HTTP $RP_CODE"
+      # The one-alert dedupe is a `commented` ledger row first and the file
+      # second (bin/lib/comment-mark.sh), so this script adds no raw state/ write.
+      if ! cm_has "probe-alerted $PROJECT $tid" "$token" "$mbase.probe-alerted"; then
+        cm_put "probe-alerted $PROJECT $tid" "$token" "$mbase.probe-alerted" || true
+        [ -x "$HARNESS/bin/alert-line.sh" ] && HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" \
+          "[$PROJECT] merged-advance: $tkey held: its main screen $purl did not answer in production ($RP_OUTCOME HTTP $RP_CODE). It stays in progress; the next run probes again." >/dev/null 2>&1
+      fi
+      continue
+    fi
+    epurl=$(_ma_esc "$purl")
+    if [ "$RP_OUTCOME" = served ]; then
+      probe_html="<p>We opened its main screen in production ($epurl) and it answered.</p>"
+    else
+      probe_html="<p>We opened its main screen in production ($epurl). It asks for sign-in, so nobody has checked it signed in yet.</p>"
+    fi
+  fi
+
   # 7. the comment
   epr=$(_ma_esc "$pr")
   if [ "$verdict" = PASS ]; then
@@ -677,6 +729,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     fi
     body="$body<p>It is not live on production yet. It goes live with the next release.</p>"
   fi
+  body="$body$probe_html"
   if [ "$stg_hold" = 1 ]; then body="$body<p>The ticket stays in progress until the release is live.</p>"
   elif [ "$to" = done ]; then body="$body<p>Moving it to done.</p>"
   else body="$body<p>Moving it to review so you can check it.</p>"; fi
@@ -739,5 +792,5 @@ if [ "$DRY" = 0 ]; then
   fi
 fi
 [ "$LEFT" -gt 0 ] && MA_LOG "MERGED_ADVANCE_CAPPED $LEFT left for the next run (MERGED_ADVANCE_MAX=$MAX)"
-MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG slice-plan=$S_SLICE slice-settle=$S_SETTLE"
+MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG no-live-probe=$S_NOPROBE slice-plan=$S_SLICE slice-settle=$S_SETTLE"
 exit 0

@@ -168,7 +168,9 @@ fi
 # seams now define the record and norm functions, pinned below and in
 # tests/pr-state-reconcile-record.bh-9937-test.sh and
 # tests/main-red-pr-pair-record.bh-9937-test.sh.
-for l in unblock blocked-resolver pipeline-health dequeue-watch wake-loop; do
+# pipeline-health, dequeue-watch and wake-loop left it in BH-9938 (wave 6):
+# their seams define the functions pinned in the BH-9938 loop below.
+for l in unblock blocked-resolver; do
   f="$DIR/bin/lib/prr-shadow.d/$l.sh"
   [ -r "$f" ] || { bad "seams: $f missing"; continue; }
   bash -n "$f" && ok || bad "seams: $f does not parse"
@@ -194,6 +196,25 @@ done
 for fn in psr_list_record psr_list_norm psr_state_record psr_state_norm mrp_list_record mrp_list_norm; do
   command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: the wave 5 seams must define $fn"
 done
+# BH-9938 (wave 6): three more seams load and define their record, github and
+# norm functions (the lanes' suites: dequeue-watch-record, pipeline-health-record
+# and wake-pr-lead-record .bh-9938).
+for spec in "dequeue-watch:dqw_labels_record dqw_labels_github dqw_labels_norm dqw_payload_record dqw_payload_github dqw_payload_norm dqw_status_record dqw_status_github dqw_status_norm" \
+            "pipeline-health:ph_open_record ph_open_github ph_open_norm ph_sdl_record ph_sdl_github ph_sdl_norm ph_payload_record ph_payload_github ph_payload_norm ph_hct_record ph_hct_github ph_hct_norm ph_status_record ph_status_github ph_status_norm" \
+            "wake-loop:wl_pr_record wl_pr_github wl_pr_norm"; do
+  # sl, not l: an assignment to l would unbind the literal loops above for
+  # bin/test-impact.sh (bin/lib/test-impact-dir-rows.sh, BOUND), and the seams
+  # they name would read as orphans.
+  sl=${spec%%:*}
+  f="$DIR/bin/lib/prr-shadow.d/$sl.sh"
+  bash -n "$f" && ok || bad "seams: $f does not parse"
+  grep -q "^# .*$sl" "$f" && ok || bad "seams: $f header must name the lane $sl"
+  grep -q 'Empty until' "$f" && bad "seams: $f header still says it is empty" || ok
+  prr_seam_load "$sl" && ok || bad "seams: prr_seam_load $sl must return 0"
+  for fn in ${spec#*:}; do
+    declare -F "$fn" >/dev/null && ok || bad "seams: loading $sl must define $fn"
+  done
+done
 prr_seam_load no-such-lane && bad "seams: an unknown lane must return 1" || ok
 
 # ---- registry ------------------------------------------------------------------------
@@ -201,6 +222,10 @@ REG="$T/lanes.json"
 if "$DIR/bin/lanes-build.sh" --root "$DIR" --to "$REG" >/dev/null 2>&1; then
   K=$(jq -c '.lanes[] | select(.id=="tickets-snapshot-push") | .knobs[] | select(.env=="GH_SOURCE") | {default, read_in}' "$REG" 2>/dev/null)
   [ "$K" = '{"default":"shadow","read_in":"bin/lib/prr-shadow.sh"}' ] && ok || bad "registry: GH_SOURCE on tickets-snapshot-push, default shadow (got '$K')"
+  for l in dequeue-watch pipeline-health wake-loop; do
+    K=$(jq -c --arg l "$l" '.lanes[] | select(.id==$l) | .knobs[] | select(.env=="GH_SOURCE") | {default, read_in}' "$REG" 2>/dev/null)
+    [ "$K" = '{"default":"shadow","read_in":"bin/lib/prr-shadow.sh"}' ] && ok || bad "registry: GH_SOURCE on $l, default shadow (got '$K')"
+  done
   K2=$(jq -c '.lanes[] | select(.id=="tickets-snapshot-push") | .knobs[] | select(.env=="TICKETS_SNAPSHOT_OPEN_PR_LIMIT") | {default, max}' "$REG" 2>/dev/null)
   [ "$K2" = '{"default":100,"max":100}' ] && ok || bad "registry: TICKETS_SNAPSHOT_OPEN_PR_LIMIT default 100 max 100 (got '$K2')"
 else

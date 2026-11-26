@@ -125,13 +125,18 @@
 #       The record's commit statuses of <head> (default the row's head_sha):
 #       {<context>: {state, description, sha, at}} on stdout, rc 0. Never a
 #       GitHub call, never a write. rc 1 and one `statuses <repo>#<n>
-#       miss=<unreadable|unknown|no-head|none>` line. rc 2 bad args.
+#       miss=<unreadable|unknown|no-head|none>` line; the word is also in
+#       PRR_MISS_WHY (call it with `> file`, not in $( ), to keep it). rc 2
+#       bad args.
 #
 #   pr_record_mergify <owner/repo> <number>
 #       The newest Mergify queue payload the record holds: {state, code,
-#       draft_pr, failing_checks, left_sha, comment_id, at}, rc 0. Never a
+#       draft_pr, failing_checks, left_sha, comment_id, at, run_id}, rc 0, as
+#       stored. run_id is the payload comment's first /actions/runs/<id> link
+#       or null; a row written before BH-9938 has no run_id key. Never a
 #       GitHub call, never a write. rc 1 and one `mergify <repo>#<n>
-#       miss=<unreadable|unknown|none>` line. rc 2 bad args.
+#       miss=<unreadable|unknown|none>` line; the word is also in PRR_MISS_WHY
+#       (call it with `> file`, not in $( ), to keep it). rc 2 bad args.
 #
 #   pr_record_head_commit_time <owner/repo> <number> <head>
 #       The commit time (ISO, UTC) of <head> on stdout, rc 0. From the record
@@ -395,7 +400,7 @@ pr_record_statuses() {
       why=none
     fi
   fi
-  if [ -n "$why" ]; then _prr_log "statuses $lr#$n miss=$why"; return 1; fi
+  if [ -n "$why" ]; then _prr_log "statuses $lr#$n miss=$why"; PRR_MISS_WHY=$why; return 1; fi
   printf '%s\n' "$out"
 }
 
@@ -407,7 +412,7 @@ pr_record_mergify() {
   if [ "$rc" != 0 ]; then why=$(_prr_why "$rc")
   elif ! out=$(jq -ce '.mergify_queue | objects' <<<"$row" 2>/dev/null); then why=none
   fi
-  if [ -n "$why" ]; then _prr_log "mergify $lr#$n miss=$why"; return 1; fi
+  if [ -n "$why" ]; then _prr_log "mergify $lr#$n miss=$why"; PRR_MISS_WHY=$why; return 1; fi
   printf '%s\n' "$out"
 }
 

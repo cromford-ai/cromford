@@ -365,3 +365,112 @@ trk_linear_close_out() {
   trk_linear_comment "${1:-}" "${2:-}" || return $?
   trk_linear_transition "${1:-}" "${3:-done}"
 }
+
+# _trk_linear_team_id — the TRK_LINEAR_TEAM team as a create needs it, one
+# compact JSON node {id, labels: {nodes: [{id, name}]}}. A read, sent even
+# under TRK_DRY=1. rc 1 unless Linear answers exactly one team.
+_trk_linear_team_id() {
+  local d
+  [[ "${TRK_LINEAR_TEAM:-}" =~ ^[A-Z][A-Z0-9_]{0,15}$ ]] || return 1
+  d=$(_trk_linear_gql 'query TrkTeam($k: String!) { teams(filter: { key: { eq: $k } }) { nodes { id labels(first: 250) { nodes { id name } } } } }' \
+    '{k: $k}' --arg k "$TRK_LINEAR_TEAM") || return $?
+  printf '%s' "$d" | jq -ce '.teams.nodes | if type == "array" and length == 1 and (.[0].id | type == "string" and length > 0) then .[0] else error end' 2>/dev/null \
+    || { printf 'tracker: linear has no single team %s\n' "$TRK_LINEAR_TEAM" >&2; return 1; }
+}
+
+# _trk_linear_ref_ok <ref> — a parent or blocker of a create: a key on
+# TRK_LINEAR_TEAM, before any request (a child never lands under another
+# team's issue). rc 1 and one stderr line otherwise.
+_trk_linear_ref_ok() {
+  local r="${1:-}"
+  [[ "$r" =~ ^([A-Z][A-Z0-9_]*)-[0-9]+$ ]] || { printf 'tracker: linear ref %s is not a Linear issue key\n' "$(_trk_sq "$r")" >&2; return 1; }
+  [ "${BASH_REMATCH[1]}" = "${TRK_LINEAR_TEAM:-}" ] && return 0
+  printf 'tracker: linear ref %s is not on team %s, refused\n' "$r" "${TRK_LINEAR_TEAM:-?}" >&2
+  return 1
+}
+
+# _trk_linear_ref_uuid <ref> — the UUID of a ref, read with _trk_linear_issue;
+# rc 1 unless Linear answers it on TRK_LINEAR_TEAM (a moved issue is refused).
+_trk_linear_ref_uuid() {
+  local m
+  m=$(_trk_linear_issue "$1") || return $?
+  printf '%s' "$m" | jq -e --arg t "$TRK_LINEAR_TEAM" '.team.key == $t' >/dev/null 2>&1 \
+    || { printf 'tracker: linear %s answered on team %s, not %s; refused\n' "$1" "$(printf '%s' "$m" | jq -r '.team.key // "?"')" "$TRK_LINEAR_TEAM" >&2; return 1; }
+  printf '%s' "$m" | jq -r .id
+}
+
+# trk_linear_create_ticket — the new tracker_create form (bin/lib/tracker.sh,
+# BH-7922). Every ref is checked as text first, then read (team, parent,
+# blockers), then ONE issueCreate {teamId, title, description, labelIds,
+# parentId}, then one issueRelationCreate type blocks per blocker (blocker ->
+# new issue). A label the team does not have, or a relation that did not
+# take, is a relationErrors entry. Prints {id, key, url, relationErrors}.
+trk_linear_create_ticket() {
+  local team tid pid="" b bid nid nkey url d rc rel='[]' lids='[]' l lid
+  local -a bl=() bu=()
+  [ -n "${TRK_LINEAR_TOKEN:-}" ] && [ -n "${TRK_CREATE_TITLE:-}" ] && [ -r "${TRK_CREATE_BODY:-}" ] || return 1
+  [ -z "${TRK_CREATE_PARENT:-}" ] || _trk_linear_ref_ok "$TRK_CREATE_PARENT" || return 1
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    _trk_linear_ref_ok "$b" || return 1
+    bl+=("$b")
+  done <<<"${TRK_CREATE_BLOCKED:-}"
+  team=$(_trk_linear_team_id) || return $?
+  tid=$(printf '%s' "$team" | jq -r .id)
+  if [ -n "${TRK_CREATE_PARENT:-}" ]; then pid=$(_trk_linear_ref_uuid "$TRK_CREATE_PARENT") || return $?; fi
+  for b in "${bl[@]}"; do bid=$(_trk_linear_ref_uuid "$b") || return $?; bu+=("$bid"); done
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    lid=$(printf '%s' "$team" | jq -r --arg l "$l" '[.labels.nodes[]? | select((.name | ascii_downcase) == ($l | ascii_downcase))] | .[0].id // empty')
+    if [ -n "$lid" ]; then lids=$(jq -c --arg i "$lid" '. + [$i] | unique' <<<"$lids")
+    else rel=$(jq -c --arg e "label $l: no such label on team $TRK_LINEAR_TEAM" '. + [$e]' <<<"$rel"); fi
+  done <<<"${TRK_CREATE_LABELS:-}"
+  _trk_linear_w issueCreate "team=$TRK_LINEAR_TEAM parent=${TRK_CREATE_PARENT:-none} labels=$(jq -r 'join(",")' <<<"$lids") body=@$TRK_CREATE_BODY"
+  for b in "${bl[@]}"; do _trk_linear_w issueRelationCreate "type=blocks issue=$b related=new"; done
+  _trk_dry && return 0
+  rc=0
+  d=$(_trk_linear_gql 'mutation TrkCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier url } } }' \
+    '{input: ({teamId: $tid, title: $t, description: $b, labelIds: $lids} + (if $pid == "" then {} else {parentId: $pid} end))}' \
+    --arg tid "$tid" --arg t "$TRK_CREATE_TITLE" --rawfile b "$TRK_CREATE_BODY" --argjson lids "$lids" --arg pid "$pid") || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  nid=$(printf '%s' "$d" | jq -r 'if .issueCreate.success == true then (.issueCreate.issue.id // empty) else empty end' 2>/dev/null)
+  nkey=$(printf '%s' "$d" | jq -r '.issueCreate.issue.identifier // empty' 2>/dev/null)
+  url=$(printf '%s' "$d" | jq -r '.issueCreate.issue.url // empty' 2>/dev/null)
+  if [ -z "$nid" ] || ! [[ "$nkey" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+    printf 'tracker: linear issueCreate answered with no issue identifier; the ticket may exist\n' >&2
+    return 1
+  fi
+  local i=0
+  for b in "${bl[@]}"; do
+    rc=0
+    d=$(_trk_linear_gql 'mutation TrkRelate($input: IssueRelationCreateInput!) { issueRelationCreate(input: $input) { success } }' \
+      '{input: {issueId: $a, relatedIssueId: $n, type: "blocks"}}' --arg a "${bu[$i]}" --arg n "$nid") || rc=$?
+    [ "$rc" = 0 ] && ! printf '%s' "$d" | jq -e '.issueRelationCreate.success == true' >/dev/null 2>&1 && rc=1
+    [ "$rc" = 0 ] || rel=$(jq -c --arg e "blocked-by $b: rc $rc" '. + [$e]' <<<"$rel")
+    i=$((i+1))
+  done
+  jq -nc --arg k "$nkey" --arg u "$url" --argjson r "$rel" '{id: $k, key: $k, url: (if $u == "" then null else $u end), relationErrors: $r}'
+}
+
+# trk_linear_search — tracker_search on Linear: one page of the team's issues
+# (every state) whose title containsIgnoreCase TRK_SEARCH_Q, first
+# TRK_SEARCH_MAX, as tracker_list rows (commentCount as trk_linear_list
+# counts it, with its comment cap). The jq name of the query is $sq: $q is
+# _trk_linear_gql's own (the GraphQL text).
+trk_linear_search() {
+  local d n cc
+  [[ "${TRK_LINEAR_TEAM:-}" =~ ^[A-Za-z0-9_]{1,16}$ ]] && [ -n "${TRK_LINEAR_TOKEN:-}" ] && [ -n "${TRK_SEARCH_Q:-}" ] || return 1
+  n="${TRK_SEARCH_MAX:-50}"   # fallback of settings row trk_search.max_rows (bin/lib/tracker.sh)
+  [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -ge 1 ] && [ "$n" -le 100 ] || return 1
+  cc="${TRK_LINEAR_LIST_COMMENT_CAP:-25}"   # fallback of settings row tracker_linear.<p>.list_comment_cap
+  [[ "$cc" =~ ^[0-9]{1,2}$ ]] && [ "$cc" -ge 1 ] && [ "$cc" -le 50 ] || return 1
+  d=$(_trk_linear_gql 'query TrkSearch($team: String!, $q: String!, $n: Int!, $cc: Int!) { issues(first: $n, filter: { team: { key: { eq: $team } }, title: { containsIgnoreCase: $q } }) { nodes { identifier title url updatedAt state { name type } labels(first: 50) { nodes { name } } comments(first: $cc) { nodes { id } pageInfo { hasNextPage } } } } }' \
+    '{team: $team, q: $sq, n: $n, cc: $cc}' --arg team "$TRK_LINEAR_TEAM" --arg sq "$TRK_SEARCH_Q" --argjson n "$n" --argjson cc "$cc") || return $?
+  printf '%s' "$d" | jq -c "${_TRK_ISO_JQ:-}"'if (.issues.nodes | type) != "array" then error("no nodes") else . end
+    | [.issues.nodes[] | {id: .identifier, key: .identifier, title: (.title // null),
+    status: (.state.name // null), labels: [(.labels.nodes // [])[].name], waitingOn: null,
+    triageVerdict: null, url: (.url // null), updatedAt: (.updatedAt | trk_iso),
+    state: (if (.state.type // "") == "completed" or (.state.type // "") == "canceled" then "closed" else "open" end),
+    commentCount: (if (.comments | type) != "object" or (.comments.nodes | type) != "array" or .comments.pageInfo.hasNextPage == true
+                   then null else (.comments.nodes | length) end)}]' 2>/dev/null || return 1
+}

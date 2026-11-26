@@ -49,6 +49,11 @@ printf 'X_API_BASE=https://x.test\nX_INTERNAL_API_TOKEN=tok-fixture-never-logged
 # "unreachable" line stays out of the ALERTS.log P10e counts.
 export HARNESS="$H" FLEET_CONF="$H/fleet.conf" STUBDIR="$B" ALLREQ="$T/ALLREQS.log" JOBS_ALERT=0
 export PATH="$T/fakebin:$PATH"
+# BH-9987: a client-filed move to review with no PASS audit now needs a live
+# probe of the primary screen, and this suite's fake curl answers 404 to it.
+# The gate has its own suite (tests/review-probe.bh-9987-test.sh); here it is
+# off, so every case below runs on the premise it was written for.
+export REVIEW_PROBE_REQUIRE=0
 # Nothing from the box reaches the lane (D60).
 unset GH_TOKEN GITHUB_TOKEN GH_ISSUES_REPO VERSION_URL VERSION_AUTH MERGED_ADVANCE_MAX \
       MERGED_ADVANCE_COOLDOWN_S MERGED_ADVANCE_DEPLOY_GRACE_S 2>/dev/null || true
@@ -214,7 +219,7 @@ calls()   { jq -r '.url + " " + .idem' "$B/POSTS.jsonl" | tr '\n' '|'; }
 plog()    { cat "$H/logs/x-os.log" 2>/dev/null; }
 advlog()  { grep 'MERGED_ADVANCE moved=' "$H/logs/x-os.log" 2>/dev/null | tail -1 | sed 's/^.*\] MERGED_ADVANCE /MERGED_ADVANCE /'; }
 field_of() { jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]' "$B/db.json"; }
-FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous slice-plan slice-settle"
+FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous no-live-probe slice-plan slice-settle"
 want() { # want [field=N ...] -> the full MERGED_ADVANCE line, every other field 0
   local -A v=(); local f a s="MERGED_ADVANCE"
   for a in "$@"; do v[${a%%=*}]="${a#*=}"; done

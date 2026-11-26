@@ -1,0 +1,11 @@
+{
+  "env": "BR_VERDICT_BLOCK_LIMIT",
+  "type": "int",
+  "default": 500,
+  "min": 1,
+  "max": 1000,
+  "unit": "rows",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9905-verdict-block.sh",
+  "note": "BH-9905: the row limit of the verdict-block source's batch read (newest first). The worker clamps it to the settings row verdict_blocks.max_rows (seeded 1000). A truncated answer is one line in logs/verdicts.log. Settings row lane.blocked-resolver.br_verdict_block_limit; code fallback 500."
+}
