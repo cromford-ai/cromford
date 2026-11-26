@@ -173,30 +173,41 @@ has "K1 default titles" "$OUT" "| under 600 | 600 to 1200 | 1200 to 3000 | over 
 # ---------------------------------------------------------------------------
 # GHS is the stub's answer dir for the current case; it logs to $GHS/log.
 mkdir -p "$T/stubbin"
+# BH-10143: the lane reaches GitHub through the tracker seam, so through
+# bin/lib/gh-rest.sh, which calls `gh api -i -X <M> <path> ...` and reads an
+# HTTP status line, a blank line and the body. The stub answers in that shape
+# from the same fixture files. A `<x>.rc` file is a failed call: 44 answers
+# 404 (gh_rest rc 44), any other value answers 503 (gh_rest rc 75). A missing
+# issue file answers 404. The POST body comes as `-F body=@<file>`; the stub
+# writes it to posted.json as {body: ...}, the same file the old --input wrote.
 cat > "$T/stubbin/gh" <<'STUB'
 #!/bin/bash
 printf '%s\n' "$*" >> "$GHS/log"
-[ "${1:-}" = api ] || exit 1
-shift
-if [ "${1:-}" = -X ] && [ "${2:-}" = POST ]; then
-  path="$3"; inp=""
-  [ "${4:-}" = --input ] && inp="$5"
-  [ -n "$inp" ] && cp "$inp" "$GHS/posted.json"
-  [ -f "$GHS/post.rc" ] && exit "$(cat "$GHS/post.rc")"
-  if [ -f "$GHS/post-answer.json" ]; then cat "$GHS/post-answer.json"
-  else echo '{"html_url":"https://github.com/example-org/cromford/issues/6025#issuecomment-900"}'; fi
-  exit 0
+[ "${1:-}" = api ] && [ "${2:-}" = -i ] && [ "${3:-}" = -X ] || exit 1
+m="$4"; path="$5"; shift 5
+send() { printf 'HTTP/2.0 %s X\r\n\r\n' "$1"; [ -n "${2:-}" ] && cat "$2"; exit 0; }
+fail() { if [ "$(cat "$1")" = 44 ]; then send 404; else send 503; fi; }
+if [ "$m" = POST ]; then
+  bf=""
+  while [ $# -gt 0 ]; do case "$1" in body=@*) bf="${1#body=@}" ;; esac; shift; done
+  [ -n "$bf" ] && jq -n --rawfile b "$bf" '{body: $b}' > "$GHS/posted.json"
+  [ -f "$GHS/post.rc" ] && fail "$GHS/post.rc"
+  if [ -f "$GHS/post-answer.json" ]; then send 201 "$GHS/post-answer.json"; fi
+  echo '{"html_url":"https://github.com/example-org/cromford/issues/6025#issuecomment-900"}' > "$GHS/post-default.json"
+  send 201 "$GHS/post-default.json"
 fi
-path="$1"
+[ "$m" = GET ] || exit 1
 case "$path" in
   repos/*/issues/*/comments*)
     p=$(sed -n 's/.*[?&]page=\([0-9]*\).*/\1/p' <<<"$path")
-    [ -f "$GHS/comments.rc" ] && exit "$(cat "$GHS/comments.rc")"
-    if [ -f "$GHS/comments-$p.json" ]; then cat "$GHS/comments-$p.json"; else echo '[]'; fi ;;
+    [ -f "$GHS/comments.rc" ] && fail "$GHS/comments.rc"
+    if [ -f "$GHS/comments-$p.json" ]; then send 200 "$GHS/comments-$p.json"; fi
+    echo '[]' > "$GHS/comments-empty.json"; send 200 "$GHS/comments-empty.json" ;;
   repos/*/issues/*)
     n="${path##*/}"
-    [ -f "$GHS/issue-$n.rc" ] && exit "$(cat "$GHS/issue-$n.rc")"
-    cat "$GHS/issue-$n.json" 2>/dev/null || exit 1 ;;
+    [ -f "$GHS/issue-$n.rc" ] && fail "$GHS/issue-$n.rc"
+    [ -f "$GHS/issue-$n.json" ] || send 404
+    send 200 "$GHS/issue-$n.json" ;;
   *) exit 1 ;;
 esac
 STUB

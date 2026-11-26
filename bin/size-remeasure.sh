@@ -201,12 +201,22 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/size-remeasure.XXXXXX") || { say "not judged: no 
 [ -r "$SELF/lib/gh-app-auth.sh" ] && . "$SELF/lib/gh-app-auth.sh" || true
 command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$SLUG" || true
 trap 'rm -rf "$W"; command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset || true' EXIT
+# Every issue read and the one comment write go through the tracker seam
+# (BH-7919, BH-10143): the GitHub Issues adapter over bin/lib/gh-rest.sh. A
+# failed read is gh_rest's rc: 44 not found, 75 unreadable.
+# shellcheck source=bin/lib/gh-rest.sh
+. "$SELF/lib/gh-rest.sh" 2>/dev/null
+# shellcheck source=bin/lib/tracker.sh
+. "$SELF/lib/tracker.sh"
+# shellcheck source=bin/lib/tracker/github-issues.sh
+. "$SELF/lib/tracker/github-issues.sh"
+TRK_ADAPTER=github-issues; TRK_DRY=0; TRK_LOG=""; TRK_SLUG="$SLUG"
 
 # 2-3. the gate.
 VERDICT=""; LATEST=0; GATE_NOTE=""
 for n in $GATES; do
   rc=0
-  gh api "repos/$SLUG/issues/$n" > "$W/issue-$n.json" 2>/dev/null || rc=$?
+  trk_gh_issue_raw "$n" > "$W/issue-$n.json" 2>/dev/null || rc=$?
   if [ "$rc" != 0 ]; then VERDICT="not judged: #$n read failed (rc $rc)"; break; fi
   if ! g=$(jq -er '[.state, (.state_reason // "none"), (.closed_at // "")] | @tsv' "$W/issue-$n.json" 2>/dev/null); then
     VERDICT="not judged: #$n answer is not an issue"; break
@@ -234,7 +244,7 @@ FOUND=""; p=1
 while :; do
   if [ "$p" -gt "$MAXP" ]; then FAILWHY="thread #$TARGET has more than $MAXP pages; absence not proven"; break; fi
   rc=0
-  gh api "repos/$SLUG/issues/$TARGET/comments?per_page=100&page=$p" > "$W/c.json" 2>/dev/null || rc=$?
+  trk_gh_comments_page "$TARGET" "$p" > "$W/c.json" 2>/dev/null || rc=$?
   if [ "$rc" != 0 ]; then FAILWHY="thread #$TARGET page $p read failed (rc $rc)"; break; fi
   jq -e 'type == "array"' "$W/c.json" >/dev/null 2>&1 || { FAILWHY="thread #$TARGET page $p is not a JSON array"; break; }
   FOUND=$(jq -r --arg m "$MARKER" '[.[] | select((.body // "") | contains($m)) | .html_url][0] // empty' "$W/c.json")
@@ -320,9 +330,8 @@ alert_once() {
 if [ -n "$FAILWHY" ]; then say "not posted: $FAILWHY"; alert_once "$FAILWHY"; exit 0; fi
 
 # 8. the post. The send comes before the stamp.
-jq -n --rawfile b "$W/body.md" '{body: $b}' > "$W/post.json"
 rc=0
-gh api -X POST "repos/$SLUG/issues/$TARGET/comments" --input "$W/post.json" > "$W/post.out" 2>"$W/post.err" || rc=$?
+trk_gh_comment_raw "$TARGET" "$W/body.md" > "$W/post.out" 2>"$W/post.err" || rc=$?
 URL=$(jq -r '.html_url // empty' "$W/post.out" 2>/dev/null)
 if [ "$rc" = 0 ] && [ -n "$URL" ]; then
   printf '%s %s\n' "$URL" "$(iso "$NOW")" > "$ST/posted"
