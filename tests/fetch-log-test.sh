@@ -64,6 +64,9 @@ ok
 
 # ---------- 3. truncation flag ----------
 # A file under the cap is whole; one over it is tailed and says so.
+# BH-10102: the cap is the FETCH_LOG_TAIL_BYTES knob (5 MiB by default); this
+# section pins the same window edge at 16000 through the knob.
+export FETCH_LOG_TAIL_BYTES=16000
 printf 'small\n' > "$T/logs/alpha-os.log"
 OUT=$(j alpha-os triage cmd-1)
 [ "$(jq -r .truncated <<<"$OUT")" = false ] && [ "$(jq -r .content <<<"$OUT")" = "small" ] \
@@ -79,6 +82,7 @@ OUT=$(j alpha-os triage cmd-2)
 head -c 16000 /dev/zero | tr '\0' 'y' > "$T/logs/alpha-os.log"
 OUT=$(j alpha-os triage cmd-3)
 [ "$(jq -r .truncated <<<"$OUT")" = false ] && ok || bad "exactly-at-cap should be truncated=false"
+unset FETCH_LOG_TAIL_BYTES
 
 # ---------- 4. JSON encoding of nasty content ----------
 # Quotes, newlines, backslashes and a lone brace are what a real log looks like;

@@ -38,7 +38,8 @@ _bcx_slug() {
 
 bcx_run() {
   local type="${1:-}" project="${2:-}" payload="${3:-}" id="${4:-}"
-  local h="${HARNESS:-/root/harness}" which key pproj out rc f slug b64 text origin
+  local h="${HARNESS:-/root/harness}" which key pproj out rc f slug b64 text origin fm fs fu
+  local -a fargs
   BCX_OK=0; BCX_RESULT=""; BCX_BODY=""
 
   if ! { { [ "$type" = fetch_log ] || [ "$type" = run_script ]; } && [ "$project" = hub ]; } \
@@ -68,7 +69,14 @@ bcx_run() {
           BCX_BODY=$("$h/bin/fetch-log.sh" --error "$project" "$which" "$id" refused 2>/dev/null)
           return 0
         fi
-        out=$(timeout 30 "$h/bin/fetch-log.sh" "$project" "$which" "$id" 2>/dev/null)
+        # BH-10102: optional match/since/until filters, as argv 4-6 and only
+        # when one is set. fetch-log.sh validates them (bad_<field> envelope).
+        fargs=("$project" "$which" "$id")
+        fm=$(jq -r '.match // ""' <<<"$payload"); case "$fm" in null) fm="" ;; esac
+        fs=$(jq -r '.since // ""' <<<"$payload"); case "$fs" in null) fs="" ;; esac
+        fu=$(jq -r '.until // ""' <<<"$payload"); case "$fu" in null) fu="" ;; esac
+        [ -n "$fm$fs$fu" ] && fargs+=("$fm" "$fs" "$fu")
+        out=$(timeout 30 "$h/bin/fetch-log.sh" "${fargs[@]}" 2>/dev/null)
       else
         # rc 1 is a refusal; rc 2 is "nothing here yet", which is not one.
         timeout 30 "$h/bin/fetch-artifact.sh" --path "$project" "$key" "$which" >/dev/null 2>&1; rc=$?

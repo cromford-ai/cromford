@@ -4814,8 +4814,15 @@ for MF in "$POOL"/*.json; do
           next_job_or_destroy
           continue ;;
       esac
+      # A LANE FAILURE NAMES ITS RUNNER AND ITS ACCOUNT (BH-10102). DWHY keeps
+      # 120 bytes, which cut a RUNNER_EXHAUSTED line inside "runner=claude r".
+      # LWHY is the whole first RESULT line (one line, the harness's own
+      # verdict text) plus the lease LABEL: MACCT is sanitized to
+      # [a-z0-9._-] above, so no token can reach it.
+      LWHY=""
       if [ "$LANEFAIL" = 1 ]; then
-        if QROW requeue "$KEY" "$DWHY" "$ATT" "$DMETA" "$TICKET"; then
+        LWHY="$RLINE account=${MACCT:-none}"
+        if QROW requeue "$KEY" "$LWHY" "$ATT" "$DMETA" "$TICKET"; then
         jq -nc --arg t "$TICKET" --arg k "$KEY" --argjson a "$ATT" --argjson d "$DNEXT" --argjson x "$DTHS" --arg ts "$(STAMP)" --arg sb "$SBASE" --arg hf "$MHF" '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,deaths:$x,enqueued_at:$ts} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end)' > "$QDIR/$KEY.json"
         # ONE ACCOUNT OUT IS NOT THE LANE OUT (BH-1853). When the reap just
         # cooled this machine's account and another account can take the next
@@ -4823,15 +4830,15 @@ for MF in "$POOL"/*.json; do
         # This machine is destroyed below (its token is the exhausted account)
         # and the next spawn re-leases. Anything else holds, exactly as before.
         if [ "${ACOOLED:-}" = 1 ] && command -v pool_account_others_ok >/dev/null 2>&1 && pool_account_others_ok "$MACCT"; then
-          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: account $MACCT ran out ($DWHY). It is cooled on the hub and another account can serve, so there is no project hold: the ticket is requeued with its deferral count unchanged ($DNEXT), $MID is destroyed rather than reused, and the next spawn takes a fresh lease. Evidence: $LOCAL"
-        elif pool_spawn_hold_set "$KEY: $DWHY"; then
-          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: the RUNNER LANE failed, not the ticket ($DWHY). The ticket is requeued with its deferral count unchanged ($DNEXT), and this project's pool spawns and reuses NOTHING for ${POOL_LANE_FAIL_HOLD_S}s (state/pool/$P/_spawn-hold — remove it to lift the hold early; with pool_state_rows on, run bin/pool-state.sh lift-hold $P, which lifts the file and the row). Evidence: $LOCAL"
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: account $MACCT ran out ($LWHY). It is cooled on the hub and another account can serve, so there is no project hold: the ticket is requeued with its deferral count unchanged ($DNEXT), $MID is destroyed rather than reused, and the next spawn takes a fresh lease. Evidence: $LOCAL"
+        elif pool_spawn_hold_set "$KEY: $LWHY"; then
+          HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: the RUNNER LANE failed, not the ticket ($LWHY). The ticket is requeued with its deferral count unchanged ($DNEXT), and this project's pool spawns and reuses NOTHING for ${POOL_LANE_FAIL_HOLD_S}s (state/pool/$P/_spawn-hold — remove it to lift the hold early; with pool_state_rows on, run bin/pool-state.sh lift-hold $P, which lifts the file and the row). Evidence: $LOCAL"
         fi
-        say "LANE FAILURE $KEY: $DWHY — requeued, deferrals unchanged ($DNEXT); project spawn hold $(pool_spawn_held >/dev/null && echo on || echo off)"
+        say "LANE FAILURE $KEY: $LWHY — requeued, deferrals unchanged ($DNEXT); project spawn hold $(pool_spawn_held >/dev/null && echo on || echo off)"
         else
           # No project hold for an abandoned ticket's failure: its lines would
           # say the ticket was requeued. The next ticket that hits the lane sets it.
-          say "LANE FAILURE $KEY: $DWHY — abandoned by an operator, not requeued"
+          say "LANE FAILURE $KEY: $LWHY — abandoned by an operator, not requeued"
         fi
       elif [ "$TOKFAIL" = 1 ]; then
         # Before the DEFER_MAX arm, so a dead token can never park a ticket.
@@ -4870,7 +4877,7 @@ for MF in "$POOL"/*.json; do
       fi
       # The beat says DEFERRED. Beating this as a pool_result would put a build
       # that never ran on the console as one that finished.
-      "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "$DWHY" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_deferred",detail:$r}')" >/dev/null 2>&1 || true
+      "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$P" --arg k "$KEY" --arg r "${LWHY:-$DWHY}" '{kind:"build",project:$p,ticket_key:$k,stage:"pool_deferred",detail:$r}')" >/dev/null 2>&1 || true
       next_job_or_destroy
       continue
     fi

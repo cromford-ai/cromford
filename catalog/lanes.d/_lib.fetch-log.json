@@ -1,0 +1,33 @@
+{
+  "libs": [
+    {
+      "id": "fetch-log",
+      "file": "bin/fetch-log.sh",
+      "note": "BH-10102. The console fetch_log reader (bin/fetch-log.sh), on the hub and on every box. Applied by fetch-log.sh itself at start, in a subshell, so a fail-closed exit never stops the read. Not required: no row keeps the env value, else the code fallback (the same numbers as the defaults below).",
+      "knobs": [
+        {
+          "env": "FETCH_LOG_TAIL_BYTES",
+          "type": "int",
+          "default": 5242880,
+          "min": 1024,
+          "max": 16777216,
+          "unit": "bytes",
+          "zero_means": null,
+          "required": false,
+          "note": "The newest bytes of a log (no filter), or of the filtered result (match/since/until set), that one fetch_log reads. 5 MiB. 16 MiB is the hard ceiling, in the code too. Was a 16000 literal."
+        },
+        {
+          "env": "FETCH_LOG_RESPONSE_BYTES",
+          "type": "int",
+          "default": 98304,
+          "min": 4096,
+          "max": 122880,
+          "unit": "bytes",
+          "zero_means": null,
+          "required": false,
+          "note": "The most bytes of one encoded log_tail beat (the safe tool-response size). 96 KiB: the beat travels as one argv string to bin/beat.sh and curl -d (Linux MAX_ARG_STRLEN 131072) and the far-box row body caps at 256 KiB. The newest lines that fit are sent; the rest are counted in omitted_bytes/omitted_lines with a more call."
+        }
+      ]
+    }
+  ]
+}
