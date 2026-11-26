@@ -131,6 +131,24 @@
 #                          main not red forces a re-read and a warn alert (the
 #                          RE-RUN edge above). 0 = off (BH-9890)
 #   HARNESS_REPO           [example-org/cromford]
+#   GH_SOURCE              [shadow] the settings row lane.main-red-pr-pair.gh_source
+#                          (BH-9937, BH-9926 wave 5), read once per tick through
+#                          bin/lib/prr-shadow.sh with the seam
+#                          bin/lib/prr-shadow.d/main-red-pr-pair.sh. off = the
+#                          open list from GitHub only; shadow = the record and
+#                          GitHub, the lane acts on GitHub and a difference writes
+#                          one PRR_SHADOW line in logs/prr-shadow.log; record =
+#                          the list from the record (a miss reads GitHub, PRR_MISS)
+#                          plus the per-PR wake gate bin/lib/prr-seen.sh before
+#                          the runs read of a head with no verdict row and before
+#                          the check-runs read of a named failure row. A head with
+#                          no `pr` wake and no `checks` wake on it since its last
+#                          read is QUIET: it is not read, it counts as unknown (so
+#                          no resolve and no freeze clear on that tick), and a
+#                          named row stands. A head is marked only after its read
+#                          answered (a verdict, or runs still in flight). One
+#                          `<slug>: record step: quiet=<n> read=<n>` line a repo.
+#                          --explain never uses the gate.
 #
 #   --explain   print the groups this tick would alert on, and the ledger rows
 #               it would record, then exit. READ-ONLY: takes no lock, writes no
@@ -192,6 +210,21 @@ if [ -f "$HENV/global.env" ]; then set -a
 # settings cache is already warm) and section 16 of tests/lanes-registry-test.sh
 # is the ordering.
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    main-red-pr-pair
+# THE PR RECORD (BH-9937): the step is read ONCE, here, after the last env
+# apply. No helper or no seam = off (today's reads); no gate in step record =
+# every head is read.
+MRP_STEP=off; MRP_GATE=0
+# shellcheck source=bin/lib/prr-shadow.sh
+if . "$(dirname "${BASH_SOURCE[0]}")/lib/prr-shadow.sh" 2>/dev/null; then MRP_STEP=$(prr_step main-red-pr-pair); fi
+# shellcheck source=bin/lib/prr-shadow.d/main-red-pr-pair.sh
+if [ "$MRP_STEP" != off ] && ! { . "$(dirname "${BASH_SOURCE[0]}")/lib/prr-shadow.d/main-red-pr-pair.sh" 2>/dev/null \
+     && command -v mrp_list_record >/dev/null 2>&1; }; then
+  log "bin/lib/prr-shadow.d/main-red-pr-pair.sh missing — step $MRP_STEP read as off this tick"; MRP_STEP=off
+fi
+if [ "$MRP_STEP" = record ] && [ "$EXPLAIN" != 1 ]; then
+  # shellcheck source=bin/lib/prr-seen.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/prr-seen.sh" 2>/dev/null && command -v prr_seen_due >/dev/null 2>&1 && MRP_GATE=1
+fi
 # THE FREEZE HAS TO LEAVE THIS BOX (BH-945, and BH-1451 for this lane). Only the
 # hub runs this lane, and a flag that is a local file freezes nothing: a box
 # asking flag_active main-red-<slug> gets "no row" and merges straight through.
@@ -409,6 +442,31 @@ mrp_head_rerun_newer() {
   [[ "$st" > "$at" ]]
 }
 
+# mrp_list_github <file> <owner/repo> — the open list as GitHub has it, the
+# github side of the PR-record read (BH-9937).
+mrp_list_github() { harness_pr_list "${2:-}" open number,headRefOid,updatedAt 100 > "${1:-}" 2>/dev/null; }
+
+# mrp_read <key> <out-file> <record-fn> <github-fn> <norm-fn> [args...] —
+# prr_read under the step read once at the top; off is the github-fn alone.
+mrp_read() {
+  if [ "$MRP_STEP" = off ] || ! command -v prr_read >/dev/null 2>&1; then
+    "$4" "$2" "${@:6}"; return $?
+  fi
+  GH_SOURCE="$MRP_STEP" prr_read main-red-pr-pair "$@"
+}
+
+# THE WAKE GATE (BH-9937, step record). mrp_gate_quiet <owner/repo> <n> <head>:
+# rc 0 = the head had no wake since its last read, do not read it (counts in
+# MRP_GQ); rc 1 = read it (counts in MRP_GR when the gate is on).
+# mrp_gate_mark <owner/repo> <n> <head> — the head's read answered.
+MRP_GQ=0; MRP_GR=0; MRP_TICK0=0
+mrp_gate_quiet() {
+  [ "$MRP_GATE" = 1 ] || return 1
+  if ! prr_seen_due main-red-pr-pair "$1" "$2" "$3" >/dev/null; then MRP_GQ=$((MRP_GQ + 1)); return 0; fi
+  MRP_GR=$((MRP_GR + 1)); return 1
+}
+mrp_gate_mark() { [ "$MRP_GATE" = 1 ] && prr_seen_mark main-red-pr-pair "$1" "$2" "$3" "$MRP_TICK0"; return 0; }
+
 # mrp_prs_nums <prs> — "#3912, #3913" as "3912 3913".
 mrp_prs_nums() { tr -c '0-9\n' ' ' <<<"$1" | tr -s ' '; }
 
@@ -435,8 +493,14 @@ mrp_prs_nums() { tr -c '0-9\n' ' ' <<<"$1" | tr -s ' '; }
 # while it stayed open. Once the PR has been quiet for PAIR_WINDOW seconds it
 # is terminal '-' (it groups with nothing); younger than that it is asked again,
 # because the run may simply not have been scheduled yet.
+#
+# MRP_HE_WHY (BH-9937) says which rc 1 it was, for the wake gate: `pending` (a
+# required run is in flight, or none is scheduled yet: GitHub answered, and the
+# run's completion is a `checks` wake on the head) or `unread` (a read failed).
+# Its stdout and rc do not change.
 pr_head_error() { # pr_head_error <owner/repo> <head-sha> <pr-updated-at>
   local slug="$1" head="$2" updated="${3:-}" runs pending_n done_n worst rid rtime jobline job jid err frc upd_s
+  MRP_HE_WHY=unread
   runs=$(gh api -X GET "repos/$slug/actions/runs" -f head_sha="$head" -f per_page=20 \
     -q '[.workflow_runs[]? | {n:.name, p:.path, s:.status, c:.conclusion, t:.created_at, u:.html_url, id:.id}]' 2>/dev/null) \
     || return 1
@@ -445,7 +509,7 @@ pr_head_error() { # pr_head_error <owner/repo> <head-sha> <pr-updated-at>
       [ .[]? | select(.s!="completed")
              | select((((.n // "") | test($re; "i")) or ((.p // "") | test($re; "i"))) | not) ] | length' <<<"$runs" 2>/dev/null) \
     || return 1
-  [ "${pending_n:-0}" -eq 0 ] || return 1
+  [ "${pending_n:-0}" -eq 0 ] || { MRP_HE_WHY=pending; return 1; }
   done_n=$(jq -r --arg re "$SKIP_RE" '
       [ .[]? | select(.s=="completed")
              | select((((.n // "") | test($re; "i")) or ((.p // "") | test($re; "i"))) | not) ] | length' <<<"$runs" 2>/dev/null) \
@@ -453,15 +517,15 @@ pr_head_error() { # pr_head_error <owner/repo> <head-sha> <pr-updated-at>
   if [ "${done_n:-0}" -eq 0 ]; then
     [ -n "$updated" ] || return 1
     upd_s=$(date -u -d "$updated" +%s 2>/dev/null) || return 1
-    [ $(( $(date -u +%s) - upd_s )) -gt "$PAIR_WINDOW" ] || return 1
-    printf '%s\t%s\t%s\n' "-" "-" "-"; return 0
+    [ $(( $(date -u +%s) - upd_s )) -gt "$PAIR_WINDOW" ] || { MRP_HE_WHY=pending; return 1; }
+    MRP_HE_WHY=""; printf '%s\t%s\t%s\n' "-" "-" "-"; return 0
   fi
   worst=$(jq -r --arg re "$SKIP_RE" '
       [ .[]? | select(.s=="completed")
              | select(.c=="failure" or .c=="timed_out" or .c=="startup_failure")
              | select((((.n // "") | test($re; "i")) or ((.p // "") | test($re; "i"))) | not) ]
       | sort_by(.t // "") | reverse | .[0] // empty | "\(.id)\t\(.t)"' <<<"$runs" 2>/dev/null) || return 1
-  if [ -z "$worst" ]; then printf '%s\t%s\t%s\n' "-" "-" "-"; return 0; fi
+  if [ -z "$worst" ]; then MRP_HE_WHY=""; printf '%s\t%s\t%s\n' "-" "-" "-"; return 0; fi
   IFS=$'\t' read -r rid rtime <<<"$worst"
   jobline=$(gh api "repos/$slug/actions/runs/$rid/jobs" \
     -q '[.jobs[]? | select(.conclusion=="failure") | "\(.name)\t\(.id)"][0] // ""' 2>/dev/null) || return 1
@@ -469,13 +533,14 @@ pr_head_error() { # pr_head_error <owner/repo> <head-sha> <pr-updated-at>
   # The read SUCCEEDED and named no failing job: a run that failed without one
   # (startup failure, every job cancelled). Terminal — it groups with nothing,
   # but it is an answer, so it is recorded and never paid for twice.
-  [ -n "$job" ] || { printf '%s\t%s\t%s\n' "(no failing job)" "(unavailable)" "$rtime"; return 0; }
+  [ -n "$job" ] || { MRP_HE_WHY=""; printf '%s\t%s\t%s\n' "(no failing job)" "(unavailable)" "$rtime"; return 0; }
   err=$(first_error_of_job "$slug" "$jid"); frc=$?
   case "$frc" in
     0) ;;
     2) err="(unavailable)" ;;
     *) return 1 ;;
   esac
+  MRP_HE_WHY=""
   printf '%s\t%s\t%s\n' "$job" "$err" "$rtime"
 }
 
@@ -592,7 +657,8 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
   local slug="$1" dashed ledger marks wledger list n rows num head upd f rowfile groups grc
   local hash cnt prs job err text id marker seen unknown=0 capped=0 still froze=0
   local rowmode=0 scratch="" krc h j e ra pmode=file ptmp="" prc mprs
-  local named=" " owait="" ownflag at rr rtmp fsince fs_s fage dec
+  local named=" " owait="" ownflag at rr rtmp fsince fs_s fage dec lf lrc norow herc nrc
+  MRP_GQ=0; MRP_GR=0; [ "$MRP_GATE" = 1 ] && MRP_TICK0=$(prr_seen_now)
   MRP_REREAD=0; MRP_STALE=0; MRP_OLD=0; MRP_STALE_AGE=""; MRP_STALE_SINCE=""
   type harness_pr_list >/dev/null 2>&1 || {
     log "$slug: bin/lib/gh-pr-list.sh is not readable — no PR-pair signal this tick"; return 0; }
@@ -606,8 +672,12 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
   command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$slug" || true
   dashed=$(echo "$slug" | tr '/' '-')
   ledger="$H/state/main-red/pr-errors/$dashed"; marks="$H/state/main-red/pairs/$dashed"
-  list=$(harness_pr_list "$slug" open number,headRefOid,updatedAt 100 2>/dev/null) \
-    || { log "$slug: open PR list unreadable — no PR-pair signal this tick"; return 0; }
+  # The open list through the PR record (BH-9937): off, shadow or record.
+  lf=$(mktemp "${TMPDIR:-/tmp}/main-red-list.XXXXXX") \
+    || { log "$slug: no scratch file for the open PR list — no PR-pair signal this tick"; return 0; }
+  mrp_read "$slug#open" "$lf" mrp_list_record mrp_list_github mrp_list_norm "$slug"; lrc=$?
+  list=$(cat "$lf" 2>/dev/null); rm -f "$lf"
+  [ "$lrc" = 0 ] || { log "$slug: open PR list unreadable — no PR-pair signal this tick"; return 0; }
   n=$(jq 'length' <<<"$list" 2>/dev/null) \
     || { log "$slug: open PR list unreadable (not JSON) — no PR-pair signal this tick"; return 0; }
   # THE HEAD LEDGER IS ROWS (BH-4156): main_red_pr_errors, one read for every
@@ -729,13 +799,27 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
       # never returns a line that starts with "##[", so such a row is asked
       # again once, and the fresh row replaces it.
       if [ ! -s "$f" ] || mrp_row_stale "$f"; then
+        norow=0; [ -s "$f" ] || norow=1
         f="$wledger/$head.tsv"
-        pr_head_error "$slug" "$head" "$upd" > "$f" || rm -f "$f"
-        [ "$EXPLAIN" = 1 ] && [ -s "$f" ] && echo "WOULD RECORD $slug $head :: $(cat "$f")"
-        if [ "$rowmode" = 1 ] && [ "$EXPLAIN" != 1 ] && [ -s "$f" ]; then
-          IFS=$'\t' read -r j e ra < "$f"
-          mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" \
-            || log "$slug: the row for head ${head:0:8} was not written — that head is read again next tick"
+        # THE WAKE GATE (BH-9937, step record): a head with no row and no wake
+        # since its last read is not read. No row = unknown, as for a head
+        # whose runs are still in flight.
+        if [ "$norow" = 1 ] && mrp_gate_quiet "$slug" "$num" "$head"; then
+          rm -f "$f"
+        else
+          herc=0; pr_head_error "$slug" "$head" "$upd" > "$f" || herc=$?
+          [ "$herc" = 0 ] || rm -f "$f"
+          [ "$EXPLAIN" = 1 ] && [ -s "$f" ] && echo "WOULD RECORD $slug $head :: $(cat "$f")"
+          if [ "$rowmode" = 1 ] && [ "$EXPLAIN" != 1 ] && [ -s "$f" ]; then
+            IFS=$'\t' read -r j e ra < "$f"
+            mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" \
+              || { herc=3; log "$slug: the row for head ${head:0:8} was not written — that head is read again next tick"; }
+          fi
+          # The mark: the read answered (a verdict that was kept, or runs in
+          # flight). An unread head or an unwritten row leaves none.
+          if [ "$herc" = 0 ] || { [ "$herc" = 1 ] && [ "${MRP_HE_WHY:-}" = pending ]; }; then
+            mrp_gate_mark "$slug" "$num" "$head"
+          fi
         fi
       elif case "$named" in *" $num "*) true ;; *) false ;; esac \
            && [ "$(cut -f1 "$f" 2>/dev/null)" != "-" ]; then
@@ -747,8 +831,14 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
           IFS=$'\t' read -r j e ra < "$f"
           if [ "$rowmode" = 1 ]; then at=$(head -1 "$scratch/at/$head" 2>/dev/null)
           else at=$(date -u -r "$f" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null); fi
-          mrp_head_rerun_newer "$slug" "$head" "$j" "$at"
-          case "$?" in
+          # THE WAKE GATE (BH-9937, step record): a quiet head is "no newer
+          # start", today's quiet answer, with no read.
+          if mrp_gate_quiet "$slug" "$num" "$head"; then nrc=1
+          else
+            nrc=0; mrp_head_rerun_newer "$slug" "$head" "$j" "$at" || nrc=$?
+            [ "$nrc" = 1 ] && mrp_gate_mark "$slug" "$num" "$head"
+          fi
+          case "$nrc" in
             0) rr="newer run attempt" ;;
             2) log "$slug: the check runs of head ${head:0:8} (#$num) are unreadable — its row stands this tick" ;;
           esac
@@ -762,11 +852,16 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
             IFS=$'\t' read -r j e ra < "$f"
             [ "$EXPLAIN" = 1 ] && echo "WOULD RECORD $slug $head :: $(cat "$f")"
             if [ "$rowmode" = 1 ] && [ "$EXPLAIN" != 1 ]; then
-              mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" 1 \
-                || log "$slug: the re-read row for head ${head:0:8} was not written — the next tick reads it again"
+              if mrs_pr_error_put "$slug" "$head" "$j" "$e" "$ra" 1; then
+                [ "$rr" = "newer run attempt" ] && mrp_gate_mark "$slug" "$num" "$head"
+              else
+                log "$slug: the re-read row for head ${head:0:8} was not written — the next tick reads it again"
+              fi
+            elif [ "$rr" = "newer run attempt" ]; then mrp_gate_mark "$slug" "$num" "$head"
             fi
             log "$slug: head ${head:0:8} of #$num re-read ($rr) — now \"$j\""
           else
+            [ "$rr" = "newer run attempt" ] && [ "${MRP_HE_WHY:-}" = pending ] && mrp_gate_mark "$slug" "$num" "$head"
             log "$slug: head ${head:0:8} of #$num re-read ($rr) has no verdict yet (a run still in flight, or a read failed) — the old row stands this tick"
           fi
           [ -n "$rtmp" ] && rm -f "$rtmp"
@@ -778,6 +873,13 @@ pr_pair_signal() { # pr_pair_signal <owner/repo>
       if [ -s "$f" ]; then printf '%s\t%s\n' "$num" "$(cat "$f")" >> "$rowfile"
       else unknown=$((unknown + 1)); fi
     done <<<"$rows"
+  fi
+  # The wake gate's retention and its count (BH-9937, step record): the marks
+  # of PRs that left the open list go.
+  if [ "$MRP_GATE" = 1 ]; then
+    # shellcheck disable=SC2046 # one word per PR number
+    prr_seen_keep main-red-pr-pair "$slug" $(jq -r '.[]?.number' <<<"$list" 2>/dev/null)
+    log "$slug: record step: quiet=$MRP_GQ read=$MRP_GR"
   fi
   # OPERATOR-WAIT JOBS NEVER PAIR (BH-9890). The verdict row still records the
   # job, so --explain and the ledger read as before; only the grouping skips it.

@@ -1,0 +1,3 @@
+[
+    {"path": "prr-seen", "class": "cache", "authority": "the per-PR wake gate of bin/lib/prr-seen.sh (BH-9937)", "note": "state/prr-seen/<lane>/<owner>_<repo>.tsv, rows <number> TAB <epoch> TAB <head>: the start time of the last tick that read each open PR, written tmp+mv under flock by prr_seen_mark and trimmed to the repo's open PRs by prr_seen_keep after each complete list. It only decides whether a lane in step record reads a PR; no answer comes from it. Losing it costs one read per PR. Machine-local, never carried"}
+]

@@ -16,8 +16,9 @@
 #            shadow + a GitHub failure: no PRR_SHADOW, rc = GitHub's rc.
 #   compare  the real tsp_open_norm: order, `up` and `url` do not count; a PR
 #            only on one side, a changed head ref or title does.
-#   seams    each wave 5/6 seam file exists, parses, defines no function, and
-#            prr_seam_load loads it; an unknown lane is rc 1.
+#   seams    each seam file a wave has not filled yet exists, parses, defines
+#            no function, and prr_seam_load loads it; a filled seam defines its
+#            functions; an unknown lane is rc 1.
 #   registry the built lanes registry carries GH_SOURCE on tickets-snapshot-push
 #            with default `shadow`, read in bin/lib/prr-shadow.sh.
 # Run from anywhere: bash tests/prr-shadow.bh-9933-test.sh   (exit 0 = pass)
@@ -163,7 +164,11 @@ fi
 # ---- seams -------------------------------------------------------------------------
 # merge-conductor left this list in BH-9936 (wave 4): its seam now defines the
 # CI read's three functions, pinned below and in tests/prr-ci-state.bh-9936-test.sh.
-for l in unblock blocked-resolver pr-state-reconcile main-red-pr-pair pipeline-health dequeue-watch wake-loop; do
+# pr-state-reconcile and main-red-pr-pair left it in BH-9937 (wave 5): their
+# seams now define the record and norm functions, pinned below and in
+# tests/pr-state-reconcile-record.bh-9937-test.sh and
+# tests/main-red-pr-pair-record.bh-9937-test.sh.
+for l in unblock blocked-resolver pipeline-health dequeue-watch wake-loop; do
   f="$DIR/bin/lib/prr-shadow.d/$l.sh"
   [ -r "$f" ] || { bad "seams: $f missing"; continue; }
   bash -n "$f" && ok || bad "seams: $f does not parse"
@@ -179,6 +184,15 @@ grep -q "^# .*merge-conductor" "$f" && ok || bad "seams: $f header must name the
 prr_seam_load merge-conductor && ok || bad "seams: prr_seam_load merge-conductor must return 0"
 for fn in mc_ci_record mc_ci_github mc_ci_norm; do
   command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: loading merge-conductor must define $fn"
+done
+for l in pr-state-reconcile main-red-pr-pair; do
+  f="$DIR/bin/lib/prr-shadow.d/$l.sh"
+  bash -n "$f" && ok || bad "seams: $f does not parse"
+  grep -q "^# .*$l" "$f" && ok || bad "seams: $f header must name the lane $l"
+  prr_seam_load "$l" && ok || bad "seams: prr_seam_load $l must return 0"
+done
+for fn in psr_list_record psr_list_norm psr_state_record psr_state_norm mrp_list_record mrp_list_norm; do
+  command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: the wave 5 seams must define $fn"
 done
 prr_seam_load no-such-lane && bad "seams: an unknown lane must return 1" || ok
 

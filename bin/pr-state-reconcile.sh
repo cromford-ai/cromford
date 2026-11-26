@@ -50,9 +50,29 @@
 # on a box (no stamp) is a dry run that only counts them. One `marker-sweep:`
 # line a run. A value that is not a whole number deletes nothing.
 # Unreadable is never written as a fact. A failed write is failed, not corrected.
+# THE PR RECORD (BH-9937, BH-9926 wave 5). The open list and the closed sweep's
+# state read go through prr_read (bin/lib/prr-shadow.sh) with the seam
+# bin/lib/prr-shadow.d/pr-state-reconcile.sh. The step is the settings row
+# lane.pr-state-reconcile.gh_source (knob GH_SOURCE, default shadow), read ONCE
+# after this lane's own lane_env_apply, so another lane's env cannot change it:
+#   off     GitHub only, as before BH-9937.
+#   shadow  both; the lane acts on GitHub, and a record answer that differs
+#           writes one PRR_SHADOW line in logs/prr-shadow.log. Every PR is read.
+#   record  the record (a miss reads GitHub and logs PRR_MISS), plus the per-PR
+#           wake gate bin/lib/prr-seen.sh: a PR with no `pr` wake and no
+#           `checks` wake on its head since its last complete read is QUIET. A
+#           quiet PR makes 0 GitHub reads: its head is the list head, held is
+#           not judged (a HOLD or RESUME comment is a `pr` wake), the builder and
+#           lead verdicts are still judged (jobs reads), CI is judged from the
+#           record (prr_ci_state, green only), and the live probe and the
+#           console QA reset wait for its next read. A due PR is read as today
+#           and marked only when none of its reads was skipped, deferred or
+#           failed, so an unread input is read again next tick. A db PR that
+#           the record calls closed or merged gets closed=1 with no GitHub read.
 # Hub only. Kill switch: flags/lane-off-pr-state-reconcile.
 # Log: logs/pr-state-reconcile.log, one line per correction, one per reset, and one
-# `checked= corrected= skipped= deferred= failed= repos=` summary a sweep.
+# `checked= corrected= skipped= deferred= failed= repos=` summary a sweep; in step
+# record the summary ends ` quiet=<n> step=record` (the PRs the gate skipped).
 set -uo pipefail
 H="${HARNESS:-/root/harness}"
 . "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
@@ -65,6 +85,11 @@ case "${1:-tick}" in tick) ;; *) echo "usage: bin/pr-state-reconcile.sh tick" >&
 . "${HARNESS:-/root/harness}/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit pr-state-reconcile
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pr-state-reconcile
+# The PR-record step (BH-9937), read once, BEFORE lead-review-land's env apply
+# below. No helper = off: today's GitHub reads.
+PSR_STEP=off
+# shellcheck source=bin/lib/prr-shadow.sh
+if . "${HARNESS:-/root/harness}/bin/lib/prr-shadow.sh" 2>/dev/null; then PSR_STEP=$(prr_step pr-state-reconcile); fi
 # LEAD_REVIEW_AUTO_REPOS is lead-review-land's knob (BH-3479.0 contract).
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    lead-review-land
 
@@ -93,6 +118,31 @@ LP=0; . "$H/bin/lib/live-probes.sh" 2>/dev/null && LP=1
 # shellcheck source=bin/lib/console-qa-gate.sh
 CQG=0; . "$H/bin/lib/lead-reviews.sh" 2>/dev/null && . "$H/bin/lib/console-qa-gate.sh" 2>/dev/null && CQG=1
 CQG_HREPO=$(awk '$1 == "cromford" {print $2; exit}' "${FLEET_CONF:-$H/fleet.conf}" 2>/dev/null)
+# The seam and the gate (BH-9937, header). A missing seam is step off; a
+# missing gate in step record reads every PR.
+# shellcheck source=bin/lib/prr-shadow.d/pr-state-reconcile.sh
+if [ "$PSR_STEP" != off ] && ! { . "$H/bin/lib/prr-shadow.d/pr-state-reconcile.sh" 2>/dev/null \
+     && command -v psr_list_record >/dev/null 2>&1; }; then
+  PSR_STEP_WAS=$PSR_STEP; PSR_STEP=off
+fi
+PSR_GATE=0
+if [ "$PSR_STEP" = record ]; then
+  # shellcheck source=bin/lib/prr-seen.sh
+  . "$H/bin/lib/prr-seen.sh" 2>/dev/null && command -v prr_seen_due >/dev/null 2>&1 && PSR_GATE=1
+  # shellcheck source=bin/lib/prr-ci-state.sh
+  command -v prr_ci_state >/dev/null 2>&1 || . "$H/bin/lib/prr-ci-state.sh" 2>/dev/null || true
+fi
+# The lane's GitHub side of the two record reads (prr_read's github-fn).
+psr_list_github() { harness_pr_list "${2:-}" open number,url,isDraft,baseRefName,headRefOid,updatedAt > "${1:-}" 2>/dev/null; }
+psr_state_github() { gh_rest GET "repos/${2:-}/pulls/${3:-}" > "${1:-}" 2>/dev/null; }
+# psr_read <key> <out-file> <record-fn> <github-fn> <norm-fn> [args...] —
+# prr_read under the step captured above; off is the github-fn alone.
+psr_read() {
+  if [ "$PSR_STEP" = off ] || ! command -v prr_read >/dev/null 2>&1; then
+    PRR_SOURCE=github; "$4" "$2" "${@:6}"; return $?
+  fi
+  GH_SOURCE="$PSR_STEP" prr_read pr-state-reconcile "$@"
+}
 
 # A required registry knob: no literal here. Empty or not a positive integer
 # means the registry was not read, and that is never "go".
@@ -112,9 +162,12 @@ trap 'rm -rf "$WORK"' EXIT
 command -v prs_gc >/dev/null 2>&1 && prs_gc
 
 STAMP=$(date -u +%s)
+# The gate's mark is the time the sweep STARTED its reads (bin/lib/prr-seen.sh).
+TICK0=$STAMP; [ "$PSR_GATE" = 1 ] && TICK0=$(prr_seen_now)
+[ -n "${PSR_STEP_WAS:-}" ] && log "bin/lib/prr-shadow.d/pr-state-reconcile.sh missing; step $PSR_STEP_WAS read as off this sweep"
 [ "$LP" = 1 ] || log "bin/lib/live-probes.sh missing; no live probes this sweep"
 [ "$CQG" = 1 ] || log "bin/lib/console-qa-gate.sh or bin/lib/lead-reviews.sh missing; no console QA reset this sweep"
-REPOS=0; CHECKED=0; CORRECTED=0; SKIPPED=0; DEFERRED=0; FAILED=0
+REPOS=0; CHECKED=0; CORRECTED=0; SKIPPED=0; DEFERRED=0; FAILED=0; QUIET=0
 s12() { case "$1" in ????????????*) printf '%s' "${1:0:12}" ;; '') printf 'null' ;; *) printf '%s' "$1" ;; esac; }
 
 # alert_once <id> <severity> <text> — one lane-alert per id, deduped by
@@ -166,16 +219,25 @@ for SLUG in $AUTO_REPOS; do
   if ! pr_gate_facts "$SLUG" > "$WORK/facts" 2>/dev/null || ! jq -e '.rows | type == "array"' "$WORK/facts" >/dev/null 2>&1; then
     log "$SLUG: the gate facts are unreadable; no corrections this pass"; SKIPPED=$((SKIPPED + 1)); continue
   fi
-  harness_pr_list "$SLUG" open number,url,isDraft,baseRefName,headRefOid,updatedAt > "$WORK/list" 2>/dev/null; RC=$?
+  psr_read "$SLUG#open" "$WORK/list" psr_list_record psr_list_github psr_list_norm "$SLUG"; RC=$?
   if [ "$RC" != 0 ] || ! jq -e 'type == "array"' "$WORK/list" >/dev/null 2>&1; then
     log "$SLUG: the open PR list is unreadable (rc $RC); next sweep retries"; SKIPPED=$((SKIPPED + 1)); continue
   fi
   while IFS=$'\t' read -r N URL DRAFT BASE LHEAD LUPD; do
     case "$N" in ''|*[!0-9]*) continue ;; esac
     CHECKED=$((CHECKED + 1))
-    HEAD=""
-    prs_pr_get "$SLUG" "$N" "$LHEAD" "$LUPD" "$BASE" "$WORK/pr" 2>/dev/null && HEAD=$(jq -r '.head.sha // empty' "$WORK/pr" 2>/dev/null | tr 'A-F' 'a-f')
-    [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || { log "$SLUG $N: live head unreadable; PR skipped"; SKIPPED=$((SKIPPED + 1)); continue; }
+    HEAD=""; PQ=0; SK0=$SKIPPED; DF0=$DEFERRED; FL0=$FAILED
+    # The wake gate (step record): a quiet PR's head is the list head.
+    if [ "$PSR_GATE" = 1 ]; then
+      LH=$(printf '%s' "$LHEAD" | tr 'A-F' 'a-f')
+      if [[ "$LH" =~ ^[0-9a-f]{40}$ ]] && ! prr_seen_due pr-state-reconcile "$SLUG" "$N" "$LH" >/dev/null; then
+        PQ=1; HEAD="$LH"; QUIET=$((QUIET + 1))
+      fi
+    fi
+    if [ "$PQ" = 0 ]; then
+      prs_pr_get "$SLUG" "$N" "$LHEAD" "$LUPD" "$BASE" "$WORK/pr" 2>/dev/null && HEAD=$(jq -r '.head.sha // empty' "$WORK/pr" 2>/dev/null | tr 'A-F' 'a-f')
+      [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || { log "$SLUG $N: live head unreadable; PR skipped"; SKIPPED=$((SKIPPED + 1)); continue; }
+    fi
     # The db's facts for this PR, '' for null (no row = every field null). A
     # null rides as '-' because read collapses adjacent tabs.
     IFS=$'\t' read -r D_HEAD D_DRAFT D_CLOSED D_CI D_APP D_LEAD D_HELD < <(jq -r --argjson n "$N" '
@@ -222,13 +284,21 @@ for SLUG in $AUTO_REPOS; do
         *) log "$SLUG $N: the standing verdict is unreadable; lead_verdict not judged"; SKIPPED=$((SKIPPED + 1)) ;;
       esac
     fi
-    HRC=0; hold_check_thread "$SLUG" "$N" >/dev/null 2>&1 || HRC=$?
-    case "$HRC" in
-      0|1) LHELD=$((HRC == 1 ? 1 : 0)); E_HELD=$LHELD; [ "$LHELD" != "${D_HELD:-0}" ] && fix held "${D_HELD:-}" "$LHELD" "held=$LHELD" ;;
-      *) log "$SLUG $N: the PR thread is unreadable; held not judged"; SKIPPED=$((SKIPPED + 1)) ;;
-    esac
+    # A quiet PR: held is not judged (no wake = no HOLD or RESUME comment).
+    if [ "$PQ" = 0 ]; then
+      HRC=0; hold_check_thread "$SLUG" "$N" >/dev/null 2>&1 || HRC=$?
+      case "$HRC" in
+        0|1) LHELD=$((HRC == 1 ? 1 : 0)); E_HELD=$LHELD; [ "$LHELD" != "${D_HELD:-0}" ] && fix held "${D_HELD:-}" "$LHELD" "held=$LHELD" ;;
+        *) log "$SLUG $N: the PR thread is unreadable; held not judged"; SKIPPED=$((SKIPPED + 1)) ;;
+      esac
+    fi
+    # A quiet PR's CI is the record's word, green only, with no GitHub read
+    # (PRR_CI_GUARD=0). Any other word judges nothing.
+    if [ "$PQ" = 1 ] && [ "${D_CI:-}" != "$HEAD" ]; then
+      CI=unknown; command -v prr_ci_state >/dev/null 2>&1 && CI=$(PRR_CI_GUARD=0 prr_ci_state "$SLUG" "$N" "$HEAD" 2>/dev/null)
+      [ "$CI" = green ] && { E_CI=1; fix ci_green_sha "${D_CI:-}" "$HEAD" "ci_green_sha=$HEAD"; }
     # CI last: two GETs, and only when the db is not already green on the head.
-    if [ "${D_CI:-}" != "$HEAD" ]; then
+    elif [ "${D_CI:-}" != "$HEAD" ]; then
       CI=$(frp_ci "$SLUG" "$HEAD" | jq -r '.state // "unreadable"' 2>/dev/null)
       case "$CI" in
         green) E_CI=1; fix ci_green_sha "${D_CI:-}" "$HEAD" "ci_green_sha=$HEAD" ;;
@@ -241,21 +311,30 @@ for SLUG in $AUTO_REPOS; do
     # lead review: the worklist gate bin/lib/lead-gates.d/72-probe-hold.sh
     # holds the review of a head that declares a catalog probe until this
     # comment is on the PR (bounded by LEAD_REVIEW_PROBE_WAIT_MAX_MIN). Fail-open.
-    if [ "$LP" = 1 ] && [ "$LDRAFT" = 0 ] && [ "$E_HELD" = 0 ] && [ "$E_APP" = 1 ] && [ "$E_CI" = 1 ] && [ "$E_LEAD" = 0 ]; then
+    if [ "$PQ" = 0 ] && [ "$LP" = 1 ] && [ "$LDRAFT" = 0 ] && [ "$E_HELD" = 0 ] && [ "$E_APP" = 1 ] && [ "$E_CI" = 1 ] && [ "$E_LEAD" = 0 ]; then
       lp_run_for_head "$SLUG" "$N" "$HEAD" "$WORK/pr" || true
     fi
     # <<< live probes
     # >>> console qa clear (BH-5909): a console-qa-gate BLOCK on this head is
     # reviewed again, with no push, once a QA: PASS comment names the head.
-    if [ "$CQG" = 1 ] && [ "$E_LEAD" = 1 ] && [ -n "$CQG_HREPO" ] && [ "${SLUG,,}" = "${CQG_HREPO,,}" ]; then
+    if [ "$PQ" = 0 ] && [ "$CQG" = 1 ] && [ "$E_LEAD" = 1 ] && [ -n "$CQG_HREPO" ] && [ "${SLUG,,}" = "${CQG_HREPO,,}" ]; then
       mkdir -p "$H/state/lead-review-enqueue" 2>/dev/null
       CQL=$(cqg_clear_block "$SLUG" "$N" "$HEAD" "$H/state/lead-review-enqueue") || true
       [ -n "$CQL" ] && log "$SLUG $N @$(s12 "$HEAD"): $CQL"
     fi
     # <<< console qa clear
+    # The wake gate's mark (step record): a due PR whose reads all answered
+    # and whose corrections were all written. Anything unread, deferred or
+    # failed leaves no mark, so the next tick reads the PR again.
+    if [ "$PSR_GATE" = 1 ] && [ "$PQ" = 0 ] && [ "$SKIPPED" = "$SK0" ] && [ "$DEFERRED" = "$DF0" ] && [ "$FAILED" = "$FL0" ]; then
+      prr_seen_mark pr-state-reconcile "$SLUG" "$N" "$HEAD" "$TICK0"
+    fi
   done < <(jq -r '.[] | [(.number|tostring), (.url // ""), (.isDraft|tostring), (.baseRefName // "main"),
       ((.headRefOid // "") | if . == "" then "-" else . end), ((.updatedAt // "") | if . == "" then "-" else . end)] | @tsv' "$WORK/list")
 
+  # The gate's retention: the marks of PRs that are no longer open go.
+  # shellcheck disable=SC2046 # one word per PR number
+  [ "$PSR_GATE" = 1 ] && prr_seen_keep pr-state-reconcile "$SLUG" $(jq -r '.[].number' "$WORK/list" 2>/dev/null)
   # Closed on GitHub, open in the db. Only a complete list can say "not open".
   if [ "$(jq 'length' "$WORK/list")" -ge 100 ]; then
     log "$SLUG: list may be truncated; closed sweep skipped"
@@ -264,7 +343,7 @@ for SLUG in $AUTO_REPOS; do
   while IFS=$'\t' read -r N HEAD; do
     case "$N" in ''|*[!0-9]*) continue ;; esac
     [ "$HEAD" = - ] && HEAD=""
-    CRC=0; gh_rest GET "repos/$SLUG/pulls/$N" > "$WORK/one" 2>/dev/null || CRC=$?
+    CRC=0; psr_read "$SLUG#$N@state" "$WORK/one" psr_state_record psr_state_github psr_state_norm "$SLUG" "$N" || CRC=$?
     ST=$(jq -r '.state // empty' "$WORK/one" 2>/dev/null)
     if [ "$CRC" != 0 ] || [ -z "$ST" ]; then
       log "$SLUG $N: the PR is not in the open list and its state is unreadable; closed not judged"; SKIPPED=$((SKIPPED + 1)); continue
@@ -275,5 +354,6 @@ for SLUG in $AUTO_REPOS; do
       | [(.number|tostring), (.head // "-")] | @tsv' "$WORK/facts")
 done
 
-log "checked=$CHECKED corrected=$CORRECTED skipped=$SKIPPED deferred=$DEFERRED failed=$FAILED repos=$REPOS"
+QSUF=""; [ "$PSR_STEP" = record ] && QSUF=" quiet=$QUIET step=record"
+log "checked=$CHECKED corrected=$CORRECTED skipped=$SKIPPED deferred=$DEFERRED failed=$FAILED repos=$REPOS$QSUF"
 exit 0

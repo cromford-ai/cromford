@@ -1,0 +1,9 @@
+{
+  "env": "GH_SOURCE",
+  "read_in": "bin/lib/prr-shadow.sh",
+  "type": "string",
+  "default": "shadow",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9937 (BH-9926 wave 5): settings row lane.main-red-pr-pair.gh_source. Where the PR-pair signal reads each repo's open PR list: off = GitHub only (today's read); shadow (default) = the PR record and GitHub, the lane acts on GitHub and logs one PRR_SHADOW line in logs/prr-shadow.log when they differ; record = the PR record (a miss reads GitHub and logs PRR_MISS) plus the per-PR wake gate bin/lib/prr-seen.sh before a head's runs read and a named head's check-runs read: a head with no wake since its last read is not read and counts as unknown. Any other value is shadow plus one PRR_STEP line. Read once per tick by prr_step in bin/lib/prr-shadow.sh. Move to record only after a 48-hour shadow count of 0 (docs/notes/2026-11-25-BH-9937-lanes-record-read.md)."
+}

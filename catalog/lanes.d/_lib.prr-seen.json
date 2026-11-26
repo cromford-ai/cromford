@@ -1,0 +1,22 @@
+{
+  "libs": [
+    {
+      "id": "prr-seen",
+      "file": "bin/lib/prr-seen.sh",
+      "note": "BH-9937 (BH-9926 wave 5): the per-PR wake gate. A lane in step record (lane.<id>.gh_source, bin/lib/prr-shadow.sh) stops reading a PR that had no `pr` wake (key = the number) and no `checks` wake (key = the head sha) since its last read. The marks are a cache in state/prr-seen/<lane>/<repo>.tsv, bounded to the repo's open PRs. Used by pr-state-reconcile and main-red-pr-pair; the blocked-resolver and unblock waves reuse it.",
+      "knobs": [
+        {
+          "env": "PRR_SEEN_BACKSTOP_S",
+          "type": "int",
+          "default": 1800,
+          "min": 0,
+          "max": 86400,
+          "unit": "seconds",
+          "zero_means": "off: the gate always reads",
+          "required": false,
+          "note": "BH-9937. The longest a lane in step record goes without reading a PR that had no wake: a mark older than this reads the PR again (the backstop for a lost webhook). wb_due (bin/lib/wake-backstop.sh) reads 1..1799 as 1800, its floor. 0 = the gate is off and every PR is read every tick. Read in bin/lib/prr-seen.sh as PRR_SEEN_BACKSTOP_S, code fallback 1800."
+        }
+      ]
+    }
+  ]
+}
