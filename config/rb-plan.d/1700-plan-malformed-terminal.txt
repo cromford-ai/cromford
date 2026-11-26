@@ -1,0 +1,138 @@
+# >>> plan malformed terminal
+# REQUEUED ONCE, THEN A HUMAN. The count is per TICKET and lives in the D1
+# ledger (kind plan_malformed) with state/plan-malformed.txt as the offline
+# fallback, because the requeue is a NEW BUILD in a new dir — a marker in this
+# build dir could never be read by the attempt that needs it. It is
+# deliberately never cleared: a ticket whose planner produced two untraced
+# plans in its life is a ticket that needs reading, not a third session.
+#
+# A FUNCTION since 2026-09-12, because TWO gates end here now: the trace gate
+# above, and the size gate below. An unsized plan and an untraced plan are the
+# same class of defect — a spec the pipeline cannot check — and two copies of
+# "requeue once, then hold" would drift apart the first time one of them was
+# fixed. One ledger, one vocabulary, one terminal. The held terminal is not a
+# request for a person: bin/blocked-resolver.sh drains PLAN_MALFORMED rows the
+# same way it drains every other park, with a fresh build against current main.
+PM_TERMINAL() { # PM_TERMINAL <why> <artifact> <what-the-planner-cannot-do>
+  local pm_why="$1" pm_art="$2" pm_cannot="$3" pm_seen=0 pm_status
+  grep -q "^$PROJECT $KEY " "$HARNESS/state/plan-malformed.txt" 2>/dev/null && pm_seen=1
+  if [ "$pm_seen" = 0 ] && type job_ledger_get >/dev/null 2>&1; then
+    job_ledger_get plan_malformed "$PROJECT $KEY" >/dev/null 2>&1 && pm_seen=1
+  fi
+  if [ "$pm_seen" = 0 ]; then pm_status=requeued; else pm_status=held; fi
+  mkdir -p "$HARNESS/state"
+  # FIVE fields since BH-657: the ARTIFACT rides on the row, so the pre-plan hold
+  # guard above can name what the planner failed at ($BUILD/size-gate.txt,
+  # $BUILD/plan-gate.txt) without opening build dirs that may already be pruned.
+  # Readers key on the `^$PROJECT $KEY ` prefix and field 3, so rows written
+  # before this (four fields) still read exactly as they did.
+  echo "$PROJECT $KEY $pm_status $(STAMP) $pm_art" >> "$HARNESS/state/plan-malformed.txt"
+  if type job_ledger_put >/dev/null 2>&1; then
+    job_ledger_put plan_malformed "$PROJECT $KEY" "$pm_status" "$pm_why" >/dev/null 2>&1 || true
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] PLAN_MALFORMED: $pm_why ($pm_status)" >> "$BUILD/pipeline.log"
+  BB plan_malformed "" "" "" false "$(head -c 600 "$pm_art" 2>/dev/null)"
+  if [ "$pm_status" = requeued ]; then
+    RESULT "PLAN_MALFORMED $pm_why — requeued once, the sweep relaunches it ($pm_art)"
+    exit 3
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] PLAN_MALFORMED twice on $KEY (2 of 2 malformed plans — every later launch of $KEY is skipped before the planner) — the planner cannot $pm_cannot; handed to bin/blocked-resolver.sh for a fresh build against current main ($pm_art)" >> "$ALERTS"
+  RESULT "PLAN_MALFORMED $pm_why — held here, handed to the blocked-resolver; this ticket already re-planned once ($pm_art)"
+  exit 4
+}
+# <<< plan malformed terminal
+if [ "$PG_RC" = 2 ] && [ "$PG_ENFORCE" = 1 ]; then
+  PG_WHY="$PG_UNTRACED of $PG_TASKS task(s) still untraced after one repair pass"
+  [ "$PG_TASKS" = 0 ] && PG_WHY="the plan carries no VALIDATE/SATISFIES lines at all, after one repair pass"
+  grep -q '^PLAN_SPEC_TRACE: missing$' "$BUILD/plan-gate.txt" 2>/dev/null \
+    && PG_WHY="${PG_WHY}; the spec trace is still missing ($(grep -c '^  UNTRACED: spec trace' "$BUILD/plan-gate.txt") gap(s))"
+  CR_WHY=""; command -v cr_why_note >/dev/null 2>&1 && CR_WHY=$(cr_why_note "$BUILD/plan-gate.txt")
+  [ -n "$CR_WHY" ] && PG_WHY="${PG_WHY}; $CR_WHY"
+  PM_TERMINAL "$PG_WHY" "$BUILD/plan-gate.txt" "produce a traced plan"
+fi
+[ "$PG_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] plan gate: $PG_UNTRACED untraced task(s) — PLAN_GATE_ENFORCE=0, executor gets an untraced plan" >> "$BUILD/pipeline.log"
+# <<< plan gate
+# >>> design collisions (BH-5791)
+# --- A PLAN THAT CHANGES WHAT ANOTHER TICKET CHANGED SAYS HOW THE TWO COMBINE --
+# #4332 and #5163 both rewrote flag_active and flag_set, and review found it
+# after both were built. bin/plan-collisions.sh reads the plan's
+# `## Changed symbols` and asks git which commits touched each one since the
+# plan's base, on main and in every open PR. The note it gives goes into
+# plan.md as `## Design collision check (BH-5791)`.
+#
+# OUTSIDE THE CHECKPOINT, like the plan gate above: an adopted pre-plan and a
+# resumed plan are checked too. The base is the one an earlier run of this
+# build used ($BUILD/collision-base), else the pre-plan's base-sha, else the
+# merge base, so a resume checks the same window.
+#
+# A LISTED symbol that collides needs a `combine` or `needs-human` line under
+# `## Design collisions`. With none, ONE repair pass ($BUILD/collision-repair-done
+# is written BEFORE the call, so a resume never pays twice), then PLAN_BLOCKED
+# with the questions at the top of plan.md, as the plan blocked gate parks it.
+# Derived symbols (no `## Changed symbols` section), an unread main and an
+# unread PR list never refuse. PLAN_COLLISION_ENFORCE=0 is the kill switch.
+# Formats: docs/notes/2026-10-10-BH-5791-design-collisions.md.
+PC_VERDICT=could-not-run; PC_HITS=0; PC_RESOLVED=0; PC_UNRES=""; PC_NH=""
+# shellcheck source=bin/lib/plan-collisions.sh
+command -v pc_note >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/plan-collisions.sh" ] && . "$HARNESS/bin/lib/plan-collisions.sh" 2>/dev/null; }
+if ! command -v pc_note >/dev/null 2>&1 || [ ! -x "$HARNESS/bin/plan-collisions.sh" ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] design collisions: lib missing on $(hostname) — not checked verdict=could-not-run" >> "$BUILD/pipeline.log"
+else
+  pc_conf "$PROJECT"
+  [ -z "$PC_CONF_WARN" ] || echo "$(STAMP) [$PROJECT/$KEY] $PC_CONF_WARN" >> "$ALERTS"
+  PC_BASE=$(head -1 "$BUILD/collision-base" 2>/dev/null)
+  if [ -z "$PC_BASE" ]; then
+    case "${PP_OUTCOME:-}" in HIT*) [ -n "${PP_DIR:-}" ] && PC_BASE=$(head -1 "$PP_DIR/base-sha" 2>/dev/null) ;; esac
+    [ -n "$PC_BASE" ] || PC_BASE=$(git merge-base HEAD "origin/$BASE" 2>/dev/null)
+    [ -z "$PC_BASE" ] || printf '%s\n' "$PC_BASE" > "$BUILD/collision-base"
+  fi
+  PC_SLUG="${GH_AUTH_SLUG:-}"
+  [ -n "$PC_SLUG" ] || PC_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')
+  PC_SUMMARY=$("$HARNESS/bin/plan-collisions.sh" --plan "$BUILD/plan.md" --repo . --base "$PC_BASE" \
+    --main "origin/$BASE" --slug "$PC_SLUG" --self-branch "$BRANCH" --self-key "$KEY" --stack-base "$BASE" \
+    --project "$PROJECT" --out "$BUILD/collisions.txt" 2>>"$BUILD/pipeline.log"); PC_RC=$?
+  PC_CHECK() { # sets PC_RESOLVED PC_UNRES PC_NH over the listed collisions
+    local n r
+    PC_RESOLVED=0; PC_UNRES=""; PC_NH=""
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      r=0; pc_resolved "$BUILD/plan.md" "$n" || r=$?
+      case "$r" in 0) PC_RESOLVED=$((PC_RESOLVED + 1)) ;; 2) PC_NH="$PC_NH; $n" ;; *) PC_UNRES="$PC_UNRES; $n" ;; esac
+    done < <(pc_listed_hits "$BUILD/collisions.txt")
+    PC_UNRES="${PC_UNRES#; }"; PC_NH="${PC_NH#; }"
+  }
+  if [ "$PC_RC" = 3 ] || [ ! -s "$BUILD/collisions.txt" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] design collisions: ${PC_SUMMARY:-no summary} — not checked" >> "$BUILD/pipeline.log"
+  else
+    PC_HITS=$(grep -c '^COLLISION	' "$BUILD/collisions.txt")
+    PC_CHECK
+    if [ "$PC_ENFORCE" = 1 ] && [ -n "$PC_UNRES" ] && [ -z "$PC_NH" ] && [ ! -e "$BUILD/collision-repair-done" ]; then
+      touch "$BUILD/collision-repair-done"
+      echo "$(STAMP) [$PROJECT/$KEY] design collisions: unresolved ($PC_UNRES) — one repair pass" >> "$BUILD/pipeline.log"
+      CC plan "$PLAN_MODEL" 600 "$BUILD/collision-repair-run.txt" "Repair the plan at $BUILD/plan.md IN PLACE. Other work changed symbols this plan lists under '## Changed symbols' after the plan's base: $(awk -F'\t' '$1 == "COLLISION" && $2 == "listed" { s = s sep sprintf("`%s` (%s %s, %s)", $3, ($4 == "main" ? "main" : "PR " $4), $5, $6); sep = "; " } END { printf "%s", s }' "$BUILD/collisions.txt"). Read each of those commits (git show <sha>, or the open PR) and the plan's design for the symbol. Then add a '## Design collisions' section to plan.md (or extend it), one bullet per symbol: '- \`<name>\`: combine — <how the two designs combine, in one or two sentences>' when they can combine, or '- \`<name>\`: needs-human — <the question a person must answer>' when they cannot. Change nothing else. Keep the '## Acceptance tests', '## QA screens' and '## Size' sections and the KIND, SIZE and SLICE lines exactly as they are."
+      PC_CHECK
+    fi
+    pc_note "$BUILD/plan.md" "$BUILD/collisions.txt"
+    if [ "$PC_HITS" = 0 ]; then PC_VERDICT=none
+    elif [ -n "$PC_UNRES$PC_NH" ] && [ "$PC_ENFORCE" = 1 ]; then PC_VERDICT=blocked
+    elif [ -n "$PC_UNRES$PC_NH" ] || [ "$PC_RESOLVED" = 0 ]; then PC_VERDICT=note-only
+    else PC_VERDICT=resolved
+    fi
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] design collisions: listed=$(sed -n 's/^SYMBOLS: listed=\([0-9]*\).*/\1/p' "$BUILD/collisions.txt" 2>/dev/null) derived=$(sed -n 's/^SYMBOLS: .*derived=\([0-9]*\).*/\1/p' "$BUILD/collisions.txt" 2>/dev/null) hits=$PC_HITS resolved=$PC_RESOLVED main=$(sed -n 's/^MAIN: \([a-z]*\).*/\1/p' "$BUILD/collisions.txt" 2>/dev/null) prs=$(sed -n 's/^OPEN_PRS: \([a-z]*\).*/\1/p' "$BUILD/collisions.txt" 2>/dev/null) verdict=$PC_VERDICT" >> "$BUILD/pipeline.log"
+  if [ "$PC_VERDICT" = blocked ]; then
+    {
+      echo "BLOCKED-NEEDS-CLARIFICATION"
+      echo "needs-human: design collision (BH-5791)"
+      while IFS= read -r PC_N; do
+        [ -n "$PC_N" ] || continue
+        echo "- Other work changed \`$PC_N\` after this plan's base. How do the two designs combine?"
+      done < <(printf '%s\n' "$PC_UNRES" "$PC_NH" | tr ';' '\n' | sed 's/^ *//')
+      echo ""
+      cat "$BUILD/plan.md"
+    } > "$BUILD/plan.md.pc" && mv "$BUILD/plan.md.pc" "$BUILD/plan.md"
+    BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
+    RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4
+  fi
+fi
+# <<< design collisions (BH-5791)

@@ -1,0 +1,68 @@
+# >>> hotspot claim
+# BH-5268: the claim also names every stored conflict hotspot (the project's
+# conflict_hotspots rows, bin/lib/plan-hotspots.sh) this plan mentions anywhere,
+# because planned-files.sh's directory allowlist drops bin/, cron/, root config
+# files and the like, and a sibling planner on any box must still see a light
+# touch on one. The union goes to claim-files.txt; planned-files.txt is NOT
+# changed (the size and scope gates read it). Nothing to add, or the hotspot
+# list unread, leaves CLAIM_FILES empty and the claim exactly as above.
+CLAIM_FILES=""; HC_N=0; PH_SOURCE=none
+# shellcheck source=bin/lib/plan-hotspots.sh
+[ -r "$HARNESS/bin/lib/plan-hotspots.sh" ] && . "$HARNESS/bin/lib/plan-hotspots.sh" 2>/dev/null
+if command -v ph_hot_list >/dev/null 2>&1 && ph_hot_list "$PROJECT" "$BUILD/.hotspots.txt" 2>>"$BUILD/pipeline.log"; then
+  HC_N=$(ph_mentions "$BUILD/plan.md" "$BUILD/.hotspots.txt" | tee "$BUILD/.hotspot-mentions.txt" | grep -c .)
+  if [ "${HC_N:-0}" -gt 0 ] && ph_union "$BUILD/planned-files.txt" "$BUILD/.hotspot-mentions.txt" "$BUILD/claim-files.txt"; then
+    CLAIM_FILES="$BUILD/claim-files.txt"
+    cp "$CLAIM_FILES" "$HARNESS/state/claims/$PROJECT/$KEY" 2>/dev/null || true
+  fi
+fi
+echo "$(STAMP) [$PROJECT/$KEY] HOTSPOT_CLAIM n=${HC_N:-0} source=$PH_SOURCE" >> "$BUILD/pipeline.log"
+# <<< hotspot claim
+# >>> touch claim
+# BH-5965: when the plan declares its files (## Files to touch), the claim is
+# that list and nothing the plan only mentions. bin/touch-files.sh writes
+# touch-source = declared | none | off; anything but declared leaves the claim
+# exactly as the two regions above made it. A test reroute is applied to the
+# declared list too, so the claim names the per-ticket test file.
+TC_SRC=absent
+if [ -x "$HARNESS/bin/touch-files.sh" ]; then
+  "$HARNESS/bin/touch-files.sh" "$BUILD" "$PROJECT" 2>>"$BUILD/pipeline.log" || :
+  TC_SRC=$(cat "$BUILD/touch-source" 2>/dev/null || echo absent)
+  if [ "$TC_SRC" = declared ] && [ -s "$BUILD/touch-files.txt" ]; then
+    [ -s "$BUILD/test-reroute.txt" ] && command -v th_apply >/dev/null 2>&1 \
+      && th_apply "$BUILD/test-reroute.txt" "$BUILD/touch-files.txt"
+    CLAIM_FILES="$BUILD/touch-files.txt"
+    cp "$CLAIM_FILES" "$HARNESS/state/claims/$PROJECT/$KEY" 2>/dev/null || true
+  fi
+fi
+TC_N=$(grep -c . "$BUILD/touch-files.txt" 2>/dev/null); TC_X=$(grep -c $'\texcluded$' "$BUILD/touch-files.src" 2>/dev/null)
+echo "$(STAMP) [$PROJECT/$KEY] TOUCH_CLAIM source=$TC_SRC n=${TC_N:-0} excluded=${TC_X:-0}" >> "$BUILD/pipeline.log"
+# <<< touch claim
+# >>> file claim db
+# BH-2524.2: the same file set on this build's job_claims row, so PLANNERS on
+# OTHER boxes see it. AFTER the local cp on purpose: a DB failure never loses
+# the local claim. Honest status: skipped = no lib / JOBS_URL / JOB_ID,
+# failed = fclaim_put returned non-zero (outage, or the contract stub), ok only on rc 0.
+FC_DB=skipped
+# shellcheck source=bin/lib/file-claims.sh
+[ -r "$HARNESS/bin/lib/file-claims.sh" ] && . "$HARNESS/bin/lib/file-claims.sh" 2>/dev/null
+if [ -n "${JOBS_URL:-}" ] && [ -n "${JOB_ID:-}" ] && command -v fclaim_put >/dev/null 2>&1; then
+  if fclaim_put "${CLAIM_FILES:-$BUILD/planned-files.txt}" >/dev/null 2>&1; then FC_DB=ok; else FC_DB=failed; fi
+fi
+echo "$(STAMP) [$PROJECT/$KEY] FILE_CLAIM db=$FC_DB" >> "$BUILD/pipeline.log"
+# <<< file claim db
+# >>> hot files
+# BH-475: the reviewer's half of the hot-file report. The claim above says what
+# this build owns; this says which of those files OTHER planned tickets also
+# intend to touch, so the review can ask the only question that actually shrinks
+# the problem — does this change belong in a per-ticket file instead? It is
+# context, never a gate: an empty file means nothing was measured (the scheduler
+# is off, or no siblings have pre-plans), not that the diff is clean, and the
+# GATES_NOTE assembly says nothing at all in that case.
+"$HARNESS/bin/overlap-schedule.sh" "$PROJECT" --hot-for "$BUILD/planned-files.txt" "$KEY" \
+  > "$BUILD/hot-files.txt" 2>/dev/null || :
+# <<< hot files
+# CKPT_ON_EXIT runs FIRST and is a no-op outside the execute stage: whatever the
+# worktree is carrying gets committed and pushed before the job row is closed,
+# so an rc != 0 / timeout / max-turns death still leaves the tree on origin.
+} # end rb_plan

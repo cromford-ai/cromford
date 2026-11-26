@@ -29,7 +29,11 @@
 #       Misses: the reader's word (unreadable, unknown, none); malformed
 #       (no string state, an unparsable at or a bad comment id); field:run_id
 #       (a dequeued payload of a row written before BH-9938, which has no
-#       run_id key: the event row is keyed on the run).
+#       run_id key: the event row is keyed on the run). BH-9938 C1: the
+#       epoch is the stored updated_at (field:updated_at when a row written
+#       before C1 has none); stale when the row is older than
+#       PR_RECORD_FIELD_MAX_AGE_S; field:failing_checks when the list is as long
+#       as the worker's cut (CHECKS_MAX), because it may be cut.
 #   dqw_payload_github <file> <slug> <n>
 #       sdq_payload_last, then for a dequeued state the comment read
 #       (dqw_gh_comment in gather.sh) and dqw_parse_payload_md. rc 1 no payload; rc 2 the payload read
@@ -38,14 +42,17 @@
 #       to the comment id it read, for the caller's skip line.
 #   dqw_payload_norm <file>
 #       [{n:"payload", state, cid}] plus draft, run, left and checks for a
-#       dequeued state. The epoch is not compared: GitHub gives updated_at,
-#       the record created_at, and the lane uses it only for the watchdog age.
+#       dequeued state. The epoch is not compared: since BH-9938 C1 both
+#       sides read the comment's updated_at, and the lane uses it only for the
+#       watchdog age.
 #
 # The combined status of a head, key "<slug>#<n>@<sha12>:status":
 #   dqw_status_record <file> <slug> <n> <head>
 #       pr_record_statuses <slug> <n> <head>, as {"statuses": [{context,
 #       state, updated_at}]}. A miss is the reader's word (unreadable,
-#       unknown, no-head, none).
+#       unknown, no-head, head, stale, none), or field:<context> (BH-9938
+#       C1) when the record has no entry of the verdict context (vs_context)
+#       for the head: other contexts alone are never "no verdict".
 #   dqw_status_github <file> <slug> <n> <head>
 #       repos/<slug>/commits/<head>/status.
 #   dqw_status_norm <file>
@@ -99,6 +106,11 @@ dqw_labels_norm() {
           | unique_by(.number) | map({n: .number})' "${1:-}" 2>/dev/null
 }
 
+# The worker's input shape bound CHECKS_MAX (worker/jobs/src/routes/pr-records.js):
+# it keeps at most this many failing-check names. A shape bound of the stored
+# value, not a tunable limit.
+_DQW_REC_CHECKS_MAX=100
+
 dqw_payload_record() {
   local f="${1:-}" slug="${2:-}" n="${3:-}" tmp rc line
   [ -n "$f" ] || return 2
@@ -107,13 +119,19 @@ dqw_payload_record() {
   PRR_MISS_WHY=""
   pr_record_mergify "$slug" "$n" > "$tmp"; rc=$?
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
-  line=$(jq -r '
+  # BH-9938 C1: the epoch is the comment's updated_at, the time
+  # sdq_payload_last reads from GitHub (a row written before C1 has no such
+  # key: a miss). A failing-checks list as long as the worker's cut may be
+  # cut: a miss.
+  line=$(jq -r --argjson cmax "$_DQW_REC_CHECKS_MAX" '
     if (.state | type) != "string" or (.state | test("^[a-z_]+$") | not)
        or ((.comment_id | type) != "number") or .comment_id < 1
        or ((.at | type) != "string") or ((.at | fromdateiso8601?) == null) then "malformed"
+    elif (has("updated_at") | not) or ((.updated_at | type) != "string") or ((.updated_at | fromdateiso8601?) == null) then "field:updated_at"
     elif .state == "dequeued" and (has("run_id") | not) then "field:run_id"
-    elif .state != "dequeued" then [.state, (.at | fromdateiso8601 | tostring), (.comment_id | tostring), "-", "-", "-", "-"] | @tsv
-    else [.state, (.at | fromdateiso8601 | tostring), (.comment_id | tostring),
+    elif .state == "dequeued" and ((.failing_checks // []) | length) >= $cmax then "field:failing_checks"
+    elif .state != "dequeued" then [.state, (.updated_at | fromdateiso8601 | tostring), (.comment_id | tostring), "-", "-", "-", "-"] | @tsv
+    else [.state, (.updated_at | fromdateiso8601 | tostring), (.comment_id | tostring),
           (.draft_pr // "-" | tostring),
           (.run_id // "-" | tostring),
           (.left_sha // "" | if test("^[0-9a-f]{40}$") then . else "-" end),
@@ -163,13 +181,17 @@ dqw_payload_norm() {
 }
 
 dqw_status_record() {
-  local f="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" tmp rc
+  local f="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" tmp rc ctx
   [ -n "$f" ] || return 2
   command -v pr_record_statuses >/dev/null 2>&1 || { echo unreadable; return 1; }
   tmp=$(mktemp "${TMPDIR:-/tmp}/dqw-status.XXXXXX") || { echo unreadable; return 1; }
   PRR_MISS_WHY=""
-  pr_record_statuses "$slug" "$n" "$head" > "$tmp"; rc=$?
+  pr_record_statuses "$slug" "$n" "$head" row-head > "$tmp"; rc=$?
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
+  # BH-9938 C1: a hit needs the verdict context itself for this head. Other
+  # contexts alone are a miss, never "no verdict" (the GitHub read decides).
+  ctx=$(vs_context 2>/dev/null) || ctx=""; ctx="${ctx:-lead-verdict}"
+  if ! jq -e --arg c "$ctx" 'has($c)' "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; echo "field:$ctx"; return 1; fi
   if ! jq -c '{statuses: [to_entries[] | {context: .key, state: .value.state, updated_at: .value.at}]}' "$tmp" > "$f" 2>/dev/null; then
     rm -f "$tmp"; : > "$f"; echo malformed; return 1
   fi

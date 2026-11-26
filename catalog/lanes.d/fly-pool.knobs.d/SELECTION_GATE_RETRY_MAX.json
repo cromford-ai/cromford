@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_RETRY_MAX",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 50,
+  "unit": "suites",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9779. The most outside reds step 7 retries. More than this retries none (gate.txt retry: skipped: <n> > <max>): many reds at once looks like a host problem, not flakes (the same as SELECTION_GATE_QUARANTINE_MAX_NEW). bin/lib/selection-gate.sh reads the row; fallback 3.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

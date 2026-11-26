@@ -29,9 +29,20 @@ the lock service they are ONE holder: the lock keeps partner and us apart, and o
 ledger claim (job_open) keeps our machines apart. Because the worker gives a NEW lease id
 whenever the same holder acquires, a renew 404 re-acquires the key: 201 = still ours,
 409 = lost. Release is by key (the worker deletes only our holder's row).
-Known gap: a pool build is QUEUED_FLY by the watcher before the acquire; from dispatch to
-machine start only triage's 2 h lease covers the ticket. A pool wait longer than that
-can reopen the TK-249 race until the dispatcher takes the lock too.
+The pool asks the lock before it spawns (BH-10141). `pool_spawn_decision` in
+bin/fly-pool.sh calls `pool_ticket_lock_gate` (bin/lib/pool-ticket-lock.sh) as its last
+gate, after HOLD, the cap and the actor gate, so a refused row takes no lease. It uses
+the same `tl_acquire`. A 409 writes `SKIP <KEY> ticket lock held by <holder>` to
+logs/fly-pool.log, spawns no machine, and the row stays queued for the next tick. An
+outage or an unknown answer spawns with one line, and the machine's own gate decides. A
+201 spawns; the lease is not released, because the machine acquires it again as the same
+holder, and `TL_TTL_S` (2 h) ends it if no machine runs. The machine's gate in gates.sh
+stays as the second check.
+Known gap (narrowed by BH-10141): a pool build is QUEUED_FLY by the watcher before any
+acquire. From the queue write to the pool's spawn decision only triage's 2 h lease covers
+the ticket; from the spawn decision on, the pool's own lease does. A queue wait longer
+than triage's lease can still reopen the TK-249 race until the dispatcher takes the lock
+too.
 
 ## Protocol (both harnesses, inside triage)
 1. Before deciding to build a ticket: acquire project-10:<KEY> (ttl 2h).

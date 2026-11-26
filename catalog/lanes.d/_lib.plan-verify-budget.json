@@ -1,0 +1,54 @@
+{
+  "libs": [
+    {
+      "id": "plan-verify-budget",
+      "file": "bin/lib/plan-verify-budget.sh",
+      "note": "BH-9779. The plan gate reads the plan's `## Verify` section and refuses a list over its budget (rc 2, the existing one repair pass, then PLAN_MALFORMED). Resolved by _pvb_knob through `_LG_KIND=libs lane_knob` in a subshell, then the env, then the fallback in bin/lib/plan-verify-budget.sh, which equals the default here (tests/plan-verify-budget.bh-9779-test.sh K1).",
+      "knobs": [
+        {
+          "env": "PLAN_VERIFY_BUDGET",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "zero_means": "no check: the gate prints PLAN_VERIFY_BUDGET: off",
+          "required": false,
+          "note": "1: a plan whose Verify list breaks a rule below is refused by bin/plan-gate.sh. 0: the check is off fleet-wide."
+        },
+        {
+          "env": "PLAN_VERIFY_MAX_SUITES",
+          "type": "int",
+          "default": 30,
+          "min": 1,
+          "max": 500,
+          "unit": "suites",
+          "zero_means": null,
+          "required": false,
+          "note": "The most distinct suites a Verify list names. 30 passes the BH-7921 named list (20 in the committed plan, 26 in the operator's count of the pool plan, about 12 min in all) and refuses a 279-suite list."
+        },
+        {
+          "env": "PLAN_VERIFY_MAX_MAIN_SUITES",
+          "type": "int",
+          "default": 3,
+          "min": 0,
+          "max": 100,
+          "unit": "suites",
+          "zero_means": "no suite may be run on main",
+          "required": false,
+          "note": "The most suites a Verify list asks to run on main as well (`run ... on main`, `head and main`). A loop over tests/ on main is always over it."
+        },
+        {
+          "env": "PLAN_VERIFY_SLOW_SUITE_S",
+          "type": "int",
+          "default": 300,
+          "min": 1,
+          "max": 7200,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "A named suite with a recorded duration over this is refused (durations from PLAN_VERIFY_DURATIONS, state/ci-durations/api.tsv, catalog/ci-suite-durations.tsv or state/test-impact-durations.tsv; none readable: the rule does not run). 488 s was the slowest BH-7921 suite; the others were under 50 s."
+        }
+      ]
+    }
+  ]
+}

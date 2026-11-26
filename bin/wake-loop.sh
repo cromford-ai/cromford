@@ -607,7 +607,9 @@ launch() {
       return 1
     fi
   fi
-  ( WAKE_LAUNCH=1 setsid "$@" </dev/null >/dev/null 2>&1 & ) 2>/dev/null
+  # BH-9938 C1: a launched lane never inherits this loop's PR-record step
+  # (GH_SOURCE, exported by lane_env_apply wake-loop): it resolves its own row.
+  ( unset GH_SOURCE GH_SOURCE_LANE; WAKE_LAUNCH=1 setsid "$@" </dev/null >/dev/null 2>&1 & ) 2>/dev/null
   say "$label: launched $(basename "$1") ${2:-}"
 }
 

@@ -1,0 +1,127 @@
+# >>> replan comment (BH-3955)
+# The replan check's amendment, posted on the child once the plan is written.
+# AFTER the thread-stability re-check on purpose: our own comment moves the
+# thread, and posted earlier it would defer this build as PLAN_STALE. ticket-fp
+# is refreshed after it for the same reason, so a resume does not read it as
+# someone else's turn. APP ONLY, like bin/lib/ticket-hold-cmd.sh: a PAT comment
+# is a human comment to hold_classify, and model-written text could carry hold
+# or lift vocabulary. replan-commented follows a successful post only, so a
+# failed post is retried by a resume; no App identity writes the distinct
+# replan-comment-skipped, so nothing reads as delivered. Neither blocks the build.
+# The issue number comes only from trk_gh_issue_number (BH-7919): a Linear or
+# Jira project has column 4 `-` too, and CRO-12 must never post on GitHub #12.
+# Its refusal (or a missing lib) is a skip, never replan-commented.
+if [ -s "$BUILD/replan-comment.md" ] && [ ! -e "$BUILD/replan-commented" ] && [ ! -e "$BUILD/replan-comment-skipped" ]; then
+  RPC_SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
+  RPC_N=""
+  { command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null; } \
+    && RPC_N=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || RPC_N=""
+  RPC_ID="${GH_TOKEN:-}"; [ -n "$RPC_N" ] || RPC_ID="not-github"
+  case "$RPC_ID" in
+    not-github)
+      touch "$BUILD/replan-comment-skipped"
+      echo "$(STAMP) [$PROJECT/$KEY] replan comment skipped: not a GitHub issue — the amendment already reached the plan" >> "$BUILD/pipeline.log" ;;
+    ghs_*)
+      if gh_rest_comment "$RPC_SLUG" "$RPC_N" "$BUILD/replan-comment.md"; then
+        touch "$BUILD/replan-commented"
+        command -v ptg_own_post >/dev/null 2>&1 && ptg_own_post "$BUILD" "$BUILD/replan-comment.md"
+        echo "$(STAMP) [$PROJECT/$KEY] replan comment posted on $RPC_SLUG#$RPC_N" >> "$BUILD/pipeline.log"
+        if [ -n "${FP_BEFORE:-}" ]; then
+          FP_BEFORE=$(TICKET_FP)
+          [ -n "$FP_BEFORE" ] && printf '%s\n' "$FP_BEFORE" > "$BUILD/ticket-fp"
+        fi
+      else
+        echo "$(STAMP) [$PROJECT/$KEY] replan comment NOT posted on $RPC_SLUG#$RPC_N (rc=$?) — a resume retries it; the amendment already reached the plan" >> "$BUILD/pipeline.log"
+      fi ;;
+    *)
+      touch "$BUILD/replan-comment-skipped"
+      echo "$(STAMP) [$PROJECT/$KEY] replan comment skipped: no App identity on this build (a PAT comment would read as a human's) — the amendment already reached the plan" >> "$BUILD/pipeline.log" ;;
+  esac
+fi
+# <<< replan comment (BH-3955)
+
+# >>> kind flow
+# --- KIND: what kind of work is this? (SDLC item 7, 2026-09-06) --------------
+# One workflow served every ticket: a copy tweak, a schema migration and a
+# DEFECT all got the same execute prompt ("implement the acceptance tests
+# first") and the same lens routing. The defect is the one that suffers — what
+# proves a bug fix is a REPRODUCTION that fails on the code as it stands, and
+# the pipeline had no stage that asked for one. TK-44 and TK-113 are both that
+# gap, and docs/LESSONS.md item 9 ("prove innocence on main") is a bug-flow step
+# written as doctrine because there was nowhere else to put it.
+#
+# bin/kind-gate.sh settles it from the board's own evidence first (type field,
+# GitHub label, title prefix) and the plan's KIND line second, and checks the
+# bug contract. It runs HERE, after the plan gate's repair pass, so the plan it
+# reads is the plan EXECUTE will get — and outside the PLAN checkpoint, like
+# the plan gate, so a resumed build is classified too.
+#
+# WARN-FIRST, the standing rule for a new gate that can demote or skip:
+#   KIND_GATE_ENFORCE=0  SHIPPED DEFAULT. The classification reaches the
+#                        planner, the executor, the reviewer, the PR's evidence
+#                        block and the ledger; a bug with no reproduction is
+#                        noted and keeps its tier; a copy ticket still buys the
+#                        E2E smoke. Nothing is withheld on a classifier's word.
+#   KIND_GATE_ENFORCE=1  arms the two consequences: a bug whose plan carries no
+#                        complete '## Reproduction' demotes to tier 2, and a
+#                        copy ticket skips the browser smoke and the
+#                        reopen-armed extra security lens.
+# The bug flow's EXECUTE prompt is NOT behind the flag: adapting how a defect is
+# built is the item itself, it withholds nothing, and a prompt that only fires
+# when a flag is on is a prompt nobody measures.
+T_KIND=$(STAGE_START)
+KIND_OUT=$("$HARNESS/bin/kind-gate.sh" "$BUILD" 2>&1); KIND_RC=$?
+STAGE_END kind "$T_KIND"
+printf '%s\n' "$KIND_OUT" > "$BUILD/kind.txt"
+KIND=$(sed -n 's/^KIND:[[:space:]]*//p' "$BUILD/kind.txt" | tail -1)
+KIND_REPRO=$(sed -n 's/^KIND_REPRO:[[:space:]]*//p' "$BUILD/kind.txt" | tail -1)
+KIND_SRC=$(sed -n 's/^KIND_SOURCE:[[:space:]]*//p' "$BUILD/kind.txt" | tail -1)
+KIND_MISS=$(sed -n 's/^KIND_REPRO_MISSING:[[:space:]]*//p' "$BUILD/kind.txt" | tail -1)
+# A gate that could not run is `unknown`, never a kind — the same rule the
+# scope gate follows, and for the same reason: not-measured and feature are
+# different facts, and only one of them is a claim.
+[ -n "$KIND" ] || KIND=unknown
+[ -n "$KIND_REPRO" ] || KIND_REPRO="n/a"
+[ -n "$KIND_SRC" ] || KIND_SRC=none
+echo "$(STAMP) [$PROJECT/$KEY] KIND: $KIND (source $KIND_SRC, repro $KIND_REPRO, rc=$KIND_RC)" >> "$BUILD/pipeline.log"
+case "$(printf '%s' "${KIND_GATE_ENFORCE:-0}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on)     KIND_ENFORCE=1 ;;
+  0|''|false|no|off) KIND_ENFORCE=0 ;;
+  *) KIND_ENFORCE=0
+     echo "$(STAMP) [$PROJECT/$KEY] KIND_GATE_ENFORCE='${KIND_GATE_ENFORCE:-}' is not a recognized on/off value — treating as OFF (warn-only)" >> "$ALERTS" ;;
+esac
+# The copy skips, armed only with the flag. They REMOVE verification, so unlike
+# a demotion they cost nothing to hold back and everything to get wrong.
+KIND_SKIP_E2E=0
+[ "$KIND" = copy ] && [ "$KIND_ENFORCE" = 1 ] && KIND_SKIP_E2E=1
+KIND_SKIP_SECLENS=$KIND_SKIP_E2E
+# The bug flow's own instruction to the executor. Empty for every other kind,
+# so those prompts stay byte-identical.
+KIND_EXEC_NOTE=""
+if [ "$KIND" = bug ]; then
+  KIND_EXEC_NOTE="BUG FLOW — READ THIS BEFORE THE INSTRUCTIONS BELOW. This ticket is a DEFECT (KIND: bug), so the first artifact you produce is proof the bug exists, not a feature test. Read the plan's '## Reproduction' section and run its REPRO command against the code EXACTLY AS IT STANDS, before you change one line, and save its FAILING output verbatim to $BUILD/red.txt — that failure IS this build's red proof, and bin/repro-gate.sh re-runs your tests at the merge base to check it. If the REPRO does NOT fail, STOP AND SAY SO in your final output rather than editing anything: either the reproduction is wrong or the defect is not where the plan says, and both are findings a human needs (TK-113 blamed five pre-existing failures on a PR that did not cause them; TK-44 shipped a replacement route over a fail-closed one that was working as designed). Then fix the ROOT CAUSE the plan named, at the file:line it named — never the call site where the symptom showed — re-run the same REPRO command to green, and check the BLAST RADIUS callers the plan listed still work. Where the repo's test framework allows it, the reproduction belongs in the suite as a NEW test file so the defect cannot come back unnoticed. Everything below still applies; where it says to write the acceptance tests first, the reproduction is the first of them. "
+  [ "$KIND_REPRO" = ok ] || KIND_EXEC_NOTE="$KIND_EXEC_NOTE THE PLAN'S REPRODUCTION IS INCOMPLETE (missing: ${KIND_MISS:-the whole section}). Do not invent one to look complete: derive the failing command from the ticket thread yourself, record in red.txt what you actually ran and what it did, and say plainly in your final output which of the five facts the plan never established. "
+fi
+# The ledger learns the KIND even when nothing is wrong, for the same reason the
+# plan gate's row does: a build that stops before the PR never reaches the
+# verdict artifact, and a row written only for bugs would make "no row" mean
+# both "not a bug" and "old box". jobs.kind is a DIFFERENT vocabulary
+# (triage|build|fix|qa|migration — which pipeline this is), so this rides as its
+# own artifact rather than overwriting that column; $BUILD/kind.txt is the
+# documented file fallback. Fail-open like every other ledger write here.
+if [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev/null 2>&1; then
+  job_artifact_put build_kind "$KIND" \
+    "$(jq -nc --arg k "$KIND" --arg s "$KIND_SRC" --arg r "$KIND_REPRO" \
+        --arg m "$(printf '%s' "$KIND_MISS" | cut -c1-300)" \
+        '{kind:$k,source:$s,repro:$r} + (if $m == "" then {} else {repro_missing:$m} end)' 2>/dev/null)" \
+    >/dev/null 2>&1 || true
+fi
+# <<< kind flow
+REROUTE_EXEC_NOTE=""
+# Sibling of KIND_EXEC_NOTE above, and empty for exactly the same reason: the
+# `# >>> test reroute` block below fills it only when this ticket's test files
+# were actually rerouted, so every other build's execute prompt is unchanged.
+# It sits one line OUTSIDE the kind-flow block on purpose — that block is
+# extracted verbatim by tests/kind-flow-test.sh, whose byte-identical-prompt row
+# would otherwise be judging a different block than the one that ships.
+

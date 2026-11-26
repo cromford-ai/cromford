@@ -1,0 +1,90 @@
+# >>> split child check
+SG_CHILD=""; SG_CHILD_SRC=none
+SG_TITLE=$(jq -r '.title // ""' "$BUILD/ticket-meta.json" 2>/dev/null)
+grep -qE '^[[:space:]]*[A-Za-z]+-[0-9]+\.[0-9]+' <<<"${SG_TITLE:-}" && { SG_CHILD=1; SG_CHILD_SRC=meta; }
+if [ -z "$SG_CHILD" ]; then
+  SG_BODY=$(jq -r '.body // ""' "$BUILD/ticket-meta.json" 2>/dev/null)
+  [ -n "$SG_BODY" ] || SG_BODY=$(cat "$BUILD/ticket-body.md" 2>/dev/null)
+  printf '%s\n' "${SG_BODY:-}" | awk '
+    f == "" && /^(```|~~~)/        { f = substr($0, 1, 3); next }
+    f != "" && index($0, f) == 1   { f = ""; next }
+    f == "" && /^Split child \(depth 1\):/ { m = 1; exit }
+    END { exit !m }' && { SG_CHILD=1; SG_CHILD_SRC=body; }
+fi
+if [ -s "$BUILD/ticket-meta.json" ]; then
+  SG_TLOG=$(printf '%s' "${SG_TITLE:-}" | tr -d '[:cntrl:]' | cut -c1-120)
+else
+  SG_TLOG=unread
+fi
+echo "$(STAMP) [$PROJECT/$KEY] SIZE: child check: title=$SG_TLOG source=$SG_CHILD_SRC" >> "$BUILD/pipeline.log"
+# <<< split child check
+if [ -n "$SG_SPLIT" ] && [ "$SG_ENFORCE" = 1 ] && [ -n "$SG_CHILD" ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] SIZE: $SG_SPLIT, but this ticket is ALREADY a split child (depth 1) — building it whole instead of splitting it again" >> "$BUILD/pipeline.log"
+  SG_SPLIT=""
+fi
+if [ -n "$SG_SPLIT" ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] DECOMPOSE: $SG_SPLIT — splitting instead of building" >> "$BUILD/pipeline.log"
+  # >>> live emit size
+  type LIVE >/dev/null 2>&1 && LIVE size split "size gate: splitting instead of building ($SG_SPLIT)"
+  # <<< live emit size
+  # The decomposer is handed the per-child budget. Without it the children come
+  # back the size of the parent and the split bought a round trip and nothing
+  # else. Extra args are optional there, so an older bin/ on a half-synced box
+  # still splits — it just splits blind.
+  # rc 3 is the splitter refusing a HELD ticket (BH-1526): not a failed split,
+  # a deferral, so it is never paged as DECOMPOSE_FAILED.
+  # rc 4 is the slice gate (BH-8739): no slice had a reason to stand alone,
+  # so the split is one child and the parent builds whole, right here.
+  "$HARNESS/bin/run-decompose.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" "$SG_MAXL" "$SG_MAXF"; SG_DRC=$?
+  if [ "$SG_DRC" = 4 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] SIZE: DECOMPOSE_NOT_NEEDED — no slice has a reason to stand alone, building whole" >> "$BUILD/pipeline.log"
+  else
+    if [ "$SG_DRC" = 0 ]; then
+      # The parent's ledger row ends here, not at `planning` (BH-3481.1). Fail-open: BB never blocks RESULT.
+      BB decomposed "" "" "" false "split into $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
+      RESULT "DECOMPOSED $(paste -sd, "$BUILD/children.txt" 2>/dev/null)"
+    elif [ "$SG_DRC" = 3 ]; then
+      RESULT "BUILD_DEFERRED held at split — $(grep -m1 '^DECOMPOSE_HELD' "$BUILD/decompose-run.txt" 2>/dev/null)"; exit 3
+    else
+      RESULT "DECOMPOSE_FAILED see $BUILD/decompose-run.txt"
+    fi
+    exit 0
+  fi
+fi
+# <<< size gate
+# >>> child plan tripwire (BH-3478)
+# A split child arrives with its parent planner's context pack (bin/lib/context-pack.sh);
+# the tripwire checker (bin/lib/child-plan-tripwire.sh, a sibling slice) judges the
+# child's plan spend against the parent's. Fail-open: no pack means no log line, and
+# the checker runs inside $(...) so neither its rc nor an exit can change this build.
+[ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
+[ -r "$HARNESS/bin/lib/child-plan-tripwire.sh" ] && . "$HARNESS/bin/lib/child-plan-tripwire.sh" 2>/dev/null
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
+if [ -z "${CP_PARENT:-}" ]; then
+  if [ -s "$BUILD/context-pack.md" ] \
+     || { command -v cp_fetch >/dev/null 2>&1 \
+          && JOBS_ALERT=0 cp_fetch "$PROJECT" "$KEY" "$BUILD/context-pack.md" >/dev/null 2>&1; }; then
+    CP_PARENT=$(head -n1 "$BUILD/context-pack.md.parent" 2>/dev/null)
+  fi
+fi
+if [ -n "${CP_PARENT:-}" ]; then
+  if command -v cpt_check >/dev/null 2>&1; then
+    CPT_VERDICT=$(cpt_check "$PROJECT" "$KEY" "$CP_PARENT" 2>/dev/null | head -n1) || true
+    # BH-9537: child plan tokens against the parent's, on the same line. Alert only.
+    CPK_TOK=""
+    if command -v cpk_tokens >/dev/null 2>&1; then
+      CPK_TOK=$(cpk_tokens "$PROJECT" "$KEY" "$CP_PARENT" "$BUILD" 2>/dev/null | head -n1) || true
+    fi
+    echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN_TRIPWIRE ${CPT_VERDICT:-UNMEASURED checker printed nothing}${CPK_TOK:+ $CPK_TOK}" >> "$BUILD/pipeline.log"
+  else
+    echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN_TRIPWIRE skipped (no checker)" >> "$BUILD/pipeline.log"
+  fi
+fi
+true
+# <<< child plan tripwire
+
+# SCALE-PLAN wave 1: conflict-aware deferral. Extract the plan's touched files;
+# if a RUNNING sibling build overlaps, hand the ticket back to the queue instead
+# of editing the same code concurrently — the union-merge class dies here.
+"$HARNESS/bin/planned-files.sh" "$BUILD" 2>/dev/null || true

@@ -19,8 +19,9 @@
 //     owner proof (BH-9262, lib/owner-proof.js): the human token, or the Pages
 //     box-ops token with an Access identity in env.BOX_OPS_OWNERS (that
 //     identity is then the actor). Without one, owner_proof_mode decides:
-//     enforce → 403 {error:"owner_only"} and ONE box_command_refused audit row
-//     (outcome refused:owner_proof); shadow (the default) → one would-refuse
+//     enforce → 403 {error:"owner_only", proof:"required"} (the hub files an
+//     owner approval on it, routes/owner-approvals.js) and ONE
+//     box_command_refused audit row (outcome refused:owner_proof); shadow (the default) → one would-refuse
 //     warn line, then an actor not in env.BOX_OPS_OWNERS → 403
 //     {error:"owner_only"} and ONE audit row (outcome refused:owner); the mode
 //     unreadable → 503 and nothing written. No command row on a refusal.
@@ -130,7 +131,7 @@ export const routes = [
       // actor, as before, and logs one would-refuse line.
       const g = await humanGate(req, env, { route: "/api/box-commands", actor });
       if (g.refuse === 503) return json(503, { error: "owner_proof_mode unavailable", detail: "the settings read failed; nothing was written" });
-      if (g.refuse) return refuse(403, "owner_only", "refused:owner_proof");
+      if (g.refuse) return refuse(403, "owner_only", "refused:owner_proof", { proof: "required" });
       if (g.proof?.via === "box-ops") actor = g.proof.identity;
       if (!g.proof && !isOwner(env, actor)) return refuse(403, "owner_only", "refused:owner");
     }

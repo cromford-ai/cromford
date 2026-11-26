@@ -309,4 +309,11 @@ if [ -z "$HUBG" ] && ! grep -q '^GH_TOKEN=' "$OUTDIR/global.env" 2>/dev/null; th
 fi
 
 chmod 600 "$OUTDIR/global.env" "$OUTDIR/$PROJECT.env" 2>/dev/null || true
+# Where this bundle came from, one non-secret line (BH-10141). bin/fly-pool.sh
+# names it in its default-token line next to the token's fingerprint. Not one
+# of the two env files, so stdout and every caller that reads them are unchanged.
+if [ -n "$HUBG" ]; then BSRC="hub env/global.env"
+elif [ "$BOX" = local ]; then BSRC="local env/global.env"
+else BSRC="env/global.env on root@$BOX"; fi
+printf '%s\n' "$BSRC" > "$OUTDIR/bundle-source" 2>/dev/null && chmod 600 "$OUTDIR/bundle-source" 2>/dev/null || true
 echo "$OUTDIR/global.env $OUTDIR/$PROJECT.env"

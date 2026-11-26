@@ -3153,6 +3153,8 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
           fi
           # <<< settings merge
         fi
+        # PER-COMMAND TIME LIMIT (BH-9779): bin/lib/agent-cmd-limit.sh.
+        [ -r "$HARNESS/bin/lib/agent-cmd-limit.sh" ] && . "$HARNESS/bin/lib/agent-cmd-limit.sh" && acl_arm "$STAGE" "$PROJECT"
         [ -n "$_settings" ] && ARGS+=(--settings "$_settings")
         # AGENT_DISALLOWED_TOOLS is a NEWLINE-separated list of permission specs
         # handed to --disallowedTools.

@@ -1,0 +1,71 @@
+# >>> size enforce switch
+# --- IS THE SIZE GATE ARMED ON THIS BUILD? ----------------------------------
+# ARMED BY DEFAULT SINCE 2026-09-14 (the operator). The gate shipped warn-only on
+# 2026-09-12 and the fleet then watched it be right and do nothing: TK-552
+# shipped 1,900 product lines across 18 files in ONE 33-minute execute, TK-556
+# was flagged decomposable the same night, and both were built whole because the
+# switch was off. Two or three parallel 15-minute children would have been
+# faster to build AND reviewable at the end. So the default flips.
+#
+# The ways to turn it back off are the three a box actually has, first hit wins:
+#   flags/size-gate-enforce-off     the fleet kill flag (or the
+#                                   `switch.size-gate-enforce-off` settings
+#                                   row). No deploy, no env edit,
+#                                   and while it is there every path below is
+#                                   byte-for-byte what it was before this
+#                                   change: an oversized plan is logged and
+#                                   built whole, an unsized plan still builds,
+#                                   and `SIZE: XL` still splits.
+#   SIZE_GATE_ENFORCE_<project>=0   one project opts out, in env/<project>.env.
+#                                   A repo whose changes are honestly wide is a
+#                                   per-project fact, the same way its threshold
+#                                   is (bin/size-threshold.sh). The name is also
+#                                   read uppercased with dashes as underscores,
+#                                   because `project-3` is not a shell identifier.
+#   SIZE_GATE_ENFORCE=0             the global switch, unchanged in meaning.
+#
+# JUNK IS NEVER A SWITCH VALUE — it falls through to the next source and says so
+# in ALERTS, the same rule bin/size-threshold.sh applies to a threshold. That
+# reasoning inverted with the default: while the gate was off, a typo must not
+# ARM something that withholds a build; now that it is on, a typo must not
+# silently DISARM the fleet's only defence against 1,900-line PRs.
+#
+# Resolved by a function rather than inline because BOTH halves of this gate
+# read the same switch — the plan-time split below and the post-hoc demotion at
+# PR-open — and two copies would drift into a build that splits at plan time and
+# then says SIZE_GATE_ENFORCE=0 in its own PR body. Memoized, so the second
+# caller is free and an ALERTS line is written once per build.
+SG_ENFORCE=0
+SG_SWITCH_SRC=""
+# shellcheck source=../lane-switch.sh
+command -v lane_switch >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
+SG_SWITCH_RESOLVE() {
+  [ -n "$SG_SWITCH_SRC" ] && return 0
+  local v raw
+  if lane_switch size-gate-enforce-off file; then
+    SG_ENFORCE=0
+    # BH-2412 split the no-row answer into legacy-file and legacy-row.
+    case "${LANE_SWITCH_SRC:-legacy}" in
+      legacy|legacy-file) SG_SWITCH_SRC="flags/size-gate-enforce-off" ;;
+      legacy-row) SG_SWITCH_SRC="pause_flags size-gate-enforce-off" ;;
+      *) SG_SWITCH_SRC="settings switch.size-gate-enforce-off ($LANE_SWITCH_SRC)" ;;
+    esac
+    return 0
+  fi
+  for v in "SIZE_GATE_ENFORCE_$PROJECT" \
+           "SIZE_GATE_ENFORCE_$(printf '%s' "$PROJECT" | tr '[:lower:].-' '[:upper:]__')" \
+           SIZE_GATE_ENFORCE; do
+    case "$v" in *[!A-Za-z0-9_]*) continue ;; esac
+    raw="${!v:-}"
+    [ -n "$raw" ] || continue
+    case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+      1|true|yes|on)  SG_ENFORCE=1; SG_SWITCH_SRC="$v" ; return 0 ;;
+      0|false|no|off) SG_ENFORCE=0; SG_SWITCH_SRC="$v" ; return 0 ;;
+      *) echo "$(STAMP) [$PROJECT/$KEY] $v='$raw' is not a recognized on/off value — ignoring it and reading the next source (to turn the size gate off, touch $HARNESS/flags/size-gate-enforce-off)" >> "$ALERTS" ;;
+    esac
+  done
+  SG_ENFORCE=1; SG_SWITCH_SRC="the shipped default (armed)"
+  return 0
+}
+# <<< size enforce switch
+

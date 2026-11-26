@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_RETRY_TIMEOUT_S",
+  "type": "int",
+  "default": 600,
+  "min": 1,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9779. The bound on the one retry run of step 7 (timeout -k 30). The slowest measured suite is about 488 s. bin/lib/selection-gate.sh reads the row; fallback 600.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

@@ -1,0 +1,89 @@
+# >>> ticket fingerprint write
+# Written on EVERY re-plan, next to the planner it describes: a build that died
+# mid-PLAN and got resumed writes a NEW plan against the CURRENT thread, and a
+# snapshot left over from the dead attempt would fail the next resume as stale
+# against a thread that never moved. No fingerprint now (boardless project,
+# board outage) means no snapshot — absence fails open below, a stale file does not.
+if [ -n "$FP_BEFORE" ]; then printf '%s\n' "$FP_BEFORE" > "$BUILD/ticket-fp"; else rm -f "$BUILD/ticket-fp"; fi
+# <<< ticket fingerprint write
+# >>> call fp write
+if BCF_OUT=$(BUILD_CALL_FP_COMPUTE); then
+  BUILD_CALL_FP=$BCF_OUT
+  printf '%s\n' "$BUILD_CALL_FP" > "$BUILD/call-fp"
+else
+  BUILD_CALL_FP=""
+  rm -f "$BUILD/call-fp"
+  echo "$(STAMP) [$PROJECT/$KEY] no stable call fp ($BCF_OUT) — plan/execute/fix use the per-build fingerprint" >> "$BUILD/pipeline.log"
+fi
+# <<< call fp write
+# >>> replan on branch (BH-9672)
+# A FRESH PLAN ON A BRANCH THAT ALREADY CARRIES WORK sees that work. The branch
+# commits were planned before a comment the new plan must apply, so the plan
+# prompt gets the commit list, the diffstat and the refused ids, and the plan
+# must write '## Existing branch commits' (keep or drop per commit). The marker
+# $BUILD/replan-on-branch makes EXECUTE run on this branch (rb_execute), under
+# the new plan, never the checkpoint skip. Only for a branch with a diff over
+# BASE AND a resume signal: a checkpoint branch, a resumed build, a refused
+# plan in this dir, the repeat arm of the gate or an adopt-time thread STALE.
+# A TARGET_BRANCH fix round with none of those keeps today's prompt.
+if command -v psr_branch_note >/dev/null 2>&1 \
+   && { git diff --quiet "${BASE:-main}"...HEAD >/dev/null 2>&1; [ "$?" = 1 ]; } \
+   && { [ -n "${CKPT_START_POINT:-}" ] || [ -n "${RESUME_BUILD:-}" ] || [ -e "$BUILD/plan.md.thread-refused" ] \
+        || [ "${PSR_REPLAN:-0}" = 1 ] || case "${PP_OUTCOME:-}" in "STALE uncited"*) true ;; *) false ;; esac; }; then
+  PSR_NOTE=$(psr_branch_note "${BASE:-main}" "$BUILD")
+  if [ -n "$PSR_NOTE" ] && [ -s "$BUILD/replan-on-branch" ]; then
+    REPLAN_LINE="${REPLAN_LINE:-}$PSR_NOTE"
+    echo "$(STAMP) [$PROJECT/$KEY] replan-on-branch: $(( $(wc -l < "$BUILD/replan-on-branch") - 1 )) commit(s), ids $(head -1 "$BUILD/replan-on-branch" | cut -d' ' -f2-)" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< replan on branch (BH-9672)
+# BH-7970: sp_render (bin/lib/stage-prompt.sh). A box without the lib refuses the stage below; it never sends an empty prompt.
+. "$HARNESS/bin/lib/stage-prompt.sh" 2>/dev/null || sp_render() { echo "stage-prompt: bin/lib/stage-prompt.sh not loaded" >&2; return 1; }
+# >>> plan prompt (tests/run-build-test-home.bh-580-test.sh drives this block)
+# The naming rule rides in FRONT of the plan instructions, not inside them: the
+# planner has to know where this ticket's test cases go before it writes a
+# files-to-touch list. Empty on a box with no lib, so that box's prompt is
+# byte-identically today's. The untrusted-input rule (BH-4491) and, under warn,
+# the flagged spans ride directly in front of PLAN ONLY, by the same rule.
+# BH-5799: the time this plan starts reading the thread, for the plan thread
+# gate. Written before the session, so a comment the planner could have read is
+# never newer than the stamp. A box without the lib writes none.
+if command -v ptg_stamp >/dev/null 2>&1; then ptg_stamp "$BUILD/plan-thread-at"; else rm -f "$BUILD/plan-thread-at"; fi
+# BH-5802: work already on main. The note asks the planner to search the base
+# since the ticket was filed (by key, files and symbols) and to park the plan
+# with `BLOCKED: already done on main by <sha>` when the work is done.
+[ -r "$HARNESS/bin/lib/dup-main.sh" ] && . "$HARNESS/bin/lib/dup-main.sh" 2>/dev/null
+# BH-5800: the failure-mode checklist, rendered from catalog/plan-failure-modes.tsv
+# into the prompt below and into the plan-gate repair pass.
+[ -r "$HARNESS/bin/lib/plan-failure-modes.sh" ] && . "$HARNESS/bin/lib/plan-failure-modes.sh" 2>/dev/null
+# BH-6299: files to touch are edits only; run-only paths go under ## Verify.
+[ -r "$HARNESS/bin/lib/verify-list.sh" ] && . "$HARNESS/bin/lib/verify-list.sh" 2>/dev/null
+# BH-7970: the prompt text lives in prompts/stages/plan.md and renders through
+# sp_render. The $(...) pieces of the old inline string are computed here, in the
+# same order, so the bytes are the same. SP_PLAN_SIZE_SCOPE keeps the old
+# string's unescaped backtick command: it ran bin/size-scope.sh --rules in the
+# repo and put its output in the prompt, and the move does not change that.
+SP_PLAN_TH_RULE=$(command -v th_plan_rule >/dev/null 2>&1 && th_plan_rule "$KEY")
+SP_PLAN_FRAGMENT_RULE=$(command -v th_fragment_rule >/dev/null 2>&1 && th_fragment_rule "$KEY" .)
+SP_PLAN_UI_NOTICE=$(command -v ui_notice >/dev/null 2>&1 && printf '%s ' "$(ui_notice)")
+SP_PLAN_DUP_MAIN=$(command -v dup_main_plan_note >/dev/null 2>&1 && dup_main_plan_note . "origin/${BASE:-main}" "$KEY" "${ISSUE_CREATED_AT:-}")
+SP_PLAN_XREPO=$(command -v xrepo_plan_note >/dev/null 2>&1 && xrepo_plan_note)
+SP_PLAN_PFM=$(command -v pfm_plan_rule >/dev/null 2>&1 && pfm_plan_rule)
+SP_PLAN_PT=$(command -v pt_plan_rule >/dev/null 2>&1 && pt_plan_rule "$PT_BODY" "$PT_TITLE" "$PT_LABELS")
+SP_PLAN_VL=$(command -v vl_plan_rule >/dev/null 2>&1 && vl_plan_rule)
+SP_PLAN_SIZE_SCOPE=$(bin/size-scope.sh --rules)
+sp_render plan SP_PROMPT_PLAN || {
+  echo "$(STAMP) [$PROJECT/$KEY] BUILD_REFUSED prompt template missing (plan): no prompts/stages/plan.md on $(hostname) — no plan session spent" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_REFUSED prompt template missing (plan)"
+  exit 3
+}
+CC_ARTIFACT_KIND=plan_file CC_ARTIFACT_FILE="$BUILD/plan.md" \
+CC plan "$PLAN_MODEL" 1200 "$BUILD/plan-run.txt" "$SP_PROMPT_PLAN"
+# <<< plan prompt
+# <<< plan launch
+# An EMPTY plan is a model/session failure (limits, auth, crash) — retryable
+# infrastructure weather, NOT a product block. A plan is a product block only
+# when its FIRST LINE OPENS with the parked marker (PLAN_IS_BLOCKED above) — a
+# title that merely mentions the word is a plan like any other. (2026-07-31: an
+# project-3 Fable-limit hit produced an empty plan that got mislabeled PLAN_BLOCKED.
+# BH-387: the unanchored match refused four complete plans on their titles.)

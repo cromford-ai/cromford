@@ -1,0 +1,3 @@
+[
+    {"path": "prr-default-branch", "class": "cache", "authority": "the default-branch memo of bin/lib/pr-record.sh (BH-9938 C1)", "note": "state/prr-default-branch/<owner>_<repo>: one line, the repo's default branch as the last GitHub open-PR list read gave it (base.repo.default_branch), written tmp+mv by pr_record_default_branch_note. The PR record has no default branch, so a record open list is served only when this memo says main; no memo or another branch is a miss and the lane reads GitHub. Losing it costs one GitHub list read. Machine-local, never carried"}
+]

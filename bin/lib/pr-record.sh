@@ -117,17 +117,50 @@
 #   pr_record_list_max_age
 #       BH-8452: the resolved PR_RECORD_LIST_MAX_AGE_S (default 900, 0 = off).
 #
+#   pr_record_open_rest <owner/repo> <out-file> [window-n] [need-cross]
+#       BH-9938 C1: pr_record_list <repo> open (with the window when given),
+#       mapped to the REST pulls shape the open-list readers use: number title
+#       html_url draft body mergeable_state created_at updated_at user.login
+#       head.{ref,sha} base.ref base.repo.default_branch labels[].name. The
+#       record holds no default branch, so the rows carry `main` only when the
+#       default-branch memo of the repo says main. ONE jobs GET, never a GitHub
+#       call. rc 0 and <out-file> on a hit, nothing on stdout. rc 1, an empty
+#       <out-file> and one miss word on stdout: pr_record_list's word,
+#       malformed, or field:default_branch (no memo, or a memo that is not
+#       main). rc 2 bad args. user.type is Bot for an author stored as
+#       <name>[bot] (the REST spelling), else User; state is open.
+#       With the 4th argument `need-cross`, the rows also carry
+#       head.repo.full_name and base.repo.full_name, from the cross-repo memo
+#       (a fork PR's head repo never changes): base is <owner/repo>; head is
+#       <owner/repo> for a PR the memo knows as same-repo, `fork` for one it
+#       knows as a fork. A row the memo does not know is the miss field:cross:
+#       the record never says "same repo" on its own.
+#
+#   pr_record_default_branch <owner/repo>
+#       The default-branch memo (state/prr-default-branch/<owner>_<repo>) on
+#       stdout, rc 0; rc 1 and nothing when there is none.
+#   pr_record_default_branch_note <owner/repo> <rest-pulls-json-file> [full]
+#       Writes the memo from the first row's base.repo.default_branch of a
+#       GitHub list read (tmp + mv). A file with no such value writes nothing.
+#       It also writes the cross-repo memo (<memo>.cross, lines <number> TAB
+#       <true|false>) from each row's head and base repo full names: `full`
+#       (the whole open list) replaces it, else the rows are merged in. Always
+#       rc 0: the memos are a cache.
+#
 #   BH-9935 readers. Each makes ONE jobs GET of the row (the GET of
 #   pr_record_peek); a miss writes one logs/pr-record.log line. A value is
 #   printed only from an entry whose sha is the asked head (40 hex, any case).
 #
-#   pr_record_statuses <owner/repo> <number> [head]
+#   pr_record_statuses <owner/repo> <number> [head] [row-head]
 #       The record's commit statuses of <head> (default the row's head_sha):
 #       {<context>: {state, description, sha, at}} on stdout, rc 0. Never a
 #       GitHub call, never a write. rc 1 and one `statuses <repo>#<n>
-#       miss=<unreadable|unknown|no-head|none>` line; the word is also in
-#       PRR_MISS_WHY (call it with `> file`, not in $( ), to keep it). rc 2
-#       bad args.
+#       miss=<unreadable|unknown|no-head|head|stale|none>` line; the word is
+#       also in PRR_MISS_WHY (call it with `> file`, not in $( ), to keep it).
+#       rc 2 bad args. BH-9938 C1: `stale` = the row is older than
+#       PR_RECORD_FIELD_MAX_AGE_S (default 3900; 0 trusts no row). With
+#       the 4th argument `row-head`, `head` = the row's head_sha is not the
+#       asked <head> (the PR moved on: the lanes judge the head they hold).
 #
 #   pr_record_mergify <owner/repo> <number>
 #       The newest Mergify queue payload the record holds: {state, code,
@@ -135,8 +168,10 @@
 #       stored. run_id is the payload comment's first /actions/runs/<id> link
 #       or null; a row written before BH-9938 has no run_id key. Never a
 #       GitHub call, never a write. rc 1 and one `mergify <repo>#<n>
-#       miss=<unreadable|unknown|none>` line; the word is also in PRR_MISS_WHY
-#       (call it with `> file`, not in $( ), to keep it). rc 2 bad args.
+#       miss=<unreadable|unknown|stale|none>` line; the word is also in
+#       PRR_MISS_WHY (call it with `> file`, not in $( ), to keep it). rc 2 bad
+#       args. BH-9938 C1: `stale` as for pr_record_statuses
+#       (PR_RECORD_FIELD_MAX_AGE_S).
 #
 #   pr_record_head_commit_time <owner/repo> <number> <head>
 #       The commit time (ISO, UTC) of <head> on stdout, rc 0. From the record
@@ -182,6 +217,7 @@ _PRR_GH_FIELDS="state draft head_ref base_ref head_sha base_sha mergeable_state 
 _PRR_DEFAULT_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.json
 _PRR_DEFAULT_HEAD_FALLBACK_S=900   # fallback only: the knob is PR_RECORD_HEAD_FALLBACK_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
 _PRR_DEFAULT_LIST_MAX_AGE_S=900   # fallback only: the knob is PR_RECORD_LIST_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
+_PRR_DEFAULT_FIELD_MAX_AGE_S=3900   # fallback only: the knob is PR_RECORD_FIELD_MAX_AGE_S in catalog/lanes.d/_lib.pr-record.knobs.d/
 
 _prr_root() { local r="${HARNESS:-${H:-}}"; [ -n "$r" ] || return 1; printf '%s' "$r"; }
 
@@ -249,6 +285,9 @@ _prr_knob() {
 _prr_max_age() { _prr_knob PR_RECORD_MAX_AGE_S "$_PRR_DEFAULT_MAX_AGE_S"; }
 
 pr_record_max_age() { _prr_max_age; }
+
+# pr_record_field_max_age — the resolved PR_RECORD_FIELD_MAX_AGE_S (BH-9938 C1).
+pr_record_field_max_age() { _prr_knob PR_RECORD_FIELD_MAX_AGE_S "$_PRR_DEFAULT_FIELD_MAX_AGE_S"; }
 
 pr_record_head_fallback_max_age() { _prr_knob PR_RECORD_HEAD_FALLBACK_MAX_AGE_S "$_PRR_DEFAULT_HEAD_FALLBACK_S"; }
 
@@ -383,8 +422,94 @@ pr_record_peek() {
 
 _prr_sha_ok() { [[ "${1:-}" =~ ^[0-9a-fA-F]{40}$ ]]; }
 
+_prr_db_file() { # _prr_db_file <owner/repo> — the memo path; rc 1 no root or a bad slug
+  local root s
+  root=$(_prr_root) || return 1
+  [[ "${1:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  s=$(_prr_lower "${1//\//_}")
+  printf '%s/state/prr-default-branch/%s' "$root" "$s"
+}
+
+pr_record_default_branch() {
+  local f v
+  f=$(_prr_db_file "${1:-}") || return 1
+  v=$(head -1 "$f" 2>/dev/null)
+  [[ "$v" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+  printf '%s\n' "$v"
+}
+
+pr_record_default_branch_note() {
+  local f v rows
+  f=$(_prr_db_file "${1:-}") || return 0
+  jq -e 'type == "array"' "${2:-/dev/null}" >/dev/null 2>&1 || return 0
+  mkdir -p "${f%/*}" 2>/dev/null || return 0
+  # The cross-repo memo: only rows that name both repos are known.
+  rows=$(jq -r '.[] | select((.number | type) == "number" and (.head.repo.full_name | type) == "string"
+          and (.base.repo.full_name | type) == "string")
+        | "\(.number)\t\((.head.repo.full_name | ascii_downcase) != (.base.repo.full_name | ascii_downcase))"' "$2" 2>/dev/null)
+  if [ "${3:-}" = full ] || [ -n "$rows" ]; then
+    { [ "${3:-}" = full ] || cat "$f.cross" 2>/dev/null; printf '%s\n' "$rows"; } \
+      | awk -F'\t' 'NF == 2 && $1 ~ /^[0-9]+$/ && ($2 == "true" || $2 == "false") { v[$1] = $2 }
+                    END { for (n in v) print n "\t" v[n] }' | sort -n > "$f.cross.tmp.$$" 2>/dev/null \
+      && mv -f "$f.cross.tmp.$$" "$f.cross" 2>/dev/null
+    rm -f "$f.cross.tmp.$$" 2>/dev/null
+  fi
+  v=$(jq -r '.[0].base.repo.default_branch // empty' "$2" 2>/dev/null)
+  [[ "$v" =~ ^[A-Za-z0-9._/-]+$ ]] || return 0
+  [ "$(head -1 "$f" 2>/dev/null)" = "$v" ] && return 0
+  printf '%s\n' "$v" > "$f.tmp.$$" 2>/dev/null && mv -f "$f.tmp.$$" "$f" 2>/dev/null
+  rm -f "$f.tmp.$$" 2>/dev/null
+  return 0
+}
+
+pr_record_open_rest() {
+  local repo="${1:-}" out="${2:-}" win="${3:-}" cross="${4:-}" tmp why rc=0 db cf cmap="{}"
+  [ -n "$out" ] && [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 2
+  : > "$out" 2>/dev/null || return 2
+  db=$(pr_record_default_branch "$repo") || db=""
+  if [ "$db" != main ]; then echo field:default_branch; return 1; fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/prr-open.XXXXXX") || { echo unreadable; return 1; }
+  if [ -n "$win" ]; then why=$(pr_record_list "$repo" open "$tmp" - "$win") || rc=$?
+  else why=$(pr_record_list "$repo" open "$tmp") || rc=$?; fi
+  if [ "$rc" != 0 ]; then rm -f "$tmp" "$tmp.sync"; echo "${why:-unreadable}"; return 1; fi
+  if [ "$cross" = need-cross ]; then
+    cf="$(_prr_db_file "$repo").cross"
+    cmap=$(awk -F'\t' 'NF == 2 { printf "%s\"%s\":%s", (n++ ? "," : "{"), $1, $2 } END { print (n ? "}" : "{}") }' "$cf" 2>/dev/null) || cmap="{}"
+    jq -e . >/dev/null 2>&1 <<<"$cmap" || cmap="{}"
+    if ! jq -e --argjson c "$cmap" 'all(.[]; ($c[(.number | tostring)] | type) == "boolean")' "$tmp" >/dev/null 2>&1; then
+      rm -f "$tmp" "$tmp.sync"; echo field:cross; return 1
+    fi
+  fi
+  # draft: the worker stores INTEGER 0/1 (routes/pr-records.js); REST is a
+  # boolean, and jq reads 0 as true, so it is mapped here.
+  if ! jq -c --arg db "$db" --arg repo "$repo" --arg cross "$cross" --argjson c "$cmap" '[.[] | {number, title, html_url: .url,
+        state: "open",
+        draft: (if .draft == 1 or .draft == true then true elif .draft == 0 or .draft == false then false else null end),
+        body, mergeable_state, created_at, updated_at,
+        user: {login: .author, type: (if ((.author // "") | endswith("[bot]")) then "Bot" else "User" end)},
+        head: ({ref: .head_ref, sha: .head_sha}
+               + (if $cross == "need-cross" then {repo: {full_name: (if $c[(.number | tostring)] then "fork" else $repo end)}} else {} end)),
+        base: {ref: .base_ref, repo: ({default_branch: $db} + (if $cross == "need-cross" then {full_name: $repo} else {} end))},
+        labels: [(.labels // [])[] | {name: .}]}]' "$tmp" > "$out" 2>/dev/null; then
+    rm -f "$tmp" "$tmp.sync"; : > "$out"; echo malformed; return 1
+  fi
+  rm -f "$tmp" "$tmp.sync"
+  return 0
+}
+
+# _prr_row_fresh <row-json> — rc 0 when the row's age_s is a whole number no
+# older than PR_RECORD_FIELD_MAX_AGE_S (default 3900). A knob of 0 trusts no
+# row. BH-9938 C1.
+_prr_row_fresh() {
+  local age max
+  age=$(jq -r '.age_s // empty' <<<"${1:-}" 2>/dev/null)
+  [[ "$age" =~ ^[0-9]+$ ]] || return 1
+  max=$(pr_record_field_max_age)
+  [ "$max" -gt 0 ] && [ "$age" -le "$max" ]
+}
+
 pr_record_statuses() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" lr row out rc=0 why=""
+  local repo="${1:-}" n="${2:-}" head="${3:-}" strict="${4:-}" lr row out rc=0 why=""
   _prr_args_ok "$repo" "$n" || return 2
   [ -z "$head" ] || _prr_sha_ok "$head" || return 2
   lr=$(_prr_lower "$repo")
@@ -395,6 +520,10 @@ pr_record_statuses() {
     [ -n "$head" ] || head=$(jq -r '.head_sha | strings' <<<"$row" 2>/dev/null)
     if ! _prr_sha_ok "$head"; then
       why=no-head
+    elif [ "$strict" = row-head ] && [ "$(jq -r '.head_sha // "" | ascii_downcase' <<<"$row" 2>/dev/null)" != "$(_prr_lower "$head")" ]; then
+      why=head
+    elif ! _prr_row_fresh "$row"; then
+      why=stale
     elif ! out=$(jq -ce --arg h "$(_prr_lower "$head")" '.statuses | objects
           | with_entries(select((.value | type) == "object" and .value.sha == $h)) | select(length > 0)' <<<"$row" 2>/dev/null); then
       why=none
@@ -410,6 +539,7 @@ pr_record_mergify() {
   lr=$(_prr_lower "$repo")
   row=$(_prr_row "$lr" "$n") || rc=$?
   if [ "$rc" != 0 ]; then why=$(_prr_why "$rc")
+  elif ! _prr_row_fresh "$row"; then why=stale
   elif ! out=$(jq -ce '.mergify_queue | objects' <<<"$row" 2>/dev/null); then why=none
   fi
   if [ -n "$why" ]; then _prr_log "mergify $lr#$n miss=$why"; PRR_MISS_WHY=$why; return 1; fi

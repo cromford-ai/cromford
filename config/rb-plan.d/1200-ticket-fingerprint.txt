@@ -1,0 +1,168 @@
+# >>> ticket fingerprint
+# SDLC item 5: the snapshot OUTLIVES THE PROCESS. $BUILD/ticket-fp records the
+# thread as it stood when THIS dir's plan was written, so the resume below can
+# ask the question this gate could not ask before ("has the thread moved since
+# the plan I am about to reuse was written?") instead of comparing against a
+# fingerprint taken seconds ago in the same run. Read here, written in the
+# fresh-plan branch — a REUSE never rewrites it.
+FP_PLAN=$(cat "$BUILD/ticket-fp" 2>/dev/null)
+# <<< ticket fingerprint
+# >>> call fp reuse
+# A resumed build keeps the build fp its plan was written under (the resume
+# stale gate below already defers one whose thread moved). Rewritten, or
+# removed, in the fresh-plan branch.
+BUILD_CALL_FP=$(cat "$BUILD/call-fp" 2>/dev/null)
+# <<< call fp reuse
+# >>> context pack (BH-3478)
+# A SPLIT CHILD PLANS FROM ITS PARENT'S MAP, on the child plan route
+# (bin/lib/child-plan.sh). A ticket is a child only when a context_packs row
+# exists for (project, key). The pack is kept in $BUILD, so a resume reuses it
+# and the child plan tripwire below reads the same file instead of a second GET.
+# This block sits OUTSIDE the checkpoint if/else on purpose: an adopted pre-plan
+# or a resumed plan takes the `then` arm, and PLAN_MODEL must still be the child
+# model for the plan-gate and size repairs and the PR body. Every path sets
+# CP_PARENT and CP_PREAMBLE, so a value inherited from the environment cannot
+# turn a non-child into a child. No token cap on the build plan. Fail-open: a
+# non-child's prompt and model are exactly today's.
+CP_WHY=""; CPK_RULE=""
+# shellcheck source=bin/lib/context-pack.sh
+[ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
+# shellcheck source=bin/lib/child-plan.sh
+[ -r "$HARNESS/bin/lib/child-plan.sh" ] && . "$HARNESS/bin/lib/child-plan.sh" 2>/dev/null
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
+if [ -s "$BUILD/context-pack.md" ] && [ -s "$BUILD/context-pack.md.parent" ]; then CP_RC=0
+elif ! command -v cp_fetch >/dev/null 2>&1; then CP_RC=9; CP_WHY="no context-pack lib"
+elif [ -n "${CPK_FETCH_RC:-}" ]; then CP_RC=$CPK_FETCH_RC  # BH-9537: the child section adopt block already asked
+else JOBS_ALERT=0 cp_fetch "$PROJECT" "$KEY" "$BUILD/context-pack.md" >/dev/null 2>&1; CP_RC=$?
+fi
+case "$CP_RC" in 0|9) ;; 2) CP_WHY="no context pack" ;; *) CP_WHY="context pack unreachable" ;; esac
+if [ "$CP_RC" = 0 ] && command -v cp_preamble >/dev/null 2>&1 \
+   && CP_PREAMBLE="$(cp_preamble "$BUILD/context-pack.md")"$'\n\n' \
+   && CP_PARENT=$(head -n1 "$BUILD/context-pack.md.parent" 2>/dev/null) && [ -n "$CP_PARENT" ]; then
+  command -v child_plan_model >/dev/null 2>&1 \
+    && CP_M=$(child_plan_model "$PROJECT" "$PLAN_MODEL") && [ -n "$CP_M" ] && PLAN_MODEL=$CP_M
+  # BH-9537: the pack is the survey; name the files changed since its commit,
+  # and, for an adopted section, ask for an amend instead of a fresh plan.
+  if command -v cpk_rule >/dev/null 2>&1 \
+     && CPK_RULE=$(cpk_rule "$BUILD/context-pack.md" "$WT" "origin/${BASE:-main}" "${CPK_ADOPT:-0}" 2>/dev/null) \
+     && [ -n "$CPK_RULE" ]; then
+    CP_PREAMBLE="${CP_PREAMBLE}${CPK_RULE}"$'\n\n'
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN parent=$CP_PARENT model=$PLAN_MODEL" >> "$BUILD/pipeline.log"
+else
+  CP_PARENT=""; CP_PREAMBLE=""
+  echo "$(STAMP) [$PROJECT/$KEY] CHILD_PLAN none (${CP_WHY:-unusable context pack})" >> "$BUILD/pipeline.log"
+fi
+# <<< context pack
+# >>> plan thread gate (BH-5799)
+# A REUSED OR ADOPTED PLAN MUST HAVE READ THE NEWEST COMMENTS. On a GitHub-issue
+# project TICKET_FP is empty, so the resume stale gate below never compares a
+# reused plan, or a pre-plan adopted above, with the thread. bin/lib/plan-thread.sh
+# does: a comment by a person or our App that is newer than the plan and not
+# cited by id in it refuses the plan. Refused here, plan.md is moved aside
+# BEFORE the checkpoint, which then takes its fresh-plan arm in this same run,
+# unless the build is a resume or its branch already carries a diff: then the
+# run ends PLAN_STALE (exit 3), as rb_review's call site does.
+# A refused pre-plan is retired at its source like a PREPLAN_STALE one: the hub
+# dir and, since BH-9672, the coordination DB row (psr_retire), so the next
+# build does not adopt it again. An unreadable thread fails open with one line.
+# BH-9672: a refusal on a resumed branch whose comment ids match an earlier
+# build's PLAN_STALE RESULT for this ticket (psr_prior_stale) is a loop: one
+# ALERTS line, and this run plans fresh with the branch's commits in the
+# prompt (the replan on branch block) and EXECUTE runs under that plan.
+# shellcheck source=bin/lib/plan-thread.sh
+[ -r "$HARNESS/bin/lib/plan-thread.sh" ] && . "$HARNESS/bin/lib/plan-thread.sh" 2>/dev/null
+if [ -s "$BUILD/plan.md" ] && ! PLAN_IS_BLOCKED "$BUILD/plan.md" && command -v ptg_check >/dev/null 2>&1; then
+  if PTG_SINCE=$(ptg_since "$BUILD"); then
+    PTG_SRC=${PTG_SINCE#*$'\t'}; PTG_SINCE=${PTG_SINCE%%$'\t'*}
+    [ "$PTG_SRC" = stamp ] || echo "$(STAMP) [$PROJECT/$KEY] plan-thread: $PTG_SRC ($PTG_SINCE)" >> "$BUILD/pipeline.log"
+    PTG_OUT=$(ptg_check "$PROJECT" "$KEY" "$BUILD/plan.md" "$PTG_SINCE" "$BUILD/own-comments.sha256"); PTG_RC=$?
+    PTG_DETAIL=${PTG_OUT#*$'\t'}
+    case "$PTG_RC" in
+      0) echo "$(STAMP) [$PROJECT/$KEY] plan-thread: ${PTG_OUT%%$'\t'*} $PTG_DETAIL (reused plan)" >> "$BUILD/pipeline.log" ;;
+      1)
+        PTG_IDS=$(ptg_ids "$PTG_DETAIL")
+        if [ "$(ptg_enforce)" = 1 ]; then
+          ptg_refuse_plan "$BUILD"
+          printf '%s\n' "$PTG_IDS" > "$BUILD/plan-stale-ids"
+          case "$(head -1 "$BUILD/preplan-outcome" 2>/dev/null)" in
+            HIT*)
+              PP_OUTCOME="STALE uncited newer comment(s) $PTG_IDS"
+              printf '%s\n' "$PP_OUTCOME" > "$BUILD/preplan-outcome"
+              if command -v psr_retire >/dev/null 2>&1; then
+                PSR_RETIRED=$(psr_retire "$HARNESS" "$PROJECT" "$KEY" "${PP_DIR:-}" "$PTG_SINCE")
+              else
+                case "${PP_DIR:-}" in "$HARNESS/plans/"?*) rm -rf "$PP_DIR" && PSR_RETIRED="hub dir removed" ;; esac
+              fi ;;
+          esac
+          # A RESUMED build re-entered its branch before rb_plan, and EXECUTE
+          # skips a branch that carries commits (rb/execute.sh). Planning fresh
+          # here would ship the first execute's diff under a plan that cites
+          # the comment (lead review of e8a769a8). So a resume, or a branch that
+          # already carries a diff over BASE (git diff exit 1, never an error),
+          # ends PLAN_STALE like call site B in rb_review.
+          if [ -n "${RESUME_BUILD:-}" ] || { git diff --quiet "${BASE:-main}"...HEAD >/dev/null 2>&1; [ "$?" = 1 ]; }; then
+            # BH-9672: the same ids as an earlier PLAN_STALE of this ticket.
+            PSR_PRIOR_RC=2; PSR_PRIOR_WHY="bin/lib/plan-stale-replan.sh is not on this box"
+            if command -v psr_prior_stale >/dev/null 2>&1; then
+              PSR_PRIOR_WHY=$(psr_prior_stale "$PROJECT" "$KEY" "$PTG_IDS" "${JOB_ID:-}" "$BUILD"); PSR_PRIOR_RC=$?
+            fi
+            if [ "$PSR_PRIOR_RC" = 0 ] && [ "$(psr_knob PSR_REPEAT_FRESH)" = 1 ]; then
+              psr_alert_once "$ALERTS" "$PROJECT" "$KEY" "$PTG_IDS" "planning fresh on the resumed branch ($PSR_PRIOR_WHY)"
+              PSR_REPLAN=1
+              echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan, resumed branch, repeat) $PTG_DETAIL — planning fresh with the branch commits in the prompt" >> "$BUILD/pipeline.log"
+            else
+              [ "$PSR_PRIOR_RC" = 2 ] && echo "$(STAMP) [$PROJECT/$KEY] plan-stale: repeat check unknown ($PSR_PRIOR_WHY)" >> "$BUILD/pipeline.log"
+              echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan, resumed branch) $PTG_DETAIL — PLAN_STALE, the branch carries work planned without it" >> "$BUILD/pipeline.log"
+              BB plan_stale "" "" "" false "uncited comment(s) newer than the plan: $PTG_IDS"
+              RESULT "PLAN_STALE uncited comment(s) newer than the plan: $PTG_IDS — refused plan retired (${PSR_RETIRED:-no pre-plan}); the next build of $KEY plans fresh with this branch's commits in its prompt"; exit 3
+            fi
+          else
+            echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_REFUSED (reused plan) $PTG_DETAIL — planning fresh" >> "$BUILD/pipeline.log"
+          fi
+        else
+          echo "$(STAMP) [$PROJECT/$KEY] PLAN_THREAD_WARN (reused plan) $PTG_DETAIL — PLAN_THREAD_GATE_ENFORCE=0, plan kept" >> "$BUILD/pipeline.log"
+        fi ;;
+      *) echo "$(STAMP) [$PROJECT/$KEY] plan-thread: $PTG_DETAIL — gate fails open" >> "$BUILD/pipeline.log" ;;
+    esac
+  else
+    echo "$(STAMP) [$PROJECT/$KEY] plan-thread: no plan time — gate fails open" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< plan thread gate (BH-5799)
+
+# BH-5910: the cross-repo-read lib. Sourced here, above the checkpoint, because
+# the plan prompt asks for its note and the gate below the checkpoint runs on
+# a fresh plan, a pre-plan and a resumed plan alike.
+[ -r "$HARNESS/bin/lib/rb/cross-repo-read.sh" ] && . "$HARNESS/bin/lib/rb/cross-repo-read.sh" 2>/dev/null
+# BH-6372.1: a perf/cost ticket's plan states a target and an outcome replay.
+# pt_build_perf sets PT_BODY/PT_TITLE/PT_LABELS for the prompt and
+# PLAN_GATE_PERF for the plan gate below. Above the checkpoint, so a reused
+# plan is gated as a perf plan too.
+[ -r "$HARNESS/bin/lib/perf-plan-rule.sh" ] && . "$HARNESS/bin/lib/perf-plan-rule.sh" 2>/dev/null
+PLAN_GATE_PERF=0
+if command -v pt_build_perf >/dev/null 2>&1; then
+  pt_build_perf "$BUILD"
+  [ "$PLAN_GATE_PERF" = 1 ] && echo "$(STAMP) [$PROJECT/$KEY] plan: perf ticket ($PT_EVIDENCE)" >> "$BUILD/pipeline.log"
+fi
+# Checkpoint: a valid non-BLOCKED plan from a prior attempt is reused verbatim
+# (fresh dirs never have one, so the normal path is unchanged).
+if [ -s "$BUILD/plan.md" ] && ! PLAN_IS_BLOCKED "$BUILD/plan.md"; then
+  # >>> resume stale gate
+  # The reused plan was written against the thread as it stood at ticket-fp.
+  # A resume can be hours or days later — TK-143 #517 shipped against a comment
+  # superseded ten minutes into planning, and a resume is that window widened.
+  # Absence is never a mismatch: a record from before item 5 (no ticket-fp), a
+  # boardless project and board API weather all fail OPEN, exactly as the
+  # in-run gate below does.
+  if [ -n "$FP_PLAN" ] && [ -n "$FP_BEFORE" ] && [ "$FP_PLAN" != "$FP_BEFORE" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] PLAN_STALE on resume: thread moved since the reused plan was written ($FP_PLAN -> $FP_BEFORE)" >> "$BUILD/pipeline.log"
+    BB plan_stale "" "" "" false "thread moved since the reused plan was written — deferred for re-plan"
+    RESULT "PLAN_STALE thread moved since the reused plan was written — re-run"; exit 3
+  fi
+  # <<< resume stale gate
+  echo "$(STAMP) [$PROJECT/$KEY] PLAN checkpoint hit — reusing $BUILD/plan.md" >> "$BUILD/pipeline.log"
+else
+# CodeGraph freshness: cheap incremental sync so the planner's graph reflects HEAD.
+command -v codegraph >/dev/null 2>&1 && [ -d "$REPO/.codegraph" ] && (cd "$REPO" && codegraph sync >/dev/null 2>&1 || true)

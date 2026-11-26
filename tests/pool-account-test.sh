@@ -321,7 +321,8 @@ keep_log
 
 # ...and the class is what an operator actually reads: bin/fly-pool.sh puts the
 # reason straight into its fallback line, so the rename above IS the log line.
-grep -qF 'ships the default project-6 token (${PAREASON:-no answer})' "$DIR/bin/fly-pool.sh" \
+# BH-10141: the line names the token's fp and source, not "project-6".
+grep -F "ships the owning box's default claude token" "$DIR/bin/fly-pool.sh" | grep -qF '(${PAREASON:-no answer})' \
   && ok || bad "5: fly-pool.sh no longer prints the pool picker's reason in its fallback line"
 
 echo "pool-account: $PASS pass, $FAIL fail"

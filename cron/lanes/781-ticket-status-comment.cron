@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── TICKET STATUS COMMENT LANE (BH-9503, C1 of #8973) ───────────────────────
+# Every 5 minutes. --dispatch reads nothing: it starts one detached
+# `ticket-status-comment.sh <project>` per fleet project, each on its own lock
+# and at a stable offset inside TICKET_STATUS_COMMENT_SPREAD_S
+# (bin/lib/project-lanes.sh). A watched GitHub-issues project
+# (TICKET_STATUS_COMMENT_PROJECTS, default cromford only) asks the worker
+# which tickets' status changed (GET /api/ticket-status-comments/due) and edits
+# each ticket's ONE status comment in place, or posts it once.
+# Off: flags/lane-off-ticket-status-comment (bin/harness-ctl.sh off
+# ticket-status-comment), or TICKET_STATUS_COMMENT_ENABLED=0.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/ticket-status-comment.sh --dispatch >> /root/harness/logs/ticket-status-comment-cron.log 2>&1

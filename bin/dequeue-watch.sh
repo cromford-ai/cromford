@@ -158,12 +158,10 @@ export HARNESS="$H"
   . "$SELF/lib/gh-budget.sh" 2>/dev/null || true
   . "$SELF/lib/gh-rest.sh" 2>/dev/null || true
   . "$SELF/lib/prr-shadow.sh" 2>/dev/null && prr_seam_load dequeue-watch 2>/dev/null
-  # lane_env_apply above exports GH_SOURCE when a settings row (live or the box
-  # cache) holds lane.dequeue-watch.gh_source. Unset after it = no row: the
-  # knob's default, resolved once here, not by one settings read per prr_read.
-  if [ -z "${GH_SOURCE+x}" ] && command -v lane_env_apply >/dev/null 2>&1 && declare -F prr_step >/dev/null; then
-    GH_SOURCE=$(GH_SOURCE='' prr_step dequeue-watch); export GH_SOURCE
-  fi
+  # The step, resolved once (BH-9938 C1 prr_pin): this lane's row (lane_env_apply
+  # exports it as GH_SOURCE), else the knob's default. A value a parent lane
+  # pinned is not this lane's step, so prr_step skips it.
+  declare -F prr_pin >/dev/null && prr_pin dequeue-watch
   [ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh" 2>/dev/null
   for _l in verdicts mc-stale-dequeue fix-round-queue needs-human hub-box ph-pr-record \
             dequeue-watch/attribute dequeue-watch/classify dequeue-watch/act dequeue-watch/llm dequeue-watch/gather; do

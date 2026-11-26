@@ -1,0 +1,202 @@
+# >>> lane checkpoints (tests/run-build-checkpoint-test.sh drives this block)
+# --- NO FINISHED WORK IS EVER LOST (2026-09-15, docs/CHECKPOINTS.md) ----------
+# Seventeen lanes died at max-turns in 24h with "NO PR". Today's project-5
+# migrations lane had COMMITTED twelve files and died before it could push; the
+# operator pushed the branch by hand as project-5 #1156. PUSH_BRANCH below makes
+# origin the second copy of the tree, but it only runs AFTER the execute stage
+# has returned — which is exactly what a max-turns death prevents.
+#
+# So the execute stage gets a heartbeat. bin/lane-checkpoint.sh commits whatever
+# the worktree is carrying as `wip: checkpoint <stage> <ISO>` and pushes the
+# branch: on a timer (--watch) while the session runs, and once more when the
+# stage ends for ANY reason — clean return, rc != 0, timeout, max-turns, or the
+# SIGTERM of a reaped machine. Each run writes one CHECKPOINT line to this
+# build's pipeline.log, so the operator can see the net working.
+#
+# CHECKPOINT_EVERY_MIN (env/global.env, default 15) is the cadence. CHECKPOINTS=0
+# or flags/lane-checkpoints-off (or the `switch.lane-checkpoints-off` settings
+# row) switches the whole thing off and every line below
+# becomes a no-op — the pre-2026-09-15 pipeline, byte for byte.
+# shellcheck source=../lane-switch.sh
+command -v lane_switch >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
+CKPT_ACTIVE=0; CKPT_PID=""; CKPT_RESUME_NOTE=""; CKPT_WIP_N="${CKPT_WIP_N:-0}"
+# THE BUILD TRIPWIRE seam (BH-3481.0), read by CC() below. Alert only since
+# BH-6705: the check never stops a build. A box without the lib has no check.
+# shellcheck source=../build-tripwire.sh
+command -v tw_check_build >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../build-tripwire.sh" 2>/dev/null || true
+# THE POOL SOFT CAP and the plan hand-off (BH-9065), read by CC() below and by
+# the hand-off block in bin/run-build.sh. A box without the lib has neither.
+# shellcheck source=../pool-stage.sh
+command -v ps_cap_due >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/../pool-stage.sh" 2>/dev/null || true
+CKPT_ON() { # read at every call site, so a flag dropped mid-build still lands
+  lane_switch lane-checkpoints-off file && return 1
+  case "$(printf '%s' "${CHECKPOINTS:-1}" | tr '[:upper:]' '[:lower:]')" in 0|off|false|no) return 1 ;; esac
+  return 0
+}
+CKPT_RUN() { # CKPT_RUN <stage> — one checkpoint, never fatal to this pipeline
+  "$HARNESS/bin/lane-checkpoint.sh" "$BUILD" "$WT" "$BRANCH" "$1" >/dev/null 2>&1 || true
+  return 0
+}
+# Counted off the SUBJECT line, not the diff: "is there real work here" and "is
+# there a tree here" are different questions, and conflating them is how a
+# checkpoint-only branch would sail into review as a finished build.
+CKPT_WIP_COUNT()    { git log --format=%s "$BASE..HEAD" 2>/dev/null | grep -c  '^wip: checkpoint ' ; }
+CKPT_NONWIP_COUNT() { git log --format=%s "$BASE..HEAD" 2>/dev/null | grep -vc '^wip: checkpoint ' ; }
+CKPT_START() {
+  CKPT_ON || return 0
+  # BH-8049: each checkpoint is a push, and on a PR branch each push starts its
+  # CI. While push-once defers the pushes, keep the traps (the EXIT flush still
+  # runs on a SIGTERM) but start no watcher.
+  if declare -F po_active >/dev/null && po_active; then
+    trap 'CKPT_ON_EXIT; trap - TERM; kill -TERM $$' TERM
+    trap 'CKPT_ON_EXIT; trap - INT;  kill -INT  $$' INT
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT watcher not started: push-once defers pushes on a PR branch (BH-8049)" >> "$BUILD/pipeline.log"
+    return 0
+  fi
+  CKPT_ACTIVE=1
+  CHECKPOINT_PARENT_PID=$$ "$HARNESS/bin/lane-checkpoint.sh" --watch "$BUILD" "$WT" "$BRANCH" execute >/dev/null 2>&1 &
+  CKPT_PID=$!
+  # A SIGTERM'd bash does NOT run its EXIT trap unless the signal is trapped, and
+  # a reaped Fly machine or a watchdog kill is exactly a SIGTERM. Both handlers
+  # save first and then re-raise, so the EXIT trap below still closes the job row.
+  trap 'CKPT_ON_EXIT; trap - TERM; kill -TERM $$' TERM
+  trap 'CKPT_ON_EXIT; trap - INT;  kill -INT  $$' INT
+}
+CKPT_STOP() { # the stage ended on its own terms: disarm, then save once more
+  [ -n "$CKPT_PID" ] && { kill "$CKPT_PID" 2>/dev/null; wait "$CKPT_PID" 2>/dev/null; CKPT_PID=""; }
+  trap - TERM; trap - INT
+  [ "$CKPT_ACTIVE" = 1 ] || return 0
+  CKPT_ACTIVE=0
+  CKPT_RUN execute-end
+}
+CKPT_ON_EXIT() { # the stage's exit trap: rc != 0, timeout, max-turns, signal
+  [ "${CKPT_ACTIVE:-0}" = 1 ] || return 0
+  CKPT_ACTIVE=0
+  [ -n "${CKPT_PID:-}" ] && kill "$CKPT_PID" 2>/dev/null
+  CKPT_RUN execute-exit
+}
+# --- Tidy before the PR ------------------------------------------------------
+# The checkpoints are a safety net, not history anybody should have to read, so
+# they collapse into one commit before a reviewer or a PR ever sees them. The
+# TREE is untouched by construction (a soft reset re-commits the same index), so
+# every diff-shaped gate downstream sees byte-identical input. It is also the
+# invariant --resume-branch leans on: wip commits at a tip mean a lane died
+# before the PR step, and a finished build must therefore never leave any.
+#
+# THE NON-WIP MESSAGES ARE CARRIED VERBATIM, deliberately: bin/test-tamper-scan.sh
+# reads TEST-CHANGE justifications out of the commit messages in range, and a
+# squash that dropped them would turn a justified test edit into a blocked build.
+#
+# Two things it refuses to do: rewrite a branch this pipeline did not cut (a
+# dispatcher-supplied TARGET_BRANCH is an existing PR's head), and rewrite a head
+# the reviewer is already bound to by anything other than equality — the same
+# fail-toward-being-read rule the rebase carry above follows.
+CKPT_SQUASH_WIP() {
+  [ "${CHECKPOINT_SQUASH:-1}" = 0 ] && return 0
+  [ "${SQUASH_OK:-0}" = 1 ] || return 0
+  local n_all n_wip rh head msgf mb
+  # BH-1310: $BASE is the LOCAL ref for main, and a box that pulled main fresh
+  # mid-build leaves it ahead of the commit this branch actually forked from.
+  # Squashing onto $BASE directly re-parents the collapsed commit onto that
+  # fresh tip; the tree is untouched (a soft reset never changes it), but every
+  # file main gained since the real fork now reads as DELETED in the diff a
+  # reviewer or gate takes against that new parent. The branch's real base is
+  # merge-base($BASE, HEAD) — resolve THAT, once, and reset/count/log against
+  # it instead. A base that cannot be resolved is never silently treated as the
+  # tip: fail loud and leave the wip commits in place.
+  mb=$(git merge-base "$BASE" HEAD 2>/dev/null)
+  if [ -z "$mb" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT squash FAILED — could not resolve merge-base($BASE, HEAD), refusing to squash onto an unrelated base" >> "$BUILD/pipeline.log"
+    return 1
+  fi
+  n_all=$(git rev-list --count "$mb..HEAD" 2>/dev/null || echo 0)
+  n_wip=$(CKPT_WIP_COUNT)
+  [ "$n_wip" -ge 1 ] && [ "$n_all" -ge 2 ] || return 0
+  head=$(git rev-parse HEAD 2>/dev/null)
+  rh=$(cat "$BUILD/review-head" 2>/dev/null || true)
+  if [ -n "$rh" ] && [ "$rh" != "$head" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT squash skipped: the reviewed head ${rh:0:8} is not this head — leaving $n_wip wip commit(s) rather than orphaning an approval" >> "$BUILD/pipeline.log"
+    return 0
+  fi
+  msgf="$BUILD/wip-squash-msg.txt"
+  git log --format='%B' --reverse "$mb..HEAD" 2>/dev/null | grep -v '^wip: checkpoint ' > "$msgf"
+  grep -q '[^[:space:]]' "$msgf" || printf '%s: work recovered from %s lane checkpoint(s)\n' "$KEY" "$n_wip" > "$msgf"
+  if git reset --soft "$mb" >> "$BUILD/pipeline.log" 2>&1 && git commit -q --no-verify -F "$msgf" >> "$BUILD/pipeline.log" 2>&1; then
+    [ -n "$rh" ] && git rev-parse HEAD > "$BUILD/review-head"
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT squash: $n_all commit(s) ($n_wip wip) collapsed into $(git rev-parse --short HEAD) — same tree, tidy history" >> "$BUILD/pipeline.log"
+  else
+    # BH-1319: rc 1, the same answer the unresolved-merge-base path above gives.
+    # The two FAILED paths log the same word, and a caller that could only see
+    # one of them was reading half the refusals as successes.
+    echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT squash FAILED — the PR ships with its $n_wip wip commit(s), which costs nothing but a noisy log" >> "$BUILD/pipeline.log"
+    return 1
+  fi
+  return 0
+}
+# CKPT_SQUASH_REFUSED <execute|pr> — the squash returned 1 (unresolved merge-base, or the
+# reset/commit failed). STILL NEVER FATAL: the build goes on with its wip commits. What
+# changes is that the refusal is RECORDED as the step that failed — a `squash` phase row
+# closed failed rc 1 on the job (the same fail-open pattern the e2e stage uses), so a
+# later SCAN_FAILED or REVIEW_BLOCKED reads back to this and not to a deleted-file mystery.
+CKPT_SQUASH_REFUSED() {
+  local where="${1:-execute}" why
+  why=$(grep 'CHECKPOINT squash FAILED' "$BUILD/pipeline.log" 2>/dev/null | tail -1 | sed 's/^.*CHECKPOINT squash FAILED[^A-Za-z]*//')
+  echo "$(STAMP) [$PROJECT/$KEY] CHECKPOINT squash refused before $where — recorded as the failed step; the build continues with its wip commits" >> "$BUILD/pipeline.log"
+  command -v job_phase_open >/dev/null 2>&1 || return 0
+  job_phase_open squash "$(hostname)" "" "checkpoint squash before $where" >/dev/null 2>&1 || return 0
+  job_phase_close 1 "" "${why:-refused}" >/dev/null 2>&1 || true
+  return 0
+}
+# <<< lane checkpoints
+
+# Re-measure against the WORKTREE now that it exists — the gate above ran
+# against $REPO, which cannot see a worktree-local project CLAUDE.md/AGENTS.md.
+# The gate has already accepted the machine context; this only refines the
+# manifest that the PR body and any later comparison will quote.
+"$HARNESS/bin/context-signature.sh" "$PROJECT" "$WT" > "$BUILD/context.json" 2>/dev/null
+CTX_SIG=$(python3 -c "import json;print(json.load(open('$BUILD/context.json'))['signature_short'])" 2>/dev/null || echo unknown)
+CTX_COMMIT=$(python3 -c "import json;print(json.load(open('$BUILD/context.json'))['harness_commit'])" 2>/dev/null || echo unknown)
+CTX_SYNC=$(python3 -c "import json;d=json.load(open('$BUILD/context.json'));print('ok' if d['machine_rules_in_sync'] and d['harness_bin_in_sync'] else 'DRIFTED')" 2>/dev/null || echo unknown)
+# Freshness of the checkout the two above are measured against (2026-08-14):
+# "in sync with my own checkout" means nothing if that checkout is a day old.
+CTX_FRESH=$(python3 -c "import json;d=json.load(open('$BUILD/context.json'));v=d.get('checkout_fresh');print('current with origin ('+str(d.get('origin_commit'))+')' if v is True else ('STALE vs origin '+str(d.get('origin_commit'))) if v is False else 'unknown')" 2>/dev/null || echo unknown)
+echo "$(STAMP) [$PROJECT/$KEY] context $CTX_SIG (harness $CTX_COMMIT, $CTX_SYNC, checkout $CTX_FRESH)" >> "$BUILD/pipeline.log"
+
+# --- CODEGRAPH (begin) ---
+# Every build gets the graph, and gets told the ONE command that reaches it.
+# The soft "if this repo is indexed, use codegraph" sentence this replaces is
+# what produced a session probing `ls .codegraph/` in a worktree, seeing the
+# directory the committed .gitignore materialises there, concluding "indexed",
+# and then doing a hundred shell reads against an index it never touched.
+# codegraph-ensure.sh creates/refreshes the MAIN clone's index and emits a
+# capability-tested line; a failure degrades to NOT AVAILABLE, never blocks.
+CG_ORIENT=$("$HARNESS/bin/codegraph-ensure.sh" "$PROJECT" "$WT" 2>/dev/null) \
+  || CG_ORIENT="CODEGRAPH NOT AVAILABLE (codegraph-ensure.sh failed)"
+echo "$(STAMP) [$PROJECT/$KEY] $(head -1 <<<"$CG_ORIENT")" >> "$BUILD/pipeline.log"
+# --- CODEGRAPH (end) ---
+
+# --- VERIFICATION MAP (begin) ---
+# The primer PLAN has been told to read since July finally gets written. Both
+# this script (below) and run-preplan.sh have carried "if
+# state/<project>-context.md exists, read it FIRST" while nothing wrote the
+# file — a read contract dangling on an empty hook. render composes it from the
+# repo's own docs/verification-map/, its CLAUDE.md verification contract and its
+# AGENT_ARCHITECTURE.md, citing each, and says ABSENT for whichever it does not
+# find. orient is the one-line availability note CC() injects, the same shape
+# codegraph-ensure.sh established.
+#
+# FAIL-OPEN, both calls: a missing or broken map is not a reason to stop
+# building. A render failure costs one pipeline.log line, and orient degrades to
+# a NOT AVAILABLE line — never to silence, which a planner cannot tell apart
+# from "nobody looked" and will go hunting to resolve.
+"$HARNESS/bin/verification-map.sh" render "$PROJECT" --repo "$WT" --hotspots-out "$BUILD/hotspots.txt" --contracts-out "$BUILD/shared-contracts.tsv" >> "$BUILD/pipeline.log" 2>&1 \
+  || echo "$(STAMP) [$PROJECT/$KEY] verification-map render failed — building without a primer" >> "$BUILD/pipeline.log"
+# Computed ONCE here and reused by every stage: a build that edits routes and
+# the map in its own working tree will still see the line as it stood at build
+# start. That is the intended reading — it orients against the base the build
+# started from — and it is why the freshness gate that matters is CI's
+# verification-map-freshness on the finished diff, not this line.
+VMAP_ORIENT=$("$HARNESS/bin/verification-map.sh" orient "$PROJECT" --repo "$WT" 2>/dev/null) \
+  || VMAP_ORIENT="VERIFICATION MAP NOT AVAILABLE (verification-map.sh failed)"
+[ -n "$VMAP_ORIENT" ] || VMAP_ORIENT="VERIFICATION MAP NOT AVAILABLE (verification-map.sh returned nothing)"
+echo "$(STAMP) [$PROJECT/$KEY] $(head -1 <<<"$VMAP_ORIENT")" >> "$BUILD/pipeline.log"

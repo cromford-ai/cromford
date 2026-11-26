@@ -156,6 +156,20 @@ trk_gh_comment_raw() {
   gh_rest POST "repos/$TRK_SLUG/issues/$n/comments" -F "body=@$f"
 }
 
+# trk_gh_comment_edit <comment-id> <bodyfile> — replace the body of one
+# existing issue comment (PATCH issues/comments/<id>), the raw answer on stdout
+# and gh_rest's own rc: 44 when the comment is gone (bin/ticket-status-comment.sh,
+# BH-9503, edits its one status comment in place). rc 1 and no call on a bad
+# slug or id or an unreadable file. A dry run logs, prints DRYRUN, sends
+# nothing and is rc 0.
+trk_gh_comment_edit() {
+  local id="${1:-}" f="${2:-}"
+  _trk_gh_ok "$id" && [ -r "$f" ] || return 1
+  _trk_logw "gh api -X PATCH repos/$TRK_SLUG/issues/comments/$id -F body=@$f"
+  _trk_dry && return 0
+  gh_rest PATCH "repos/$TRK_SLUG/issues/comments/$id" -F "body=@$f"
+}
+
 # trk_gh_close_completed <n> — close issue <n> as completed (state_reason
 # completed, which trk_gh_transition does not send). gh_rest's own rc and its
 # raw answer on stdout; the caller re-reads the state to prove the close took

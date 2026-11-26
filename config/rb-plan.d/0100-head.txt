@@ -1,0 +1,62 @@
+# bin/lib/rb/plan.sh — the plan stage: the lane checkpoints, context signature, codegraph and verification-map orientation, the CC runner, ticket fingerprint and meta, thread-stability gate, preplan adopt, the PLAN run, the plan gate, kind flow, the size switch with its size gate and decompose hand-off, and claims publish.
+# The body is the VERBATIM text of its former slice of bin/run-build.sh. Since the
+# BH-572 cut the driver runs it as a bare `rb_<name>` call, in pipeline order.
+#
+# WHERE THE SLICE STARTS, AND WHY IT IS NOT THE ANCHOR #478 NAMED. The parent
+# plan drew this boundary at `# >>> checkpoint adopt`. That line sits INSIDE the
+# `else` arm of the driver's `if [ -n "${TARGET_BRANCH:-}" ]` — the `if`, the
+# `then` arm and the `else` all belong to the preceding slice (gates.sh,
+# rb_gate_claim_and_workspace), and only the closing `fi` would have landed
+# here. A body that opens with somebody else's `fi` does not parse: `bash -n`
+# and the ticket's own side-effect check both refuse it, and after the cut the
+# pipeline would open an `if` in one function and close it in another. So the
+# body starts at the first line AFTER that `fi` (`# Record the branch for
+# checkpoint-resume:`), which is the nearest boundary that keeps the block
+# whole. The checkpoint-adopt block (`# >>> checkpoint adopt` through its `fi`)
+# therefore stays with the slice that opens its `if`; #478 and #569 are told.
+# Entry functions, pipeline order: rb_plan
+# Reads: _ ALERTS BASE BRANCH BUILD BUILD_CALL_FP CARRIED_NOTE_LINE CARRIED_NOTE_SRC CC_ARTIFACT_FILE
+#   CC_ARTIFACT_KIND CG_ORIENT CHECKPOINT_SQUASH CHECKPOINTS CKPT_ACTIVE CKPT_PID CKPT_WIP_N
+#   CTX_COMMIT CTX_FRESH CTX_SIG CTX_SYNC FP_AFTER FP_BEFORE FP_PLAN HARNESS HOTFIX JOB_ID KEY KIND
+#   KIND_ENFORCE KIND_EXEC_NOTE KIND_GATE_ENFORCE KIND_HINT KIND_HINT_LINE KIND_HINT_SRC
+#   KIND_MISS KIND_OUT KIND_PROBE KIND_RC KIND_REPRO KIND_SKIP_E2E KIND_SRC PG_ENFORCE PG_LIST
+#   PG_MAX PG_RC PG_TASKS PG_UNTRACED PG_VERDICT PG_WHY PLAN_AMBIGUITY_RULE PLAN_GATE_ENFORCE
+#   PLAN_GATE_MAX_LIST PLAN_MODEL PM_ART PM_STATUS PP_DIR PP_FP PP_OUTCOME PP_RC PP_RESUMED
+#   PP_WHY PROJECT REPO SG_BODY SG_CHILD SG_CHILD_SRC SG_DECL SG_ENFORCE SG_LIMITS SG_MAXF SG_MAXL SG_OUT SG_RC
+#   SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY SQUASH_OK TH_N TH_P TH_R
+#   TH_REC TH_RN TICKET VMAP_ORIENT WT
+#   GH_AUTH_SLUG PC_CONF_WARN PC_ENFORCE UI_PLAN_NOTE
+# Writes: AGENT_CALL_ARTIFACT_KIND BCF_OUT REOPEN_REASON_LINE RR_LINE RR_LOG REVERT_REASON_LINE RV_LINE RV_LOG BUILD_CALL_FP BUILD_NOTE_RELAY CARRIED_NOTE_LINE CARRIED_NOTE_SRC CC_ARTIFACT_KIND CG_ORIENT
+#   CHECKPOINT_PARENT_PID CN_SRC CP_M CP_PARENT CP_PREAMBLE CP_RC CP_WHY CKPT_ACTIVE CKPT_PID CTX_COMMIT CTX_FRESH CTX_SIG CTX_SYNC FP_AFTER
+#   FP_BEFORE FP_PLAN KIND KIND_EXEC_NOTE KIND_HINT KIND_HINT_LINE KIND_HINT_SRC KIND_MISS
+#   KIND_OUT KIND_PROBE KIND_REPRO KIND_SKIP_E2E KIND_SKIP_SECLENS KIND_SRC PG_LIST PG_TASKS
+#   PAR_FWD PG_UNTRACED PG_VERDICT PG_WHY PLAN_AMBIGUITY_RULE PLAN_MODEL PM_ART PM_STATUS PP_DIR PP_EV PP_EV_DETAIL PP_EV_RC PP_FP PP_OUTCOME
+#   PP_RESUMED PP_WHY PTG_DETAIL PTG_IDS PTG_OUT PTG_RC PTG_SINCE PTG_SRC RBT_KIND REROUTE_EXEC_NOTE SG_BODY SG_CHILD SG_CHILD_SRC SG_DECL SG_ENFORCE SG_LIMITS SG_MAXF SG_MAXL
+#   SG_OUT SG_RC SG_SPLIT SG_SRC SG_SWITCH_SRC SG_TIER SG_TITLE SG_TLOG SG_UNDECL_WHY SG_VERDICT SG_WHY TH_N TH_REC
+#   TH_RN VMAP_ORIENT
+#   PC_BASE PC_HITS PC_N PC_NH PC_RC PC_RESOLVED PC_SLUG PC_SUMMARY PC_UNRES PC_VERDICT STN_NOTE UI_PLAN_NOTE
+#   WT_LINE WT_RC LP_PLACE LP_WHY
+#   MN_NOTE DEFER_TOP
+#   CPK_ADOPT CPK_FETCH_RC CPK_P CPK_RULE CPK_TOK
+#   SI_HOUT SI_HRC SI_MSG SI_OUT SI_RC
+# shellcheck shell=bash
+
+rb_plan() {
+# Record the branch for checkpoint-resume: a relaunched run re-enters it
+# instead of cutting ticket/<key>-rN and abandoning the finished commits.
+echo "$BRANCH" > "$BUILD/branch"
+# >>> branch artifact (BH-1033)
+# ...and on the JOB ROW, which is the copy a lane on another box can read. The
+# file above is on this machine's disk, and bin/pr-url-reconcile.sh runs on the
+# hub: with no row it SCRAPES pipeline.log for the name, silently falls back to
+# the stem when the scrape misses, and can then relink a record to whatever PR
+# happens to sit on ticket/<key> — someone else's. The name is settled HERE, by
+# the code that chose it, before the push and before the PR.
+# Fail-open and quiet: no client, no row, or an unreachable worker and the
+# scrape is exactly what it was.
+command -v job_artifact_put >/dev/null 2>&1 && [ -n "${JOB_ID:-}" ] \
+  && job_artifact_put branch "$BRANCH" \
+       "$(jq -nc --arg r "$(basename "$BUILD")" --arg b "$BRANCH" \
+          '{record:$r,branch:$b,source:"run-build"}' 2>/dev/null)" >/dev/null 2>&1
+# <<< branch artifact
+

@@ -1,0 +1,12 @@
+{
+  "env": "SELECTION_GATE_RETRY_OUTSIDE",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9779. 1: a selection-gate red only on suites outside this change's impact set (bin/test-impact.sh select --why --map-only rows of kind self, reads, named, source, learned, closure or regression) runs those suites once more; a suite green on that run leaves red: and gets a ci_flakes row (workflow selection-gate, kind flake). 0: no retry and no retry: line. bin/lib/selection-gate.sh reads the row; bin/selection-gate.sh alone falls back to 0, like the other steps.",
+  "read_in": "bin/lib/selection-gate.sh"
+}

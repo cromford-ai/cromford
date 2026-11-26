@@ -17,6 +17,15 @@
 #       lane.<id>.gh_source when setting_get is already defined, then `shadow`,
 #       the documented fallback of the knob GH_SOURCE. Any other value is
 #       `shadow` plus one `PRR_STEP lane=<l> bad=<value>` line.
+#       BH-9938 C1: $GH_SOURCE counts only when GH_SOURCE_LANE is empty or is
+#       <lane-id>. A value a parent lane pinned (GH_SOURCE_LANE=<parent>) is
+#       not this lane's step: lane_env_apply exports a row and never unsets an
+#       inherited value, so a child would run under its parent's step.
+#
+#   prr_pin <lane-id>
+#       Resolves prr_step <lane-id> once and exports GH_SOURCE=<step> and
+#       GH_SOURCE_LANE=<lane-id>, so each later prr_read of that lane makes
+#       no settings read. A child lane that inherits the pair ignores it.
 #
 #   prr_seam_load <lane-id>
 #       Sources bin/lib/prr-shadow.d/<lane-id>.sh, the lane's record, github
@@ -50,7 +59,7 @@ _prr_shadow_log() {
 
 prr_step() {
   local lane="${1:-}" v="" rc
-  if [ -n "${GH_SOURCE+x}" ]; then
+  if [ -n "${GH_SOURCE+x}" ] && { [ -z "${GH_SOURCE_LANE:-}" ] || [ "$GH_SOURCE_LANE" = "$lane" ]; }; then
     v="$GH_SOURCE"
   elif command -v setting_get >/dev/null 2>&1; then
     v=$(setting_get "lane.$lane.gh_source" 2>/dev/null); rc=$?
@@ -61,6 +70,14 @@ prr_step() {
     '') printf 'shadow\n' ;;
     *) _prr_shadow_log "PRR_STEP lane=$lane bad=$v"; printf 'shadow\n' ;;
   esac
+}
+
+prr_pin() {
+  local lane="${1:-}" v
+  [[ "$lane" =~ ^[a-z0-9][a-z0-9-]*$ ]] || return 2
+  v=$(prr_step "$lane")
+  GH_SOURCE="$v"; GH_SOURCE_LANE="$lane"
+  export GH_SOURCE GH_SOURCE_LANE
 }
 
 prr_seam_load() {

@@ -63,7 +63,7 @@ right crontab — but the files have no reason to exist there. To SEE a render,
 use `bin/render-cron.sh <box>`, `bin/render-cron.sh --out-dir <dir>` or
 `bin/render-diff.sh`.
 
-**Three rows here are still COMMITTED. The first is `rules/CLAUDE.md`** (BH-1336). It is rendered
+**Four rows here are still COMMITTED. The first is `rules/CLAUDE.md`** (BH-1336). It is rendered
 from `rules/topics/` by `bin/render-rules.sh`, and five scripts copy it verbatim
 onto every box and every builder — `bin/update-runners.sh`,
 `bin/sync-agent-rules.sh`, `fly/builder-runner.sh`, `bin/rules-drift-check.sh`
@@ -77,7 +77,20 @@ union-concatenating a document with a generated table of contents produces a
 file nobody wrote. `docs/PR-OWNERSHIP.md` (BH-5235.2) is the second committed
 render, for the same reason: `bin/pr-owner-sweep.sh`, `bin/lib/pr-health.sh`
 and the docs link it by path and readers browse it on GitHub, so it stays in git, and a conflict on it is resolved
-by `bin/render-doc-sections.sh --write` over the merged `docs/PR-OWNERSHIP.d/`.
+by `bin/render-doc-sections.sh --write` over the merged `docs/PR-OWNERSHIP.d/`. `bin/lib/rb/plan.sh` (BH-9704) is the third: it is
+rendered from `config/rb-plan.d/` by `bin/render-split.sh`, whose `--write` refuses
+the regenerate when a merge side edited the render by hand, so a hand edit is
+never dropped. Its row and the fly-pool row are last in the table, so every other row's command runs
+before it. A refused regenerate still discards the uncommitted output of the
+earlier rows on the conductor's rebase path (`mc_regen_generated` runs
+`git checkout -- .` on any failure); the PR then stays red on `--check` until a
+fix round moves the hand edit into a fragment. The guard reads a batch-train
+union (`--theirs` on each render conflict, one regenerate after the last merge)
+through its parents, so siblings that each add a fragment never trip it. The Fly pool script `bin/fly-pool.sh` (BH-9704 C1) is the
+fourth: it is rendered from `config/fly-pool.d/` (`.sh` fragments, the 4th field
+of its `catalog/splits.d/` row) by the same `bin/render-split.sh --write`, so
+the one command renders both rows and the same guard keeps a hand edit;
+`bin/fly-pool-build.sh` renders the same bytes.
 
 **`worker/jobs/schema.sql` is NOT in git** (BH-6005). It is composed from
 `worker/jobs/schema.d/NNNN-<name>.sql` by `bin/schema-build.sh` and is
@@ -123,3 +136,5 @@ column.
 | `docs/PR-OWNERSHIP.md` | `bin/render-doc-sections.sh --write` | committed |
 | `worker/jobs/schema.sql` | `bin/schema-build.sh --write` |  |
 | `catalog/state-paths.json` | `bin/state-paths-build.sh --compose` |  |
+| `bin/lib/rb/plan.sh` | `bin/render-split.sh --write` | committed |
+| `bin/fly-pool.sh` | `bin/render-split.sh --write` | committed |

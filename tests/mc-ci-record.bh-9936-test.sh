@@ -129,7 +129,11 @@ tick GH_SOURCE=record
 [ "$(grep -c '^GET /api/pr-records?repo=example-org/demo&number=1' "$F/jobs.log" 2>/dev/null)" -ge 1 ] && ok || bad "M1 the tick read the PR record: $(cat "$F/jobs.log" 2>/dev/null)"
 S=$(row_state)
 [ -n "$S" ] && [ "$S" != WAIT_CI ] && ok || bad "M1 the row is not WAIT_CI (got '$S'); log: $(grep -F "$SLUG#1" "$CLOG" 2>/dev/null | tail -3)"
-[ ! -s "$PLOG" ] && ok || bad "M1 a record hit logs nothing: $(cat "$PLOG" 2>/dev/null)"
+# BH-9938 C1: the open list also reads through prr_read now; this fixture has
+# no record list, so its key ($SLUG#open) misses and reads GitHub. The CI read
+# (key $SLUG#<n>@<sha12>) and the flake read still log nothing on a hit.
+PL_CI=$(grep -v " key=$SLUG#open " "$PLOG" 2>/dev/null)
+[ -z "$PL_CI" ] && ok || bad "M1 a record hit logs nothing: $PL_CI"
 
 # M2 — shadow step: the GitHub read stays, and the record is read beside it.
 fresh

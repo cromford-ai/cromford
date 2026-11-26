@@ -1,0 +1,69 @@
+# >>> plan launch
+# >>> plan malformed hold
+# THE HOLD IS A GATE, NOT A LABEL (BH-657). PM_TERMINAL below writes `requeued`
+# on a ticket's FIRST malformed plan and `held` on its second, and until now
+# nothing read those rows BEFORE a plan was bought — so "held for a human" was a
+# RESULT string and a ledger row, never a refusal. Every launcher funnels through
+# these lines (the triage sweep's relaunch, an unscoped tick that still sees the
+# handoff label, bin/blocked-resolver.sh's rebuild-fresh rung, a Fly machine
+# running this same script), and each one paid for a full Fable plan that died at
+# the same gate. harness-console HC-10 bought three of them 30 minutes apart on
+# 2026-09-17 — the triage cadence, not the resolver's 90-minute floor, which is
+# what proves the choke point is here rather than in one launcher.
+#
+# FAIL-OPEN, DELIBERATELY: only the literal statuses `held` and `skipped` hold a
+# ticket. An unreadable file, a ledger outage, an empty or unrecognised status all
+# launch, because a wrong hold costs a ticket that never ships and a wrong launch
+# costs one plan session. And the hold has a documented way out — an operator
+# appends a `released` row (last row wins) — or it would be a park nobody can
+# leave.
+PM_HOLD_STATUS() { # the ticket's last known plan-malformed status, or empty
+  local pm_row pm_file="" pm_st="" pm_led pm_first=file
+  pm_row=$(grep "^$PROJECT $KEY " "$HARNESS/state/plan-malformed.txt" 2>/dev/null | tail -1)
+  [ -n "$pm_row" ] && pm_file=$(printf '%s\n' "$pm_row" | awk '{print $3}')
+  # WHICH HALF IS THE RECORD. Off (today): the box's own file is its word and the
+  # ledger answers only when the file has no row at all — a state dir that was
+  # rebuilt, or a second malformed plan that ran on another machine. With the
+  # no-twin-ledgers flag up (BH-1036) the order flips: the ROW is the record and
+  # the file is the cache behind it, so a wiped state dir cannot un-hold a
+  # ticket two malformed plans already parked. Either way rc 1 (outage) and rc 2
+  # (no row) both mean "no status" and the other half is asked.
+  type lt_on >/dev/null 2>&1 && lt_on && pm_first=row
+  if [ "$pm_first" = file ] && [ -n "$pm_file" ]; then printf '%s' "$pm_file"; return 0; fi
+  if type job_ledger_get >/dev/null 2>&1; then
+    if pm_led=$(job_ledger_get plan_malformed "$PROJECT $KEY" 2>/dev/null); then
+      pm_st=$(head -1 <<<"$pm_led" | awk '{print $1}')
+    fi
+  fi
+  printf '%s' "${pm_st:-$pm_file}"
+}
+PM_STATUS=$(PM_HOLD_STATUS)
+case "$PM_STATUS" in
+  held|skipped)
+    PM_ART=$(grep "^$PROJECT $KEY held " "$HARNESS/state/plan-malformed.txt" 2>/dev/null | tail -1 | awk '{print $5}')
+    [ -n "$PM_ART" ] || PM_ART="no artifact recorded"
+    echo "$(STAMP) [$PROJECT/$KEY] PLAN skipped: $KEY is held after 2 malformed plans — no plan session spent ($PM_ART)" >> "$BUILD/pipeline.log"
+    # ONE ALERTS line per held ticket, and the ROW is what remembers it: the alert
+    # rides the `held` -> `skipped` transition, so every later launch is log-only
+    # no matter which box or machine it lands on. The file row is written before
+    # the alert, so a ledger outage still records the transition on this box.
+    if [ "$PM_STATUS" = held ]; then
+      mkdir -p "$HARNESS/state"
+      echo "$PROJECT $KEY skipped $(STAMP) $PM_ART" >> "$HARNESS/state/plan-malformed.txt"
+      if type job_ledger_put >/dev/null 2>&1; then
+        job_ledger_put plan_malformed "$PROJECT $KEY" skipped \
+          "held after 2 malformed plans — launches are skipped before the planner" >/dev/null 2>&1 || true
+      fi
+      echo "$(STAMP) [$PROJECT/$KEY] PLAN_MALFORMED hold: $KEY already produced 2 malformed plans and is skipped before the planner from now on — no third plan session. Release: append '$PROJECT $KEY released <stamp>' to state/plan-malformed.txt and job_ledger_put plan_malformed '$PROJECT $KEY' released ($PM_ART)" >> "$ALERTS"
+    fi
+    BB plan_malformed "" "" "" false "held after 2 malformed plans — skipped before the planner, no plan session spent"
+    # The RESULT keeps the PLAN_MALFORMED verb and the "held for a human" phrase on
+    # purpose: every sweep SOP, the console's parked mapping and blocked-resolver
+    # already have a rule for that shape, and this skip wants exactly that rule.
+    RESULT "PLAN_MALFORMED held for a human: $KEY already produced 2 malformed plans — skipped before the planner, no plan session spent ($PM_ART)"
+    exit 4
+    ;;
+esac
+# <<< plan malformed hold
+echo "$(STAMP) [$PROJECT/$KEY] PLAN ($PLAN_MODEL)" >> "$BUILD/pipeline.log"
+BB planning

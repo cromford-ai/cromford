@@ -1,0 +1,65 @@
+# >>> test reroute (tests/run-build-test-home.bh-580-test.sh drives this block)
+# PER-TICKET TEST FILES, consumer side (#580). A pre-plan may have recorded that
+# a test file this plan names is already held by a sibling build, and where this
+# ticket's cases should go instead. The swap happens HERE, between the list
+# being derived and the claim being published, because the claims copy,
+# bin/conflict-check.sh and bin/plan-overlap.sh all read that same list — a
+# sibling must see the path this build will actually write. The same record
+# becomes the executor's note, so the prompt and the claim can never disagree:
+# both are read off $BUILD/test-reroute.txt.
+#
+# Fail-open at every step. No lib (old box), no record, or the kill switch, and
+# this block does nothing at all — no file written, no log line, empty note.
+if command -v th_enabled >/dev/null 2>&1 && th_enabled "$HARNESS"; then
+  # Relay first, hub second: on a Fly builder the record arrives as a flat copy
+  # next to the job, and the hub path may not exist on that machine at all.
+  TH_REC=""
+  for TH_R in "$(th_relay_path "$PROJECT" "$KEY")" "$(th_record_path "$HARNESS" "$PROJECT" "$KEY")"; do
+    [ -r "$TH_R" ] && [ -s "$TH_R" ] && { TH_REC="$TH_R"; break; }
+  done
+  # >>> test home plan
+  # ADVISORY plan-time finding, BEFORE the swap so it judges what the planner
+  # actually wrote. A shared test file that already exists and is named as a
+  # plain add target is the merge-conflict shape this whole item exists to kill.
+  # It refuses nothing and writes no RESULT — it hands the reviewer a sentence.
+  : > "$BUILD/test-home.txt"
+  if [ "${KIND:-}" != bug ] && [ -s "$BUILD/planned-files.txt" ]; then
+    TH_N=0
+    while IFS= read -r TH_P; do
+      [ -n "$TH_P" ] || continue
+      th_is_test_path "$TH_P" || continue
+      th_is_per_ticket "$TH_P" && continue
+      # A file that does not exist yet is nobody's shared file.
+      [ -e "$WT/$TH_P" ] || continue
+      # "Every plan line naming this path carries a change-word" is the skip, so
+      # the finding needs at least one line naming it with none of them: a
+      # ticket whose scope IS the existing test, a bug reproduction, or a path
+      # mentioned only as a regression risk is not planning to append cases.
+      grep -F -- "$TH_P" "$BUILD/plan.md" 2>/dev/null \
+        | grep -Eiv 'existing|change|modif|update|fix|rewrite|reproduc|regression|risk|TEST-CHANGE' \
+        | grep -q . || continue
+      printf 'SHARED: %s -> %s\n' "$TH_P" "$(th_per_ticket_path "$TH_P" "$KEY")" >> "$BUILD/test-home.txt"
+      TH_N=$((TH_N+1))
+    done < "$BUILD/planned-files.txt"
+    if [ "$TH_N" -gt 0 ]; then
+      printf 'TEST_HOME_PLAN: %s\n' "$TH_N" >> "$BUILD/test-home.txt"
+      echo "$(STAMP) [$PROJECT/$KEY] TEST_HOME_PLAN: $TH_N shared test file(s) named as a plain add target (advisory) — $BUILD/test-home.txt" >> "$BUILD/pipeline.log"
+    fi
+  fi
+  # <<< test home plan
+  if [ -n "$TH_REC" ]; then
+    cp -f "$TH_REC" "$BUILD/test-reroute.txt" 2>/dev/null
+    # Idempotent by contract: a resumed build whose list is already swapped gets
+    # a byte-identical list back, and still gets the note its EXECUTE needs.
+    th_apply "$BUILD/test-reroute.txt" "$BUILD/planned-files.txt"
+    REROUTE_EXEC_NOTE=$(th_exec_note "$BUILD/test-reroute.txt")
+    TH_RN=$(grep -c '^REROUTE tests: ' "$BUILD/test-reroute.txt" 2>/dev/null || true)
+    echo "$(STAMP) [$PROJECT/$KEY] TEST_REROUTE: ${TH_RN:-0} path(s) forwarded to EXECUTE" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< test reroute
+# SCALE-PLAN-2 claims ledger: publish this build's file set so sibling PLANNERS
+# shard around us instead of colliding. Stale claims (dead builds) age out at 4h.
+mkdir -p "$HARNESS/state/claims/$PROJECT"
+find "$HARNESS/state/claims/$PROJECT" -type f -mmin +240 -delete 2>/dev/null
+cp "$BUILD/planned-files.txt" "$HARNESS/state/claims/$PROJECT/$KEY" 2>/dev/null || true

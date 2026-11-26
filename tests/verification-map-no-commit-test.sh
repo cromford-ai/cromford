@@ -210,12 +210,16 @@ if command -v mc_regen_table >/dev/null 2>&1; then
     "$(printf 'rules/CLAUDE.md\tbin/render-rules.sh --write')" \
     "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
     "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
-    "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')")
-  # Of the last three rows two are still COMMITTED: rules/CLAUDE.md (BH-1336),
+    "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')" \
+    "$(printf 'bin/lib/rb/plan.sh\tbin/render-split.sh --write')" \
+    "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')")
+  # Of the last six rows four are still COMMITTED: rules/CLAUDE.md (BH-1336),
   # a render five box scripts copy verbatim, and docs/PR-OWNERSHIP.md
-  # (BH-5235.2), linked by path. worker/jobs/schema.sql, the composition of
+  # (BH-5235.2), linked by path, and bin/lib/rb/plan.sh (BH-9704), the render
+  # of config/rb-plan.d/, and bin/fly-pool.sh (BH-9704 C1), the render of
+  # config/fly-pool.d/. worker/jobs/schema.sql, the composition of
   # worker/jobs/schema.d/, is not in git since BH-6005 (BH-5239.4 deleted the
-  # Cloud schema row). Each is declared here so a conflict on it is regenerated
+  # Cloud schema row), and catalog/state-paths.json is not in git (BH-8986). Each is declared here so a conflict on it is regenerated
   # instead of hand merged. GT-2 pins the same list; the two must not drift.
   if [ "$TBL" = "$WANT" ]; then ok
   else bad "NC-4: mc_regen_table over a tree with NO committed README must still print the declared rows, the verification-map README among them (the table lives in docs/verification-map/index/tail.md). Got:

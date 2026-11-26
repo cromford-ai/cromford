@@ -1,0 +1,132 @@
+# >>> defer top
+# BH-9426: the top deferral files (bin/lib/defer-top.sh, from the defer-report lane) ride under the map line.
+[ -r "$HARNESS/bin/lib/defer-top.sh" ] && . "$HARNESS/bin/lib/defer-top.sh" 2>/dev/null && DEFER_TOP=$(defer_top_line "$PROJECT" "$HARNESS" 2>/dev/null) && [ -n "$DEFER_TOP" ] && VMAP_ORIENT="$VMAP_ORIENT
+$DEFER_TOP"
+# <<< defer top
+# --- VERIFICATION MAP (end) ---
+
+CC() { # CC <stage> <model> <timeout-sec> <outfile> <prompt>  (runner + cost via agent-call.sh)
+  local stage="$1" model="$2" to="$3" out="$4" prompt="$5"
+  # One injection point for twelve call sites: the code-touching stages get the
+  # graph line FIRST, before anything else in their prompt. QA and other stages
+  # do not read code this way and are left alone.
+  #
+  # The map line rides beside it for the stages that decide WHAT to build and
+  # whether it was built right. A fix round works from named review findings and
+  # QA gets its map pointer inside its own prompt, so neither needs this.
+  # Defaulted, not bare: an unset VMAP_ORIENT is a harness bug, and a harness bug
+  # must degrade to an honest line rather than killing a build stage under
+  # `set -u`. Same reason the render above is fail-open.
+  case "$stage" in
+    plan|execute|review) prompt="${VMAP_ORIENT:-VERIFICATION MAP NOT AVAILABLE (never rendered for this build)}
+
+$prompt" ;;
+  esac
+  case "$stage" in
+    plan|execute|review|fix) prompt="$CG_ORIENT
+
+$prompt" ;;
+  esac
+  # Phase 7: the stage's DECLARED OUTCOME, handed to agent-call.sh so it can
+  # record the artifact on the claim right before it closes the phase. Consumed
+  # once and cleared, so a declaration can never leak onto the next stage and
+  # credit it with an artifact it did not produce.
+  local _ak="${CC_ARTIFACT_KIND:-}" _af="${CC_ARTIFACT_FILE:-}"
+  CC_ARTIFACT_KIND=""; CC_ARTIFACT_FILE=""
+  # BH-2413: the call guard's fingerprint for this call. The plan and the
+  # execute run are the ticket's build fp (BUILD_CALL_FP, written at plan time),
+  # so a second build of the same unchanged ticket on the same main is the SAME
+  # work to the guard. A fix round adds its outfile and the tree it fixes, so
+  # the lens, merged and QA rounds of one build stay distinct. Plan and size
+  # repairs, and every other stage, pass nothing: agent-call's per-prompt
+  # fallback, as before. No build fp means nothing passed for any stage.
+  local _fp="" _tree=""
+  if [ -n "${BUILD_CALL_FP:-}" ]; then
+    case "$stage:${out##*/}" in
+      plan:plan-run.txt|execute:execute-run.txt) _fp="$BUILD_CALL_FP" ;;
+      fix:*) _tree=$(git rev-parse --short=12 'HEAD^{tree}' 2>/dev/null) && [ -n "$_tree" ] \
+               && _fp="$BUILD_CALL_FP:${out##*/}:t$_tree" ;;
+    esac
+  fi
+  # BH-3481.0: the build tripwire measures the spend so far and alerts on a
+  # trip. It never stops the build (BH-6705), so its answer is not read.
+  if [ -n "${BUILD:-}" ]; then
+    command -v tw_check_build >/dev/null 2>&1 && tw_check_build "$PROJECT" "${KEY:-}" "$BUILD" 0 >/dev/null || true
+    # BH-4488: a build dir holding BUDGET_STOP is over its hard cap (agent-call
+    # wrote it on the refused call). The build ends here with its terminal.
+    if [ -f "$BUILD/BUDGET_STOP" ]; then
+      BB budget_stop "" BUDGET_STOP "" false "$(head -c 1200 "$BUILD/BUDGET_STOP")"
+      RESULT "BUILD_REFUSED BUDGET_STOP $(head -1 "$BUILD/BUDGET_STOP")"
+      exit 3
+    fi
+    # BH-4489: a sibling call already deferred this build on a day cap (a lens
+    # in a background subshell, whose own exit 3 ended only that subshell). It
+    # is not terminal, so no BB event: defer without buying this call too.
+    if [ -s "$BUILD/BUDGET_DEFER" ]; then
+      RESULT "BUILD_DEFERRED $(head -1 "$BUILD/BUDGET_DEFER")"
+      exit 3
+    fi
+    # BH-9065: the machine soft cap. At the cap the build checkpoints and ends
+    # CAPPED before it buys this call; before it, this call ends at the cap.
+    # A fire that did not land keeps the full timeout, and an open PR (RB_PR_OPEN)
+    # turns the cap off: ps_cap_due and ps_cap_clamp read both.
+    if command -v ps_cap_due >/dev/null 2>&1; then
+      ps_cap_due && ps_cap_fire "$stage" && exit 3
+      to=$(ps_cap_clamp "$to")
+    fi
+  fi
+  # BH-2578: every build call is the fly-pool lane's, so its knobs bind. A prefix,
+  # not an export: run-decompose and prebuild-repro launched from here keep theirs.
+  # BH-5839: AGENT_CALL_STEER=1 makes this call a step boundary for the ticket
+  # page's notes. Only CC() sets it, because only CC() stops on a steer-hold.
+  local _rc=0
+  AGENT_CALL_STEER=1 AGENT_CALL_LANE=fly-pool AGENT_CALL_ARTIFACT_KIND="$_ak" AGENT_CALL_ARTIFACT_FILE="$_af" AGENT_CALL_FP="$_fp" \
+    "$HARNESS/bin/agent-call.sh" "$stage" "$PROJECT" "$model" "$to" "$out" "$prompt" || _rc=$?
+  if [ -n "${BUILD:-}" ] && [ -f "$BUILD/BUDGET_STOP" ]; then
+    BB budget_stop "" BUDGET_STOP "" false "$(head -c 1200 "$BUILD/BUDGET_STOP")"
+    RESULT "BUILD_REFUSED BUDGET_STOP $(head -1 "$BUILD/BUDGET_STOP")"
+    exit 3
+  fi
+  # BH-9065: a session the cap cut short is not a verdict on its output.
+  if [ -n "${BUILD:-}" ] && command -v ps_cap_due >/dev/null 2>&1 && ps_cap_due && ps_cap_fire "$stage"; then
+    exit 3
+  fi
+  # BH-4489: a day budget cap (stage-day / project-day) refused the call, or a
+  # day cap could not be read inside the build (fail closed). Neither is
+  # terminal: the day resets, the worker comes back. The build defers. Nothing
+  # resumes it (resume-dead.sh leaves a first run's BUILD_DEFERRED to triage and
+  # skips pool dirs): the ticket is re-offered as a fresh build, and the launch
+  # gate in gates.sh refuses that re-offer while this project's day cap or any
+  # build stage's stage-day cap is over or unreadable, so the retry buys no
+  # plan or execute call before 00:00Z. BUDGET_DEFER
+  # carries the deferral out of a backgrounded call (the parallel review
+  # lenses): `exit 3` ends only that subshell, so the parent reads the marker
+  # after the join, and every later CC() refuses on it. A resume clears it.
+  if [ "$_rc" = 74 ]; then
+    local _bl
+    _bl=$(head -1 "$out" 2>/dev/null | tr -d '\r')
+    case "$_bl" in
+      "AGENT_CALL_REFUSED budget-stage-day "*|"AGENT_CALL_REFUSED budget-project-day "*|"AGENT_CALL_REFUSED budget-cap-unreadable "*)
+        if [ -n "${BUILD:-}" ]; then
+          echo "$(STAMP) [$PROJECT/${KEY:-}] $stage deferred on a budget cap: ${_bl#AGENT_CALL_REFUSED }" >> "$BUILD/pipeline.log"
+          printf '%s\n' "${_bl#AGENT_CALL_REFUSED }" > "$BUILD/BUDGET_DEFER"
+        fi
+        RESULT "BUILD_DEFERRED ${_bl#AGENT_CALL_REFUSED }"
+        exit 3 ;;
+      # A person held this ticket from its page while this build ran.
+      # bin/agent-call.sh refused the next step on the hold note; the build
+      # stops here, after the step it was in. The hold label keeps the re-offer
+      # from starting until someone resumes it. The same marker stops the
+      # parallel review lenses; its line says which reason it was.
+      "AGENT_CALL_REFUSED steer-hold "*)
+        if [ -n "${BUILD:-}" ]; then
+          echo "$(STAMP) [$PROJECT/${KEY:-}] $stage deferred: held from Mission Control (${_bl#AGENT_CALL_REFUSED })" >> "$BUILD/pipeline.log"
+          printf '%s\n' "${_bl#AGENT_CALL_REFUSED }" > "$BUILD/BUDGET_DEFER"
+        fi
+        RESULT "BUILD_DEFERRED ${_bl#AGENT_CALL_REFUSED }"
+        exit 3 ;;
+    esac
+  fi
+  return $_rc
+}
+

@@ -16,6 +16,10 @@
 #       finds both old bare shapes in a fixture (the check can fail)
 #   A8  sourcing epic-blocker.sh alone loads the adapter; _eb_fetch reads
 #       through it with the same URLs and leaves TRK_SLUG unset
+#   E1  trk_gh_comment_edit (BH-9503) sends the exact comment PATCH with the
+#       body file and prints the answer; rc 44 and 75 reach the caller
+#   E2  a bad slug, a bad id or an unreadable file is rc 1 with no call; a
+#       dry run logs the PATCH, prints DRYRUN and sends nothing
 # No network: gh_rest is a shell function that logs its argv.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -109,6 +113,28 @@ out=$(run 0 'unset TRK_SLUG; _EB_KNOBS_DONE=1; GH_REST_LIST_LIB=1; HARNESS='"$T"
   trk_gh_sub_issues() { return 44; }
   _eb_fetch o/r 7 '"$T"'/eb2; echo "rc=$? sub=$(cat '"$T"'/eb2/sub.json)"')
 [ "$out" = "rc=0 sub=[]" ] && ok || bad "A8 sub 404 must be an empty list: '$out'"
+
+# ---- E1 -------------------------------------------------------------------------------
+printf 'status\n' > "$T/body.md"
+out=$(run 0 '. "$SRC/bin/lib/tracker.sh"; . "$SRC/bin/lib/tracker/github-issues.sh"; TRK_SLUG=o/r trk_gh_comment_edit 9001 '"$T"'/body.md'); rc=$?
+[ "$rc" = 0 ] && [ "$out" = '{"fake":1}' ] && ok || bad "E1 rc $rc body '$out'"
+[ "$(cat "$LOG")" = "PATCH repos/o/r/issues/comments/9001 -F body=@$T/body.md" ] && ok \
+  || bad "E1 the comment PATCH: '$(cat "$LOG")'"
+for want in 44 75; do
+  run "$want" '. "$SRC/bin/lib/tracker.sh"; . "$SRC/bin/lib/tracker/github-issues.sh"; TRK_SLUG=o/r trk_gh_comment_edit 9001 '"$T"'/body.md' >/dev/null; rc=$?
+  [ "$rc" = "$want" ] && ok || bad "E1 edit: gh_rest rc $want reached the caller as $rc"
+done
+
+# ---- E2 -------------------------------------------------------------------------------
+for args in "TRK_SLUG=bad trk_gh_comment_edit 9001 $T/body.md" "TRK_SLUG=o/r trk_gh_comment_edit 9x $T/body.md" \
+            "TRK_SLUG=o/r trk_gh_comment_edit 9001 $T/missing.md"; do
+  run 0 '. "$SRC/bin/lib/tracker.sh"; . "$SRC/bin/lib/tracker/github-issues.sh"; '"$args" >/dev/null; rc=$?
+  [ "$rc" = 1 ] && [ ! -s "$LOG" ] && ok || bad "E2 '$args': rc $rc, calls '$(cat "$LOG")'"
+done
+out=$(run 0 '. "$SRC/bin/lib/tracker.sh"; . "$SRC/bin/lib/tracker/github-issues.sh"; TRK_DRY=1 TRK_LOG='"$T"'/trk.log TRK_SLUG=o/r trk_gh_comment_edit 9001 '"$T"'/body.md'); rc=$?
+[ "$rc" = 0 ] && [ ! -s "$LOG" ] && [ "$out" = "DRYRUN gh api -X PATCH repos/o/r/issues/comments/9001 -F body=@$T/body.md" ] \
+  && grep -qxF "gh api -X PATCH repos/o/r/issues/comments/9001 -F body=@$T/body.md" "$T/trk.log" && ok \
+  || bad "E2 dry run: rc $rc out '$out' calls '$(cat "$LOG")'"
 
 echo "tracker-seam-epic-needs.bh-9513: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

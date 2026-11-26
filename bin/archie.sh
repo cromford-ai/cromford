@@ -226,7 +226,13 @@ intercept() {
       local cls="$f2" dbody
       dbody=$(jq -nc --arg c "$cls" --arg d "$([ "$kind" = delegate ] && echo delegate || echo ask_first)" \
         --argjson n "$ARCHIE_DELEGATE_AFTER" '{class: $c, decision: $d, min_streak: $n, actor: "chat"}')
-      resp=$(_jobs_req POST /api/archie/classes/delegation "$dbody"); rc=$?
+      # In this shell, not a $( ): the 403 branch reads JOBS_HTTP and JOBS_BODY.
+      _jobs_req POST /api/archie/classes/delegation "$dbody" >/dev/null; rc=$?; resp="${JOBS_BODY:-}"
+      if [ "$rc:$kind:${JOBS_HTTP:-}" = "1:delegate:403" ] \
+         && [ "$(jq -r '.error // ""' <<<"$resp" 2>/dev/null)" = human_proof_required ]; then
+        file_delegation_approval "$cls" "$text"
+        return 0
+      fi
       case "$rc:$kind" in
         0:delegate) printf "Done. I'll handle %s calls and report after each one. One overrule puts it back.\n" "$cls" ;;
         0:askfirst) printf "OK, %s calls stay with you, and I'll ask first. Its count starts again from zero.\n" "$cls" ;;
@@ -241,6 +247,36 @@ intercept() {
       return 0 ;;
   esac
   return 1
+}
+
+# file_delegation_approval <class> <text>: the worker wants an owner proof
+# (owner_proof_mode=enforce) and chat holds none, so the delegation becomes a
+# pending owner approval (POST /api/owner-approvals). The owner runs it from
+# the console Machines screen with the proof; this row grants nothing. The
+# chat sender is recorded as `via`. "needs your OK" is printed only after the
+# worker answered 2xx with an id.
+file_delegation_approval() {
+  local cls="$1" text="$2" cid ab id link
+  cid=$(printf '%s' "${ARCHIE_CMD_ID:-}" | tr -dc 'A-Za-z0-9_-' | cut -c1-64)
+  [ -n "$cid" ] || cid=$(printf '%s' "$text" | sha256sum | cut -c1-16)
+  ab=$(jq -nc --arg c "$cls" --argjson n "$ARCHIE_DELEGATE_AFTER" \
+    --arg v "${ARCHIE_TRANSPORT:-telegram}:${ARCHIE_FROM_USER:-unknown}" --arg k "archie-delegation:$cls:$cid" \
+    '{kind: "archie_delegation", payload: {class: $c, min_streak: $n}, actor: "chat", via: $v, dedupe_key: $k}')
+  _jobs_req POST /api/owner-approvals "$ab" >/dev/null
+  id=$(jq -r '.id // empty' <<<"${JOBS_BODY:-}" 2>/dev/null)
+  case "${JOBS_HTTP:-}" in
+    200|201) [[ $id =~ ^[1-9][0-9]*$ ]] || id="" ;;
+    *) id="" ;;
+  esac
+  if [ -z "$id" ]; then
+    log "delegate $cls: owner approval not filed (http ${JOBS_HTTP:-no answer})"
+    printf "I couldn't file the delegation of %s for your approval, the jobs DB didn't answer. Nothing changed.\n" "$cls"
+    return 0
+  fi
+  if [ -n "${CONSOLE_URL:-}" ]; then link="here: ${CONSOLE_URL%/}/machines#owner-approvals"
+  else link="on the console Machines screen, Owner approvals panel"; fi
+  log "delegate $cls: owner approval #$id filed"
+  printf 'Delegating %s needs your OK in the console, because chat cannot prove it is you. Approve it %s\n' "$cls" "$link"
 }
 
 # record_choice <id> <decision> <reply key>: the operator's answer on the newest

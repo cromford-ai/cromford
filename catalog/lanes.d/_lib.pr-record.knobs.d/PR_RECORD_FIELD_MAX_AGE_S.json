@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_FIELD_MAX_AGE_S",
+  "read_in": "bin/lib/pr-record.sh",
+  "type": "int",
+  "default": 3900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off: every status, payload, head-commit and flake read from the record is a miss and goes to GitHub",
+  "required": false,
+  "note": "BH-9938 C1 (the C0 review age check). pr_record_statuses, pr_record_mergify, the head-commit read and the conductor's flake read serve a record row only while it is at most this many seconds old (age_s); an older row is the miss stale and the lane reads GitHub. Default 3900 s (65 minutes): a status or a Mergify payload of an idle PR does not change, and this guard exists only for a missed webhook. Wave 7's slow sweep (BH-9939) runs every 60 minutes and is the repair for a missed event, so the limit is one sweep plus 5 minutes. The cost: an idle PR whose row is older than this reads GitHub. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 3900 and one logs/pr-record.log line names it."
+}

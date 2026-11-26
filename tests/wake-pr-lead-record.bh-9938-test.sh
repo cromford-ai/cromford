@@ -32,6 +32,8 @@
 #       other 2 are over the cap (no GitHub read).
 #   W7  step off: today's read, 0 record GETs.
 #   W8  the seam file is absent: today's inline read, 0 record GETs.
+#   W16 (BH-9938 C1) no GH_SOURCE and no row (step shadow): 3 pr wakes make
+#       at most 1 settings read of lane.wake-loop.gh_source.
 # M1-M2 at the end are the D1 self-check on a mutated seam.
 #
 # No wall clock: every age is a fixed age_s in a fixture. PR_RECORD_MAX_AGE_S is
@@ -57,7 +59,7 @@ fresh() {
   scratch_rm "$H"
   mkdir -p "$H/bin/lib/jobs" "$H/env" "$H/logs" "$H/locks" "$H/state/wcs" "$H/flags" "$H/calls"
   rm -rf "$T/gh" "$T/rec"; mkdir -p "$T/gh" "$T/rec"
-  : > "$T/gh.log"; : > "$T/lane.log"; : > "$T/rec.log"
+  : > "$T/gh.log"; : > "$T/lane.log"; : > "$T/rec.log"; : > "$T/set.log"
   printf '{"settings":[]}' > "$T/settings.json"
   printf 'HARNESS_SECRET=s\nJOBS_URL=https://jobs.test\nLEAD_REVIEW_AUTO_REPOS="example-org/cromford"\n' \
     > "$H/env/global.env"
@@ -102,6 +104,7 @@ case "$method $path" in
     cat "$T9938/settings.json"; printf '\n200' ;;
   "GET /api/settings/"*)
     k="${path#/api/settings/}"
+    printf '%s\n' "$k" >> "$T9938/set.log"
     v=$(jq -r --arg k "$k" '.settings[] | select(.key == $k) | .value' "$T9938/settings.json")
     if [ -n "$v" ]; then jq -nc --arg k "$k" --arg v "$v" '{setting:{key:$k,value:$v}}'; printf '\n200'
     else printf '{"error":"not found"}\n404'; fi ;;
@@ -382,7 +385,20 @@ case_W9() { # record, a record hit on a draft: no ring, no GitHub read
 }
 
 check() { local out; if out=$("$1" 2>&1); then ok; else bad "$1 — $out"; fi; unset GH_SOURCE; }
-for c in S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 W1 W2 W3 W3b W4 W5 W6 W7 W8 W9; do check "case_$c"; done
+# BH-9938 C1 (C0 review note 6): the step is read once per drain, not once per PR.
+case_W16() { # no GH_SOURCE and no row (the default, shadow): 3 pr wakes make at most 1 settings read of the step
+  local n reads
+  fresh; unset GH_SOURCE GH_SOURCE_LANE; export JOBS_SETTINGS_CACHE_S=0
+  for n in 7161 7162 7163; do rec $n '"open"' 0 "\"$(head40 ec0 $n)\"" 30; pr $n open false "$(head40 ec0 $n)"; done
+  wakes "$(W 1 $BH pr 7161 pull_request.synchronize)" "$(W 2 $BH pr 7162 pull_request.synchronize)" "$(W 3 $BH pr 7163 pull_request.synchronize)"
+  run_as $BOX || { echo "W16 loop rc $RC: $(LOG)"; return 1; }
+  unset JOBS_SETTINGS_CACHE_S
+  reads=$(grep -cx 'lane.wake-loop.gh_source' "$T/set.log" 2>/dev/null || true)
+  [ "${reads:-0}" -le 1 ] || { echo "W16 $reads settings reads of lane.wake-loop.gh_source for 3 PRs: $(tr '\n' ' ' < "$T/set.log")"; return 1; }
+  [ "$(rec_n)" = 3 ] || { echo "W16 step shadow must read the record for each PR: $(rec_n)"; return 1; }
+}
+
+for c in S1 S2 S3 S4 S5 S6 S7 S8 S9 S10 S11 W1 W2 W3 W3b W4 W5 W6 W7 W8 W9 W16; do check "case_$c"; done
 
 # ── D1: mutate the installed seam, and the case that pins it must go red ────
 SEAM_SRC="$DIR/bin/lib/prr-shadow.d/wake-loop.sh"

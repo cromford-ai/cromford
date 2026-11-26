@@ -147,12 +147,11 @@ for _P in "$(dirname "$0")/lib/prr-shadow.sh" "$H/bin/lib/prr-shadow.sh"; do
   [ -r "$_P" ] && { . "$_P"; break; }
 done
 command -v prr_seam_load >/dev/null 2>&1 && prr_seam_load pipeline-health
-# lane_env_apply above sets GH_SOURCE when the row exists. Unset here means no
-# row, so the step is resolved once (the default), and prr_step makes no
-# setting_get read on each prr_read. Not exported: a child lane resolves its own.
-if [ -z "${GH_SOURCE+x}" ] && command -v lane_env_apply >/dev/null 2>&1 && declare -F prr_step >/dev/null; then
-  GH_SOURCE=$(GH_SOURCE='' prr_step pipeline-health)
-fi
+# The step, resolved once (BH-9938 C1 prr_pin): this lane's row (lane_env_apply
+# exports it as GH_SOURCE), else the knob's default. A value a parent lane
+# pinned is not this lane's step, so prr_step skips it. GH_SOURCE_LANE tells
+# a child lane that the pair is not its own.
+declare -F prr_pin >/dev/null && prr_pin pipeline-health
 # BH-1585: the paged REST issue/PR lists the starved-project check reads.
 for _P in "$(dirname "$0")/lib/gh-rest-list.sh" "$H/bin/lib/gh-rest-list.sh"; do
   # shellcheck source=bin/lib/gh-rest-list.sh

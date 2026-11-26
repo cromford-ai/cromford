@@ -36,7 +36,7 @@ const REPLY_KEY_RE = /^reply:(\d+):[A-Za-z0-9_-]{1,64}$/;
 const CHOICES = new Set(["approve", "change", "drop"]);
 
 // THE class identity: trimmed and lowercased here and nowhere else.
-const classOf = (v) => {
+export const classOf = (v) => {
   if (typeof v !== "string") return null;
   const c = v.trim().toLowerCase();
   return CLASS_RE.test(c) ? c : null;

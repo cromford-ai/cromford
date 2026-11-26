@@ -1,0 +1,91 @@
+{
+  "id": "ticket-status-comment",
+  "name": "Ticket status comment (one in-place status comment per ticket, edited at each state change)",
+  "scope": "hub",
+  "script": "bin/ticket-status-comment.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-ticket-status-comment",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "TICKET_STATUS_COMMENT_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "BH-9503: read by bin/ticket-status-comment.sh as ${TICKET_STATUS_COMMENT_ENABLED:-1}: 0 writes ` disabled` to logs/ticket-status-comment.log and stops before any worker or GitHub call.",
+      "settable": true
+    },
+    {
+      "env": "TICKET_STATUS_COMMENT_PROJECTS",
+      "type": "string",
+      "default": "self",
+      "min": null,
+      "max": null,
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "BH-9503: the projects whose GitHub issues get the in-place status comment. `self` (also empty) = cromford only; `all` = every fleet.conf project; or a comma list of project names, exact match, no spaces. Any other value is one stderr line and reads as self. A project that is not a GitHub-issues board (fleet.conf column 4 is not -) never gets a comment. A run for a project that is not watched writes one log line and exits 0 before any request. NOT settable from the control plane (a *_PROJECTS knob on a root lane, tests/lanes-registry-test.sh check 17a): set it in env/global.env.",
+      "settable": false
+    },
+    {
+      "env": "TICKET_STATUS_COMMENT_SPREAD_S",
+      "type": "int",
+      "default": 240,
+      "min": 0,
+      "max": 290,
+      "unit": "seconds",
+      "zero_means": null,
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "BH-9503: the cron line runs `ticket-status-comment.sh --dispatch`, which starts one detached `ticket-status-comment.sh <project>` per fleet project (bin/lib/project-lanes.sh pl_dispatch), each at a stable offset inside this many seconds. 0 starts every run at once. A value that is not a number of seconds is one line in logs/ticket-status-comment-cron.log and 240.",
+      "settable": true
+    },
+    {
+      "env": "TICKET_STATUS_COMMENT_ADOPT_PAGES",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 10,
+      "unit": "pages",
+      "zero_means": null,
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "BH-9503: when a ticket has no recorded comment id (or its comment was deleted), the lane reads at most this many pages of 100 issue comments to find our App's marked status comment before it posts a new one. A value outside 1..10 is one stderr line and 3.",
+      "settable": true
+    },
+    {
+      "env": "TICKET_STATUS_COMMENT_FIXTURE",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "Test seam: a file bin/ticket-status-comment.sh sources after its libs (the fake worker and the fake GitHub), only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/ticket-status-comment.sh",
+      "note": "Test seam gate: bin/ticket-status-comment.sh honours TICKET_STATUS_COMMENT_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/ticket-status-comment.log"
+  }
+}

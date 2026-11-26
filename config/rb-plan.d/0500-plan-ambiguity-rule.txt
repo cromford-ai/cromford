@@ -1,0 +1,106 @@
+# >>> plan ambiguity rule
+# WHO IS ON THE OTHER SIDE OF AN OPEN QUESTION (the operator, 2026-09-13).
+#
+# On an IN-APP PRODUCT BOARD the other side is the CLIENT. A plan that guesses
+# at a client's intent ships the wrong feature and costs a revert plus a
+# conversation, so BLOCKED-NEEDS-CLARIFICATION is exactly right there and is
+# left alone — the early-engagement incident is the standing lesson.
+#
+# On a GITHUB-ISSUES LANE (fleet.conf board prefix "-": project-5, project-7,
+# project-6) the other side is OPERATOR, and the operator does not answer build questions —
+# "the reality is I will never do a human review". A plan that parks there is a
+# ticket that never ships. So the planner runs ASSUMPTION-FORWARD: it takes the
+# most conservative reading it can defend, writes what it assumed under an
+# ASSUMPTIONS heading, and builds. The assumptions ride into the PR body
+# (PR_BODY_FOR below), which is where they are cheap to correct.
+#
+# THE RULE KEYS ON tracker_kind (BH-7921), not on column 4: github-issues,
+# jira and linear are assumption-forward, a board asks. With no kind (no
+# tracker lib, no answer) column 4 decides, as before.
+RBT_KIND=""
+{ declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } && { rbt_tracked "$PROJECT" || true; }
+case "$RBT_KIND" in
+  github-issues|jira|linear) PAR_FWD=1 ;;
+  board) PAR_FWD=0 ;;
+  *) PAR_FWD=0; [ "$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)" = "-" ] && PAR_FWD=1 ;;
+esac
+if [ "$PAR_FWD" = 1 ]; then
+  PLAN_AMBIGUITY_RULE="AMBIGUITY IS NOT A STOP ON THIS LANE. This ticket is a GitHub issue, and nobody is standing by to answer a question about it — a plan that parks is a ticket that never ships. So do NOT write BLOCKED-NEEDS-CLARIFICATION for an unconfirmed mechanism. Instead: pick the MOST CONSERVATIVE reading you can defend (the one that changes the least, breaks the least, and is easiest to reverse if it is wrong), and write a '## ASSUMPTIONS' section in plan.md listing every such pick as its own line — what was ambiguous, what you assumed, and what you would have done under the other reading. That section is copied verbatim into the PR body, so a wrong assumption is caught at review instead of stalling the build. The ONE thing that still stops you: if the thread's LATEST state says the work is on hold, manual/data-entry, or already shipped, that is not ambiguity and it is not yours to assume past — write BLOCKED as the first line with that quote."
+else
+  PLAN_AMBIGUITY_RULE="If the thread does NOT actually confirm the mechanism, write BLOCKED-NEEDS-CLARIFICATION as the first line of plan.md with the open questions."
+fi
+# <<< plan ambiguity rule
+# >>> carried note
+# A NOTE THE RESOLVER LEFT FOR THIS KEY (2026-09-13, bin/blocked-resolver.sh).
+# When an adjudication ACCEPTS something the pipeline is going to block on again
+# — today that is one thing, a TEST-CHANGE justification for a deletion a Fable
+# ruling found legitimate — the ruling has to reach the NEXT build, and a pool
+# build cannot be resumed (its machine is gone, and the hub holds only a copy of
+# its record). So the resolver writes the note here, keyed on the ticket, and
+# the plan stage CONSUMES it: the file is moved into this build's own directory,
+# so it is read exactly once and a later, unrelated build of the same key never
+# inherits a ruling about a diff it does not contain.
+#
+# A POOL MACHINE HAS NO HUB STATE, so bin/fly-pool.sh relays the hub's note
+# beside the job (push_build_note) to build-note-$PROJECT-$KEY.md in the relay
+# dir; that copy is read first, then the local one (a hub build).
+#
+# A WATCHER BOX HAS NEITHER (BH-5003), so the note is also the ledger row
+# build_note/"$PROJECT $KEY" (bin/lib/build-note-db.sh, sourced by
+# bin/run-build.sh). The order is relay file, then the row (bn_take claims a
+# `pending` row as `consumed`, atomically across boxes, and only a won claim
+# writes the note), then the local file. A relay or local consume marks the row
+# consumed too, so no second box uses the same ruling, and a local file whose
+# row another box already used (bn_used: the row's detail is THIS file, never an
+# earlier note's row left behind) is retired (.relayed-<epoch>, the name the
+# re-plan floor counts) instead of consumed again. Every DB step is behind
+# `command -v`, and every failure (no lib, BUILD_NOTE_DB=0, a 404, an outage)
+# leaves exactly the file behaviour above. pipeline.log names the source.
+CARRIED_NOTE_LINE=""
+CARRIED_NOTE_SRC="$HARNESS/state/build-notes/$PROJECT/$KEY.md"
+BUILD_NOTE_RELAY="/run/harness/build-note-$PROJECT-$KEY.md"
+CN_FROM=""
+if [ -s "$BUILD_NOTE_RELAY" ] && [ ! -s "$BUILD/carried-note.md" ]; then
+  CN_SRC="$BUILD_NOTE_RELAY"; CN_FROM=relay
+elif [ ! -s "$BUILD/carried-note.md" ] && command -v bn_take >/dev/null 2>&1 \
+     && bn_take "$PROJECT" "$KEY" "$BUILD/carried-note.md"; then
+  CN_SRC="ledger build_note/$PROJECT $KEY"; CN_FROM=db
+  # A hub build holds the same note as its file: the full text replaces the
+  # row's 4000-byte copy, and the file is used up exactly as a local consume.
+  [ -s "$CARRIED_NOTE_SRC" ] && { mv -f "$CARRIED_NOTE_SRC" "$BUILD/carried-note.md" 2>/dev/null || rm -f "$CARRIED_NOTE_SRC"; }
+  echo "$(STAMP) [$PROJECT/$KEY] carried note from bin/blocked-resolver.sh consumed into $BUILD/carried-note.md (source: db — $CN_SRC)" >> "$BUILD/pipeline.log"
+elif [ -s "$CARRIED_NOTE_SRC" ] && [ ! -s "$BUILD/carried-note.md" ]; then
+  CN_SRC="$CARRIED_NOTE_SRC"; CN_FROM=local
+  if command -v bn_used >/dev/null 2>&1; then
+    case "$(bn_used "$PROJECT" "$KEY" "$CARRIED_NOTE_SRC" 2>/dev/null)" in
+      consumed|relayed)
+        mv -f "$CARRIED_NOTE_SRC" "$CARRIED_NOTE_SRC.relayed-$(date +%s)" 2>/dev/null || rm -f "$CARRIED_NOTE_SRC"
+        echo "$(STAMP) [$PROJECT/$KEY] carried note $CARRIED_NOTE_SRC NOT used: its ledger row says another box already used it (retired .relayed-*)" >> "$BUILD/pipeline.log"
+        CN_FROM="" ;;
+    esac
+  fi
+fi
+if [ "$CN_FROM" = relay ] || [ "$CN_FROM" = local ]; then
+  mv -f "$CN_SRC" "$BUILD/carried-note.md" 2>/dev/null || cp -f "$CN_SRC" "$BUILD/carried-note.md"
+  echo "$(STAMP) [$PROJECT/$KEY] carried note from bin/blocked-resolver.sh consumed into $BUILD/carried-note.md (source: $CN_FROM — $CN_SRC)" >> "$BUILD/pipeline.log"
+  if command -v bn_mark >/dev/null 2>&1; then bn_mark "$PROJECT" "$KEY" consumed >/dev/null 2>&1 || true; fi
+fi
+# KIND: ci-replan (policy, the operator 2026-09-24): a prior PR of this ticket stayed
+# CI-red through its repair rounds and was parked; this build is the automatic
+# NARROWER re-plan, and the note is its evidence, not an adjudication ruling.
+if [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/dev/null)" = "KIND: ci-replan" ]; then
+  CARRIED_NOTE_LINE=" THIS BUILD IS AN AUTOMATIC NARROWER RE-PLAN. A prior PR of this ticket stayed CI-red after its repair rounds and was parked. Plan a NARROWER change than the prior attempt: the smallest slice of the ticket that can land green on its own, informed by the failing checks below; leave the rest for a follow-up and do not repeat the prior approach unchanged. EVIDENCE: $(tail -n +2 "$BUILD/carried-note.md" | head -c 1500 | tr '\n' ' ')"
+# KIND: stale-replan (BH-3935): a prior PR of this ticket sat with no new commit
+# and no new review past pr_stale.replan_days and was parked; this build is the
+# automatic re-plan. Nothing was refused, so it is not framed as a ruling.
+elif [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/dev/null)" = "KIND: stale-replan" ]; then
+  CARRIED_NOTE_LINE=" THIS BUILD IS AN AUTOMATIC RE-PLAN. A prior PR of this ticket sat with no new commits and no new review for days and was parked. Re-read the ticket thread and plan it fresh against current main; do not assume the prior PR's approach. EVIDENCE: $(tail -n +2 "$BUILD/carried-note.md" | head -c 1500 | tr '\n' ' ')"
+# KIND: review-replan (BH-9437): a prior PR of this ticket kept an ALWAYS-BLOCK
+# review finding through its fix rounds and was closed; this build is the
+# automatic re-plan, and the note carries the finding and the rounds.
+elif [ -s "$BUILD/carried-note.md" ] && [ "$(head -1 "$BUILD/carried-note.md" 2>/dev/null)" = "KIND: review-replan" ]; then
+  CARRIED_NOTE_LINE=" THIS BUILD IS AN AUTOMATIC RE-PLAN AFTER A REVIEW BLOCK. A prior PR of this ticket kept an ALWAYS-BLOCK review finding through its fix rounds and was closed. Plan so the finding below cannot occur, and do not repeat the prior approach unchanged. EVIDENCE: $(tail -n +2 "$BUILD/carried-note.md" | head -c 1500 | tr '\n' ' ')"
+elif [ -s "$BUILD/carried-note.md" ]; then
+  CARRIED_NOTE_LINE=" A PRIOR BUILD OF THIS TICKET WAS BLOCKED AND THE BLOCK WAS ADJUDICATED. The ruling is below, verbatim. Honor it: if it carries a 'TEST-CHANGE:' block, copy that block into plan.md word for word (the test-tamper gate reads plan.md for exactly that string, and without it this build blocks again on a change that has already been ruled acceptable). If it says something was REJECTED, do not do that thing again. RULING: $(head -c 1500 "$BUILD/carried-note.md" | tr '\n' ' ')"
+fi
+# <<< carried note

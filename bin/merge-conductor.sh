@@ -983,7 +983,7 @@ pr_worker() {
     # non-required ones are not green, so a cancelled run buys no rerun.
     case "$CI:$MSTATE:${MC_CI_REQUIRED_GREEN:-0}" in
       green:UNSTABLE:1) ;;
-      none:*|green:BLOCKED:*|green:UNSTABLE:*) MC_FLAKE=$(mc_ci_flake_runs "$SLUG" "$HEAD") ;;
+      none:*|green:BLOCKED:*|green:UNSTABLE:*) MC_FLAKE=$(mc_ci_flake_runs "$SLUG" "$HEAD" "$NUM") ;;
     esac
   fi
   if [ -n "$MC_FLAKE" ]; then

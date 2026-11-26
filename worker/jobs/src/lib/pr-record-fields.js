@@ -14,7 +14,16 @@
 //                  comment body is never stored. run_id is the first
 //                  /actions/runs/<id> link of the body, or null; a row
 //                  written before BH-9938 has no run_id key, and a PUT may
-//                  leave it out.
+//                  leave it out. updated_at (BH-9938 C1) is the comment's
+//                  updated_at, the epoch sdq_payload_last reads from GitHub;
+//                  an edited delivery of the same comment replaces it. A row
+//                  written before C1 has no updated_at key.
+//                  draft_pr, left_sha, failing_checks and run_id follow
+//                  dqw_parse_payload_md (bin/lib/dequeue-watch/attribute.sh),
+//                  the parser dequeue-watch acts on: the FIRST `on draft #`,
+//                  the first 40-hex `at` sha on a `Left the queue` line, the
+//                  first run link, and the names of the `❌ [` bullets under
+//                  `Failing checks:` up to the first blank line.
 //   head_commit    {sha, at}: the commit time of a pushed head (push deliveries,
 //                  HEAD_PUSH_SQL; or bin/lib/pr-record.sh after a GitHub read)
 //   files          {sha, paths}: the changed paths of head `sha`, sorted and
@@ -76,9 +85,11 @@ function statusEntry(v) {
 
 function mergifyEntry(v, checksMax) {
   const keys = ["state", "code", "draft_pr", "failing_checks", "left_sha", "comment_id", "at"];
-  // run_id (BH-9938) is optional: a row written before it has no such key.
+  // run_id and updated_at (BH-9938) are optional: a row written before them
+  // has no such key.
   const hasRun = isObj(v) && Object.hasOwn(v, "run_id");
-  if (!keysOnly(v, hasRun ? [...keys, "run_id"] : keys)) return undefined;
+  const hasUpd = isObj(v) && Object.hasOwn(v, "updated_at");
+  if (!keysOnly(v, [...keys, ...(hasRun ? ["run_id"] : []), ...(hasUpd ? ["updated_at"] : [])])) return undefined;
   const state = nullable(v.state, (x) => (typeof x === "string" && MQ_STATE_RE.test(x) ? x : undefined));
   const code = nullable(v.code, (x) => (typeof x === "string" && MQ_CODE_RE.test(x) ? x : undefined));
   const draft = nullable(v.draft_pr, (x) => (Number.isSafeInteger(x) && x > 0 ? x : undefined));
@@ -88,9 +99,41 @@ function mergifyEntry(v, checksMax) {
   const id = Number.isSafeInteger(v.comment_id) && v.comment_id > 0 ? v.comment_id : undefined;
   const at = isoAt(v.at);
   const run = hasRun ? nullable(v.run_id, (x) => (Number.isSafeInteger(x) && x > 0 ? x : undefined)) : null;
-  if ([state, code, draft, left, checks, id, at, run].includes(undefined)) return undefined;
+  const upd = hasUpd ? isoAt(v.updated_at) : null;
+  if ([state, code, draft, left, checks, id, at, run, upd].includes(undefined)) return undefined;
   const out = { state, code, draft_pr: draft, failing_checks: checks, left_sha: left, comment_id: id, at };
-  return hasRun ? { ...out, run_id: run } : out;
+  return { ...out, ...(hasRun ? { run_id: run } : {}), ...(hasUpd ? { updated_at: upd } : {}) };
+}
+
+// bulletChecks(body) — the check names dqw_parse_payload_md's awk reads: on
+// the lines after the first line that starts with `Failing checks:`, up to the
+// first blank line, the text after the LAST "❌ [`" of a line, cut at the first
+// "`]" after it. A line without the marker is skipped.
+function bulletChecks(body) {
+  const out = [];
+  let on = false;
+  for (const l of body.split("\n")) {
+    if (/^Failing checks:/.test(l)) { on = true; continue; }
+    if (!on) continue;
+    if (/^\s*$/.test(l)) break;
+    const i = l.lastIndexOf("❌ [`");
+    if (i < 0) continue;
+    const rest = l.slice(i + "❌ [`".length);
+    const j = rest.indexOf("`]");
+    out.push(j < 0 ? rest : rest.slice(0, j));
+  }
+  return out;
+}
+
+// leftSha(body) — dqw_parse_payload_md's rule: the first 40-hex (lower case)
+// `at` sha on a line that names `Left the queue`.
+function leftSha(body) {
+  for (const l of body.split("\n")) {
+    if (!l.includes("Left the queue")) continue;
+    const m = /at `([0-9a-f]{40})`/.exec(l);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // fieldValues(checksMax) — column -> check, the VALUE_FIELDS form: the JSON
@@ -126,30 +169,25 @@ export function fieldValues(checksMax) {
   };
 }
 
-// The Mergify value of one comment body, or null. The port of fbh_parse
-// (bin/lib/mc-failed-batch.sh): the payload JSON between the markers; code =
-// dequeue_reason.code; failing checks = dequeue_reason.checks (strings or
-// {name}), else the backticked "Failing checks:" bullets; draft = the last
-// "on draft #N"; left sha = the last "Left the queue … at `<sha>`".
-function mergifyValueOf(body, id, at, checksMax) {
+// The Mergify value of one comment body, or null. State and code come from the
+// payload JSON between the markers (dequeue_reason.code). Since BH-9938 C1 the
+// draft, left sha, run id and failing checks follow dqw_parse_payload_md
+// (bin/lib/dequeue-watch/attribute.sh), the only reader of those fields, so
+// the record and the GitHub read give the same values: the first
+// "on draft #N", the first 40-hex "Left the queue … at `<sha>`", the first
+// run link, and the "❌ [`<name>`" bullets (bulletChecks).
+function mergifyValueOf(body, id, at, checksMax, updatedAt = null) {
   const m = PAYLOAD_RE.exec(body);
   if (!m) return null;
   let p;
   try { p = JSON.parse(m[1]); } catch { return null; }
   if (!isObj(p)) return null;
   const reason = isObj(p.dequeue_reason) ? p.dequeue_reason : {};
-  let checks = (Array.isArray(reason.checks) ? reason.checks : [])
-    .map((c) => (typeof c === "string" ? c : isObj(c) && typeof c.name === "string" ? c.name : ""))
-    .filter((c) => c !== "");
-  if (!checks.length) {
-    const parts = body.split("Failing checks:");
-    const tail = parts.length > 1 ? parts[1].split("\n## ")[0] : "";
-    checks = tail.split("\n").filter((l) => /^\s*[-*] /.test(l))
-      .map((l) => { const c = /`([^`]+)`/.exec(l); return c ? c[1] : ""; }).filter((c) => c !== "");
-  }
-  const last = (re) => { let v = null; for (const x of body.matchAll(re)) v = x[1]; return v; };
-  const draft = last(/on draft #([0-9]+)/g);
-  const left = last(/Left the queue\*\*[^\n]*? at `([0-9a-fA-F]{7,40})`/g);
+  // BH-9938 C1: the same rules as dqw_parse_payload_md (see the field doc above).
+  const checks = bulletChecks(body);
+  const draftM = /on draft #([0-9]+)/.exec(body);
+  const draft = draftM ? draftM[1] : null;
+  const left = leftSha(body);
   // The FIRST run link, the one dqw_parse_payload_md (bin/lib/dequeue-watch/attribute.sh)
   // keys the dequeue-watch event row on.
   const runM = /\/actions\/runs\/([0-9]+)/.exec(body);
@@ -165,6 +203,7 @@ function mergifyValueOf(body, id, at, checksMax) {
     comment_id: id,
     at,
     run_id: runN !== null && Number.isSafeInteger(runN) && runN > 0 ? runN : null,
+    ...(updatedAt !== null ? { updated_at: updatedAt } : {}),
   };
   return mergifyEntry(value, checksMax) === undefined ? null : value;
 }
@@ -194,7 +233,10 @@ export function fieldWritesOf(event, payload, t, checksMax) {
     const id = Number.isSafeInteger(c.id) && c.id > 0 ? c.id : null;
     if (number === null || id === null || !ISO_RE.test(str(c.created_at))) return [];
     const at = atOf(c.created_at, t);
-    const value = mergifyValueOf(c.body, id, at, checksMax);
+    // updated_at: GitHub's own edit time, no fraction (sdq_payload_last's
+    // epoch); created_at when the delivery has none.
+    const um = ISO_RE.exec(str(c.updated_at));
+    const value = mergifyValueOf(c.body, id, at, checksMax, um ? `${um[1]}Z` : at);
     return value ? [{ kind: "mergify", repo, number, at, id, value }] : [];
   }
 

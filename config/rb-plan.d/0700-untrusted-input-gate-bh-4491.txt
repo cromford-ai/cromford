@@ -1,0 +1,66 @@
+# >>> untrusted input gate (BH-4491)
+# --- TICKET TEXT IS DATA: THE INJECTION-SHAPE CHECK RUNS BEFORE ANY PLAN SPEND --
+# bin/lib/untrusted-input.sh reads the ticket (title, body, comments not
+# written by the harness or by a trigger.actors.<p> human) and greps it for
+# instructions aimed at the agent. The settings row untrusted_input.mode says
+# what a flag does: log (record only), warn (record, and the plan prompt names
+# the flagged spans as hostile data; the default), block (refuse with ONE
+# comment quoting the span, ledger untrusted-input "<p> <KEY>"). Here, above the
+# repro drive, the pre-plan adoption and the CC plan call, so under block no
+# plan model call is made. A resumed build runs it again: it is grep, no model.
+# BUILD_REFUSED for a block, COMMENTED only when the ticket carries our comment
+# for this episode (a failed post leaves the sweep its ALERTS line).
+# BUILD_DEFERRED when the answer cannot be trusted (unreadable text under block,
+# a flag under an unknown mode, no ledger). TOP LEVEL ONLY: the exit 3 is the point.
+UI_PLAN_NOTE=""
+# shellcheck source=bin/lib/untrusted-input.sh
+if [ -r "$(dirname "$0")/lib/untrusted-input.sh" ]; then . "$(dirname "$0")/lib/untrusted-input.sh" 2>/dev/null
+elif [ -r "$HARNESS/bin/lib/untrusted-input.sh" ]; then . "$HARNESS/bin/lib/untrusted-input.sh" 2>/dev/null
+fi
+if ! command -v ui_gate >/dev/null 2>&1; then
+  echo "$(STAMP) [$PROJECT/$KEY] UNTRUSTED-INPUT defer: lib missing on $(hostname) (half-synced bin/?)" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_DEFERRED untrusted-input lib missing on $(hostname) — the next tick re-offers $KEY"
+  exit 3
+fi
+UI_RC=0
+ui_gate "$PROJECT" "$KEY" "${TICKET:-}" "$BUILD" || UI_RC=$?
+if [ "$UI_RC" = 0 ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] UNTRUSTED-INPUT $UI_LINE" >> "$BUILD/pipeline.log"
+elif [ "$UI_RC" = 1 ]; then
+  UI_LINE="SKIP_UNTRUSTED $KEY — $UI_LINE"
+  echo "$(STAMP) [$PROJECT/$KEY] UNTRUSTED-INPUT $UI_LINE" >> "$BUILD/pipeline.log"
+  mkdir -p "$HARNESS/logs" 2>/dev/null
+  echo "$(STAMP) [$PROJECT/$KEY] $UI_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+  RESULT "BUILD_REFUSED $UI_LINE"
+  [ "${UI_SPOKE:-0}" = 1 ] && touch "$BUILD/COMMENTED"
+  exit 3
+else
+  echo "$(STAMP) [$PROJECT/$KEY] UNTRUSTED-INPUT defer: $UI_LINE" >> "$BUILD/pipeline.log"
+  mkdir -p "$HARNESS/logs" 2>/dev/null
+  echo "$(STAMP) [$PROJECT/$KEY] UNTRUSTED-INPUT defer: $UI_LINE" >> "$HARNESS/logs/${PROJECT}.log" 2>/dev/null || true
+  RESULT "BUILD_DEFERRED untrusted-input unverifiable ($UI_LINE) — the next tick re-offers $KEY"
+  exit 3
+fi
+# <<< untrusted input gate (BH-4491)
+# >>> web-task hook (BH-7594)
+# A web-task ticket (a board type field or a label, never a title) is never
+# planned: bin/lib/web-task/route.sh queues one web-task lane-run row, here,
+# after the untrusted input gate and before any plan spend. No lib on the box
+# is WEBTASK_FAILED, never a plan of a ticket that asked for no code.
+if [ "${KIND_HINT:-}" = web-task ]; then
+  WT_LINE=""; WT_RC=1
+  # shellcheck source=bin/lib/web-task/route.sh
+  [ -r "$HARNESS/bin/lib/web-task/route.sh" ] && . "$HARNESS/bin/lib/web-task/route.sh" 2>/dev/null
+  if command -v wt_route >/dev/null 2>&1; then
+    wt_route "$PROJECT" "${TICKET:-}" "$KEY" "${JOB_ID:-}" "$KIND_HINT" "${KIND_HINT_SRC:-}"; WT_RC=$?
+  else
+    WT_LINE="WEBTASK_FAILED bin/lib/web-task/route.sh is missing on $(hostname)"; WT_RC=0
+  fi
+  if [ -n "$WT_LINE" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] WEB-TASK: $WT_LINE" >> "$BUILD/pipeline.log"
+    RESULT "$WT_LINE"
+    [ "$WT_RC" = 3 ] && exit 3
+    exit 0
+  fi
+fi
+# <<< web-task hook (BH-7594)

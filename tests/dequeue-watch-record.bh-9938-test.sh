@@ -13,6 +13,13 @@
 #   S4  payload misses and edges: no row, mergify_queue null, a dequeued row
 #       with no run_id key (field:run_id), run_id null (hit, run -), a queued
 #       row with no run_id key (hit), a bad at (malformed), worker fail
+#   S7-S10 (BH-9938 C1, the C0 review notes): no lead-verdict entry is a miss
+#       (A2); the payload epoch is updated_at and a row without it misses
+#       (A3); a list of CHECKS_MAX names misses (A5); age = knob + 1 is stale
+#       (PR_RECORD_FIELD_MAX_AGE_S, default 3900) for the payload and the
+#       status reads (A7)
+#   L5  step record with no lead-verdict entry: 3 misses, 3 GitHub status
+#       reads, and no stale-status claim from the record
 #   S5  status: the record maps to the combined-status shape with the GitHub
 #       norm; an older head's entry only is a miss (none); a changed state
 #       changes the norm
@@ -116,10 +123,10 @@ rec() {
   mkdir -p "$F/records"
   if [ "$st" = dequeued ]; then
     mq=$(jq -nc --argjson n "$n" --arg at "$AT_ISO" --arg h "$HEAD" \
-      '{state: "dequeued", code: null, draft_pr: 201, failing_checks: ["Pure-logic gate fixtures"], left_sha: $h, comment_id: (9000 + $n), at: $at}')
+      '{state: "dequeued", code: null, draft_pr: 201, failing_checks: ["Pure-logic gate fixtures"], left_sha: $h, comment_id: (9000 + $n), at: $at, updated_at: $at}')
   else
     mq=$(jq -nc --argjson n "$n" --arg at "$AT_ISO" --arg s "$st" \
-      '{state: $s, code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: (9000 + $n), at: $at}')
+      '{state: $s, code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: (9000 + $n), at: $at, updated_at: $at}')
   fi
   [ "$run" = nokey ] || mq=$(jq -c --argjson r "$run" '. + {run_id: $r}' <<<"$mq")
   jq -nc --arg r "$LSLUG" --argjson n "$n" --arg h "$HEAD" --argjson mq "$mq" --arg s "$sst" \
@@ -262,7 +269,39 @@ eq "S5 norm shape" "$NR" '[{"n":"lead-verdict","v":"success"}]'
 rec 422 dequeued 5001 failure
 seam dqw_status_record "$T/s.rec" "$SLUG" 422 "$HEAD"
 [ "$(norm dqw_status_norm "$T/s.rec")" != "$NG" ] && ok || bad "S5 a changed state left the norm equal"
+# BH-9938 C1: asking a head that is not the row's head is the miss `head`;
+# a row at that head whose entries are all for an older head is `none`.
+seam dqw_status_record "$T/s.rec" "$SLUG" 421 "$OTHER"; eq "S5 a head that is not the row's head" "$(src):$(out)" "1:head"
+jq -c --arg o "$OTHER" '.head_sha = $o' "$F/records/421.json" > "$F/records/x" && mv "$F/records/x" "$F/records/421.json"
 seam dqw_status_record "$T/s.rec" "$SLUG" 421 "$OTHER"; eq "S5 only an older head's entry" "$(src):$(out)" "1:none"
+
+# ── S7-S10: the BH-9938 C1 review notes (A2, A3, A5, A7) ─────────────────────
+base S7 471 472 473 474 475
+# A2: the record holds only harness-verdict for the head: a miss, never "no verdict".
+jq -c --arg h "$HEAD" '.statuses = {"harness-verdict": {state: "success", description: "v", sha: $h, at: "2026-11-24T08:00:00Z"}}' \
+  "$F/records/471.json" > "$F/records/x" && mv "$F/records/x" "$F/records/471.json"
+seam dqw_status_record "$T/s.rec" "$SLUG" 471 "$HEAD"; eq "S7 no lead-verdict entry is a miss" "$(src):$(out)" "1:field:lead-verdict"
+# A3: the epoch is updated_at, the time sdq_payload_last reads; a row without it misses.
+jq -c '.mergify_queue.updated_at = "2026-11-24T08:30:00Z"' "$F/records/472.json" > "$F/records/x" && mv "$F/records/x" "$F/records/472.json"
+jq '.[0].updated_at = "2026-11-24T08:30:00Z"' "$F/comments-472.json" > "$F/x" && mv "$F/x" "$F/comments-472.json"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 472; eq "S8 record rc" "$(src)" 0
+seam dqw_payload_github "$T/s.gh" "$SLUG" 472;  eq "S8 github rc" "$(src)" 0
+eq "S8 record epoch = GitHub epoch (the edit time)" "$(cut -f2 "$T/s.rec")" "$(cut -f2 "$T/s.gh")"
+eq "S8 the epoch is the edit time" "$(cut -f2 "$T/s.rec")" "$(date -u -d 2026-11-24T08:30:00Z +%s)"
+jq -c 'del(.mergify_queue.updated_at)' "$F/records/473.json" > "$F/records/x" && mv "$F/records/x" "$F/records/473.json"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 473; eq "S8 a row with no updated_at misses" "$(src):$(out)" "1:field:updated_at"
+# A5: a failing-check list as long as the worker's cut may be cut: a miss.
+jq -c '.mergify_queue.failing_checks = [range(100) | "c\(.)"]' "$F/records/471.json" > "$F/records/x" && mv "$F/records/x" "$F/records/471.json"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 471; eq "S9 a list of 100 names misses" "$(src):$(out)" "1:field:failing_checks"
+jq -c '.mergify_queue.failing_checks = [range(99) | "c\(.)"]' "$F/records/471.json" > "$F/records/x" && mv "$F/records/x" "$F/records/471.json"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 471; eq "S9 a list of 99 names is a hit" "$(src)" 0
+# A7: the age check on the payload and the status reads (PR_RECORD_FIELD_MAX_AGE_S, default 3900).
+echo 3901 > "$F/records/474.age"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 474; eq "S10 payload: age = knob + 1 is stale" "$(src):$(out)" "1:stale"
+seam dqw_status_record "$T/s.rec" "$SLUG" 474 "$HEAD"; eq "S10 status: age = knob + 1 is stale" "$(src):$(out)" "1:stale"
+echo 3900 > "$F/records/474.age"
+seam dqw_payload_record "$T/s.rec" "$SLUG" 474; eq "S10 payload: age = knob is a hit" "$(src)" 0
+seam dqw_status_record "$T/s.rec" "$SLUG" 474 "$HEAD"; eq "S10 status: age = knob is a hit" "$(src)" 0
 
 CASE=S6
 printf 'dequeued\t100\t9\t201\t5001\t%s\tx\n' "$HEAD" > "$T/n1"
@@ -324,6 +363,17 @@ eq "L4 comment read of 462" "$(cnt "REST GET repos/$SLUG/issues/comments/9462")"
 eq "L4 comment lists in all" "$(cnt "gh api --paginate repos/$SLUG/issues/")" 1
 eq "L4 label lists on GitHub" "$(cnt "REST GET repos/$SLUG/issues?labels=")" 0
 eq "L4 event of 462 keyed on GitHub's run" "$(jq -r 'select(.pr == 462) | .run_id' "$F/db/events.jsonl")" 5001
+
+# ── L5: step record, a record with no lead-verdict entry -> miss, GitHub's status ──
+base L5 481 482 483 484 485
+for n in 481 482 483; do
+  jq -c --arg h "$HEAD" '.statuses = {"harness-verdict": {state: "success", description: "v", sha: $h, at: "2026-11-24T08:00:00Z"}}' \
+    "$F/records/$n.json" > "$F/records/x" && mv "$F/records/x" "$F/records/$n.json"
+done
+run_lane record
+eq "L5 PRR_MISS field:lead-verdict lines" "$(grep -c ' PRR_MISS lane=dequeue-watch key=.*:status why=field:lead-verdict fallback=github' "$SHADOW" 2>/dev/null || true)" 3
+eq "L5 status reads on GitHub" "$(cnt "REST GET repos/$SLUG/commits/$HEAD/status")" 3
+grep -q 'stale-status' "$LOG" && bad "L5 the lane claimed stale-status on a record miss: $(grep stale-status "$LOG" | head -2)" || ok
 
 # ── B: the rate_limit judgment, no fixture seam (the real gh-budget lib) ──────
 B="$T/b"

@@ -123,6 +123,10 @@ wc_pr_lead_dispatch() {
      && tmpf=$(mktemp "${TMPDIR:-/tmp}/wc-pr-lead.XXXXXX" 2>/dev/null); then
     prr=1; step=$(prr_step wake-loop)
   fi
+  # BH-9938 C1: the step is pinned once per drain, so each prr_read below
+  # makes no settings read. Local to this call: the loop's own environment
+  # and every lane it launches keep theirs.
+  local -x GH_SOURCE="$step" GH_SOURCE_LANE=wake-loop
   for e in $q; do
     slug="${e%#*}"; n="${e##*#}"
     case "$repos" in *" $slug "*) ;; *) continue ;; esac

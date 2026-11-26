@@ -1,0 +1,2 @@
+# BH-9938 C1: the shared Mergify fixture that both payload parsers read.
+tests/fixtures/mergify/bh-9938-parse.md	worker	worker/jobs/test/pr-record-mergify-parse.bh-9938.test.js reads the shared Mergify fixture that tests/mergify-parse-agree.bh-9938-test.sh also reads (BH-9938)

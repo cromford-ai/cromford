@@ -201,10 +201,14 @@ test('M1 a Mergify payload comment stores code, draft PR, failing checks, left s
   assert.ok(r.status < 300);
   assert.equal(rowOf(o.db, repo, 5).mergify_queue, null, 'no body, no payload: no write');
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196632, createdAt: ago(600), body }));
+  // BH-9938 C1: the left sha follows dqw_parse_payload_md (40 hex, lower
+  // case), so a 12-character upper-case sha is not read; updated_at is the
+  // comment's edit time (created_at here).
   assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue'), {
     state: 'dequeued', code: 'CHECKS_FAILED', draft_pr: 8165, failing_checks: ['lint'],
-    left_sha: C.slice(0, 12), comment_id: 6366196632, at: ago(600), run_id: null,
+    left_sha: null, comment_id: 6366196632, at: ago(600), run_id: null, updated_at: ago(600),
   });
+  assert.equal(jsonOf(o.db, repo, 5, 'mergify_queue').left_sha, null);
   // P9 of the BH-8186 suite: no checks in the payload, the Failing checks bullets.
   const noChecks = mergifyBody(JSON.stringify({ state: 'dequeued', dequeue_reason: { code: 'CHECKS_FAILED' } }), 900, C, 'Jobs worker — routes');
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196700, createdAt: ago(500), body: noChecks }));
@@ -213,11 +217,14 @@ test('M1 a Mergify payload comment stores code, draft PR, failing checks, left s
   // Object checks ({name}) and a queued payload with no reason.
   const objs = mergifyBody(JSON.stringify({ state: 'dequeued', dequeue_reason: { code: 'X', checks: [{ name: 'a' }, 'b', 7] } }), 1, C, 'z');
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196701, createdAt: ago(400), body: objs }));
-  assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue').failing_checks, ['a', 'b']);
+  // BH-9938 C1: the names come from the bullets, as dqw_parse_payload_md reads them.
+  assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue').failing_checks, ['z']);
+  assert.equal(jsonOf(o.db, repo, 5, 'mergify_queue').left_sha, C);
   const queued = '-*- Mergify Payload -*-\n{"state":"queued"}\n-*- Mergify Payload End -*-\nQueued';
   await hook(o.env, 'issue_comment', commentEvent(repo, 5, 'created', { id: 6366196702, createdAt: ago(300), body: queued }));
   assert.deepEqual(jsonOf(o.db, repo, 5, 'mergify_queue'), {
     state: 'queued', code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: 6366196702, at: ago(300), run_id: null,
+    updated_at: ago(300),
   });
 });
 

@@ -1,0 +1,85 @@
+# >>> live emit plan
+# The first thing an operator wants to know about a running build: was a plan
+# written, did it size itself, and did the size gate let it through.
+type LIVE >/dev/null 2>&1 && LIVE plan "${SG_VERDICT:-not-recorded}" \
+  "plan written: ${SG_DECL:-no size declared}; ${PG_TASKS:-0} task(s) traced, ${PG_UNTRACED:-0} untraced; size gate: ${SG_VERDICT:-not-recorded}"
+# <<< live emit plan
+# The switch is resolved once per build, as before — both halves of the gate
+# still read this one function.
+SG_SWITCH_RESOLVE
+echo "$(STAMP) [$PROJECT/$KEY] SIZE: enforcement $([ "$SG_ENFORCE" = 1 ] && echo ON || echo OFF), from $SG_SWITCH_SRC" >> "$BUILD/pipeline.log"
+# NO REPAIR PASS FOR A MISSING `## Size` (BH-5292, the operator 2026-10-07). BH-657
+# bought one planner session here so a plan with no heading would not die at
+# PLAN_MALFORMED. A missing heading is now a WARNING: bin/size-gate.sh estimates
+# the size from the plan's file list and the build proceeds (`estimated`), so a
+# model session spent writing a number nobody is blocked on is pure spend.
+echo "$(STAMP) [$PROJECT/$KEY] SIZE: $SG_VERDICT (${SG_DECL:-nothing declared}, limits lines=$SG_MAXL files=$SG_MAXF src=$SG_SRC, rc=$SG_RC)${SG_WHY:+ — $SG_WHY}" >> "$BUILD/pipeline.log"
+# THE LEDGER LEARNS THE SIZE EVEN WHEN NOTHING IS WRONG, for the same reason the
+# plan-gate row is written on clean builds: a decomposed or malformed build
+# never reaches the verdict artifact, and a row written only on failure would
+# make "no row" mean both "small" and "old box". Fail-open; the file fallback is
+# $BUILD/size-gate.txt.
+if [ -n "${JOB_ID:-}" ] && command -v job_artifact_put >/dev/null 2>&1; then
+  job_artifact_put size_gate "$SG_VERDICT" \
+    "$(jq -nc --arg v "$SG_VERDICT" --arg d "$SG_DECL" --arg o "$SG_WHY" \
+        --argjson ml "$SG_MAXL" --argjson mf "$SG_MAXF" --arg ms "$SG_SRC" \
+        '{verdict:$v,limits:{lines:$ml,files:$mf,src:$ms}} + (if $d == "" then {} else {declared:$d} end) + (if $o == "" then {} else {over:$o} end)' 2>/dev/null)" \
+    >/dev/null 2>&1 || true
+fi
+# NO `## Size` IS A WARNING (BH-5292): the gate estimated the size from the
+# plan's file list and the build goes on, armed or not. Only a plan the gate
+# could not read at all (`undeclared`: no plan.md, or an empty one) is still a
+# malformed plan, through the same requeue-once ledger the trace gate uses.
+if [ "$SG_VERDICT" = estimated ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] SIZE WARNING: the plan declares no '## Size' section — $(sed -n 's/^SIZE_ESTIMATED:[[:space:]]*//p' "$BUILD/size-gate.txt" 2>/dev/null | tail -1), building whole" >> "$BUILD/pipeline.log"
+fi
+if [ "$SG_VERDICT" = undeclared ]; then
+  if [ "$SG_ENFORCE" = 1 ]; then
+    PM_TERMINAL "the size gate found no readable plan to size" \
+                "$BUILD/size-gate.txt" "write a plan the size gate can read"
+  fi
+  echo "$(STAMP) [$PROJECT/$KEY] SIZE: undeclared — size enforcement is OFF (from $SG_SWITCH_SRC), the build continues unsized" >> "$BUILD/pipeline.log"
+fi
+SG_SPLIT=""
+# MEASURED BEATS SELF-REPORTED (the operator, 2026-09-16: "not create a decomposition
+# as a rule"). BH-597 declared FILES: 5 / LINES: 210, measured `within`, and was
+# still split into four serial children because its planner also wrote
+# `SIZE: XL` on the last line. The T-shirt line is the planner's mood; the
+# `## Size` section is a number the plan is held to — declared here, and
+# compared with the diff that actually shipped in the evidence block at PR-open.
+# When the number says it fits, XL is a note, not a trigger. XL keeps its
+# old power only when the gate could not measure (undeclared, not-recorded) or
+# agrees (over). Armed-only: a disarmed box (kill flag, SIZE_GATE_ENFORCE=0)
+# keeps XL as its sole trigger, byte-for-byte what it had before the gate.
+if tail -3 "$BUILD/plan.md" | grep -qE '^SIZE: *XL'; then
+  if [ "$SG_VERDICT" = within ] && [ "$SG_ENFORCE" = 1 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] SIZE: the plan sized itself XL but measures ${SG_DECL:-?}, within the threshold — measured beats self-reported, building whole" >> "$BUILD/pipeline.log"
+  else
+    SG_SPLIT="the plan sized itself XL"
+  fi
+fi
+if [ "$SG_VERDICT" = over ]; then
+  if [ "$SG_ENFORCE" = 1 ]; then
+    SG_SPLIT="${SG_SPLIT:-the plan is over the decomposition threshold ($SG_WHY)}"
+  else
+    echo "$(STAMP) [$PROJECT/$KEY] SIZE: over the threshold ($SG_WHY) — decomposable, but size enforcement is OFF (from $SG_SWITCH_SRC), so this builds whole" >> "$BUILD/pipeline.log"
+  fi
+fi
+# DEPTH 1, AND ONLY DEPTH 1 (2026-09-14). bin/run-decompose.sh titles every
+# child it files `<PARENT KEY>.<n>: ...` on both lanes, so a split child says out
+# loud that it is already a slice of something. A slice that STILL sizes over
+# the threshold is built whole with this one line as the note: splitting it again
+# buys another Fable call, another ticket, another 6-8 minute push-to-review dead
+# gap, and the thing being split is by construction the narrowest scope anyone
+# has written down yet. It is also the only thing between one bad estimate and a
+# split loop that files tickets forever. Armed-only, so the kill flag leaves the
+# XL path exactly as it was, and fail-open: a build whose ticket-meta.json never
+# arrived is not treated as a child, because "we could not read the title" and
+# "this is a top-level ticket" are different facts and only one of them is here.
+# THE BODY IS A SECOND LOCAL SOURCE (BH-851). A title can be edited, and the
+# meta file can arrive without one, but the filer also writes a column-0
+# `Split child (depth 1): ...` line into every decompose child's footer
+# (fc_child_footer), so the body on disk is read too: `.body` in the meta, else
+# ticket-body.md. Never a network call. The match is strict (column 0, outside
+# ``` / ~~~ fences, the filer's exact text), because a ticket that only QUOTES
+# the line must still split. The decision is logged either way.

@@ -880,7 +880,19 @@ mc_probe_read_timeout_s() { local s="${MC_PR_PROBE_READ_TIMEOUT_S:-20}"; [[ "$s"
 #   was superseded by a success on a later attempt — latest wins, so it is not
 #   a flake and nothing is re-run.
 mc_ci_flake_runs() {
-  local slug="$1" sha="$2" runs GH_REST_TIMEOUT_S
+  local slug="$1" sha="$2" n="${3:-}" runs GH_REST_TIMEOUT_S f
+  # BH-9938 C1: with the PR number, the read goes through prr_read and the
+  # merge-conductor seam (mc_flake_record: "no flake evidence" from the record
+  # only when every check of the head completed and none was cancelled or
+  # timed out). MC_FLAKE_GH=1 is the seam's GitHub side calling back.
+  if [ -z "${MC_FLAKE_GH:-}" ] && [[ "$n" =~ ^[1-9][0-9]{0,9}$ ]] && _mc_ci_prr_load \
+     && command -v mc_flake_record >/dev/null 2>&1 \
+     && f=$(mktemp "${TMPDIR:-/tmp}/mc-flake.XXXXXX" 2>/dev/null); then
+    prr_read merge-conductor "$slug#$n@${sha:0:12}:flake" "$f" mc_flake_record mc_flake_github mc_flake_norm "$slug" "$sha" "$n" >/dev/null
+    [ -s "$f" ] && cat "$f"
+    rm -f "$f"
+    return 0
+  fi
   # BH-6346: the same bound as mc_ci_state; a cut read is "no flake evidence".
   GH_REST_TIMEOUT_S=$(mc_ci_read_timeout_s); [ "$GH_REST_TIMEOUT_S" -gt 0 ] || GH_REST_TIMEOUT_S=
   mc_rest_var runs gh_rest GET "repos/$slug/actions/runs?head_sha=$sha&per_page=50" || return 0

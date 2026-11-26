@@ -1,0 +1,2 @@
+# BH-9779: the execute prompt names the verify discipline after the plan sentence.
+s#on the current branch (br-4)\. #on the current branch (br-4). Run the suites the plan names, one command per suite. Never send a suite's output to /dev/null. Do not run a loop or a glob over tests/: the gate runs the wide selection. #

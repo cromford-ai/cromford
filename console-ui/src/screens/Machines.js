@@ -9,6 +9,7 @@ import { Section, Skeleton, Empty, ErrorBox, healthColor, Legend } from '../ui/p
 import { flyMachines, flyOrphans, flyProjectProps, flyUnreadableReason } from '../lib/fly.js';
 import { SortableTable } from '../ui/SortableTable.js';
 import { FlyIdlePanel } from './FlyIdlePanel.js';
+import { OwnerApprovalsPanel } from '../ui/OwnerApprovalsPanel.js';
 import { Dot } from '../ui/icons.js';
 import { useConfirm } from '../ui/Modal.js';
 import { PauseReasonForm } from '../ui/PauseForms.js';
@@ -47,21 +48,27 @@ export function MachinesScreen({ quotePoll } = {}) {
 
   // Every box/machine op: the confirm+reason dialog, then the POST, then the
   // banner. The request is only ever queued here; the box's lane runs it.
+  // BH-9262: it resolves to the banner result (null on cancel), and an ok one
+  // carries `id`, the id of the last command the worker took (the launch, not
+  // its quote), so the OWNER APPROVALS panel can record it.
   const boxOp = useCallback(async (type, ctx, text, tone) => {
     const label = COMMAND_LABELS[type];
     const own = OWN_FLOWS[type];
+    let lastId = null;
+    const post = (cmd) => api.boxCommand(cmd).then((r) => { lastId = r && r.id != null ? r.id : null; return r; });
     const res = own ? await own(ctx, {
-      confirm, post: api.boxCommand, list: () => api.boxCommands('hub'), poll: quotePoll || QUOTE_POLL
+      confirm, post, list: () => api.boxCommands('hub'), poll: quotePoll || QUOTE_POLL
     }) : await requestBoxCommand(type, ctx, {
       ask: (form) => confirm({
         title: label, confirmLabel: label, tone, confirmBlocked: true,
         body: ({ setBlocked }) => html`<${PauseReasonForm} text=${text} value=${form} onBlocked=${setBlocked}/>`
       }),
-      post: api.boxCommand
+      post
     });
-    if (!res) return;
+    if (!res) return null;
     setBanner(res);
     reloadCmds();
+    return res.ok ? { ...res, id: lastId } : res;
   }, [confirm, reloadCmds, quotePoll]);
 
   // BH-4993: the boxes' health in words, the Fleet headline's own rule.
@@ -84,6 +91,8 @@ export function MachinesScreen({ quotePoll } = {}) {
           <span>${banner.text}</span>
           <button class="btn btn--sm" type="button" style="margin-left:auto" onClick=${() => setBanner(null)}>DISMISS</button>
         </div>` : null}
+
+      <${OwnerApprovalsPanel} boxOp=${boxOp} confirm=${confirm} setBanner=${setBanner}/>
 
       ${m.loading && !m.data ? html`<${Skeleton} rows=${5} height=${22}/>` : null}
       ${m.error && !m.data ? html`<${ErrorBox} error=${m.error} onRetry=${m.reload}/>` : null}

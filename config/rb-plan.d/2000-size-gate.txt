@@ -1,0 +1,98 @@
+# >>> size gate
+# --- SIZE: the plan declares how big it is, and too big is SPLIT, not built ---
+# SCALE-PLAN wave 2 gave this pipeline a decomposer on 2026-07-28, and for six
+# weeks it fired on exactly one input: a planner voluntarily writing `SIZE: XL`
+# on the last line of its own plan. Self-reported, all-or-nothing, and
+# unmeasured — an `L` plan that turned into 1,400 lines was indistinguishable
+# from an `L` plan that turned into 200.
+#
+# MEASURED (the operator, 2026-09-12): the MEDIAN diff across 381 merged harness PRs is
+# 1,268 lines changed. Large orgs land 100-300, because review cost, conflict
+# probability and re-review cost all grow superlinearly with size — a
+# 1,200-line PR is not four times the work of a 300-line one to review, it is
+# the one nobody reviews properly. So decomposition becomes the DEFAULT above a
+# threshold instead of an XL-only escape hatch.
+#
+# THE UNIT IS PRODUCT LINES, not diff lines. bin/size-scope.sh owns the
+# exclusion list (tests, docs, specs, lockfiles, generated files, Prisma
+# migration snapshots) and is the only place it lives — the post-hoc guard at
+# PR-open calls the same helper on the diff that actually shipped, so the two
+# sides cannot disagree about what they measured. Counting tests would punish
+# the red-first discipline the rest of this pipeline pays to enforce.
+#
+# THE THRESHOLD IS NOT A CONSTANT. bin/size-threshold.sh resolves it per
+# project and per axis (BH-4985): the settings rows size_gate.<axis>.<project>
+# then size_gate.<axis> (seeded 1200/30, edited on /config) — or, for a hotfix
+# ticket, size_gate.<axis>.hotfix[.<project>] (1500/30) ahead of both — then
+# flags/size-gate-<project> on the box, then the repo-tracked
+# catalog/size-thresholds.conf, then 1200 lines / 30 files. The source it used
+# rides the SIZE line below and the size_gate ledger artifact as src=.
+#
+# WARN-FIRST FOR TWO DAYS, THEN ARMED (the operator, 2026-09-14). The gate shipped
+# disarmed on 2026-09-12 under the standing rule for a new gate that can
+# withhold a build, and warn-only did exactly what it promised: it measured,
+# logged, and watched TK-552 build 1,900 product lines in 18 files whole. The
+# switch now resolves through `# >>> size enforce switch` above and defaults to
+# ARMED:
+#   armed    an over-threshold plan is handed to bin/run-decompose.sh instead of
+#            built (row 21). A plan that declares no size is a WARNING since
+#            BH-5292: its size is estimated from its file list and it builds
+#            whole unless the estimate is past 2x the threshold. Only a missing
+#            or empty plan.md is still PLAN_MALFORMED (row 20c).
+#   disarmed the estimate is still parsed, judged, logged and written to the
+#            ledger; an oversized plan is named here and built whole, exactly as
+#            it did before this change. flags/size-gate-enforce-off is the fleet
+#            lever, SIZE_GATE_ENFORCE_<project>=0 the per-project one.
+# `SIZE: XL` still splits either way when the gate could not measure or agrees:
+# it was the ONLY decomposition trigger this pipeline had, and shipping the
+# replacement disarmed while removing the original would leave the fleet with
+# no decomposition at all. A measured `within` overrides it (see below).
+# >>> size threshold call (tests/size-threshold-hotfix-tier.size-hotfix-test.sh drives this block)
+# A HOTFIX ticket is sized against its own, bigger tier (the operator, 2026-10-07): the
+# rows size_gate.<axis>.hotfix[.<project>], seeded 1500/30, so an emergency
+# builds as one PR instead of being split. HOTFIX is the value `# >>> hotfix
+# detect` in gates.sh already settled (job env, label read once, kill flag
+# honoured) — no second GitHub read here. Not a hotfix: no tier, today's answer.
+SG_TIER=""
+[ "${HOTFIX:-}" = 1 ] && SG_TIER=hotfix
+SG_LIMITS=$(SIZE_TIER="$SG_TIER" "$HARNESS/bin/size-threshold.sh" "$PROJECT" all 2>/dev/null) || SG_LIMITS=""
+SG_MAXL=$(printf '%s' "$SG_LIMITS" | awk '{print $1}')
+SG_MAXF=$(printf '%s' "$SG_LIMITS" | awk '{print $2}')
+SG_SRC=$(printf '%s' "$SG_LIMITS" | awk '{print $3}')
+case "${SG_SRC:-}" in ''|*[!a-z:,]*) SG_SRC=default ;; esac
+case "${SG_MAXL:-}" in ''|*[!0-9]*) SG_MAXL=1200; SG_SRC=default ;; esac
+case "${SG_MAXF:-}" in ''|*[!0-9]*) SG_MAXF=30; SG_SRC=default ;; esac
+# <<< size threshold call
+# The plan's MENTION list, handed to the gate for the record only: it prints the
+# count and names it `SIZE_FILES_MENTIONED: n (not gating)` above the tolerated
+# file limit, and judges the file axis on the declaration alone (BH-612 — this
+# list is a deliberate over-listing and it was decomposing 45-line fixes whose
+# prose named eighteen callers).
+#
+# Re-derived UNCONDITIONALLY, not skipped when the file is
+# already there: a resumed build whose plan was rewritten in the same dir would
+# otherwise be checked against the DEAD attempt's file list. It is a pure
+# function of plan.md with no network and no model call, and planned-files.sh
+# runs once more below for the claims ledger, so paying for it twice is free.
+"$HARNESS/bin/planned-files.sh" "$BUILD" 2>/dev/null || true
+# A FUNCTION since BH-657 (when a repair pass re-measured the plan; that pass is
+# gone since BH-5292, the function stayed). Everything downstream reads it off
+# the file on disk rather than off a session's claim about what it wrote.
+SG_MEASURE() {
+  SG_OUT=$(SIZE_LIMITS_SRC="$SG_SRC" "$HARNESS/bin/size-gate.sh" "$BUILD/plan.md" "$SG_MAXL" "$SG_MAXF" "$BUILD/planned-files.txt" 2>&1)
+  SG_RC=$?
+  printf '%s\n' "$SG_OUT" > "$BUILD/size-gate.txt"
+  SG_VERDICT=$(sed -n 's/^SIZE_VERDICT:[[:space:]]*//p' "$BUILD/size-gate.txt" 2>/dev/null | tail -1)
+  SG_WHY=$(sed -n 's/^SIZE_OVER:[[:space:]]*//p' "$BUILD/size-gate.txt" 2>/dev/null | tail -1)
+  SG_DECL=$(sed -n 's/^SIZE_DECLARED:[[:space:]]*//p' "$BUILD/size-gate.txt" 2>/dev/null | tail -1)
+  # A gate that could not run is `not-recorded`, never a size — the rule the kind
+  # and scope gates already follow, because not-measured and small-enough are
+  # different facts and only one of them is a claim. rc 0/2/3 are verdicts; a
+  # crash, a missing helper on a half-synced box or a `set -u` death is not.
+  case "$SG_RC" in
+    0|2|3) [ -n "$SG_VERDICT" ] || SG_VERDICT=not-recorded ;;
+    *) SG_VERDICT=not-recorded
+       echo "$(STAMP) [$PROJECT/$KEY] SIZE: the size gate could not run (rc=$SG_RC) — this plan was NOT sized, do not read that as small" >> "$BUILD/pipeline.log" ;;
+  esac
+}
+SG_MEASURE

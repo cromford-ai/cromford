@@ -67,6 +67,10 @@ unset __scratch_repo
 # fly/entrypoint.sh exports HARNESS_ENV_DIR on pool machines; resolver rule 1
 # would otherwise send every scratch $T/h/env fixture to the live tmpfs.
 unset HARNESS H HARNESS_CHECKOUT HARNESS_ENV_DIR
+# BH-10141: bin/fly-pool.sh asks the cross-harness ticket lock before a spawn.
+# A shell that exports the live lock service must not reach it from a suite; a
+# suite that drives a fake lock service sets both after sourcing this.
+unset LOCKS_URL LOCKS_TOKEN
 # BH-3223: a pool machine's build env carries HARNESS_SECRET and COST_ROWS_BOX,
 # and an UNSET JOBS_URL falls back to the live worker (bin/lib/jobs/req.sh), so
 # every stub-runner cost row a suite made landed in prod cost_rows. EMPTY is the

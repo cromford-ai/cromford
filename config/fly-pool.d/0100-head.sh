@@ -222,6 +222,12 @@ HOTFIX_ON=1
 # shellcheck source=bin/lib/pool-actor-gate.sh
 . "$HARNESS/bin/lib/pool-actor-gate.sh" 2>/dev/null \
   || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-actor-gate.sh" 2>/dev/null || true
+# BH-10141: pool_ticket_lock_gate, the cross-harness ticket lock asked before a
+# spawn, and pool_bundle_token_fp for the default-token line. A tree without the
+# lib spawns as before and the builder's gate decides.
+# shellcheck source=bin/lib/pool-ticket-lock.sh
+. "$HARNESS/bin/lib/pool-ticket-lock.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-ticket-lock.sh" 2>/dev/null || true
 command -v hotfix_lane_on >/dev/null 2>&1 && HOTFIX_ON=$(hotfix_lane_on "$HARNESS")
 job_is_hot() {
   [ "$HOTFIX_ON" = 1 ] || return 1
@@ -2375,6 +2381,8 @@ pool_spawn_decision() {
       say "$P spawn gates inactive: no repo slug, a gh client that cannot reach GitHub, or a repo no credential can see (that one also writes an ALERTS line naming the rungs) — HOLD/open-PR/terminal/cap checks not applied"
       _POOL_GATES_SAID=1
     }
+    # The ticket lock needs no GitHub, so it is asked here too (BH-10141).
+    if command -v pool_ticket_lock_gate >/dev/null 2>&1; then pool_ticket_lock_gate "$KEY" || return 1; fi
     return 0
   fi
   # 0b. A ROW WAITING ON A NAMED BLOCKER (BH-5967): held with no machine until
@@ -2554,5 +2562,9 @@ pool_spawn_decision() {
   # asked before a machine is spent. After the cap on purpose: a capped or held
   # row costs no events read. bin/lib/pool-actor-gate.sh owns the answer.
   if command -v pool_actor_gate >/dev/null 2>&1; then pool_actor_gate "$JF" "$KEY" "$TICKET" || return 1; fi
+  # 6. The cross-harness ticket lock (BH-10141): another holder's lock is a
+  # SKIP line and the row stays queued; an outage spawns. LAST on purpose: a
+  # held, capped or refused row takes no lease. bin/lib/pool-ticket-lock.sh.
+  if command -v pool_ticket_lock_gate >/dev/null 2>&1; then pool_ticket_lock_gate "$KEY" || return 1; fi
   return 0
 }

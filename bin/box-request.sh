@@ -39,6 +39,12 @@
 # is one ALERTS line and nobody resolves. Only a Telegram sender with a
 # username resolves; Slack and Mission Control never do. Unset = nobody can
 # queue from chat.
+# When the worker wants an owner proof (owner_proof_mode=enforce: 403 with
+# proof:"required"), chat holds none, so the ask becomes a pending owner
+# approval (POST /api/owner-approvals, kind box_command, via the chat sender).
+# The owner runs it from the console Machines screen, Owner approvals panel,
+# which prices a launch again; the approval grants nothing by itself. A 403
+# with no proof field is still "not an owner".
 #
 # STATE (jobs ledger): box_offer/<transport>:<chat>:<thread|0> holds the open
 # offer (detail JSON); a new offer replaces the old one. box_launch/q<quote_id>
@@ -241,6 +247,34 @@ post_cmd() {
   JOBS_ALERT=0 req POST /api/box-commands "$1"
 }
 
+# proof_required — rc 0 when the last box-commands answer was the worker's
+# 403 {proof:"required"}. Read it before the next request overwrites RC/BODY.
+proof_required() {
+  [ "$RC:${JOBS_HTTP:-}" = 1:403 ] && [ "$(jq -r '.proof // ""' <<< "${BODY:-null}" 2>/dev/null)" = required ]
+}
+
+# file_approval <type> <payload-json> <what> — files the owner approval and
+# prints the reply. "needs your OK" is printed only after a 2xx with an id.
+file_approval() {
+  local type="$1" payload="$2" what="$3" target cid id link
+  target=$(jq -r '.target // ""' <<< "$payload")
+  cid=$(printf '%s' "${BOXREQ_CMD_ID:-}" | tr -dc 'A-Za-z0-9_-' | cut -c1-64)
+  [ -n "$cid" ] || cid=$(printf '%s %s' "$(now_s)" "$payload" | sha256sum | cut -c1-16)
+  JOBS_ALERT=0 req POST /api/owner-approvals "$(jq -nc --argjson p "$payload" --arg a "$OWNER" \
+    --arg v "${BOXREQ_TRANSPORT:-telegram}:${BOXREQ_FROM_USER:-unknown}" --arg k "box:$type:$target:$cid" \
+    '{kind: "box_command", payload: $p, actor: $a, via: $v, dedupe_key: $k}')"
+  id=$(jq -r '.id // empty' <<< "${BODY:-null}" 2>/dev/null)
+  if [ "$RC" != 0 ] || ! [[ $id =~ ^[1-9][0-9]*$ ]]; then
+    log "$type $target: owner approval not filed (rc $RC http $(http_of))"
+    echo "$what needs an owner proof, and I couldn't file it for your approval (HTTP $(http_of)). $NOTHING"
+    return 0
+  fi
+  if [ -n "${CONSOLE_URL:-}" ]; then link="${CONSOLE_URL%/}/machines#owner-approvals"
+  else link="the console Machines screen, Owner approvals panel"; fi
+  log "$type $target: owner approval #$id filed by $OWNER"
+  echo "$what needs your OK in the console, because chat cannot prove it is you. Nothing runs until you approve it there: $link"
+}
+
 # br_quote — the quote step. Reads OWNER, A_PROJECT, A_ID, A_ACCOUNT, A_VCPUS,
 # A_MEM, A_DISK, FACTS, REASON. Prints the reply.
 br_quote() {
@@ -281,6 +315,13 @@ br_quote() {
     --argjson d "$disk" --arg r "$REASON" --arg o "$OWNER" \
     '{box: "hub", type: "orgo_launch_quote", target: $t, account: $a, project: $p, vcpus: $v, mem_gb: $m,
       disk_gb: $d, reason: $r, actor: $o, confirm: true}')"
+  if proof_required; then
+    file_approval orgo_launch_quote "$(jq -nc --arg t "$id" --arg a "$acct" --arg p "$A_PROJECT" --argjson v "$vc" \
+      --argjson m "$mem" --argjson d "$disk" --arg r "$REASON" \
+      '{box: "hub", type: "orgo_launch_quote", target: $t, account: $a, project: $p, vcpus: $v, mem_gb: $m,
+        disk_gb: $d, reason: $r}')" "The price check for box $id ($A_PROJECT)"
+    return 0
+  fi
   case "$RC:${JOBS_HTTP:-}" in
     0:*) qid=$(jq -r '.id // empty' <<< "$BODY" 2>/dev/null) ;;
     1:403) echo "The jobs worker says you are not an owner (BOX_OPS_OWNERS). $NOTHING"; log "quote $id refused: owner_only"; return 0 ;;
@@ -352,6 +393,7 @@ br_launch() {
   post_cmd "$(jq -c --arg r "$REASON" --arg ow "$OWNER" '{box: "hub", type: "orgo_launch", target, account, project,
       vcpus, mem_gb, disk_gb, quote_id, confirm_monthly_usd: .figure, reason: $r, actor: $ow, confirm: true}' <<< "$o")"
   err=$(jq -r '.error // ""' <<< "${BODY:-null}" 2>/dev/null); code="${JOBS_HTTP:-}"
+  local proof=0; proof_required && proof=1
   ledger_launch() { req PUT /api/ledger "$(jq -nc --arg k "q$qid" --arg s "$1" --arg d "$2" '{kind: "box_launch", key: $k, status: $s, detail: $d}')"
     [ "$RC" = 0 ] || log "launch q$qid -> $1 not recorded (rc $RC)"; }
   case "$RC:$code:$err" in
@@ -375,7 +417,11 @@ br_launch() {
       echo "The jobs worker refused the launch (HTTP 409 ${err:-conflict}). $NOTHING" ;;
     1:403:*|1:400:*)
       ledger_launch refused "${err:-$code}"
-      if [ "$code" = 403 ]; then echo "The jobs worker says you are not an owner (BOX_OPS_OWNERS). $NOTHING"
+      if [ "$proof" = 1 ]; then
+        # The console prices it again: the approval is the quote spec, never this quote id.
+        file_approval orgo_launch_quote "$(jq -c --arg r "$REASON" '{box: "hub", type: "orgo_launch_quote", target,
+          account, project, vcpus, mem_gb, disk_gb, reason: $r}' <<< "$o")" "The launch of box $(jq -r .target <<< "$o") (\$$fig/mo)"
+      elif [ "$code" = 403 ]; then echo "The jobs worker says you are not an owner (BOX_OPS_OWNERS). $NOTHING"
       else echo "The jobs worker refused the launch (HTTP 400 $err). $NOTHING"; fi ;;
     *)
       log "launch q$qid: unknown outcome (rc $RC http ${code:-no answer}); the claim stays and nothing is resent"
@@ -399,8 +445,14 @@ br_fly() {
        + (if $c == "" then {} else {cap: ($c | tonumber)} end)')
   fi
   post_cmd "$body"
-  local id code="${JOBS_HTTP:-}" err
+  local id code="${JOBS_HTTP:-}" err proof=0
+  proof_required && proof=1
   id=$(jq -r '.id // "?"' <<< "${BODY:-null}" 2>/dev/null); err=$(jq -r '.error // ""' <<< "${BODY:-null}" 2>/dev/null)
+  if [ "$proof" = 1 ]; then
+    offer_status refused
+    file_approval "$type" "$(jq -c 'del(.actor, .confirm)' <<< "$body")" "$type for $p"
+    return 0
+  fi
   case "$RC:$code" in
     0:*) offer_status accepted
          log "$type #$id queued for $p by $OWNER"

@@ -40,7 +40,9 @@ async function request(path, init) {
   // BH-5750: the box-commands owner gate answers 403 {error:"owner_only"} to
   // a signed-in session that is not an owner. That is a refusal to show, not
   // a lost session, so it is the one 403 that is not an AuthError.
-  if ((res.status === 403 && !(body && body.error === 'owner_only'))
+  // BH-9262: 403 {error:"human_proof_required"} is the owner-proof gate's
+  // refusal (worker/jobs/src/lib/owner-proof.js), a refusal to show the same way.
+  if ((res.status === 403 && !(body && (body.error === 'owner_only' || body.error === 'human_proof_required')))
     || (res.status === 404 && body && body.error === 'unauthorized')) {
     throw new AuthError();
   }
@@ -499,6 +501,11 @@ export const api = {
   // BH-2518: a box/machine op request, and the recent commands (optionally one box's).
   boxCommand: (body) => post('/api/coord/box-commands', body),
   boxCommands: (box) => get('/api/coord/box-commands' + (box ? '?box=' + encodeURIComponent(box) : '')),
+  // BH-9262 (C1): the owner-approval inbox. The pending rows, one decide, and
+  // the archie delegation an APPROVE runs. No actor goes out: the proxy stamps it.
+  ownerApprovals: () => get('/api/coord/owner-approvals'),
+  decideOwnerApproval: (id, body) => post(coordPath(`/api/owner-approvals/${encodeURIComponent(id)}/decide`), body),
+  archieDelegation: (body) => post(coordPath('/api/archie/classes/delegation'), body),
   // BH-5750 C4: the hub's last Orgo computer list per account (ORGO STATE).
   orgoComputers: () => get('/api/coord/orgo-computers'),
   // BH-2521: the SEED REGISTRY plan/apply/runs and the CHAT BINDINGS read/edit.

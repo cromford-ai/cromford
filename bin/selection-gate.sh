@@ -88,6 +88,15 @@
 #      problem. bin/flaky-tier.sh files the repair ticket, projects the row
 #      into CI_QUARANTINE (the batch drops it) and releases it after a green
 #      nightly on a newer main sha (docs/gates/prequeue-fresh-main.md).
+#   7  BH-9779, with SELECTION_GATE_RETRY_OUTSIDE=1: when every suite still red
+#      is outside this change's impact set (bin/test-impact.sh select --why
+#      --map-only over MB..HEAD; rows self, reads, named, source, learned,
+#      closure, regression are inside; a full row or a failed read puts every
+#      red inside), and there are at most SELECTION_GATE_RETRY_MAX of them,
+#      they run once more (timeout SELECTION_GATE_RETRY_TIMEOUT_S; output in
+#      <out>/retry-run.txt). A suite with a PASS line there, and no other line,
+#      leaves red: and gets a ci_flakes row (workflow selection-gate, kind
+#      flake). Any other answer keeps it red. bin/lib/selection-gate-retry.sh.
 #
 # OUTPUT. <out>/gate.txt, written once (tmp + mv):
 #   head: <40-hex>  base: <mb|->  suites: <n>  rc: <0|1|could-not-run|no-selection>
@@ -100,6 +109,9 @@
 #   (<c> counts per-file cache hits and prime.tsv hits, BH-9094)
 #   and, after the reuse: line, only with SELECTION_GATE_SUITE_QUARANTINE=1:
 #   quarantined: <comma list|->[ quarantine-cap: <n> > <max>][ write-failed <suite>]…
+#   and, only with SELECTION_GATE_RETRY_OUTSIDE=1 (step 7):
+#   retry: <-|skipped: inside <n>[ (...)]|skipped: <n> > <max>|could-not-run: <why>
+#          |ran <n>: green <list|->; red <list|->[ flake-record: failed <suite>]…|off (no retry lib)>
 #   and LAST, only with SELECTION_GATE_FRESH_MAIN=1:
 #   fresh-main: <on <main12>|off (<why>)|-> (`-`: the run stopped before step 1b)
 # plus <out>/selection.txt (the list) and <out>/run.txt (the runner's output).
@@ -113,10 +125,13 @@
 # main-run reserve (step 3: SELECTION_GATE_BASELINE_RESERVE_PAD_S,
 # SELECTION_GATE_MAIN_TIMEOUT_MIN_S) in the env, and, BH-9697, four more:
 # SELECTION_GATE_FRESH_MAIN, SELECTION_GATE_FRESH_FETCH_S (step 1b),
-# SELECTION_GATE_SUITE_QUARANTINE, SELECTION_GATE_QUARANTINE_MAX_NEW (5, 6).
+# SELECTION_GATE_SUITE_QUARANTINE, SELECTION_GATE_QUARANTINE_MAX_NEW (5, 6),
+# and, BH-9779, SELECTION_GATE_RETRY_OUTSIDE, SELECTION_GATE_RETRY_TIMEOUT_S and
+# SELECTION_GATE_RETRY_MAX (7).
 # The fallbacks below name their rows. Test seams: SELECTION_GATE_PLAN (the
 # planner, default <tree>/bin/ci-plan.sh) and SELECTION_GATE_RUNNER (default
-# <tree>/bin/remote-gate.sh), SELECTION_GATE_FRESH_REF and SELECTION_GATE_SQ_LIST.
+# <tree>/bin/remote-gate.sh), SELECTION_GATE_FRESH_REF, SELECTION_GATE_SQ_LIST and
+# SELECTION_GATE_IMPACT (step 7's impact command, default <tree>/bin/test-impact.sh).
 set -uo pipefail
 
 TREE=""; BASE=""; OUT=""
@@ -153,7 +168,7 @@ while [ $# -gt 0 ]; do
     --out)     [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
     --timeout) [ $# -ge 2 ] || usage; TO="$2"; shift ;;
     -P)        [ $# -ge 2 ] || usage; PAR="$2"; shift ;;
-    -h|--help) sed -n '2,119p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,134p' "$0"; exit 0 ;;
     *) echo "selection-gate: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -219,6 +234,21 @@ SQ=0; [ "${SELECTION_GATE_SUITE_QUARANTINE:-0}" = 1 ] && SQ=1
 SQ_MAX="${SELECTION_GATE_QUARANTINE_MAX_NEW:-3}"; [[ "$SQ_MAX" =~ ^[1-9][0-9]*$ ]] || SQ_MAX=3
 SQ_SRC="-"; SQ_LIST=""; SQ_SUFFIX=""; QUARL=()
 
+# RETRY OUTSIDE THE IMPACT SET (BH-9779, step 7). lane.fly-pool.selection_gate_retry_outside
+# (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_RETRY_OUTSIDE.json). Unset or
+# anything but 1 is 0: no step 7 and no `retry:` line; bin/lib/selection-gate.sh
+# passes the row.
+RT7=0; [ "${SELECTION_GATE_RETRY_OUTSIDE:-0}" = 1 ] && RT7=1
+# lane.fly-pool.selection_gate_retry_timeout_s (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_RETRY_TIMEOUT_S.json)
+SGR7_TO="${SELECTION_GATE_RETRY_TIMEOUT_S:-600}"; [[ "$SGR7_TO" =~ ^[1-9][0-9]*$ ]] || SGR7_TO=600
+# lane.fly-pool.selection_gate_retry_max (catalog/lanes.d/fly-pool.knobs.d/SELECTION_GATE_RETRY_MAX.json)
+SGR7_MAX="${SELECTION_GATE_RETRY_MAX:-3}"; [[ "$SGR7_MAX" =~ ^[1-9][0-9]*$ ]] || SGR7_MAX=3
+RETRY_LINE="-"
+if [ "$RT7" = 1 ]; then
+  # shellcheck source=bin/lib/selection-gate-retry.sh
+  . "$(dirname "$0")/lib/selection-gate-retry.sh" 2>/dev/null || { RT7=2; RETRY_LINE="off (no retry lib)"; }
+fi
+
 HEAD_SHA=$(git -C "$TREE" rev-parse HEAD 2>/dev/null) || HEAD_SHA=""
 MB="-"; N=0; RC=""; RED="-"; NOTED="-"; MODE="-"; WHY="-"; QSRC="-"; HNOTED="-"; BRED="-"; BSTAT="-"
 
@@ -230,10 +260,12 @@ write_gate() {
     && { [ "$BL" = 0 ] || printf 'baseline-red: %s\nbaseline: %s\n' "$BRED" "$BSTAT" >> "$t"; } \
     && { [ "$SGR" = 0 ] || printf 'reuse: %s\n' "$SGR_LINE" >> "$t"; } \
     && { [ "$SQ" = 0 ] || printf 'quarantined: %s%s\n' "$(_sg_join ${QUARL[@]+"${QUARL[@]}"})" "$SQ_SUFFIX" >> "$t"; } \
+    && { [ "$RT7" = 0 ] || printf 'retry: %s\n' "$RETRY_LINE" >> "$t"; } \
     && { [ "$FMG" = 0 ] || printf 'fresh-main: %s\n' "$FMLINE" >> "$t"; } \
     && mv -f "$t" "$OUT/gate.txt" || { rm -f "$t"; echo "selection-gate: cannot write $OUT/gate.txt" >&2; exit 3; }
   local b=""; [ "$BL" = 0 ] || b=" baseline-red=$BRED"
   [ "$SQ" = 0 ] || b+=" quarantined=$(_sg_join ${QUARL[@]+"${QUARL[@]}"})"
+  [ "$RT7" = 0 ] || b+=" retry=${RETRY_LINE// /_}"
   [ "$FMG" = 0 ] || b+=" fresh-main=${FMLINE// /_}"
   echo "selection-gate: rc=$RC suites=$N red=$RED noted=$NOTED mode=$MODE why=$WHY$b"
   case "$RC" in 0) exit 0 ;; 1) exit 1 ;; no-selection) exit 4 ;; *) exit 3 ;; esac
@@ -608,6 +640,8 @@ if [ "$RC" = 1 ]; then
   [ "$BL" = 1 ] && [ "${#keep[@]}" -gt 0 ] && baseline_pass
   # BH-9697: a suite red here and on main, not in the diff, is quarantined.
   [ "$SQ" = 1 ] && [ "$SQ_SRC" != unreadable ] && sq_quarantine
+  # ── 7. one retry outside the impact set (BH-9779) ────────────────────────
+  [ "$RT7" = 1 ] && [ "${#keep[@]}" -gt 0 ] && sgr7_retry
   if [ "${#keep[@]}" -gt 0 ]; then RED=$(IFS=,; echo "${keep[*]}"); else RC=0; fi
 fi
 [ "$SGR" = 1 ] && sgr_record

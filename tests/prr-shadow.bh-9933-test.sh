@@ -184,7 +184,9 @@ f="$DIR/bin/lib/prr-shadow.d/merge-conductor.sh"
 bash -n "$f" && ok || bad "seams: $f does not parse"
 grep -q "^# .*merge-conductor" "$f" && ok || bad "seams: $f header must name the lane merge-conductor"
 prr_seam_load merge-conductor && ok || bad "seams: prr_seam_load merge-conductor must return 0"
-for fn in mc_ci_record mc_ci_github mc_ci_norm; do
+# BH-9938 C1 (wave 6, slice C1): the open-list, external-list and flake reads.
+for fn in mc_ci_record mc_ci_github mc_ci_norm mc_open_record mc_open_github mc_open_norm \
+          mc_xe_record mc_xe_github mc_flake_record mc_flake_github mc_flake_norm; do
   command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: loading merge-conductor must define $fn"
 done
 for l in pr-state-reconcile main-red-pr-pair; do

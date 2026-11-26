@@ -1,0 +1,10 @@
+{
+  "env": "ARCHIE_FROM_USER",
+  "read_in": "bin/archie.sh",
+  "type": "string",
+  "default": "unknown",
+  "zero_means": null,
+  "required": false,
+  "settable": false,
+  "note": "BH-9262. Not a knob: bin/orchestrate.sh's archie intercept block sets it per message to the sender (META_FROM_USER), and bin/archie.sh reads it for the via field of an owner-approval request. Code fallback unknown. NOT settable from the control plane."
+}

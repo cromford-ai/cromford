@@ -323,7 +323,7 @@ fi
 . "$HARNESS/bin/lib/archie.sh" 2>/dev/null || true
 type archie_sign >/dev/null 2>&1 || archie_sign() { printf '%s\n' "$1"; }
 if [ -x "$HARNESS/bin/archie.sh" ]; then
-  _arc_out=$(ARCHIE_CMD_ID="${CMD_ID:-}" "$HARNESS/bin/archie.sh" intercept "$TEXT" 2>/dev/null); _arc_rc=$?
+  _arc_out=$(ARCHIE_CMD_ID="${CMD_ID:-}" ARCHIE_TRANSPORT="${META_TRANSPORT:-}" ARCHIE_FROM_USER="${META_FROM_USER:-}" "$HARNESS/bin/archie.sh" intercept "$TEXT" 2>/dev/null); _arc_rc=$?
   if [ "$_arc_rc" = 0 ] && [ -n "$_arc_out" ]; then
     _arc_t=$(mktemp -d 2>/dev/null) || _arc_t=""
     if [ -n "$_arc_t" ]; then

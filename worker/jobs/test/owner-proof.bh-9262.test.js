@@ -206,7 +206,7 @@ test('P2b enforce: a box-commands refusal writes one refused:owner_proof audit r
   setMode(env.db, 'enforce');
   const res = await send(env.DB, '/api/box-commands', ROUTES[0].body());
   assert.equal(res.status, 403);
-  assert.deepEqual(res.body, { error: 'owner_only' });
+  assert.deepEqual(res.body, { error: 'owner_only', proof: 'required' });
   const audit = env.db.prepare("SELECT * FROM hub_lease_changes WHERE action='box_command_refused'").all();
   assert.equal(audit.length, 1);
   assert.equal(audit[0].outcome, 'refused:owner_proof');

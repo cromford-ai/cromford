@@ -61,6 +61,9 @@
 # gives a reason. This is a REPORT: it never changes the exit code. Unset, the
 # output is exactly the trace report.
 #
+# VERIFY BUDGET (BH-9779). The `## Verify` list has a budget
+# (bin/lib/plan-verify-budget.sh, the lib lane plan-verify-budget knobs).
+#
 # OUTCOME REPLAY (prompts/plan-contract.md §16). PLAN_GATE_PERF=1 says the
 # ticket is perf/cost; then, or when the plan has a `## Target metric` heading,
 # the plan needs a target line and an outcome-replay acceptance item.
@@ -79,7 +82,10 @@
 #         <path>)..." line per unlisted id and PLAN_CONTRACTS: ok (...) |
 #         unlisted | unread (no line without the file), PLAN_OUTCOME_REPLAY:
 #         ok | missing | n/a with one "UNTRACED: outcome replay — <gap>"
-#         line per gap, and last
+#         line per gap, PLAN_VERIFY_DURATIONS: <file> | unread,
+#         PLAN_VERIFY_SUITES: <n> and PLAN_VERIFY_BUDGET: ok | over | off | n/a
+#         with one "UNTRACED: verify budget — line <n>: <rule>: <excerpt>"
+#         line per hit (bin/lib/plan-verify-budget.sh), and last
 #         PLAN_TRACE: ok | untraced | unavailable
 #
 # exit 0  every task block carries both lines
@@ -273,6 +279,18 @@ fi
 PPR_LIB="$(cd "$(dirname "$0")" && pwd)/lib/perf-plan-rule.sh"
 if [ -r "$PPR_LIB" ] && . "$PPR_LIB" && command -v pt_plan_check >/dev/null 2>&1; then
   pt_plan_check "$PLAN"
+  [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
+fi
+
+# ---- the Verify budget (BH-9779) -----------------------------------------------
+# The plan's `## Verify` list names only the suites this change can break, one
+# command per suite: no loop or glob over tests/, a run on main for at most a
+# few suites, no "run with no timeout", no suite over the slow limit.
+# bin/lib/plan-verify-budget.sh decides. A list over its budget refuses the plan
+# (rc 2, the same repair pass). No lib on this box: no check.
+PVB_LIB="$(cd "$(dirname "$0")" && pwd)/lib/plan-verify-budget.sh"
+if [ -r "$PVB_LIB" ] && . "$PVB_LIB"; then
+  pvb_plan_check "$PLAN"
   [ $? = 2 ] && [ "$RC" = 0 ] && RC=2
 fi
 

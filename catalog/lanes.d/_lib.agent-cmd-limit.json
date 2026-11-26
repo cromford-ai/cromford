@@ -1,0 +1,44 @@
+{
+  "libs": [
+    {
+      "id": "agent-cmd-limit",
+      "file": "bin/lib/agent-cmd-limit.sh",
+      "note": "BH-9779. acl_arm (called by bin/agent-call.sh for the plan, execute, review and fix stages) resolves these once per call and sets CLAUDE_CODE_SHELL_PREFIX=bin/agent-cmd-limit.sh on the claude process, so each shell command the agent runs ends at the limit and the session goes on. Fallbacks in bin/lib/agent-cmd-limit.sh equal the defaults here (tests/agent-cmd-limit.bh-9779-test.sh K1).",
+      "knobs": [
+        {
+          "env": "AGENT_CMD_LIMIT_S",
+          "type": "int",
+          "default": 1800,
+          "min": 0,
+          "max": 7200,
+          "unit": "seconds",
+          "zero_means": "not armed: no per-command limit",
+          "required": false,
+          "note": "The time limit of one shell command in a build-stage agent call. Over 1500 because bin/test-impact-gate.sh runs under timeout 1500 in a build and builders must run it (D38); 3.7x under the 6,716 s BH-7921 call."
+        },
+        {
+          "env": "AGENT_CMD_TAIL_LINES",
+          "type": "int",
+          "default": 40,
+          "min": 5,
+          "max": 400,
+          "unit": "lines",
+          "zero_means": null,
+          "required": false,
+          "note": "How many last lines of a stopped command's stdout and stderr the agent gets back, after the stream. The same as SELECTION_GATE_RUN_TAIL_LINES."
+        },
+        {
+          "env": "AGENT_CMD_KILL_GRACE_S",
+          "type": "int",
+          "default": 10,
+          "min": 1,
+          "max": 600,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "After the limit, the seconds between SIGTERM and SIGKILL for the command's process group (timeout -k), and for a child the command left holding its output."
+        }
+      ]
+    }
+  ]
+}

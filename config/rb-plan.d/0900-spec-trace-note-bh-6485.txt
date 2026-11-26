@@ -1,0 +1,94 @@
+# >>> spec trace note (BH-6485)
+# A ticket body with `Spec:` or `Reference:` lines tells the planner the
+# `## Spec trace` rule (prompts/plan-contract.md §17) through UI_PLAN_NOTE, so
+# the prompt line does not change. No such lines, or no lib: nothing is added.
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
+STN_NOTE=""; command -v st_plan_note >/dev/null 2>&1 && STN_NOTE=$(st_plan_note "$BUILD/ticket-meta.json")
+[ -n "$STN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$STN_NOTE"
+# <<< spec trace note (BH-6485)
+# >>> coverage rows note (BH-9441)
+# A ticket body with a `## Scope` list tells the planner how many rows
+# `## Requirements coverage` needs (prompts/plan-contract.md §4) through
+# UI_PLAN_NOTE. No Scope list, or no lib: nothing is added.
+# shellcheck source=bin/lib/coverage-rows.sh
+[ -r "$HARNESS/bin/lib/coverage-rows.sh" ] && . "$HARNESS/bin/lib/coverage-rows.sh" 2>/dev/null
+CRN_NOTE=""; command -v cr_plan_note >/dev/null 2>&1 && CRN_NOTE=$(cr_plan_note "$BUILD/ticket-meta.json")
+[ -n "$CRN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$CRN_NOTE"
+# <<< coverage rows note (BH-9441)
+# >>> replan check (BH-3955)
+# A SPLIT CHILD WHOSE BLOCKERS HAVE MERGED GETS ONE CHEAP LOOK BEFORE ITS PLAN.
+# bin/replan-check.sh decides eligibility itself (a `<KEY>.<n>` child, n >= 1,
+# with `Part of #` and every `Blocked-by` merged, not stacked) and writes
+# $BUILD/replan-verdict on every path; a resume reuses that file, so this costs
+# one call per build dir at most. amend: the amended scope rides the plan prompt
+# below and the pre-plan adoption is bypassed. escalate: the script already put
+# the `hold` label on and sent the one beat, so this build parks as PLAN_BLOCKED,
+# the terminal the sweep, the blocked-resolver and the hold label already own.
+# Anything else, a missing script included, plans exactly as before.
+REPLAN_LINE=""
+if [ -x "$HARNESS/bin/replan-check.sh" ]; then
+  STACK_ON="${STACK_ON:-}" HARNESS="$HARNESS" timeout 300 "$HARNESS/bin/replan-check.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" >> "$BUILD/replan-check.out" 2>&1
+fi
+case "$(head -1 "$BUILD/replan-verdict" 2>/dev/null)" in
+  amend*)
+    [ -s "$BUILD/replan-amendment.md" ] && REPLAN_LINE=" THE BLOCKERS OF THIS CHILD HAVE MERGED AND A REPLAN CHECK AMENDED ITS SCOPE. Plan against the AMENDED scope and acceptance tests below; they supersede the issue body where they differ. AMENDMENT: $(head -c 4000 "$BUILD/replan-amendment.md" | tr '\n' ' ')" ;;
+  escalate*)
+    # A failed hold put no label on, so the copy must not say one parks it.
+    case "$(head -1 "$BUILD/replan-verdict" 2>/dev/null)" in
+      "escalate hold-failed"*) RPC_PARK='The `hold` label could NOT be applied (see ALERTS.log), so nothing parks it yet; put the label on, or answer the decision on the thread.' ;;
+      *) RPC_PARK='The `hold` label parks it; remove the label once the decision is on the thread.' ;;
+    esac
+    printf 'BLOCKED: REPLAN escalate :: %s\n\nEvery blocker of this child merged, and a replan check found a decision only a human can make before it builds. %s Evidence: %s\n' \
+      "$(head -1 "$BUILD/replan-decision.txt" 2>/dev/null)" "$RPC_PARK" "$BUILD/replan-evidence.md" > "$BUILD/plan.md"
+    BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
+    RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4 ;;
+esac
+# <<< replan check (BH-3955)
+# >>> prebuild repro (BH-2004)
+# REPRODUCE A BUG BEFORE PAYING FOR ITS BUILD. bin/prebuild-repro.sh records
+# $BUILD/prebuild-repro.txt and answers 0 (build), 10 (stopped, the ticket was
+# commented) or 11 (stop wanted, the comment failed). The record's presence is
+# the resume guard, so a resumed build never pays for the repro twice; rc 11
+# deletes it so the next offer retries. Every stage is a stub today (BH-2039):
+# a bug records cannot-drive and builds as before. A box without the runner or
+# its library fails open, the same rationale as the rollout hook above.
+REPRO_BRIEF_LINE=""
+# shellcheck disable=SC1091
+[ -r "$HARNESS/bin/lib/prebuild-repro.sh" ] && . "$HARNESS/bin/lib/prebuild-repro.sh"
+if [ ! -e "$BUILD/prebuild-repro.txt" ] && [ -x "$HARNESS/bin/prebuild-repro.sh" ]; then
+  "$HARNESS/bin/prebuild-repro.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" >> "$BUILD/prebuild-repro.out" 2>&1
+  PRR_RC=$?
+  case "$PRR_RC" in
+    10) RESULT "BUILD_DEFERRED repro NOT_REPRODUCED — commented on the ticket, waiting on the client"; touch "$BUILD/COMMENTED"; exit 3 ;;
+    11) rm -f "$BUILD/prebuild-repro.txt"; RESULT "BUILD_DEFERRED repro NOT_REPRODUCED but the board comment failed — retrying next offer"; exit 3 ;;
+  esac
+fi
+command -v pr_brief_line >/dev/null 2>&1 && REPRO_BRIEF_LINE="$(pr_brief_line "$BUILD")"
+# <<< prebuild repro
+# >>> child section adopt (BH-9537)
+# A SPLIT CHILD PLANS FROM ITS PARENT'S SECTION. bin/run-decompose.sh ends each
+# child's context pack with `Section: complete` when the parent's section for
+# that child carries an owns list, acceptance tests and an observable outcome
+# (bin/lib/child-pack.sh). Such a child has no pre-plan of its own, so the adopt
+# block below would log PREPLAN_MISS and the PLAN stage would plan from nothing.
+# Here the pack is fetched early, into the file the context pack block below
+# reads (one GET; that block reuses the file or this answer). CPK_ADOPT=1 turns
+# the adopt block's MISS into CHILD, and the PLAN stage gets an amend
+# instruction. Fail-open: no lib, no pack or an incomplete section is today's
+# path. A resumed dir is not asked.
+CPK_ADOPT=0; CPK_FETCH_RC=""; CPK_P=""
+# shellcheck source=bin/lib/child-pack.sh
+[ -r "$HARNESS/bin/lib/child-pack.sh" ] && . "$HARNESS/bin/lib/child-pack.sh" 2>/dev/null
+if command -v cpk_complete >/dev/null 2>&1 && [ ! -s "$BUILD/plan.md" ]; then
+  if ! { [ -s "$BUILD/context-pack.md" ] && [ -s "$BUILD/context-pack.md.parent" ]; }; then
+    # shellcheck source=bin/lib/context-pack.sh
+    [ -r "$HARNESS/bin/lib/context-pack.sh" ] && . "$HARNESS/bin/lib/context-pack.sh" 2>/dev/null
+    if command -v cp_fetch >/dev/null 2>&1; then
+      JOBS_ALERT=0 cp_fetch "$PROJECT" "$KEY" "$BUILD/context-pack.md" >/dev/null 2>&1; CPK_FETCH_RC=$?
+    fi
+  fi
+  CPK_P=$(head -n1 "$BUILD/context-pack.md.parent" 2>/dev/null)
+  if [ -n "$CPK_P" ] && [ "$CPK_P" != "$KEY" ] && cpk_complete "$BUILD/context-pack.md"; then CPK_ADOPT=1; fi
+fi
+# <<< child section adopt (BH-9537)

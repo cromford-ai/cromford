@@ -73,6 +73,16 @@ prs_wake_seen() { return 2; }
 
 prs_open_list() {
   local slug="$1" out="$2" d meta ttl now wrc=0 rc=0 fd tmp
+  # BH-9938 C1: the merge conductor (PRS_OPEN_PRR=merge-conductor) reads its
+  # open list through prr_read and its seam (mc_open_record / mc_open_github,
+  # bin/lib/prr-shadow.d/merge-conductor.sh). The GitHub side calls back here
+  # with _PRS_IN_PRR=1 and runs the body below unchanged. A record answer is
+  # never written into the shared snapshot. Every other lane: no change.
+  if [ "${PRS_OPEN_PRR:-}" = merge-conductor ] && [ -z "${_PRS_IN_PRR:-}" ] \
+     && declare -F prr_read >/dev/null 2>&1 && declare -F mc_open_record >/dev/null 2>&1; then
+    prr_read merge-conductor "$slug#open" "$out" mc_open_record mc_open_github mc_open_norm "$slug"
+    return
+  fi
   if ! _prs_on || ! d=$(_prs_dir "$slug") || ! mkdir -p "$d" 2>/dev/null; then
     _gh_rest_list "$slug" pulls 1000 '.' -f state=open > "$out" || rc=$?
     return "$rc"

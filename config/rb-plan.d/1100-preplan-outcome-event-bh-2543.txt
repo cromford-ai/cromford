@@ -1,0 +1,89 @@
+# >>> preplan outcome event (BH-2543)
+# ONE stage_events ROW PER NON-RESUMED BUILD, so GET /api/preplans/adoption
+# counts each build's pre-plan outcome exactly once: HIT->ADOPTED, STALE, OFF,
+# anything else MISS (the adopt block's own `*)` arm). A resumed dir already
+# posted its row the first time through, so it posts nothing. It sits outside
+# the adopt markers because tests/preplan-adopt.bh-776-test.sh holds that block
+# to exactly one PREPLAN_ line per run. Every path is logged and the block ends
+# in `true`: a hub that cannot take the row never changes the build's rc.
+#
+# A MISS/STALE/OFF build has no plan.md until PLAN finishes, so a build that
+# died mid-PLAN is not PP_RESUMED on its next attempt and would post a second
+# row. $BUILD/preplan-event is written only after a post succeeds, and a dir
+# that carries it posts nothing again; a failed post leaves no marker, so the
+# next attempt still tries (BH-2543.1).
+if [ "$PP_RESUMED" != 1 ]; then
+if [ -e "$BUILD/preplan-event" ]; then
+  echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_EVENT already recorded by an earlier attempt ($(head -1 "$BUILD/preplan-event" 2>/dev/null)) — not re-posted" >> "$BUILD/pipeline.log"
+else
+  case "$PP_OUTCOME" in HIT*) PP_EV=ADOPTED ;; STALE*) PP_EV=STALE ;; OFF*) PP_EV=OFF ;; CHILD*) PP_EV=CHILD ;; *) PP_EV=MISS ;; esac
+  case "$PP_OUTCOME" in *' '*) PP_EV_DETAIL=${PP_OUTCOME#* } ;; *) PP_EV_DETAIL="" ;; esac
+  PP_EV_DETAIL=${PP_EV_DETAIL:0:400}
+  if [ -z "${JOB_ID:-}" ] || ! command -v job_event >/dev/null 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_EVENT not recorded (no job row)" >> "$BUILD/pipeline.log"
+  elif job_event "$JOB_ID" preplan "$PP_EV" "$PP_EV_DETAIL"; then
+    printf '%s\n' "$PP_EV" > "$BUILD/preplan-event" 2>/dev/null
+    echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_EVENT $PP_EV recorded" >> "$BUILD/pipeline.log"
+  else
+    PP_EV_RC=$?
+    echo "$(STAMP) [$PROJECT/$KEY] PREPLAN_EVENT not recorded (post failed rc=$PP_EV_RC)" >> "$BUILD/pipeline.log"
+  fi
+fi
+fi
+true
+# <<< preplan outcome event (BH-2543)
+# >>> build call fp
+# THE BUILD'S CALL-GUARD FINGERPRINT (BH-2413). Every plan and execute prompt
+# embeds this build's own $BUILD dir, so the guard's per-prompt fallback sees a
+# new build of the same ticket as new work, and a ticket relaunched all day was
+# re-planned all day. The build fp names the WORK instead: the ticket key, a
+# hash of its title + body + thread, and the main sha the plan reads. CC()
+# above hands it to plan, execute and fix.
+#
+# The thread is FP_BEFORE on an in-app board. On a GitHub-issue project
+# (github-issues) FP_BEFORE is always empty, so the thread is the issue's WHOLE
+# comment thread projected to [id, updated_at]: a new comment adds an id, an
+# edit moves a stamp. The endpoint is oldest first, so it is paged to its end,
+# up to 1000 comments (BH-2485: one page never saw comment 101+). Past 1000
+# there is no signal. Only rc 0 and an array on every page count; a rate limit
+# (75) is no signal, not "no comments", and a partial thread is never signed.
+# Any missing input is NO build fp, and those calls fall back to the per-build
+# fingerprint: never an fp that could fold two pieces of work. The issue
+# number comes only from trk_gh_issue_number (BH-7919): a Linear or Jira
+# project has column 4 `-` too, and it has no GitHub thread to sign. Its
+# thread is FP_BEFORE, which TICKET_FP signs through the tracker contract
+# (BH-7921).
+TICKET_THREAD_SIG() { # prints the thread signature, rc 1 when there is none
+  local repo issue t rc page acc='[]' sig=""
+  if [ -n "${FP_BEFORE:-}" ]; then printf '%s\n' "$FP_BEFORE"; return 0; fi
+  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 1
+  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 1
+  repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
+  [ -n "$repo" ] && [ -n "$issue" ] && command -v gh_rest >/dev/null 2>&1 || return 1
+  t=$(mktemp "${TMPDIR:-/tmp}/ticket-thread.XXXXXX") || return 1
+  for page in 1 2 3 4 5 6 7 8 9 10; do
+    rc=0; gh_rest GET "repos/$repo/issues/$issue/comments?per_page=100&page=$page" > "$t" || rc=$?
+    { [ "$rc" = 0 ] && jq -e 'type == "array"' "$t" >/dev/null 2>&1; } || { rm -f "$t"; return 1; }
+    acc=$(jq -sc '.[0] + .[1]' <(printf '%s\n' "$acc") "$t" 2>/dev/null) || { rm -f "$t"; return 1; }
+    [ "$(jq 'length' "$t")" -lt 100 ] && break
+    [ "$page" = 10 ] && { rm -f "$t"; return 1; }
+  done
+  rm -f "$t"
+  sig=$(jq -ce '[.[] | [.id, .updated_at]]' <<<"$acc" 2>/dev/null)
+  [ -n "$sig" ] || return 1
+  printf '%s\n' "$sig"
+}
+BUILD_CALL_FP_COMPUTE() { # prints the build fp (rc 0) or why there is none (rc 1)
+  local mat sig sha fp
+  mat=$(jq -c '{title, body}' "$BUILD/ticket-meta.json" 2>/dev/null) && [ -n "$mat" ] \
+    || { echo "no ticket-meta.json"; return 1; }
+  sig=$(TICKET_THREAD_SIG) || { echo "no thread signal"; return 1; }
+  sha=$(git -C "$WT" rev-parse --verify -q "origin/$BASE^{commit}" 2>/dev/null) \
+    || { echo "origin/$BASE does not resolve"; return 1; }
+  # Sourced in this command substitution's subshell: the guard lib's globals
+  # never reach the pipeline.
+  fp=$( . "$HARNESS/bin/lib/call-guard.sh" && printf '%s\n%s' "$mat" "$sig" | call_guard_build_fp "$KEY" "$sha" ) \
+    && [ -n "$fp" ] || { echo "fingerprint inputs incomplete"; return 1; }
+  printf '%s\n' "$fp"
+}
+# <<< build call fp

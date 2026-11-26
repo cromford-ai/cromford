@@ -38,7 +38,14 @@ xe_project() {
   [ "$AE_CAP" -gt 0 ] || return 0
   local t rc line login num rows=() d0="$AE_DEFERRED" checked=0
   t=$(mktemp "${TMPDIR:-/tmp}/xe.XXXXXX") || return 0
-  rc=0; gh_rest GET "repos/$AE_SLUG/pulls?state=open&per_page=100" > "$t" || rc=$?
+  # BH-9938 C1: through prr_read and the conductor seam when it is loaded
+  # (the record's window of 100 in step record); today's read otherwise.
+  rc=0
+  if declare -F prr_read >/dev/null 2>&1 && declare -F mc_xe_record >/dev/null 2>&1; then
+    prr_read merge-conductor "$AE_SLUG#open:100" "$t" mc_xe_record mc_xe_github mc_open_norm "$AE_SLUG" || rc=$?
+  else
+    gh_rest GET "repos/$AE_SLUG/pulls?state=open&per_page=100" > "$t" || rc=$?
+  fi
   if [ "$rc" = 75 ]; then
     rm -f "$t"; _ae_log "$AE_SLUG external list rate limited or unreachable (75, HTTP ${GH_REST_STATUS:-000}) — skipped this tick, not read as no PRs"; return 0
   fi

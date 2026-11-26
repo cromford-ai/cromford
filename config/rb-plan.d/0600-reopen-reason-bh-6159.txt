@@ -1,0 +1,78 @@
+# >>> reopen reason (BH-6159)
+# A ticket the client sent back carries the comments posted around that move,
+# saved by the reopen lane (bin/lib/reopen-reason.sh, row reopen_reason/"<p> <KEY>").
+# The plan prompt gets them so the rebuild answers the rejection. Fails open.
+REOPEN_REASON_LINE=""; RR_LOG=none
+[ -r "$HARNESS/bin/lib/reopen-reason.sh" ] && . "$HARNESS/bin/lib/reopen-reason.sh" 2>/dev/null
+if command -v rr_plan_line >/dev/null 2>&1 && rr_on; then
+  rr_plan_line "$PROJECT" "$KEY" >/dev/null 2>&1
+  REOPEN_REASON_LINE="${RR_LINE:-}"
+fi
+echo "$(STAMP) [$PROJECT/$KEY] REOPEN REASON: ${RR_LOG:-none}" >> "$BUILD/pipeline.log"
+# <<< reopen reason (BH-6159)
+# >>> revert reason (BH-6160)
+# A ticket whose merge was reverted carries the failure signal of that revert,
+# saved by the reopen lane (bin/lib/revert-reason.sh, row revert_reason/"<p> <KEY>").
+# The plan prompt gets it so the rebuild does not fail the same way. Fails open.
+REVERT_REASON_LINE=""; RV_LOG=none
+[ -r "$HARNESS/bin/lib/revert-reason.sh" ] && . "$HARNESS/bin/lib/revert-reason.sh" 2>/dev/null
+if command -v rv_plan_line >/dev/null 2>&1; then
+  rv_plan_line "$PROJECT" "$KEY" >/dev/null 2>&1
+  REVERT_REASON_LINE="${RV_LINE:-}"
+fi
+echo "$(STAMP) [$PROJECT/$KEY] REVERT REASON: ${RV_LOG:-none}" >> "$BUILD/pipeline.log"
+# <<< revert reason (BH-6160)
+# <<< ticket meta
+# >>> rollout hook
+# A ROLLOUT MASTER FILES ITS WAVES, IT NEVER BUYS A PLAN (BH-985, child .4 of
+# #816). A ticket whose body carries a `## Rollout` section is a sequence its
+# author already wrote down. Planning it is a model call for work that is
+# already decided, and the size gate splitting it is a split of a thing that is
+# already split — so the decision is made HERE, above the pre-plan adoption and
+# the PLAN launch, on the ticket meta the block above already fetched.
+#
+# FAIL-OPEN ON EVERY ABSENCE, and that is what lets this slice ship before
+# bin/run-rollout.sh (#984) exists: no ticket-meta.json, no body field, an empty
+# body, or no executable lane script on this box, and the block does nothing at
+# all. `-x` rather than `-r` on purpose — a non-executable file is a half-synced
+# box, and the ordinary plan path is the safe default there.
+#
+# DETECTION IS DELEGATED. `--is-rollout` is the lane's own answer (it runs
+# bin/lib/file-children.sh's fence-safe detector); a second copy of that state
+# machine here is exactly the bug that library exists to prevent. Anything but
+# rc 0 — a no, or a crash — falls through to the plan, because filing issues on
+# a real repo is irreversible and a detector that did not say yes has not said
+# yes. The child regex is the size gate's own, byte for byte: a `.n` title is a
+# wave, and a wave is planned like any other ticket.
+RH_BODY=""
+if [ -s "$BUILD/ticket-meta.json" ] && [ -x "$HARNESS/bin/run-rollout.sh" ]; then
+  RH_BODY=$(jq -r '.body // ""' "$BUILD/ticket-meta.json" 2>/dev/null)
+fi
+if [ -n "$RH_BODY" ]; then
+  RH_TITLE=$(jq -r '.title // ""' "$BUILD/ticket-meta.json" 2>/dev/null)
+  printf '%s\n' "$RH_BODY" > "$BUILD/ticket-body.md"
+  if ! grep -qE '^[[:space:]]*[A-Za-z]+-[0-9]+\.[0-9]+' <<<"$RH_TITLE" \
+     && "$HARNESS/bin/run-rollout.sh" --is-rollout "$BUILD/ticket-body.md" >/dev/null 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] ROLLOUT: the ticket body carries a rollout section — filing its waves instead of planning it (no model call)" >> "$BUILD/pipeline.log"
+    "$HARNESS/bin/run-rollout.sh" "$PROJECT" "$TICKET" "$KEY" "$BUILD" > "$BUILD/rollout-hook.out" 2>&1
+    RH_RC=$?
+    # The lane's own word, wherever it wrote it (stdout, its run log, or both —
+    # last match wins), bare or in the `RESULT "…"` form. NO LINE IS A FAILURE,
+    # and so is a FILED line from a run that exited non-zero: `done` here must
+    # mean the waves are on the board, never "the script ended".
+    # Quoted form FIRST, then `t` so a matched `RESULT "…"` line is never re-read
+    # as a bare one: the reason is free text the lane writes, and a reason that
+    # names a wave quotes it (`… unknown wave "foo"`). Matching up to the first
+    # inner `"` matched nothing at all and lost the lane's word to the generic
+    # fallback below (BH-1338). Only the quoted form strips a closing `"`; a bare
+    # reason that legitimately ends in one is kept whole.
+    RH_LINE=$(cat "$BUILD/rollout-run.txt" "$BUILD/rollout-hook.out" 2>/dev/null \
+      | sed -nE -e 's/^RESULT[[:space:]]+"(ROLLOUT_(FILED|FAILED).*)"[[:space:]]*$/\1/p' -e t \
+                -e 's/^(RESULT[[:space:]]+)?(ROLLOUT_(FILED|FAILED)([^[:space:]]|.*[^[:space:]])?)[[:space:]]*$/\2/p' | tail -1)
+    [ -n "$RH_LINE" ] || RH_LINE="ROLLOUT_FAILED bin/run-rollout.sh ended rc=$RH_RC without a result line (see $BUILD/rollout-run.txt)"
+    case "$RH_LINE" in ROLLOUT_FILED*) [ "$RH_RC" = 0 ] || RH_LINE="ROLLOUT_FAILED bin/run-rollout.sh wrote '$RH_LINE' but exited rc=$RH_RC" ;; esac
+    RESULT "$RH_LINE"
+    exit 0
+  fi
+fi
+# <<< rollout hook

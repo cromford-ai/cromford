@@ -1,0 +1,61 @@
+# >>> plan empty-output verdict
+# WHY THE STAGE'S OWN VERDICT WINS (BH-642). "produced no output" is true of a
+# model that ran and said nothing, and equally true of a ladder that burned
+# because every account was out of credits — and telling those apart used to
+# mean reading failovers.log by hand. bin/agent-call.sh now leaves its verdict
+# beside the outfile as <outfile>.class (RUNNER_EXHAUSTED / RUNNER_RATE_LIMITED
+# / RUNNER_ERROR plus the classes it saw), so when there is one it is what gets
+# reported. With no sidecar the original sentence is rendered unchanged, because
+# that state still happens and the sentence is still true in it.
+if [ ! -s "$BUILD/plan.md" ]; then
+  WHY_BB="plan session produced no output (model limit/failure?)"
+  WHY_RESULT="plan session produced no output"
+  # A call-guard refusal (BH-2305) ran no session and wrote no .class; say so.
+  WHY_CG=$(head -1 "$BUILD/plan-run.txt" 2>/dev/null)
+  case "$WHY_CG" in
+    "AGENT_CALL_REFUSED call-guard "*)
+      WHY_BB="plan refused by the call-guard before the call: $(head -c 300 <<<"$WHY_CG")"
+      WHY_RESULT="$WHY_BB" ;;
+  esac
+  if [ -s "$BUILD/plan-run.txt.class" ]; then
+    WHY_BB="plan session ended $(head -1 "$BUILD/plan-run.txt.class" | head -c 1000 | tr -d '\n')"
+    WHY_RESULT="$WHY_BB"
+  fi
+  BB plan_deferred "" "" "" false "$WHY_BB"
+  RESULT "BUILD_DEFERRED $WHY_RESULT"; exit 3
+fi
+# <<< plan empty-output verdict
+# >>> human gate lib (BH-9559)
+# shellcheck source=bin/lib/human-gate.sh
+[ -r "${HARNESS:-}/bin/lib/human-gate.sh" ] && . "${HARNESS:-}/bin/lib/human-gate.sh"
+# <<< human gate lib (BH-9559)
+# >>> plan blocked gate
+if PLAN_IS_BLOCKED "$BUILD/plan.md"; then
+  # One human gate per client question (lane plan, reason plan_blocked), into
+  # $BUILD/human-gates.md for pb_notice. It never changes the RESULT below.
+  command -v hg_plan_blocked >/dev/null 2>&1 && hg_plan_blocked "${PROJECT:-}" "${KEY:-}" "$BUILD" >> "$BUILD/pipeline.log" 2>&1
+  BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
+  RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4
+fi
+# <<< plan blocked gate
+
+# Thread-stability re-check (see GATE above): the thread moving during PLAN
+# means the plan may be anchored on a comment that is no longer the latest
+# turn — the TK-143 #517 failure exactly. Defer like the other retryable
+# paths; the next triage pass re-reads the thread and re-plans from current
+# state. A failed re-fetch fails open (one plan built on a snapshot beats
+# blocking every build on board API weather). Runs BEFORE the plan gate below
+# so a stale plan defers without spending a repair session on it.
+if [ -n "$FP_BEFORE" ]; then
+  FP_AFTER=$(TICKET_FP)
+  if [ -z "$FP_AFTER" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] stale-check: post-PLAN re-fetch failed — gate fails open" >> "$BUILD/pipeline.log"
+  elif [ "$FP_AFTER" != "$FP_BEFORE" ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] PLAN_STALE: thread moved during planning ($FP_BEFORE -> $FP_AFTER)" >> "$BUILD/pipeline.log"
+    BB plan_stale "" "" "" false "thread moved during planning — deferred for re-plan"
+    RESULT "PLAN_STALE thread moved during planning — re-run"; exit 3
+  fi
+fi
+
+fi  # end PLAN checkpoint
+

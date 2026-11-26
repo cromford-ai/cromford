@@ -18,3 +18,4 @@
 ^<!-- harness-status: selection-gate -->$	# bin/lib/selection-gate.sh — sg_notice, the GATE_RED notice
 ^<!-- harness-status: board-closeout -->$	# bin/board-closeout.sh — the PR_CREATED / PR_MERGED close-out
 ^<!-- harness-status: results-sweep -->$	# prompts/TEMPLATE-GH.md — the results sweep close-out and stop reports
+^<!-- harness-status: ticket-status -->$	# worker/jobs/src/routes/ticket-status-comment.js — renderBody, the one in-place ticket status comment (BH-9503)

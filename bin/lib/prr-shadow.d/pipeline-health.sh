@@ -20,14 +20,16 @@
 #       pr_record_list <slug> open <tmp> - <window> (no window when empty),
 #       mapped to the REST pulls shape: number title html_url draft body
 #       mergeable_state created_at updated_at user.login head.{ref,sha}
-#       base.ref labels[].name. The record has no base.repo.default_branch,
-#       so the callers' own `// "main"` applies. Miss: pr_record_list's word;
-#       no lib is `unreadable`.
+#       base.ref labels[].name, through pr_record_open_rest
+#       (bin/lib/pr-record.sh). BH-9938 C1: the record has no default branch,
+#       so a hit needs the repo's default-branch memo to say main, and the
+#       rows then carry base.repo.default_branch main. Miss: pr_record_list's
+#       word, field:default_branch, malformed; no lib is `unreadable`.
 #   ph_open_github <file> <slug> <window> <list|rows>
 #       list: the raw `pulls?state=open&per_page=100` page, or the snapshot
 #       list (prs_open_list) when HPL_SNAPSHOT=1. rows: gh_rest_pr_list_all
 #       <slug> open <window>, or the first <window> snapshot rows. rc is the
-#       read's.
+#       read's. A good read writes the default-branch memo.
 #   ph_open_norm <file>
 #       [{n, head: .head.sha, labels: sorted names}] sorted by n.
 #
@@ -95,31 +97,25 @@ ph_prr() {
 
 # ── open-PR list ─────────────────────────────────────────────────────────────
 ph_open_record() {
-  local f="${1:-}" slug="${2:-}" win="${3:-}" tmp why rc
+  local f="${1:-}" slug="${2:-}" win="${3:-}"
   [ -n "$f" ] || return 2
-  command -v pr_record_list >/dev/null 2>&1 || { echo unreadable; return 1; }
-  tmp=$(mktemp "${TMPDIR:-/tmp}/ph-open.XXXXXX") || { echo unreadable; return 1; }
-  if [ -n "$win" ]; then why=$(pr_record_list "$slug" open "$tmp" - "$win"); rc=$?
-  else why=$(pr_record_list "$slug" open "$tmp"); rc=$?; fi
-  if [ "$rc" != 0 ]; then
-    rm -f "$tmp" "$tmp.sync"
-    echo "${why:-unreadable}"; return 1
-  fi
-  # draft: the worker stores INTEGER 0/1 (routes/pr-records.js); REST is a
-  # boolean, and jq reads 0 as true, so it is mapped here.
-  if ! jq -c '[.[] | {number, title, html_url: .url,
-        draft: (if .draft == 1 or .draft == true then true elif .draft == 0 or .draft == false then false else null end),
-        body, mergeable_state, created_at, updated_at,
-        user: {login: .author}, head: {ref: .head_ref, sha: .head_sha}, base: {ref: .base_ref},
-        labels: [(.labels // [])[] | {name: .}]}]' "$tmp" > "$f" 2>/dev/null; then
-    rm -f "$tmp" "$tmp.sync"; : > "$f"
-    echo malformed; return 1
-  fi
-  rm -f "$tmp" "$tmp.sync"
-  return 0
+  # BH-9938 C1: the shared mapping of bin/lib/pr-record.sh, which also holds
+  # the default-branch rule (a hit only when the repo's memo says main).
+  command -v pr_record_open_rest >/dev/null 2>&1 || { echo unreadable; return 1; }
+  pr_record_open_rest "$slug" "$f" "$win"
 }
 
 ph_open_github() {
+  local rc=0
+  _ph_open_github_read "$@" || rc=$?
+  # BH-9938 C1: the GitHub rows carry base.repo.default_branch; keep it for
+  # the record side (pr_record_open_rest), which has no default branch.
+  [ "$rc" = 0 ] && command -v pr_record_default_branch_note >/dev/null 2>&1 \
+    && pr_record_default_branch_note "${2:-}" "${1:-}"
+  return "$rc"
+}
+
+_ph_open_github_read() {
   local out="${1:-}" slug="${2:-}" win="${3:-}" shape="${4:-list}" f rc=0
   [ -n "$out" ] || return 2
   if [ "$shape" = rows ]; then
@@ -183,8 +179,13 @@ ph_payload_record() {
   PRR_MISS_WHY=""
   pr_record_mergify "$slug" "$n" > "$tmp"; rc=$?
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
-  line=$(jq -r 'select((.state | type) == "string" and .state != "" and (.comment_id | type) == "number")
-    | [.state, (.at | strings | sub("\\.[0-9]+"; "") | fromdateiso8601 | tostring), (.comment_id | tostring)] | @tsv' "$tmp" 2>/dev/null)
+  # BH-9938 C1: the epoch is the comment's updated_at, the time
+  # sdq_payload_last reads from GitHub. A row written before C1 has no such
+  # key: a miss, never the created time.
+  if ! jq -e '.updated_at | strings' "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; echo field:updated_at; return 1; fi
+  line=$(jq -r 'select((.state | type) == "string" and .state != "" and (.comment_id | type) == "number"
+      and ((.at | strings | sub("\\.[0-9]+"; "") | fromdateiso8601?) != null))
+    | [.state, (.updated_at | strings | sub("\\.[0-9]+"; "") | fromdateiso8601 | tostring), (.comment_id | tostring)] | @tsv' "$tmp" 2>/dev/null)
   rm -f "$tmp"
   [[ "$line" =~ ^[^[:space:]]+$'\t'[0-9]+$'\t'[0-9]+$ ]] || { echo malformed; return 1; }
   printf '%s\n' "$line" > "$f"
@@ -211,6 +212,8 @@ ph_hct_record() {
   head=$(printf '%s' "${4:-}" | tr 'A-F' 'a-f')
   command -v pr_record_peek >/dev/null 2>&1 || { echo unreadable; return 1; }
   row=$(pr_record_peek "$slug" "$n") || { echo unreadable; return 1; }
+  # BH-9938 C1: the row's age is checked like every other record read.
+  command -v _prr_row_fresh >/dev/null 2>&1 && ! _prr_row_fresh "$row" && { echo stale; return 1; }
   hc=$(jq -c '.head_commit | objects' <<<"$row" 2>/dev/null)
   [ -n "$hc" ] || { echo field:head_commit; return 1; }
   [ -n "$head" ] && [ "$(jq -r '.sha // "" | ascii_downcase' <<<"$hc" 2>/dev/null)" = "$head" ] || { echo sha; return 1; }
@@ -235,14 +238,18 @@ ph_hct_norm() {
 
 # ── 13d combined status ──────────────────────────────────────────────────────
 ph_status_record() {
-  local f="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" tmp rc
+  local f="${1:-}" slug="${2:-}" n="${3:-}" head="${4:-}" tmp rc ctx
   [ -n "$f" ] || return 2
   command -v pr_record_statuses >/dev/null 2>&1 || { echo unreadable; return 1; }
   tmp=$(mktemp "${TMPDIR:-/tmp}/ph-st.XXXXXX") || { echo unreadable; return 1; }
   # A plain command with `> file`: PRR_MISS_WHY must reach this shell.
   PRR_MISS_WHY=""
-  pr_record_statuses "$slug" "$n" "$head" > "$tmp"; rc=$?
+  pr_record_statuses "$slug" "$n" "$head" row-head > "$tmp"; rc=$?
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
+  # BH-9938 C1: a hit needs the verdict context itself for this head. Other
+  # contexts alone are a miss, never "no verdict" (the GitHub read decides).
+  ctx=$(vs_context 2>/dev/null) || ctx=""; ctx="${ctx:-lead-verdict}"
+  if ! jq -e --arg c "$ctx" 'has($c)' "$tmp" >/dev/null 2>&1; then rm -f "$tmp"; echo "field:$ctx"; return 1; fi
   if ! jq -c '{statuses: [to_entries[] | {context: .key, state: .value.state, updated_at: .value.at}]}' "$tmp" > "$f" 2>/dev/null; then
     rm -f "$tmp"; : > "$f"
     echo malformed; return 1

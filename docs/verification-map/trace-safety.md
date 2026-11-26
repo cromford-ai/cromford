@@ -52,6 +52,9 @@ HIT <test> created /nonexistent (existence probe: absent before the test, presen
 CHECK-NOTE test-trace-safety: /nonexistent already exists, creation probe cannot attribute   (stderr, rc unchanged)
 EXIT <rc> <test>            a test exited nonzero
 TIMEOUT <test> (killed after <n>s)
+TIMEOUT <test> (killed after <n>s, shard budget)   --gate: cut at the time the shard budget left
+NOTRUN <path> (shard budget <B>s spent)            --gate: the budget was spent, the test never started
+BUDGET: <k> of <m> tests not run (shard budget <B>s)   only when k > 0, just before TRACE:
 TRACE: <n> tests, <f> nonzero exit(s), <h> hit(s)
 ```
 
@@ -127,6 +130,10 @@ were hits or `TRACE_SAFETY_KEEP=1`, in which case its path is printed on stderr
 so the trace behind a hit can be read.
 
 **Knobs:** `TRACE_SAFETY_TEST_TIMEOUT` (per-test seconds, default 600),
+`TRACE_SAFETY_SHARD_BUDGET_S` (`--gate` only: whole seconds for the whole run,
+default 0 = no budget; CI passes the repo variable of that name, fallback 2400)
+and `TRACE_SAFETY_T0` (epoch seconds the budget counts from, default the
+script's start; CI passes the clock step's `SHARD_T0`) (BH-9465),
 `TRACE_SAFETY_KEEP=1`, `HARNESS_TEST_SANDBOX=1`, `HARNESS_ROOT_OVERRIDE`,
 `TMPDIR` / `RUNNER_TEMP` (extra allowed temp roots when set),
 `TRACE_SAFETY_CREATE_ROOT` (the root no test may create, default `/nonexistent`;

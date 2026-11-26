@@ -9,5 +9,5 @@
   "required": false,
   "settable": true,
   "read_in": "bin/lib/suite-preflight.sh",
-  "note": "BH-7695. The bound on the one suite-preflight setup attempt (npm ci / npm install) in the build's harness suite run. A killed install is rc 124 in the HARNESS_PREFLIGHT: setup line, and node_modules is checked again after it. Per project: lane.fly-pool.<project>.suite_preflight_setup_s."
+  "note": "BH-7695. The bound on the one suite-preflight setup attempt (pnpm, yarn or npm install, by lock file) in the build's harness suite run. A killed install is rc 124 in the HARNESS_PREFLIGHT: setup line, and node_modules is checked again after it. Per project: lane.fly-pool.<project>.suite_preflight_setup_s."
 }

@@ -1,0 +1,140 @@
+# >>> stage lane verdict (BH-1853)
+# A stage whose session ended because the RUNNER LANE was out (an account at
+# its limit, a credential refused) did not fail on the ticket. bin/agent-call.sh
+# leaves that verdict beside every outfile as <outfile>.class; the plan stage
+# has read it since BH-642, and these two let every later stage read it too.
+# The predicate is bin/fly-pool.sh's pool_lane_failure, so the RESULT this
+# writes is one the pool reap cools, unpins and requeues on without charging
+# the ticket a deferral. Only the sidecars are read, never a review body that
+# might quote the token. First line only, capped at 1000 bytes so the
+# `exhausted=` and `resets_at=` fields at its end survive a long `seen=` list.
+stage_lane_class() { # stage_lane_class <outfile>... -> prints the line, 0 when one blames the lane
+  local f line
+  for f in "$@"; do
+    [ -s "$f.class" ] || continue
+    line=$(head -1 "$f.class" 2>/dev/null | head -c 1000)
+    case "$line" in *RUNNER_EXHAUSTED*|*" class=auth"*) printf '%s\n' "$line"; return 0 ;; esac
+  done
+  return 1
+}
+STAGE_LANE_DEFER() { # STAGE_LANE_DEFER <stage-label> <outfile>... — exits 3 when the lane failed
+  local line
+  line=$(stage_lane_class "${@:2}") || return 0
+  echo "$(STAMP) [$PROJECT/$KEY] $1: the runner lane failed ($line) — deferring, not a verdict on the ticket" >> "$BUILD/pipeline.log"
+  RESULT "BUILD_DEFERRED $1 session ended $line"; exit 3
+}
+# <<< stage lane verdict
+
+# --- GATE: thread-stability snapshot (2026-08-14) -----------------------------
+# TK-143 #517 shipped a code lane built against a comment the client superseded
+# 10 minutes into planning — the plan prompt's THREAD RECENCY law can only see
+# the thread as it stood when the planner READ it. Mechanical complement:
+# fingerprint the ticket's activity before PLAN, re-fetch after, and defer the
+# build if the thread moved underneath the planner. Fail-OPEN on API weather
+# (board down must not stop builds); boardless projects (fleet prefix "-")
+# return an empty fingerprint and skip the gate entirely. A Jira or Linear
+# ticket (tracker_kind, BH-7921) is read through the tracker contract
+# (bin/lib/rb-tracker.sh): `trk:<sha256>` of its title, body and thread from a
+# fresh read each call, without this build's own posts (own-comments.sha256).
+# The read is kept in $BUILD/tracker-ticket.json for TICKET_META below.
+TICKET_FP() {
+  local base prefix tok tv j
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && if rbt_tracked "$PROJECT"; then
+      j=$(rbt_read "$PROJECT" "$TICKET") || return 0
+      printf '%s\n' "$j" > "$BUILD/tracker-ticket.json.$$" && mv -f "$BUILD/tracker-ticket.json.$$" "$BUILD/tracker-ticket.json" || return 0
+      rbt_fp "$BUILD/tracker-ticket.json" "$BUILD/own-comments.sha256"
+      return 0
+    fi
+  base=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" prod 2>/dev/null)
+  prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)
+  [ -n "$base" ] && [ "$base" != "-" ] || return 0
+  # BH-1955: the token through bin/lib/board-creds.sh. None or two is one
+  # ALERTS line and NO board call — the gate's fail-open "no snapshot".
+  command -v board_token_var >/dev/null 2>&1 && tv=$(board_token_var "$PROJECT" "$HENV/$PROJECT.env" run-build) || return 0
+  tok=$(board_env_value "$tv" "$HENV/$PROJECT.env")
+  [ -n "$tok" ] || return 0
+  curl -s -m 20 -H "Authorization: Bearer $tok" -H "User-Agent: curl/8" "$base$prefix/tickets/$TICKET" 2>/dev/null \
+    | jq -r '(.ticket // .) as $t | "\($t.lastActivityAt // "")|\($t.updatedAt // "")|\($t.turnChangedAt // "")|\((.comments // $t.comments // []) | length)"' 2>/dev/null
+}
+FP_BEFORE=$(TICKET_FP)
+[ -n "$FP_BEFORE" ] || echo "$(STAMP) [$PROJECT/$KEY] stale-check: no pre-PLAN activity snapshot (no board / API failure) — gate fails open" >> "$BUILD/pipeline.log"
+
+# >>> ticket meta
+# --- What the board already says this ticket IS (SDLC item 7) ----------------
+# The deterministic half of the KIND classifier's evidence — the board's own
+# type field, the GitHub issue's labels, the title — fetched ONCE here and
+# written to $BUILD/ticket-meta.json, so bin/kind-gate.sh stays a pure file
+# reader that an operator can re-run against an archived record and get the
+# same answer this build got. The ticket BODY rides the same call (BH-985): the
+# rollout hook below reads it from this file, so dispatching a rollout master
+# costs no API call of its own. kind-gate.sh reads named fields only, so the
+# extra key is inert there.
+#
+# FAIL-OPEN ON EVERY BRANCH, like TICKET_FP above: no board, no token, no gh,
+# an API that 500s — all leave no file, and the classifier falls back to the
+# plan's own KIND line. Fetched only when the file is absent, so a resume
+# classifies the ticket as it stood when the plan was written rather than
+# re-reading a board that may have moved.
+TICKET_META() {
+  local base prefix tok tv repo issue t rc=0
+  # A Jira or Linear ticket (BH-7921): the read TICKET_FP kept, else one read
+  # now. type is "" (the classifier then reads the labels and the title).
+  { declare -F rbt_tracked >/dev/null || . "$HARNESS/bin/lib/rb-tracker.sh" 2>/dev/null; } \
+    && if rbt_tracked "$PROJECT"; then
+      rbt_read "$PROJECT" "$TICKET" "$BUILD/tracker-ticket.json" >/dev/null 2>&1 || return 0
+      rbt_meta "$BUILD/tracker-ticket.json"
+      return 0
+    fi
+  base=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" prod 2>/dev/null)
+  prefix=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" board_prefix 2>/dev/null)
+  if [ -n "$base" ] && [ "$base" != "-" ] && [ "$prefix" != "-" ]; then
+    # BH-1955: same resolver and same no-call refusal as TICKET_FP above.
+    command -v board_token_var >/dev/null 2>&1 && tv=$(board_token_var "$PROJECT" "$HENV/$PROJECT.env" run-build) || return 0
+    tok=$(board_env_value "$tv" "$HENV/$PROJECT.env")
+    [ -n "$tok" ] || return 0
+    curl -s -m 20 -H "Authorization: Bearer $tok" -H "User-Agent: curl/8" "$base$prefix/tickets/$TICKET" 2>/dev/null \
+      | jq -c '(.ticket // .) | {title:(.title // ""),
+                                 type:(.type // .ticketType // .issueType // ""),
+                                 labels:(.labels // []),
+                                 body:((.description // .body) // "")}' 2>/dev/null
+    return 0
+  fi
+  # GitHub-issue projects: the `bug` label is the whole deterministic signal
+  # there, and the jq projection keeps this to the three fields the classifier
+  # and the rollout hook read instead of a full issue object. A read that is not
+  # rc 0 prints nothing, so no empty file is promoted. Column 4 `-` is not
+  # proof of GitHub (a Linear or Jira project has it too), so the issue number
+  # comes only from trk_gh_issue_number (bin/lib/tracker.sh), which answers
+  # nothing unless the tracker is github-issues (BH-7919).
+  repo=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
+  command -v trk_gh_issue_number >/dev/null 2>&1 || . "$HARNESS/bin/lib/tracker.sh" 2>/dev/null || return 0
+  issue=$(trk_gh_issue_number "$PROJECT" "$KEY" 2>/dev/null) || return 0
+  [ -n "$repo" ] && [ -n "$issue" ] && command -v gh >/dev/null 2>&1 || return 0
+  t=$(mktemp "${TMPDIR:-/tmp}/ticket-meta.XXXXXX") || return 0
+  gh_rest GET "repos/$repo/issues/$issue" > "$t" || rc=$?
+  [ "$rc" = 0 ] && jq -c '{title:(.title // ""),labels:(.labels // []),body:(.body // "")}' "$t" 2>/dev/null
+  rm -f "$t"
+  return 0
+}
+if [ ! -s "$BUILD/ticket-meta.json" ]; then
+  TICKET_META > "$BUILD/ticket-meta.new" 2>/dev/null
+  if [ -s "$BUILD/ticket-meta.new" ]; then mv "$BUILD/ticket-meta.new" "$BUILD/ticket-meta.json"
+  else rm -f "$BUILD/ticket-meta.new"
+       echo "$(STAMP) [$PROJECT/$KEY] KIND: no ticket metadata (no board / no gh / API failure) — the plan's own KIND line decides" >> "$BUILD/pipeline.log"; fi
+fi
+KIND_PROBE=$("$HARNESS/bin/kind-gate.sh" "$BUILD" 2>/dev/null)
+KIND_HINT=$(sed -n 's/^KIND_HINT:[[:space:]]*//p' <<<"$KIND_PROBE" | tail -1)
+KIND_HINT_SRC=$(sed -n 's/^KIND_HINT_SOURCE:[[:space:]]*//p' <<<"$KIND_PROBE" | tail -1)
+if [ -n "${KIND_HINT:-}" ] && [ "$KIND_HINT" != none ]; then
+  # A type field or a label is the board SAYING the kind. A title prefix is the
+  # gate READING one off how somebody typed a sentence, and it is the source
+  # that misfires — so it asks rather than asserts, while the gate's precedence
+  # rule stays as it is and still prints the disagreement either way.
+  case "$KIND_HINT_SRC" in
+    title=*) KIND_HINT_LINE="THE TICKET TITLE READS AS KIND: $KIND_HINT (evidence: $KIND_HINT_SRC) — a title prefix, which is the weakest evidence the board offers, so if the thread says otherwise write the KIND you actually find and say why. Whichever you write, the gate compares it to that prefix and prints the disagreement for the reviewer rather than resolving it silently." ;;
+    *)       KIND_HINT_LINE="THE BOARD ALREADY CLASSIFIES THIS TICKET as KIND: $KIND_HINT (evidence: $KIND_HINT_SRC), and that classification wins over yours — write that KIND line. If you think it is wrong, write it anyway and say why in the plan, because a reviewer can read the thread and adjudicate; silently reclassifying cannot be reviewed." ;;
+  esac
+else
+  KIND_HINT_LINE="The board carries no type field, label or title prefix for this ticket, so your KIND line is the only classification this build will have — read the thread and choose honestly."
+fi

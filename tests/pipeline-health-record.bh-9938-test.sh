@@ -60,6 +60,9 @@ mkh() {
   ( cd "$SRC" && scratch_install_closure bin/lib/prr-shadow.sh "$1" ) >/dev/null 2>&1
   ( cd "$SRC" && scratch_install_closure bin/lib/ph-pr-record.sh "$1" ) >/dev/null 2>&1
   printf 'proj %s - - 2 box\n' "$SLUG" > "$1/fleet.conf"
+  # BH-9938 C1: the default-branch memo a GitHub list read wrote (main), so a
+  # record open list can be served (pr_record_open_rest).
+  mkdir -p "$1/state/prr-default-branch"; echo main > "$1/state/prr-default-branch/example-org_proj-os"
   : > "$1/jobs-calls.txt"; : > "$1/gh-calls.txt"; : > "$1/alerts.txt"; : > "$1/fired.txt"
   cat > "$1/fakebin/gh" <<'EOF'
 #!/bin/bash
@@ -133,7 +136,7 @@ ghopen() {
 }
 mqobj() { # mqobj <state> <n> <epoch>
   jq -nc --arg s "$1" --argjson c "$((5000 + $2))" --arg at "$(iso "$3")" \
-    '{state: $s, code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: $c, at: $at}'
+    '{state: $s, code: null, draft_pr: null, failing_checks: [], left_sha: null, comment_id: $c, at: $at, updated_at: $at}'
 }
 ghcomment() { # ghcomment <h> <n> <state> <epoch>
   jq -nc --arg b "${DQBODY/\"state\": \"dequeued\"/\"state\": \"$3\"}" --arg u "$(iso "$4")" --argjson id "$((5000 + $2))" \
@@ -237,7 +240,7 @@ useam ph_open_record "$U/f" "$SLUG" 100; RC=$?
 [ "$(jq -c '.[0] | {number, title, html_url, draft, body, mergeable_state, created_at, updated_at, user, head, base, labels}' "$U/f")" \
   = "$(jq -c --arg s "$(sha 1001)" --arg c "$(iso $((NOW0 - 86400 + 1001)))" -n '{number: 1001, title: "X-1001 work",
       html_url: "https://github.com/example-org/proj-os/pull/1001", draft: false, body: "Refs #1001", mergeable_state: "clean",
-      created_at: $c, updated_at: $c, user: {login: "operator"}, head: {ref: "ticket/x-1001", sha: $s}, base: {ref: "main"},
+      created_at: $c, updated_at: $c, user: {login: "operator", type: "User"}, head: {ref: "ticket/x-1001", sha: $s}, base: {ref: "main", repo: {default_branch: "main"}},
       labels: [{name: "merge-queue"}, {name: "ai-build"}]}')" ] && ok || bad "U6: the row is not in the REST pulls shape: $(jq -c '.[0]' "$U/f")"
 # U6b without a window a truncated page is a miss (pr_record_list's rule, kept).
 useam ph_open_record "$U/f" "$SLUG" ""; RC=$?
@@ -275,7 +278,7 @@ useam ph_payload_record "$U/f" "$SLUG" 965; RC=$?
 useam ph_payload_record "$U/f" "$SLUG" 968; RC=$?
 [ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = unknown ] && ok || bad "U10: no row must miss unknown (rc=$RC out=$(cat "$U/out.txt"))"
 # U11 payload: an unparseable at -> malformed.
-row "$U" 966 '{"state":"dequeued","comment_id":7,"at":"yesterday"}' null
+row "$U" 966 '{"state":"dequeued","comment_id":7,"at":"yesterday","updated_at":"2025-11-24T12:00:00Z"}' null
 useam ph_payload_record "$U/f" "$SLUG" 966; RC=$?
 [ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = malformed ] && ok || bad "U11: a bad at must miss malformed (rc=$RC out=$(cat "$U/out.txt"))"
 
@@ -286,9 +289,64 @@ useam ph_status_record "$U/f" "$SLUG" 967 "$(sha 967)"; RC=$?
 [ "$RC" = 0 ] && [ "$(jq -c '.statuses | sort_by(.context)' "$U/f")" \
   = '[{"context":"harness-verdict","state":"pending","updated_at":"2025-11-24T11:00:00Z"},{"context":"lead-verdict","state":"success","updated_at":"2025-11-24T12:00:00Z"}]' ] \
   && ok || bad "U12: status shape (rc=$RC f=$(cat "$U/f" 2>/dev/null) out=$(cat "$U/out.txt"))"
-# U13 status: entries only for an older head -> miss none.
+# U13 status: a head that is not the row's head -> miss head (BH-9938 C1);
+# the row at that head with entries only for an older head -> miss none.
 useam ph_status_record "$U/f" "$SLUG" 967 "$(sha 2)"; RC=$?
-[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = none ] && ok || bad "U13: another head must miss none (rc=$RC out=$(cat "$U/out.txt"))"
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = head ] && ok || bad "U13: another head must miss head (rc=$RC out=$(cat "$U/out.txt"))"
+jq -c --arg h "$(sha 2)" '.row.head_sha = $h' "$U/rec/967.json" > "$U/x" && mv "$U/x" "$U/rec/967.json"
+useam ph_status_record "$U/f" "$SLUG" 967 "$(sha 2)"; RC=$?
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = none ] && ok || bad "U13: entries only for an older head must miss none (rc=$RC out=$(cat "$U/out.txt"))"
+
+# U19 (BH-9938 C1, A4): the record open list needs the default-branch memo
+# to say main. Another branch or no memo is a miss field:default_branch; a
+# GitHub list read writes the memo.
+list "$U" 30 false "$(lrow 991 ai-build)"
+echo develop > "$U/state/prr-default-branch/example-org_proj-os"
+useam ph_open_record "$U/f" "$SLUG" 30; RC=$?
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = field:default_branch ] && ok || bad "U19: memo develop must miss (rc=$RC out=$(cat "$U/out.txt"))"
+rm -f "$U/state/prr-default-branch/example-org_proj-os"
+useam ph_open_record "$U/f" "$SLUG" 30; RC=$?
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = field:default_branch ] && ok || bad "U19: no memo must miss (rc=$RC out=$(cat "$U/out.txt"))"
+echo main > "$U/state/prr-default-branch/example-org_proj-os"
+useam ph_open_record "$U/f" "$SLUG" 30; RC=$?
+[ "$RC" = 0 ] && [ "$(jq -r '.[0].base.repo.default_branch' "$U/f")" = main ] && ok || bad "U19: memo main must hit with default_branch main (rc=$RC f=$(cat "$U/f" 2>/dev/null))"
+echo '[{"number":1,"base":{"ref":"develop","repo":{"default_branch":"develop"}}}]' > "$U/gh-list.json"
+useam pr_record_default_branch_note "$SLUG" "$U/gh-list.json"
+[ "$(cat "$U/state/prr-default-branch/example-org_proj-os")" = develop ] && ok || bad "U19: a GitHub list read must write the memo: $(cat "$U/state/prr-default-branch/example-org_proj-os")"
+echo main > "$U/state/prr-default-branch/example-org_proj-os"
+
+# U15-U18 (BH-9938 C1, the C0 review notes A2, A3, A7).
+# U15 status: only harness-verdict for the head -> miss field:lead-verdict.
+row "$U" 969 null null "$(jq -nc --arg s "$(sha 969)" '{"harness-verdict": {state: "success", sha: $s, at: "2025-11-24T12:00:00Z"}}')"
+useam ph_status_record "$U/f" "$SLUG" 969 "$(sha 969)"; RC=$?
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = field:lead-verdict ] && ok || bad "U15: no lead-verdict entry must miss field:lead-verdict (rc=$RC out=$(cat "$U/out.txt"))"
+# U16 payload: the epoch is updated_at (the edit time sdq_payload_last reads);
+# a row without updated_at misses field:updated_at.
+row "$U" 970 "$(mqobj dequeued 970 $((NOW0 - 2700)) | jq -c --arg u "$(iso $((NOW0 - 600)))" '.updated_at = $u')" null
+useam ph_payload_record "$U/f" "$SLUG" 970; RC=$?
+[ "$RC" = 0 ] && [ "$(cut -f2 "$U/f")" = "$((NOW0 - 600))" ] && ok || bad "U16: the epoch must be updated_at (rc=$RC f=$(cat "$U/f" 2>/dev/null))"
+ghcomment "$U" 970 dequeued $((NOW0 - 600))
+u16gh() { . "$HARNESS/bin/lib/mc-stale-dequeue.sh" || return 9; ph_payload_github "$1" example-org/proj-os 970; }
+useam u16gh "$U/g"; RC=$?
+[ "$RC" = 0 ] && cmp -s "$U/f" "$U/g" && ok || bad "U16: the record epoch must equal sdq_payload_last's (rec=$(cat "$U/f") gh=$(cat "$U/g" 2>/dev/null))"
+row "$U" 971 "$(mqobj dequeued 971 $((NOW0 - 2700)) | jq -c 'del(.updated_at)')" null
+useam ph_payload_record "$U/f" "$SLUG" 971; RC=$?
+[ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = field:updated_at ] && ok || bad "U16: a row with no updated_at must miss (rc=$RC out=$(cat "$U/out.txt"))"
+# U17 the age check (PR_RECORD_FIELD_MAX_AGE_S, default 3900): age = knob + 1 is stale for the payload,
+# status and hct reads; age = knob is a hit.
+for age in 3901 3900; do
+  row "$U" 972 "$(mqobj dequeued 972 $((NOW0 - 2700)))" "$(jq -nc --arg s "$(sha 972)" '{sha: $s, at: "2025-11-24T12:00:00Z"}')" \
+    "$(jq -nc --arg s "$(sha 972)" '{"lead-verdict": {state: "success", sha: $s, at: "2025-11-24T12:00:00Z"}}')" "$age"
+  for fn in "ph_payload_record $U/f $SLUG 972" "ph_status_record $U/f $SLUG 972 $(sha 972)" "ph_hct_record $U/f $SLUG 972 $(sha 972)"; do
+    # shellcheck disable=SC2086
+    useam $fn; RC=$?
+    if [ "$age" = 3901 ]; then
+      [ "$RC" = 1 ] && [ "$(cat "$U/out.txt")" = stale ] && ok || bad "U17: ${fn%% *} at age 3901 must miss stale (rc=$RC out=$(cat "$U/out.txt"))"
+    else
+      [ "$RC" = 0 ] && ok || bad "U17: ${fn%% *} at age 3900 must be a hit (rc=$RC out=$(cat "$U/out.txt"))"
+    fi
+  done
+done
 
 # U14 norms: equal for equal data, unequal for a changed number, state or verdict.
 normeq() { # normeq <name> <fn> <a-file> <b-file> <equal|differ>
@@ -352,7 +410,7 @@ lu_fixture() {
   ghopen "$h"
   row "$h" 951 null null "$(jq -nc --arg s "$(sha 951)" --arg st "$lead951" --arg at "$(iso $((NOW0 - 3600)))" '{"lead-verdict": {state: $st, sha: $s, at: $at}}')"
   row "$h" 952 null null "$(jq -nc --arg s "$(sha 952)" --arg at "$(iso $((NOW0 - 3600)))" '{"lead-verdict": {state: "failure", sha: $s, at: $at}, "harness-verdict": {state: "success", sha: $s, at: $at}}')"
-  row "$h" 953 null null "$(jq -nc --arg s "$(sha 953)" --arg at "$(iso $((NOW0 - 3600)))" '{"harness-verdict": {state: "pending", sha: $s, at: $at}}')"
+  row "$h" 953 null null "$(jq -nc --arg s "$(sha 953)" --arg at "$(iso $((NOW0 - 3600)))" '{"lead-verdict": {state: "pending", sha: $s, at: $at}, "harness-verdict": {state: "pending", sha: $s, at: $at}}')"
 }
 P2="$T/p2"; mkh "$P2"; lu_fixture "$P2" pending
 drive "$P2" "open lu" GH_SOURCE=record LEAD_REVIEW_AUTO_REPOS="$SLUG"

@@ -350,7 +350,16 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
         say "$KEY: another claude account can serve, so OpenRouter is off on this machine (OPENROUTER_FALLBACK=off)"
       fi
     else
-      say "$KEY ships the default project-6 token (${PAREASON:-no answer})"
+      # >>> default-token line (BH-10141)
+      # Name the token that ships, not an account: the first 8 hex of the sha256
+      # of the bundle's last CLAUDE_CODE_OAUTH_TOKEN line, and where the bundle
+      # came from (fly-envbundle.sh writes bundle-source). Never the token.
+      PTFP=none; PTSRC="unknown source"
+      command -v pool_bundle_token_fp >/dev/null 2>&1 && PTFP=$(pool_bundle_token_fp "$TMP/global.env")
+      if [ "$PULL" = 1 ]; then PTSRC="pull base"
+      elif [ -s "$TMP/bundle-source" ]; then PTSRC=$(head -n 1 "$TMP/bundle-source"); fi
+      say "$KEY ships the owning box's default claude token, fp $PTFP from $PTSRC (${PAREASON:-no answer})"
+      # <<< default-token line
     fi
   fi
   # THE DEFAULT TOKEN STILL NEEDS A LABEL (2026-09-16). The lease path writes

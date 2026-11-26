@@ -156,7 +156,7 @@ function wholeRow(byKey, key, min) {
   const n = Number(v);
   return Number.isSafeInteger(n) && n >= min ? n : null;
 }
-function knobs(byKey) {
+export function knobs(byKey) {
   return {
     stuckMin: wholeRow(byKey, "ticket_status.stuck_min", 0) ?? STUCK_MIN_DEFAULT,
     batchMax: wholeRow(byKey, "ticket_status.batch_max", 1) ?? BATCH_MAX_DEFAULT,
@@ -288,7 +288,7 @@ export function ticketState(r, nowMs) {
 
 // Every table the loader reads exists, and build_queue / pr_records carry
 // their added columns and indexes. All cached per isolate: 0 statements warm.
-async function ensureAll(env) {
+export async function ensureAll(env) {
   await Promise.all(["pool_holds", "pool_markers", "pool_spawns", "pool_terminals", "ticket_events", "ticket_edges", "pr_records"]
     .map((tbl) => ensureTable(env, tbl)));
   await Promise.all([ensureColumns(env, "build_queue"), ensureColumns(env, "pr_records")]);

@@ -1,0 +1,5 @@
+# catalog/splits.d/bh-9704-rb-plan.tsv — the PLAN-stage lib bin/lib/rb/plan.sh is a committed
+# render of config/rb-plan.d/ (bin/render-split.sh). Mode 644: the lib is sourced, not
+# executed (stat gives 644 at main 869069b4).
+# <render path> TAB <fragment dir>/ TAB <octal mode>
+bin/lib/rb/plan.sh	config/rb-plan.d/	644

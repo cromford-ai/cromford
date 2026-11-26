@@ -1,0 +1,7 @@
+# suite	seconds (fixture: the operator measured 488 s for docs-guide-pages, 2026-11-17)
+tests/docs-guide-pages.bh-6507-test.sh	488
+tests/execute-resume.bh-9123-test.sh	41
+tests/execute-empty.bh-9021-test.sh	12
+tests/name-guard.bh-8918-test.sh	30
+tests/tracker-contract-test.sh	9
+tests/plan-gate-test.sh	20

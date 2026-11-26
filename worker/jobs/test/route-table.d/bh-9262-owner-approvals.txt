@@ -1,0 +1,6 @@
+# OWNER APPROVALS (BH-9262 C1): the inbox a chat caller files into when an
+# owner command needs a proof the hub does not hold. Filing and the list take
+# the fleet bearer; decide (POST /api/owner-approvals/:id/decide) also needs the human token or the Pages box-ops proof.
+POST /api/owner-approvals
+GET /api/owner-approvals
+POST re:/^\/api\/owner-approvals\/(\d+)\/decide$/

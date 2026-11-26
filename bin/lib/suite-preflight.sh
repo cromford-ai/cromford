@@ -112,18 +112,62 @@ sp_knob() {
   printf '%s' "$v"
 }
 
-# sp_install <dir> <log-file> — the ONE setup attempt: `npm ci` with a lockfile,
-#   else `npm install --no-package-lock` (no stray lockfile in the worktree),
-#   bounded by the SUITE_PREFLIGHT_SETUP_S knob, output appended to
-#   <log-file>. Sets SP_SETUP="<cmd> (rc=<n>)" and returns the rc. The rc alone
-#   is not trusted: the caller runs sp_hard again.
+# sp_pm <dir> — the install command the repo's lock file names (BH-10128). Sets
+#   SP_PM_CMD (array), SP_PM_TOOL (pnpm|yarn|npm), SP_PM_MISS (the tool when
+#   neither it nor corepack is on PATH, else empty) and SP_PM_NOTE (the lock
+#   choice when more than one lock file is present, else empty).
+#     pnpm-lock.yaml     pnpm install --frozen-lockfile
+#     yarn.lock          yarn install --frozen-lockfile (--immutable with .yarnrc.yml: berry)
+#     package-lock.json  npm ci --no-audit --no-fund
+#     none               npm install --no-audit --no-fund --no-package-lock
+#   Order: pnpm, then yarn, then npm. pnpm and yarn go through corepack when
+#   package.json has a packageManager field, or when the tool itself is not on
+#   PATH. A pnpm or yarn repo NEVER falls back to npm: npm stops on a pnpm repo
+#   (project-3, 2026-11-25), and that fallback was this defect.
+sp_pm() {
+  local d="${1:-.}" f lock="" others=""
+  SP_PM_CMD=(npm install --no-audit --no-fund --no-package-lock); SP_PM_TOOL=npm; SP_PM_MISS=""; SP_PM_NOTE=""
+  for f in pnpm-lock.yaml yarn.lock package-lock.json; do
+    [ -f "$d/$f" ] || continue
+    if [ -z "$lock" ]; then lock="$f"; else others="${others:+$others }$f"; fi
+  done
+  [ -n "$others" ] && SP_PM_NOTE="$lock chosen over $others"
+  case "$lock" in
+    pnpm-lock.yaml) SP_PM_TOOL=pnpm; SP_PM_CMD=(pnpm install --frozen-lockfile) ;;
+    yarn.lock)      SP_PM_TOOL=yarn; SP_PM_CMD=(yarn install --frozen-lockfile)
+                    [ -f "$d/.yarnrc.yml" ] && SP_PM_CMD=(yarn install --immutable) ;;
+    package-lock.json) SP_PM_CMD=(npm ci --no-audit --no-fund); return 0 ;;
+    *) return 0 ;;
+  esac
+  if command -v corepack >/dev/null 2>&1 \
+     && { grep -qE '"packageManager"[[:space:]]*:' "$d/package.json" 2>/dev/null \
+          || ! command -v "$SP_PM_TOOL" >/dev/null 2>&1; }; then
+    SP_PM_CMD=(corepack "${SP_PM_CMD[@]}")
+  elif ! command -v "$SP_PM_TOOL" >/dev/null 2>&1; then
+    SP_PM_MISS="$SP_PM_TOOL"
+  fi
+  return 0
+}
+
+# sp_install <dir> <log-file> — the ONE setup attempt with the command sp_pm
+#   picks, bounded by the SUITE_PREFLIGHT_SETUP_S knob, output appended to
+#   <log-file>. Sets SP_SETUP="<cmd> (rc=<n>)" and returns the rc; a
+#   bracketed note follows the rc when the tool is not on the box (rc 127,
+#   nothing runs) or more than one lock file is present. The rc alone is not
+#   trusted: the caller runs sp_hard again.
 sp_install() {
-  local d="${1:-.}" log="${2:-/dev/null}" rc to
-  local cmd=(npm install --no-audit --no-fund --no-package-lock)
-  [ -f "$d/package-lock.json" ] && cmd=(npm ci --no-audit --no-fund)
-  to=$(sp_knob SUITE_PREFLIGHT_SETUP_S "${PROJECT:-}")
-  ( cd "$d" && timeout "$to" "${cmd[@]}" ) >> "$log" 2>&1; rc=$?
-  SP_SETUP="${cmd[*]} (rc=$rc)"
+  local d="${1:-.}" log="${2:-/dev/null}" rc to note=""
+  sp_pm "$d"
+  if [ -n "$SP_PM_MISS" ]; then
+    note="$SP_PM_MISS not found on this box"
+    echo "suite-preflight: $note (no $SP_PM_MISS and no corepack on PATH); $SP_PM_TOOL repo, npm is not used" >> "$log" 2>/dev/null
+    rc=127
+  else
+    to=$(sp_knob SUITE_PREFLIGHT_SETUP_S "${PROJECT:-}")
+    ( cd "$d" && export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 && timeout "$to" "${SP_PM_CMD[@]}" ) >> "$log" 2>&1; rc=$?
+  fi
+  [ -n "$SP_PM_NOTE" ] && note="${note:+$note; }$SP_PM_NOTE"
+  SP_SETUP="${SP_PM_CMD[*]} (rc=$rc)${note:+ [$note]}"
   return "$rc"
 }
 

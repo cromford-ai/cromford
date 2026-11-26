@@ -109,8 +109,11 @@
 #     both verdicts are clean, 2 as before when the run cannot be trusted.
 #   --verdict <file> writes the two verdicts separately, so CI's two fan-in
 #   checks each judge their own: `tests=<n>`, `failed=<k>`, `hits=<h>`,
-#   `pure=pass|fail`, `trace=clean|dirty`. It is written ONLY when the scan
+#   `pure=pass|fail`, `trace=clean|dirty`, then `notrun=<k>` (tests the shard
+#   budget did not start), `timeout_names=` and `notrun_names=` (comma lists of
+#   repo-relative paths, empty when none). It is written ONLY when the scan
 #   completed, so a missing file means "did not run" and both fan-ins go red.
+#   pure=pass needs no failure AND no not-run test.
 #   --timings <file> (BH-5518) writes one `<suite>\t<seconds>\t<rc>` row per
 #   suite: the path from tests/ on, the wall time to 0.1 s of the test AND its
 #   trace scan (BH-6876: the scan is shard time the weights must carry; the
@@ -131,6 +134,16 @@
 #
 # KNOBS:
 #   TRACE_SAFETY_TEST_TIMEOUT  per-test timeout in whole seconds (default 600)
+#   TRACE_SAFETY_SHARD_BUDGET_S  --gate only: whole seconds the whole run may
+#                              take, from TRACE_SAFETY_T0 (default 0 = no
+#                              budget). A test starts with a timeout of
+#                              min(TRACE_SAFETY_TEST_TIMEOUT, time left); once
+#                              the budget is spent no test starts: it prints
+#                              `NOTRUN <path> (shard budget <B>s spent)` and is
+#                              counted as not run. CI sets it below its job cap,
+#                              so a slow shard still writes its verdict.
+#   TRACE_SAFETY_T0            epoch seconds the budget counts from (default
+#                              this script's start; CI passes its job start)
 #   TRACE_SAFETY_KEEP=1        keep the work dir and every trace, print where
 #   HARNESS_TEST_SANDBOX=1     required to run as root next to a live harness
 #   HARNESS_ROOT_OVERRIDE      what "a live harness" means (default /root/harness)
@@ -244,6 +257,18 @@ TEST_TIMEOUT="${TRACE_SAFETY_TEST_TIMEOUT:-600}"
 case "$TEST_TIMEOUT" in
   ''|*[!0-9]*) die "TRACE_SAFETY_TEST_TIMEOUT must be a whole number of seconds, got '$TEST_TIMEOUT'" ;;
 esac
+# The shard budget. 0 (the fallback) is no budget; CI passes the repo variable
+# TRACE_SAFETY_SHARD_BUDGET_S (fallback 2400 in config/harness-ci/160-tests-shard).
+SHARD_BUDGET="${TRACE_SAFETY_SHARD_BUDGET_S:-0}"
+case "$SHARD_BUDGET" in
+  ''|*[!0-9]*) die "TRACE_SAFETY_SHARD_BUDGET_S must be a whole number of seconds, got '$SHARD_BUDGET'" ;;
+esac
+SHARD_BUDGET=$((10#$SHARD_BUDGET))
+BUDGET_T0="${TRACE_SAFETY_T0:-$EPOCHSECONDS}"
+case "$BUDGET_T0" in
+  ''|*[!0-9]*) die "TRACE_SAFETY_T0 must be whole epoch seconds, got '$BUDGET_T0'" ;;
+esac
+BUDGET_T0=$((10#$BUDGET_T0))
 # SIGPIPE AT ITS DEFAULT ACTION (BH-5544). The CI runners start their steps with
 # SIGPIPE ignored (PR #5221), a process inherits that through every exec, and bash
 # cannot reset a signal ignored at entry. A test written on a laptop then sees
@@ -275,6 +300,8 @@ if [ "$GATE" = 1 ]; then
 fi
 shopt -u nullglob
 [ -z "$VERDICT" ] || [ "$GATE" = 1 ] || die "--verdict is only meaningful with --gate"
+[ "$SHARD_BUDGET" -eq 0 ] || [ "$GATE" = 1 ] || [ "$MODE" = list ] \
+  || die "TRACE_SAFETY_SHARD_BUDGET_S is only meaningful with --gate (the plain lane's verdict is hits over every test)"
 [ -z "$TIMINGS" ] || [ "$GATE" = 1 ] || die "--timings is only meaningful with --gate"
 if [ -n "$TIMINGS" ]; then
   { mkdir -p "$(dirname "$TIMINGS")" && : > "$TIMINGS"; } 2>/dev/null || die "cannot write the timings file $TIMINGS"
@@ -709,9 +736,28 @@ function loose_scan(c,   raw) {
 '
 
 # ── run every test, read every trace ────────────────────────────────────────
-NTESTS=0; NEXIT=0; NHIT=0
+NTESTS=0; NEXIT=0; NHIT=0; NNOTRUN=0
+TIMEOUT_NAMES=""; NOTRUN_NAMES=""
 for TEST_PATH in "${TESTS[@]}"; do
   NAME="$(basename "$TEST_PATH")"
+  REL="${TEST_PATH#"$ROOT"/}"
+  # The shard budget: the time left caps this test's timeout, and a spent
+  # budget starts no test at all. A not-run test gets no `--- <test> rc=` line,
+  # so bin/suite-reuse.sh never records it as a pass. The budget is this run's
+  # own: the test runs with TRACE_SAFETY_SHARD_BUDGET_S and TRACE_SAFETY_T0
+  # unset (env -u below), or a suite that runs the plain lane would inherit
+  # CI's budget and be refused rc 2.
+  THIS_TIMEOUT=$TEST_TIMEOUT; BY_BUDGET=0
+  if [ "$SHARD_BUDGET" -gt 0 ]; then
+    LEFT=$((BUDGET_T0 + SHARD_BUDGET - EPOCHSECONDS))
+    if [ "$LEFT" -le 0 ]; then
+      echo "NOTRUN $REL (shard budget ${SHARD_BUDGET}s spent)"
+      NNOTRUN=$((NNOTRUN + 1))
+      NOTRUN_NAMES="${NOTRUN_NAMES:+$NOTRUN_NAMES,}$REL"
+      continue
+    fi
+    if [ "$LEFT" -lt "$TEST_TIMEOUT" ]; then THIS_TIMEOUT=$LEFT; BY_BUDGET=1; fi
+  fi
   # The work files are keyed on the path relative to the root, not the
   # basename: --gate adds tests/mc/, and a suite there may share a basename with
   # one in tests/. The names PRINTED stay basenames, as they always were.
@@ -733,23 +779,29 @@ for TEST_PATH in "${TESTS[@]}"; do
     T0=$SECONDS; E0=$EPOCHREALTIME
     ( cd "$ROOT" && exec 199>"$TRACE" \
       && ${DFL_PIPE[@]+"${DFL_PIPE[@]}"} env -u HARNESS -u H -u HARNESS_CHECKOUT -u SCRATCH -u T \
+             -u TRACE_SAFETY_SHARD_BUDGET_S -u TRACE_SAFETY_T0 \
              GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" BASH_ENV="$WORK/trace-env.sh" \
-             timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) </dev/null >"$ERRF" 2>&1
+             timeout "$THIS_TIMEOUT" bash "$TEST_PATH" ) </dev/null >"$ERRF" 2>&1
     RC=$?
     echo "--- ${TEST_PATH#"$ROOT"/} rc=$RC $((SECONDS - T0))s"
     [ "$RC" -eq 0 ] || print_redacted "$ERRF"
   else
     ( cd "$ROOT" && exec 199>"$TRACE" \
       && ${DFL_PIPE[@]+"${DFL_PIPE[@]}"} env -u HARNESS -u H -u HARNESS_CHECKOUT -u SCRATCH -u T \
+             -u TRACE_SAFETY_SHARD_BUDGET_S -u TRACE_SAFETY_T0 \
              GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" BASH_ENV="$WORK/trace-env.sh" \
-             timeout "$TEST_TIMEOUT" bash "$TEST_PATH" ) >"$OUTF" 2>"$ERRF"
+             timeout "$THIS_TIMEOUT" bash "$TEST_PATH" ) >"$OUTF" 2>"$ERRF"
     RC=$?
   fi
 
   EXIT_LINE=""
   if [ "$RC" -ne 0 ]; then
     NEXIT=$((NEXIT + 1))
-    if [ "$RC" -eq 124 ]; then EXIT_LINE="TIMEOUT $NAME (killed after ${TEST_TIMEOUT}s)"
+    if [ "$RC" -eq 124 ]; then
+      TIMEOUT_NAMES="${TIMEOUT_NAMES:+$TIMEOUT_NAMES,}$REL"
+      if [ "$BY_BUDGET" = 1 ]; then EXIT_LINE="TIMEOUT $NAME (killed after ${THIS_TIMEOUT}s, shard budget)"
+      else EXIT_LINE="TIMEOUT $NAME (killed after ${TEST_TIMEOUT}s)"
+      fi
     else EXIT_LINE="EXIT $RC $NAME"
     fi
   fi
@@ -821,21 +873,24 @@ for TEST_PATH in "${TESTS[@]}"; do
   rm -f "$OUTF"
 done
 
+[ "$NNOTRUN" -eq 0 ] \
+  || echo "BUDGET: $NNOTRUN of ${#TESTS[@]} tests not run (shard budget ${SHARD_BUDGET}s)"
 echo "TRACE: $NTESTS tests, $NEXIT nonzero exit(s), $NHIT hit(s)"
 if [ "$GATE" = 1 ]; then
   # Two verdicts from one run. The file is the fan-in jobs' input and is written
   # only here, after every test ran and every trace was read: every rc 2 above
   # exits before this line, so a missing file is a scan that did not complete.
-  PURE=pass; [ "$NEXIT" -eq 0 ] || PURE=fail
+  PURE=pass; [ "$NEXIT" -eq 0 ] && [ "$NNOTRUN" -eq 0 ] || PURE=fail
   TRC=clean; [ "$NHIT" -eq 0 ] || TRC=dirty
   if [ -n "$VERDICT" ]; then
     mkdir -p "$(dirname "$VERDICT")" 2>/dev/null
     { echo "tests=$NTESTS"; echo "failed=$NEXIT"; echo "hits=$NHIT"
-      echo "pure=$PURE"; echo "trace=$TRC"; } > "$VERDICT" \
+      echo "pure=$PURE"; echo "trace=$TRC"; echo "notrun=$NNOTRUN"
+      echo "timeout_names=$TIMEOUT_NAMES"; echo "notrun_names=$NOTRUN_NAMES"; } > "$VERDICT" \
       || die "cannot write the verdict file $VERDICT"
   fi
   echo "GATE: pure-logic $PURE ($NEXIT of $NTESTS failed), trace $TRC ($NHIT hit(s))"
-  [ "$NHIT" -eq 0 ] && [ "$NEXIT" -eq 0 ]
+  [ "$NHIT" -eq 0 ] && [ "$NEXIT" -eq 0 ] && [ "$NNOTRUN" -eq 0 ]
   exit $?
 fi
 [ "$NHIT" -eq 0 ]

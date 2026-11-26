@@ -1,0 +1,7 @@
+# catalog/splits.d/bh-9704-fly-pool.tsv — the Fly pool script bin/fly-pool.sh is a committed
+# render of config/fly-pool.d/ (bin/render-split.sh, BH-9704 C1). Mode 755: the script is
+# executed. Extension sh: bin/fly-pool-build.sh (BH-7454) and the fragment README name the
+# fragments NNNN-<name>.sh. Both renderers give the same bytes (the LC_ALL=C `cat` of the
+# fragments); render-split's --write adds the merge guard the Generated files row needs.
+# <render path> TAB <fragment dir>/ TAB <octal mode> TAB <fragment ext>
+bin/fly-pool.sh	config/fly-pool.d/	755	sh

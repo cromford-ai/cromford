@@ -1,0 +1,76 @@
+# >>> pr-body-requires note (BH-7378)
+# The planner lists each section or literal the PR body must carry in a
+# fenced ```pr-body-requires block, and the pre-review self-check NOTEs each
+# one the live body lacks. It rides in front of PLAN ONLY through
+# UI_PLAN_NOTE, so the prompt line itself does not change. No lib on the box:
+# the variable stays as it was.
+# shellcheck source=bin/lib/pr-body-requires.sh
+[ -r "$HARNESS/bin/lib/pr-body-requires.sh" ] && . "$HARNESS/bin/lib/pr-body-requires.sh" 2>/dev/null
+command -v pbr_plan_rule >/dev/null 2>&1 && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(pbr_plan_rule) "
+# <<< pr-body-requires note (BH-7378)
+# >>> changed symbols note (BH-5791)
+# The planner lists the symbols it changes, so the design collisions block
+# below can check them against main and the open PRs. It rides in front of
+# PLAN ONLY through UI_PLAN_NOTE, so the prompt line itself does not change.
+# No lib on the box: the variable stays as it was.
+# shellcheck source=bin/lib/plan-collisions.sh
+[ -r "$HARNESS/bin/lib/plan-collisions.sh" ] && . "$HARNESS/bin/lib/plan-collisions.sh" 2>/dev/null
+command -v pc_plan_note >/dev/null 2>&1 && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(pc_plan_note) "
+# <<< changed symbols note (BH-5791)
+# >>> stack section note (BH-6389)
+# A child planned on its parent's OPEN branch is told the `## Stack` rule; the
+# note is empty unless the stacked child block left $BUILD/stack-wait-pending.
+SWN_NOTE=""; command -v sw_plan_note >/dev/null 2>&1 && SWN_NOTE=$(sw_plan_note "$BUILD")
+[ -n "$SWN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$SWN_NOTE "
+# <<< stack section note (BH-6389)
+# >>> migration number note (BH-7325)
+# A project with a migrations_glob.<project> row and numbered files on main
+# (<dir>/NNNN_<name>.sql) gets its next number RESERVED here, before the
+# pre-plan adoption and the CC plan call, so the row exists before any file is
+# written. bin/lib/migration-number.sh decides; an outage leaves the number
+# unreserved and says so in the note. Kill switch: the settings row
+# migration_number.reserve = 0 (MIGRATION_NUMBER_RESERVE=0 on a box overrides).
+MN_NOTE=""
+# shellcheck source=bin/lib/migration-number.sh
+[ -r "$HARNESS/bin/lib/migration-number.sh" ] && . "$HARNESS/bin/lib/migration-number.sh" 2>/dev/null
+if command -v mn_plan_note >/dev/null 2>&1; then
+  MN_NOTE=$(mn_plan_note "$PROJECT" "$KEY" . "origin/${BASE:-main}" "${BRANCH:-}" 2>>"$BUILD/pipeline.log")
+  [ -n "$MN_NOTE" ] && UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$MN_NOTE "
+  [ -s "$BUILD/migration-number.txt" ] && echo "$(STAMP) [$PROJECT/$KEY] migration-number: $(head -1 "$BUILD/migration-number.txt")" >> "$BUILD/pipeline.log"
+fi
+# <<< migration number note (BH-7325)
+# >>> spec intake (BH-8840)
+# A Spec line that mixes prose, quotes or globs with its path is read here by
+# the path rule (bin/lib/spec-trace.sh st_intake), before any paid plan call.
+# The readable tokens go into ticket-meta.json as .spec_trace, which the note,
+# the plan gate and the review lens read. A line that names no readable file
+# holds the ticket with ONE comment (thc_run hold) and starts no plan; a failed
+# hold leaves no COMMENTED, so the sweep posts plan.md's sentence. A clean line,
+# a resume, no lib or a base ref that does not resolve: nothing changes here.
+# shellcheck source=bin/lib/spec-trace.sh
+[ -r "$HARNESS/bin/lib/spec-trace.sh" ] && . "$HARNESS/bin/lib/spec-trace.sh" 2>/dev/null
+if [ -s "$BUILD/ticket-meta.json" ] && command -v st_intake >/dev/null 2>&1; then
+  SI_OUT=$(st_intake . "origin/${BASE:-main}" "$BUILD/ticket-meta.json" 2>>"$BUILD/pipeline.log"); SI_RC=$?
+  printf '%s\n' "$SI_OUT" > "$BUILD/spec-intake.txt"
+  case "$SI_OUT" in "SPEC_INTAKE: ok"*|"SPEC_INTAKE: refuse"*|"SPEC_INTAKE: unknown"*)
+    echo "$(STAMP) [$PROJECT/$KEY] spec-intake: $SI_OUT" >> "$BUILD/pipeline.log" ;;
+  esac
+  if [ "$SI_RC" = 3 ]; then
+    SI_MSG='The Spec line names no readable file. Write it as `Spec: <path>[#section]`.'
+    printf 'BLOCKED: SPEC intake :: %s\n\n%s\n' "$SI_MSG" "$SI_OUT" > "$BUILD/plan.md"
+    # shellcheck source=bin/lib/ticket-hold-cmd.sh
+    command -v thc_run >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/ticket-hold-cmd.sh" ] && . "$HARNESS/bin/lib/ticket-hold-cmd.sh"; }
+    SI_HRC=1; SI_HOUT="ticket-hold-cmd.sh is not on this box"
+    if command -v thc_run >/dev/null 2>&1; then
+      SI_HOUT=$(thc_run hold "$PROJECT" "$(jq -nc --arg t "$KEY" --arg r "$SI_MSG" '{ticket:$t,reason:$r,actor:"spec-intake"}')" 2>/dev/null); SI_HRC=$?
+    fi
+    if [ "$SI_HRC" = 0 ]; then
+      touch "$BUILD/COMMENTED"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] SPEC intake: the Spec line of $KEY names no readable file and the hold failed (rc=$SI_HRC: $(printf '%s' "$SI_HOUT" | tr '\n' ' ' | cut -c1-160)). No plan ran; the results sweep posts plan.md's sentence." >> "$ALERTS"
+    fi
+    BB plan_blocked "" "" "" false "$(head -c 1200 "$BUILD/plan.md" 2>/dev/null)"
+    RESULT "PLAN_BLOCKED $BUILD/plan.md"; exit 4
+  fi
+fi
+# <<< spec intake (BH-8840)
