@@ -656,7 +656,8 @@ mc_settle_merged() { # … <head> [merge-sha]
     # filed answers from the record's `filed` ledger and posts nothing twice.
     # $key here is the conductor's <slug>#<n>, not the board KEY: the KEY and
     # the board id come from the build record's job.json, else the KEY from
-    # the ticket/<key>[-r<n>] branch.
+    # the ticket/<key>[-r<n>] branch, else the KEY the PR title leads with.
+    local ptitle="" ptre='^[[:space:][]*([A-Z][A-Z0-9]*-[0-9]+)'
     if [ -n "$rec" ] && [ -r "$rec/job.json" ]; then
       bkey=$(jq -r '.key // empty' "$rec/job.json" 2>/dev/null)
       btid=$(jq -r '.ticket_id // empty' "$rec/job.json" 2>/dev/null)
@@ -664,8 +665,14 @@ mc_settle_merged() { # … <head> [merge-sha]
     if [ -z "$bkey" ] && [[ "$br" =~ ^ticket/([A-Za-z]+-[0-9]+)(-r[0-9]+)?$ ]]; then
       bkey=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:lower:]' '[:upper:]')
     fi
+    # A hand-opened PR (BH-10080, TK-604 #913) has no record and no ticket/
+    # branch: the KEY its title leads with, as sco_plan_fetch reads it.
     if [ -z "$bkey" ]; then
-      mc_log "$key board slice settle NOT spawned: no board KEY in the record or the branch ($br)"
+      ptitle=$(mc_pr_view "$url" .title 2>/dev/null) || ptitle=""
+      [[ "$ptitle" =~ $ptre ]] && bkey="${BASH_REMATCH[1]}"
+    fi
+    if [ -z "$bkey" ]; then
+      mc_log "$key board slice settle NOT spawned: no board KEY in the record, the branch ($br) or the PR title"
     else
       mkdir -p "$MC_H/logs" 2>/dev/null
       ( HARNESS="$MC_H" setsid "$MC_H/bin/slice-board-settle.sh" "$project" "$bkey" "$url" "${rec:--}" ${btid:+--ticket "$btid"} --park 1 \

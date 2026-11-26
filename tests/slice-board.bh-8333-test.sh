@@ -97,6 +97,9 @@ esac
 exit 0
 SH
 chmod +x "$T/stub/curl"
+# GitHub is never called: mc_settle_merged reads a PR title for a merge with no
+# KEY (BH-10080), and this stub answers every gh call with a failure.
+printf '#!/bin/bash\nexit 1\n' > "$T/stub/gh"; chmod +x "$T/stub/gh"
 printf '[{"id":"rb-1","capabilities":["dependencies"]}]\n' > "$T/boards-cap.json"
 printf '[{"id":"rb-1","capabilities":["reactions"]}]\n' > "$T/boards-nocap.json"
 
@@ -303,7 +306,11 @@ case_dir S6; rec_c0 s6
 settle "$REC" "$CUID" 1 CURL_FAIL_CREATE=2
 [ "$SW|$SRC" = "deferred:file-failed|1" ] && ok || bad "S6: a failed create gives deferred:file-failed (got $SW|$SRC)"
 [ "$(cat "$REC/slice-board/children.txt")" = LG-101 ] && ok || bad "S6: the record holds child 1"
-[ "$(comments)$(moves)" = 00 ] && ok || bad "S6: nothing posted on the master before every child exists"
+# BH-10080: a failed filing posts ONE note that says the rest is NOT filed
+# yet (Scope 3: "on any failure"), never a filed claim and never a move.
+[ "$(moves)" = 0 ] && ok || bad "S6: no move before every child exists"
+[ "$(comments)" = 1 ] && body_n '/comments ' 1 | jq -r .body | grep -q 'NOT filed yet' && ok || bad "S6: one note says NOT filed yet (got $(comments))"
+grep -q 'We filed' <<<"$(body_n '/comments ' 1)" && bad "S6: nothing claims a filing before every child exists" || ok
 grep -q 'slice-board-failed:ledger-os:LG-9:752' "$ALERT_LOG" && ok || bad "S6: one failed page"
 : > "$CURL_LOG"
 settle "$REC" "$CUID" 1
@@ -337,10 +344,15 @@ settle_remote 0
 [ "$SW|$SRC" = "filed:LG-101,LG-102|0" ] && ok || bad "S8: the merged spec is fetched and filed (got $SW|$SRC; $(tail -3 "$T/settle.err"))"
 grep -q 'contents/.harness/specs/LG-9/plan.md?ref=abc123' "$CURL_LOG.gh" && ok || bad "S8: the spec is read at the merge sha"
 [ -s "$T/h/state/slice-board/ledger-os-LG-9-pr752/filed" ] && ok || bad "S8: with no record the ledger is state/slice-board/<project>-<KEY>-pr<n>"
+# S9 (premise changed by BH-10080, Scope 2): a spec 404 is a hand-opened PR,
+# and its body `SLICE: C0` is the plan. It names no rest and the parent has no
+# description, so the answer is unknown:none, paged once, ledger kept.
 case_dir S9; rm -rf "$T/h/state/slice-board"
 settle_remote 44
-[ "$SW|$SRC" = "skip:no-plan|3" ] && ok || bad "S9: a spec 404 gives skip:no-plan (got $SW|$SRC)"
-[ ! -e "$T/h/state/slice-board/ledger-os-LG-9-pr752" ] && ok || bad "S9: a skip leaves no state ledger"
+[ "$SW|$SRC" = "unknown:none|2" ] && ok || bad "S9: a spec 404 reads the PR body as the plan, unknown:none (got $SW|$SRC)"
+[ "$(alerts)" = 1 ] && ok || bad "S9: one page (got $(alerts))"
+[ -e "$T/h/state/slice-board/ledger-os-LG-9-pr752/unknown-paged" ] && ok || bad "S9: the state ledger is kept, terminal"
+rm -rf "$T/h/state/slice-board"
 
 case_dir S10; rec_c0 s10
 settle "$REC" "$CUID" 1 CURL_PARENT_RC=7

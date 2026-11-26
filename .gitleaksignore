@@ -34,8 +34,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -200,6 +200,7 @@ tests/run-decompose.bh-1340-test.sh:generic-api-key:72
 tests/scale-fakes.bh-7906-test.sh:generic-api-key:102
 tests/scope-trk-route.bh-8449-test.sh:generic-api-key:47
 tests/secret-literals-token-length.bh-1124-test.sh:github-app-token:59
+tests/slice-board-remainder.bh-10080-test.sh:generic-api-key:37
 tests/slice-board.bh-8333-test.sh:generic-api-key:35
 tests/spend-lane-push.bh-6174-test.sh:curl-auth-header:214
 tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120

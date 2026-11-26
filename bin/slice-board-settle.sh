@@ -11,9 +11,19 @@
 # lets the filer post the slice comment and move the master to in_progress;
 # --park 0 files only, for a caller that posts its own comment.
 #
+# A plan with no `SLICE: C<k> of #` line still counts when it carries a weak
+# slice marker (BH-10080: `SLICE: C0`, a SLICE-REASON line, `This plan builds
+# slice C0`, or a `<KEY>: C0` PR title), and with no record and no merged spec
+# the PR body is the plan (a hand-opened slice PR). A rest with no C<j> list is
+# ONE "Rest of <KEY>" child from the plan's coverage rows, else the ticket's
+# own scope. --park 1 posts one note on the master for unknown, exists and
+# file-failed that says the rest is NOT filed (or where it is) and who files it.
+#
 # Prints the helper's word and exits with its rc:
-#   0 filed:<keys> · 1 deferred:<why> (rerun) · 2 unknown:<why> (paged)
-#   3 skip:<why> (not a slice of this ticket, switched off, a dry run)
+#   0 filed:<keys> · 0 exists:<keys> (the master already has children; nothing
+#   filed) · 1 deferred:<why> (rerun) · 2 unknown:<why> (paged; unknown:covered
+#   = the plan maps every row to merged work) · 3 skip:<why> (not a slice of
+#   this ticket, switched off, a dry run)
 set -uo pipefail
 HARNESS="${HARNESS:-/root/harness}"
 LIB="$(cd "$(dirname "$0")" && pwd)/lib"

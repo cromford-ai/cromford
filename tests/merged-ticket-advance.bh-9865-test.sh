@@ -210,7 +210,7 @@ calls()   { jq -r '.url + " " + .idem' "$B/POSTS.jsonl" | tr '\n' '|'; }
 plog()    { cat "$H/logs/x-os.log" 2>/dev/null; }
 advlog()  { grep 'MERGED_ADVANCE moved=' "$H/logs/x-os.log" 2>/dev/null | tail -1 | sed 's/^.*\] MERGED_ADVANCE /MERGED_ADVANCE /'; }
 field_of() { jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]' "$B/db.json"; }
-FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous slice-plan"
+FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous slice-plan slice-settle"
 want() { # want [field=N ...] -> the full MERGED_ADVANCE line, every other field 0
   local -A v=(); local f a s="MERGED_ADVANCE"
   for a in "$@"; do v[${a%%=*}]="${a#*=}"; done
@@ -343,12 +343,15 @@ local_case 501 TK-501 u_7 -
 OUT=$(run x-os)
 advanced S8 TK-501
 
-# S9: only a SLICE-REASON line -> advances
+# S9: only a SLICE-REASON line -> held. BH-10080 changed this premise: a
+# SLICE-REASON line is written only for a sliced plan, and TK-618's plan had no
+# SLICE line, so the lane moved a slice master on and its rest was lost.
+# slice_board_marker (bin/lib/slice-board.sh) reads it as slice C0.
 reset
 local_case 501 TK-501 u_7 "${PLAN_HEAD}
 SLICE-REASON: ordering: x"
 OUT=$(run x-os)
-advanced S9 TK-501
+held_local S9 501 in_progress
 
 # S10: an older slice build behind a newer non-slice PR build -> advances
 reset

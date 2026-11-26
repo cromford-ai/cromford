@@ -214,7 +214,7 @@ calls()   { jq -r '.url + " " + .idem' "$B/POSTS.jsonl" | tr '\n' '|'; }
 plog()    { cat "$H/logs/x-os.log" 2>/dev/null; }
 advlog()  { grep 'MERGED_ADVANCE moved=' "$H/logs/x-os.log" 2>/dev/null | tail -1 | sed 's/^.*\] MERGED_ADVANCE /MERGED_ADVANCE /'; }
 field_of() { jq -r --argjson id "$1" --arg f "$2" '.[] | select(.id == $id) | .[$f]' "$B/db.json"; }
-FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous slice-plan"
+FIELDS="moved comment-only no-audit audit-fail newer-build client-spoke client-review moved-back move-gave-up no-local-build no-pr-in-thread pr-open deploy-behind peer-unread pr-ambiguous slice-plan slice-settle"
 want() { # want [field=N ...] -> the full MERGED_ADVANCE line, every other field 0
   local -A v=(); local f a s="MERGED_ADVANCE"
   for a in "$@"; do v[${a%%=*}]="${a#*=}"; done

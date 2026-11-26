@@ -20,6 +20,12 @@
 #   key   FXR-<id>-<ck8>   target fly, ticket_id <id>. <ck8> is the first 8 hex
 #                          of sha256(cap_key). Two dashes: no ticket key shape
 #                          ([A-Z]+-[0-9]+, project-3 TK-<n>) matches it.
+#         FXR-<id>-<ck8>-r<n>  the same round re-offered n > 0 times after a
+#                          timeout (BH-9906, frp_key). The hub mapping
+#                          (bin/lib/queue-row-job.sh _qrj_fixround) accepts
+#                          both forms (BH-10115). A meta it refuses closes the
+#                          pool row failed AND posts one setup-blocked finish
+#                          as the meta's box, so the row is not left claimed.
 #   meta  {kind:"fixround", id, box, project, cap_key, attempt, by}
 # Identity only: args and record_in (up to 256 KB) stay in the fix_round_jobs
 # row, and the worker cuts meta at 4000 chars. bin/lib/queue-row-job.sh carries

@@ -93,6 +93,14 @@
 # merged PR's body from the pulls/<n> read the lane already makes; the version
 # route is not read for it. A SLICE line for another ticket does not hold. With
 # no lib on the box (mid-sync) nothing is held, as before.
+# BH-10080: a weak slice marker (slice_board_marker: `SLICE: C0` with no
+# `of #`, a SLICE-REASON line, a `<KEY>: C0` PR title on the peer path) holds
+# too. A held slice whose ledger (<build>/slice-board/, or
+# state/slice-board/<project>-<KEY>-pr<n>/ on the peer path) has no terminal
+# file (filed, exists, unknown-paged) spawns bin/slice-board-settle.sh
+# --ticket <id> --park 1, detached, output to logs/slice-board.log: one
+# MERGED_ADVANCE_SLICE_SETTLE <KEY> <pr> line each, counted `slice-settle`.
+# MERGED_ADVANCE_MAX bounds it, and --dry-run spawns nothing.
 #
 # THE TURN. After an echoed move to `review` (either path) the lane gives the
 # turn to the client: POST /tickets/<id>/turn {"to":"client"}. A move does not
@@ -100,7 +108,7 @@
 # move still counts.
 #
 # One log line per run that read the board:
-#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N slice-plan=N
+#   MERGED_ADVANCE moved=N comment-only=N skipped: no-audit=N audit-fail=N newer-build=N client-spoke=N client-review=N moved-back=N move-gave-up=N no-local-build=N no-pr-in-thread=N pr-open=N deploy-behind=N peer-unread=N pr-ambiguous=N slice-plan=N slice-settle=N
 # plus MERGED_ADVANCE_CAPPED when MERGED_ADVANCE_MAX stopped the loop early.
 #
 # Called from inapp_released_lines (bin/lib/rt/scope.sh) right before the
@@ -221,6 +229,7 @@ declare -F cm_put >/dev/null 2>&1 || cm_put() { mkdir -p "$(dirname "$3")" 2>/de
 # shellcheck source=bin/lib/slice-board.sh
 [ -r "$SELF/lib/slice-board.sh" ] && . "$SELF/lib/slice-board.sh" 2>/dev/null
 declare -F slice_board_token >/dev/null 2>&1 || slice_board_token() { return 1; }
+declare -F slice_board_marker >/dev/null 2>&1 || slice_board_marker() { return 1; }
 SLUG=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null) || SLUG=""
 PROD=$("$SELF/prod-url.sh" "$PROJECT" 2>/dev/null) || PROD=""
 
@@ -444,7 +453,7 @@ if [ -n "$nid" ]; then
 fi
 
 MOVED=0; CONLY=0; S_NOAUDIT=0; S_AUDITFAIL=0; S_NEWER=0; S_SPOKE=0; S_CREVIEW=0; S_BACK=0; S_GAVEUP=0
-S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLICE=0
+S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLICE=0; S_SETTLE=0
 EXAMINED=0; LEFT=0; IDX=0; STOPAT=""
 NCANDS=$(grep -c . "$TMP/cands.tsv" 2>/dev/null) || NCANDS=0
 
@@ -455,7 +464,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
 
   # 2. the newest build for the key must itself be a PR
   newest=$(_ma_builds "$tkey" | head -1)
-  PEER=0; splan=""
+  PEER=0; splan=""; stitle=""; srec="-"; sledger=""
   if [ -z "$newest" ]; then
     # 2p. no build dir on this box: the peer path (header, BH-8786). Where it
     # goes first, so a client review ticket costs no request (as step 4).
@@ -483,6 +492,8 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     esac
     jq -r '.body // ""' "$TMP/pr.json" > "$TMP/prbody.md" 2>/dev/null || : > "$TMP/prbody.md"
     splan="$TMP/prbody.md"
+    stitle=$(jq -r '.title // ""' "$TMP/pr.json" 2>/dev/null) || stitle=""
+    sledger="$HARNESS/state/slice-board/$PROJECT-$tkey-pr$prn"
     sha="${PR_SHA:0:8}"; verdict=PEER; token="pr-$prn-$sha"
     pr="https://github.com/$SLUG/pull/$prn"
     cutoff=$(date -u -d "@$PR_EP" '+%Y-%m-%dT%H:%M:%SZ')
@@ -521,11 +532,27 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     case "$sha" in ''|*[!0-9a-f]*) sha="" ;; esac
     token="${sha:-$bstamp}"
     splan="$ndir/plan.md"
+    srec="$ndir"; sledger="$ndir/slice-board"
   fi
 
   # 2s. a slice plan for THIS ticket (BH-9865): board-closeout keeps it in
-  # progress and decompose-parent-close closes it. No comment, no move.
-  if slice_board_token "$splan" "$tid" "$tkey" >/dev/null 2>&1; then S_SLICE=$((S_SLICE + 1)); continue; fi
+  # progress and decompose-parent-close closes it. No comment, no move. A
+  # weak slice marker holds too (BH-10080), and a held slice whose ledger has
+  # no terminal answer gets its settle spawned, detached (a hand-opened PR
+  # reaches no conductor settle).
+  if slice_board_token "$splan" "$tid" "$tkey" >/dev/null 2>&1 \
+     || slice_board_marker "$splan" "$stitle" "$tid" "$tkey" >/dev/null 2>&1; then
+    S_SLICE=$((S_SLICE + 1))
+    if [ "$DRY" = 0 ] && [ -n "$sledger" ] && [ -x "$SELF/slice-board-settle.sh" ] \
+       && [ ! -s "$sledger/filed" ] && [ ! -s "$sledger/exists" ] && [ ! -e "$sledger/unknown-paged" ]; then
+      mkdir -p "$HARNESS/logs" 2>/dev/null
+      ( HARNESS="$HARNESS" setsid "$SELF/slice-board-settle.sh" "$PROJECT" "$tkey" "$pr" "$srec" --ticket "$tid" --park 1 \
+          </dev/null >>"$HARNESS/logs/slice-board.log" 2>&1 9>&- 8>&- & ) 2>/dev/null
+      S_SETTLE=$((S_SETTLE + 1))
+      MA_LOG "MERGED_ADVANCE_SLICE_SETTLE $tkey $pr"
+    fi
+    continue
+  fi
 
   # 3b. this lane's own earlier outcome for this ticket and audit
   #   moved   our move landed (echoed). Finding the ticket open again means a
@@ -712,5 +739,5 @@ if [ "$DRY" = 0 ]; then
   fi
 fi
 [ "$LEFT" -gt 0 ] && MA_LOG "MERGED_ADVANCE_CAPPED $LEFT left for the next run (MERGED_ADVANCE_MAX=$MAX)"
-MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG slice-plan=$S_SLICE"
+MA_LOG "MERGED_ADVANCE moved=$MOVED comment-only=$CONLY skipped: no-audit=$S_NOAUDIT audit-fail=$S_AUDITFAIL newer-build=$S_NEWER client-spoke=$S_SPOKE client-review=$S_CREVIEW moved-back=$S_BACK move-gave-up=$S_GAVEUP no-local-build=$S_NOLOCAL no-pr-in-thread=$S_NOPR pr-open=$S_PROPEN deploy-behind=$S_BEHIND peer-unread=$S_PEERUNREAD pr-ambiguous=$S_AMBIG slice-plan=$S_SLICE slice-settle=$S_SETTLE"
 exit 0

@@ -33,6 +33,13 @@
 # that cannot answer now (deferred) exits 1 with nothing posted, so the sweep
 # carries it. On PR_CREATED the status stays `review` and the comment says the
 # rest is filed at merge.
+# BH-10080: a weak slice marker (slice_board_marker: `SLICE: C0` with no
+# `of #`, a SLICE-REASON line) is a slice too. The comment states what the
+# filing step returned: `filed:` names the children, `exists:` names the
+# children the master already has, and `unknown:` or any other answer says the
+# rest is NOT filed and names who files it by hand (knob SLICE_BOARD_FILE_OWNER).
+# After the post it writes <build>/slice-board/noted, so the conductor's park-1
+# settle posts no second note.
 #
 # HONEST CLAIMS. The comment says what was actually verified: the adversarial
 # review and the repo's own suite are named as build-proof, and the browser QA
@@ -196,10 +203,24 @@ SLICE_TOKEN=""; SLICE_K=""; SLICE_HTML=""; SLICE_NOTE=""
 _SBL="$(cd "$(dirname "$0")" && pwd)/lib/slice-board.sh"; [ -r "$_SBL" ] || _SBL="$BIN/lib/slice-board.sh"
 # shellcheck source=bin/lib/slice-board.sh
 if [ -r "$_SBL" ] && . "$_SBL" 2>/dev/null && command -v slice_board_token >/dev/null 2>&1; then
-  SLICE_TOKEN=$(slice_board_token "$BUILD/plan.md" "$TICKET" "$KEY" 2>/dev/null) || SLICE_TOKEN=""
+  if SLICE_TOKEN=$(slice_board_token "$BUILD/plan.md" "$TICKET" "$KEY" 2>/dev/null); then
+    SLICE_K=$(slice_board_line "$BUILD/plan.md" | cut -f1)
+  else
+    SLICE_TOKEN=""
+    # A weak slice marker (BH-10080): TK-618's plan had no SLICE line, and the
+    # ticket went to `done` with its rest never filed.
+    if command -v slice_board_marker >/dev/null 2>&1 \
+       && SLICE_K=$(slice_board_marker "$BUILD/plan.md" "" "$TICKET" "$KEY" 2>/dev/null); then
+      SLICE_TOKEN="$TICKET"
+    fi
+  fi
 fi
+# Who files a remainder by hand: the knob SLICE_BOARD_FILE_OWNER (BH-10080).
+SLICE_OWNER=""
+[ -n "$SLICE_TOKEN" ] && command -v slice_board_owner >/dev/null 2>&1 && SLICE_OWNER=$(slice_board_owner 2>/dev/null)
+SLICE_OWNER="${SLICE_OWNER:-the operator}"
+SLICE_NOTED=0
 if [ -n "$SLICE_TOKEN" ]; then
-  SLICE_K=$(slice_board_line "$BUILD/plan.md" | cut -f1)
   if [ "$TO_STATUS" = done ]; then
     TO_STATUS=in_progress
     # Park 0: the filer files and records, and this script owns the one comment.
@@ -217,18 +238,23 @@ if [ -n "$SLICE_TOKEN" ]; then
         done < <(tr ',' '\n' <<<"${SW#filed:}")
         SLICE_HTML="<p>Not live yet: the rest of the plan. We filed each remaining slice as its own ticket:</p><ul>$LI</ul><p>This ticket stays in progress until they all land.</p>"
         SLICE_NOTE=" (slice C$SLICE_K; children ${SW#filed:})" ;;
+      exists:*)
+        # The parent already has children (BH-10080): nothing was filed now.
+        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining work already has its own tickets: $(esc "${SW#exists:}").</p><p>This ticket stays in progress until they land.</p>"
+        SLICE_NOTE=" (slice C$SLICE_K; already has children ${SW#exists:})" ;;
       unknown:*)
-        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet: we could not read them from the plan, and we flagged it so a person files them.</p><p>This ticket stays in progress until they land.</p>"
+        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet: we could not read them from the plan, and we flagged it so a person files them. $(esc "$SLICE_OWNER") files them by hand.</p><p>This ticket stays in progress until they land.</p>"
         SLICE_NOTE=" (slice C$SLICE_K; remaining slices not filed: ${SW#unknown:})" ;;
       deferred:*)
         say "slice C$SLICE_K: the remaining slices are not filed yet ($SW) — nothing posted, left for the sweep"
         exit 1 ;;
       *)
-        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet.</p><p>This ticket stays in progress until they land.</p>"
+        SLICE_HTML="<p>Not live yet: the rest of the plan. The remaining slices are not filed yet. $(esc "$SLICE_OWNER") files them by hand.</p><p>This ticket stays in progress until they land.</p>"
         SLICE_NOTE=" (slice C$SLICE_K; remaining slices not filed: ${SW:-no answer})" ;;
     esac
+    SLICE_NOTED=1
   else
-    SLICE_HTML="<p>This PR is slice C$SLICE_K of the plan. When it merges, we file the remaining slices as their own tickets, and this ticket stays open until they land.</p>"
+    SLICE_HTML="<p>This PR is slice C$SLICE_K of the plan. When it merges, we file the remaining slices as their own tickets, and this ticket stays open until they land. A comment here names each new ticket once it exists. If we cannot file them, we say so here.</p>"
     SLICE_NOTE=" (slice C$SLICE_K)"
   fi
 fi
@@ -278,6 +304,9 @@ RESP=$(CURL -X POST -d "$(jq -nc --arg b "$BODY_HTML" '{body:$b}')" \
 # RESULT unmarked and the relay path carries the close-out exactly as today.
 printf '%s' "$RESP" | jq -e '(.comment // .id // .data) != null' >/dev/null 2>&1 \
   || { say "comment POST refused: $(printf '%.200s' "$RESP")"; exit 1; }
+# This comment states what the filing step returned, so the conductor's park-1
+# settle on the same ledger posts no second note (BH-10080).
+[ "$SLICE_NOTED" = 1 ] && [ -d "$BUILD/slice-board" ] && touch "$BUILD/slice-board/noted" 2>/dev/null
 
 # THE COMMENT FIRST, THE STATUS SECOND, and never the other way round. A ticket
 # moved to `review` with no comment is a client seeing work change state with no

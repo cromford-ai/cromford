@@ -26,13 +26,20 @@
 #   the next tick reads it again. A row that cannot be read is rc 0 with one
 #   line: the adopt runs as before (fail-open, so a queue outage never holds
 #   every adopt). The read is frp_put's (bin/lib/fix-round-pool.sh).
+#   A round the box re-offered n times after a timeout ran as FXR-<id>-<ck8>-r<n>
+#   (frp_key, BH-9906), n = the row's record_in.timeout_requeues count. The
+#   gate reads that live row and sets FRT_KEY to it for frt_refund (BH-10115).
 frt_adopt_gate() {
-  local p="$1" rkey="$2" reason="$3" ck="$4" row="$5" id ck8 key resp st why
-  FRT_WRONG=0
+  local p="$1" rkey="$2" reason="$3" ck="$4" row="$5" id ck8 key n resp st why
+  FRT_WRONG=0; FRT_KEY=""
   id=$(printf '%s' "$row" | jq -r '.id // empty' 2>/dev/null)
   ck8=$(printf '%s' "$ck" | sha256sum 2>/dev/null | cut -c1-8)
   [ -n "$id" ] && [ "${#ck8}" = 8 ] || return 0
-  key="FXR-$id-$ck8"
+  n=$(printf '%s' "$row" | jq -r '.record_in // null | if type == "string" then (fromjson? // null) else . end
+        | if type == "object" then ((.timeout_requeues // []) | if type == "array" then length else 0 end) else 0 end' 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  key="FXR-$id-$ck8"; [ "$n" -gt 0 ] && key="$key-r$n"
+  FRT_KEY="$key"
   command -v _jobs_req >/dev/null 2>&1 \
     && resp=$(_jobs_req GET "/api/queue?project=$p&key=$key&limit=1" 2>/dev/null) \
     && IFS=$'\t' read -r st why < <(jq -r --arg k "$key" 'if (.queue | type) != "array" then error("no queue") else
@@ -56,6 +63,8 @@ frt_adopt_gate() {
 #   adds it to every cap) and one fix-round-wrong-tree attempt. A setup-blocked
 #   or box-paused round spent nothing, so nothing is refunded. A write that
 #   fails is one line and no retry: a lost refund is the conservative side.
+#   The key named is FRT_KEY, the row frt_adopt_gate read (BH-10115), else
+#   FXR-<id>-<ck8>.
 frt_refund() {
   local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" id="$6" res="$7" key ck8
   case "$res" in
@@ -63,7 +72,7 @@ frt_refund() {
       say "$p/$rkey [$reason]: wrong-tree round $id: nothing was spent, nothing refunded"
       return 0 ;;
   esac
-  ck8=$(printf '%s' "$ck" | sha256sum 2>/dev/null | cut -c1-8); key="FXR-$id-$ck8"
+  ck8=$(printf '%s' "$ck" | sha256sum 2>/dev/null | cut -c1-8); key="${FRT_KEY:-FXR-$id-$ck8}"
   if ! br_json_edit "$p" "$ck" '.fixround_refunds = ((.fixround_refunds // 0) + 1)
       | .attempts += [{at:$t, action:"fix-round-wrong-tree", reason:$r, url:$u,
           detail:("pool row " + $k + " reaped wrong-tree; this round does not count against the fix rung; the ladder offers the fix round again")}]

@@ -1,0 +1,9 @@
+{
+  "env": "SLICE_BOARD_FILE_OWNER",
+  "read_in": "bin/lib/slice-board.sh",
+  "type": "string",
+  "default": "the operator",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10080: settings row lib.slice-closeout.slice_board_file_owner. The name a board note and the builder close-out give as the person who files a slice remainder by hand, when the harness could not file it (unknown:*, deferred:file-failed). Text, not a limit. Empty uses the default. Read by slice_board_owner through sco_knob."
+}

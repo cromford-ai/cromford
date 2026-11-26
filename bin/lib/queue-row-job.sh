@@ -111,12 +111,12 @@ queue_row_job_file() {
   # flat one, rather than failing as "slug missing".
   rb=""
   kd=$(printf '%s' "${meta:-}" | jq -r 'if type=="object" then (.kind // "") else "" end' 2>/dev/null)
-  # `fixround` (BH-8065): a blocked-resolver FIX ROUND, `FXR-<id>-<ck8>`, put
+  # `fixround` (BH-8065): a blocked-resolver FIX ROUND, `FXR-<id>-<ck8>[-r<n>]`, put
   # by bin/lib/fix-round-pool.sh. Key and kind must agree both ways, as for RR-;
   # first, so fixround meta on any other key (an LR- one too) says fixround.
   case "$kd:$key" in
-    fixround:FXR-*) fx=$(_qrj_fixround "$meta" "$key" "$project") || { _qrj_rr_refuse "$project" "$key" "$fx" "$h" "$tag" fixround; return 3; } ;;
-    fixround:*)     _qrj_rr_refuse "$project" "$key" key "$h" "$tag" fixround; return 3 ;;
+    fixround:FXR-*) fx=$(_qrj_fixround "$meta" "$key" "$project") || { _qrj_rr_refuse "$project" "$key" "$fx" "$h" "$tag" fixround "$meta"; return 3; } ;;
+    fixround:*)     _qrj_rr_refuse "$project" "$key" key "$h" "$tag" fixround "$meta"; return 3 ;;
     *:FXR-*)        _qrj_rr_refuse "$project" "$key" kind "$h" "$tag" fixround; return 3 ;;
   esac
   # `rereview` (BH-7635): a conductor RE-REVIEW row, `RR-<pr>-<head8>`. The key
@@ -242,19 +242,44 @@ _qrj_rereview() {
     | if .reviewed == "" then .reviewed = "-" else . end' 2>/dev/null
 }
 
-# _qrj_rr_refuse <project> <key> <field> <harness> <tag> [kind] — the rc 3 path
-#   for a re-review row (kind rereview, the default), a lead-review row (kind
-#   leadreview, BH-8027) or a fix-round row (kind fixround, BH-8065): closed
-#   `failed` (a release would re-offer it every tick), ONE alert, no queue
-#   file, and the one-line `say` text on stdout.
+# _qrj_rr_refuse <project> <key> <field> <harness> <tag> [kind] [meta] — the
+#   rc 3 path for a re-review row (kind rereview, the default), a lead-review
+#   row (kind leadreview, BH-8027) or a fix-round row (kind fixround, BH-8065):
+#   closed `failed` (a release would re-offer it every tick), ONE alert, no
+#   queue file, and the one-line `say` text on stdout.
+#   A FIX-ROUND refusal also posts ONE fix-round finish (BH-10115), when the
+#   meta (7th arg, flat or nested) names a numeric id and a valid box:
+#   `setup-blocked <b64 reason>` as that box, so the fix row is not left
+#   claimed until the box's stale re-offer reads this failed row and says "no
+#   finish landed". The finish is after the row is closed, never retried, and
+#   sends no jobs-client ALERTS line (the refusal already alerted). With no
+#   jobs client loaded, fix_round_finish makes no request.
 _qrj_rr_refuse() {
-  local project="$1" key="$2" bad="${3:-meta}" h="$4" tag="$5" kind="${6:-rereview}" what=re-review msg
+  local project="$1" key="$2" bad="${3:-meta}" h="$4" tag="$5" kind="${6:-rereview}" m="${7:-}" what=re-review msg fin="" fid fbox frc
   case "$kind" in leadreview) what=lead-review ;; fixround) what=fix-round ;; esac
   command -v queue_done >/dev/null 2>&1 \
     && { queue_done "$project" "$key" failed "$kind meta rejected ($bad)" >/dev/null 2>&1 || true; }
   msg="[$tag] $key: this row's $what meta is unusable (field '$bad') — the row is closed FAILED and NO queue file was written, because a $what row that lost its $kind object is dispatched as an ordinary build. Fix the producer that queued this row."
   [ -x "$h/bin/alert-line.sh" ] && HARNESS="$h" "$h/bin/alert-line.sh" "$msg"
-  printf '%s: %s meta rejected (field %s) — row closed failed, no queue file written\n' "$key" "$kind" "'$bad'"
+  if [ "$kind" = fixround ]; then
+    IFS=$'\t' read -r fid fbox < <(printf '%s' "$m" | jq -r 'select(type=="object") | if (.fixround|type)=="object" then .fixround else . end
+          | [(.id // "" | tostring), (.box // "" | tostring)] | @tsv' 2>/dev/null)
+    if [[ ${fid:-} =~ ^[0-9]+$ ]] && [[ ${fbox:-} =~ ^[A-Za-z0-9._-]+$ ]]; then
+      declare -F fix_round_finish >/dev/null 2>&1 || . "$h/bin/lib/fix-round-queue.sh" 2>/dev/null || true
+      if declare -F fix_round_finish >/dev/null 2>&1; then
+        JOBS_ALERT=0 fix_round_finish "$fid" "$fbox" \
+          "setup-blocked $(printf '%s' "the hub refused pool row $key: $kind meta rejected ($bad); the round did not run" | base64 -w0)" \
+          >/dev/null 2>&1; frc=$?
+        if [ "$frc" = 0 ]; then fin="; fix round $fid finish posted (setup-blocked) as $fbox"
+        else fin="; fix round $fid finish not posted (rc $frc), the box's stale re-offer finishes it"; fi
+      else
+        fin="; fix round $fid finish not posted (no fix-round client), the box's stale re-offer finishes it"
+      fi
+    else
+      fin="; no finish: the meta names no id/box"
+    fi
+  fi
+  printf '%s: %s meta rejected (field %s) — row closed failed, no queue file written%s\n' "$key" "$kind" "'$bad'" "$fin"
 }
 
 # _qrj_leadreview <meta> <key> — the normalised `leadreview` object (BH-8027),
@@ -341,7 +366,10 @@ _qrj_cp_refuse() {
 #   nested ({kind:"fixround",fixround:{…}}) metas collapse to one object. `id`
 #   and `attempt` are numbers; `box` and `project` are [A-Za-z0-9._-]+ and
 #   `project` is the row's own; `cap_key` is non-empty; the key is
-#   FXR-<id>-<first 8 hex of sha256(cap_key)>. The machine runs
+#   FXR-<id>-<first 8 hex of sha256(cap_key)>, or that key with the retry
+#   suffix -r<n> (n >= 1, no leading zero) that frp_key gives a round the box
+#   re-offered n times after a timeout (BH-9906, BH-10115). The suffix is
+#   identity on the row only: the fixround object is the same. The machine runs
 #   `bin/fix-round-claim.sh --run-pool <id> <box> <project> <cap_key>`, which
 #   checks the cap_key charset again before any path.
 _qrj_fixround() {
@@ -363,6 +391,11 @@ _qrj_fixround() {
     esac
   done
   ck8=$(printf '%s' "$ck" | sha256sum 2>/dev/null | cut -c1-8)
-  [ "${#ck8}" = 8 ] && [ "$key" = "FXR-$id-$ck8" ] || { printf 'key'; return 1; }
+  [ "${#ck8}" = 8 ] || { printf 'key'; return 1; }
+  case "$key" in
+    "FXR-$id-$ck8") ;;
+    "FXR-$id-$ck8-r"*) [[ ${key#"FXR-$id-$ck8-r"} =~ ^[1-9][0-9]*$ ]] || { printf 'key'; return 1; } ;;
+    *) printf 'key'; return 1 ;;
+  esac
   printf '%s' "$o" | jq -c '{kind:"fixround"} + . + {id:(.id|tonumber), attempt:(.attempt|tonumber)}' 2>/dev/null
 }
