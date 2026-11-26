@@ -42,7 +42,8 @@ merge_queue:
   # above it, and 11 of 19 readable batches were red on 2026-10-22. Rollback:
   # 3 once logs/ci-batch-red.log shows red_rate under 15 for 7 days, rendered
   # from config/mergify/repos/cromford.conf.
-  max_parallel_checks: 1
+  # 3 again (2026-11-25, backlog drain, the operator's decision): see that file.
+  max_parallel_checks: 3
 
 queue_rules:
   # FIRST IN THE FILE IS FIRST IN LINE: the hotfix queue is above default, and it

@@ -1,7 +1,8 @@
 #!/bin/bash
-# tests/mergify-config.bh-6337-test.sh — this repo's Mergify queue checks 1
-# batch at a time (BH-8085; was 3, BH-6337), and nothing else in the queue
-# changed with it.
+# tests/mergify-config.bh-6337-test.sh — this repo's Mergify queue checks 3
+# batches at a time (2026-11-25, the operator's decision for the backlog drain; was 1,
+# BH-8085; was 3, BH-6337), and nothing else in the queue changed with it.
+# TEST-CHANGE (2026-11-25): only the pinned number moved from 1 to 3.
 #
 # Every render goes through the real CLI ($DIR/bin/mergify-template.sh). Values
 # are read from the PARSED YAML (python3 + PyYAML -> json -> jq), never grepped
@@ -30,7 +31,7 @@ render_json() {
   tojson "$T/r.yml" > "$2"
 }
 # one_parallel <json> — the C1/C2 assert
-one_parallel() { jq -e '.merge_queue.max_parallel_checks == 1' "$1" >/dev/null; }
+one_parallel() { jq -e '.merge_queue.max_parallel_checks == 3' "$1" >/dev/null; }
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
   for c in C1 C2 C3 C4 C5 C6 C7; do echo "SKIP (no PyYAML): $c"; done

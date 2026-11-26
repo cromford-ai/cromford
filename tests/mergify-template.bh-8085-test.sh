@@ -1,7 +1,9 @@
 #!/bin/bash
-# tests/mergify-template.bh-8085-test.sh — this repo's Mergify queue checks 1
-# batch at a time (the operator, 2026-10-22, BH-8085, CI cost hotfix), and a committed
-# .mergify.yml at any other value is drift.
+# tests/mergify-template.bh-8085-test.sh — this repo's Mergify queue checks 3
+# batches at a time, and a committed .mergify.yml at any other value is drift.
+# TEST-CHANGE (2026-11-25, the operator's decision for the backlog drain): the pinned
+# value was 1 (the operator, 2026-10-22, BH-8085, CI cost hotfix). The asserts are the
+# same; only the pinned number and the near-miss values moved.
 #
 # Every render and compare goes through a scratch copy of the real CLI, conf
 # and root .mergify.yml, so `--check` reads the scratch tree and never the
@@ -42,7 +44,7 @@ render_json() {
   tojson "$T/r.yml" > "$2"
 }
 # one_parallel <json> — the P1/P2 assert
-one_parallel() { jq -e '.merge_queue.max_parallel_checks == 1' "$1" >/dev/null; }
+one_parallel() { jq -e '.merge_queue.max_parallel_checks == 3' "$1" >/dev/null; }
 
 # P1: the render of the conf checks 1 batch at a time.
 if render_json "$CONF" "$T/now.json" && one_parallel "$T/now.json"; then ok
@@ -56,9 +58,9 @@ else bad "P2 .mergify.yml max_parallel_checks (got $(jq -c '.merge_queue' "$T/ym
 "$BIN" --check > "$T/check.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok || bad "P3 --check rc $rc (want 0): $(head -c 400 "$T/check.out")"
 
-# P4: near misses. The yaml at the old value 3, at 2 and at the ceiling 8 each
+# P4: near misses. The yaml at the old value 1, at 2 and at the ceiling 8 each
 # drift from the conf (compare rc 1).
-for v in 3 2 8; do
+for v in 1 2 8; do
   sed "s/^  max_parallel_checks: .*/  max_parallel_checks: $v/" "$YML" > "$T/near$v.yml"
   if ! tojson "$T/near$v.yml" | jq -e --argjson v "$v" '.merge_queue.max_parallel_checks == $v' >/dev/null; then
     bad "P4 the near-miss yaml at $v did not take the value"; continue
@@ -67,12 +69,12 @@ for v in 3 2 8; do
   [ "$rc" = 1 ] && ok || bad "P4 compare of a yaml at $v: rc $rc (want 1, drift)"
 done
 
-# P5: non-vacuity. A conf at 3 renders a file that fails the P1 assert.
-sed 's/^max_parallel_checks=.*/max_parallel_checks=3/' "$CONF" > "$T/at3.conf"
+# P5: non-vacuity. A conf at 1 renders a file that fails the P1 assert.
+sed 's/^max_parallel_checks=.*/max_parallel_checks=1/' "$CONF" > "$T/at3.conf"
 if render_json "$T/at3.conf" "$T/at3.json" \
-   && jq -e '.merge_queue.max_parallel_checks == 3' "$T/at3.json" >/dev/null \
+   && jq -e '.merge_queue.max_parallel_checks == 1' "$T/at3.json" >/dev/null \
    && ! one_parallel "$T/at3.json"; then ok
-else bad "P5 a conf at 3 did not fail the P1 assert (got $(jq -c '.merge_queue' "$T/at3.json" 2>/dev/null))"; fi
+else bad "P5 a conf at 1 did not fail the P1 assert (got $(jq -c '.merge_queue' "$T/at3.json" 2>/dev/null))"; fi
 
 # P6: one max_parallel_checks line (no duplicate key hides the value), and
 # scope_default_capacity is not above it.
