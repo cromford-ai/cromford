@@ -553,6 +553,9 @@ _ae_gates() {
   if command -v bg_scan_read >/dev/null 2>&1; then
     local issue=""
     [ "$("$(_ae_home)/bin/fleet-conf.sh" "$AE_P" board_prefix 2>/dev/null)" = "-" ] && issue=$(mc_issue_of "$rec" "$br")
+    # BH-10316: the gate before a queue post reads GitHub live, not the
+    # conductor's tick memo (bin/lib/mc/tick-memo.sh).
+    command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$AE_SLUG" "$num"
     bg_scan_read "$AE_SLUG" "$num" "$url" "$head" "$issue" >/dev/null 2>&1; rc=$?
     [ "$rc" = 0 ] || { _ae_skip "$key" "$head" block-gate "the block gate answered rc $rc (1 a BLOCK stands, 2 unreadable)"; return 1; }
   fi

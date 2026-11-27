@@ -46,6 +46,14 @@
 # #2 #9 #10 plain (nothing stands). #10's branch is ticket/bh-20. Lifecycle:
 # BH-7 ejected with PR #7, BH-20 plan_blocked with no PR. No failed batch.
 #
+# BH-10197: the queue and review collectors ask the change gate
+# (bin/lib/unblock/change-gate.sh) before their per-PR GitHub-only reads. The
+# fake _jobs_req answers its two routes from tests/lib/unblock-gate-fake.bh-10197.sh
+# on the clock GATE_NOW (UNOW + the tick offset). L2 puts the wake of #3 in
+# the fake's wakes too (its minute is the tick's, so L2b reads #3 again as
+# unsettled); L7 sets UNBLOCK_GATE_BACKSTOP_S=1800 at 1900 s, because the gate's
+# backstop (default 3600) now runs before the file cache's.
+#
 # MUTATIONS (D1), each tried once by hand: ubp_cached always runs the cmd ->
 # L1 red; ubp_cached writes the cache before the cmd -> L6 red; prr_read acts
 # on the record in shadow -> L3 red.
@@ -100,6 +108,7 @@ jq -n '
 jq -c '{incomplete_results: false, items: [.[] | select(.cr) | {number: .n}]}' "$FXT/prs.json" > "$FXT/search.base.json"
 
 cat > "$T/fx.sh" <<'SH'
+. "$GATE_FAKE"
 _fx_pr() { jq -c --argjson n "$1" '.[] | select(.n == $n)' "$FXT/prs.json"; }
 setting_get() {
   printf 'SETTING %s\n' "$1" >> "$FXT/seq.log"
@@ -125,6 +134,7 @@ _jobs_req() {
   local q="$2" n age
   printf '%s %s\n' "$1" "$2" >> "$FXT/jobs.log"
   case "$1 $q" in
+    "POST /api/unblock/change-marks/"*) fxg_req "$1" "$2" "${3:-}"; return ;;
     "GET /api/pr-records?"*number=*)
       n=${q##*number=}
       _fx_pr "$n" | jq -c '{row: {repo: "example-org/cromford", number: .n, state: "open", draft: 0, head_sha: .head,
@@ -185,6 +195,9 @@ SH
 
 NOWR=$(date +%s)  # determinism: ok the real prs_wake_seen reads the box clock; the gate clock is pinned to it
 UNOW=1795000000
+# BH-10197: the change gate's two jobs routes, a file-backed fake on the clock GATE_NOW.
+export FXG_DIR="$FXT/gate"
+. "$REPO/tests/lib/unblock-gate-fake.bh-10197.sh" || exit 1
 # feed [kind:key:at]... — the mirror the real prs_wake_seen reads
 feed() {
   local r k y a i=100
@@ -205,14 +218,15 @@ reset() {
   for d in "$H/state" "$H/logs" "$H/locks" "$T/net.log" "$T/alerts.log"; do scratch_rm "$d" || exit 1; done
   rm -f "$FXT"/*.log "$FXT"/*.txt "$FXT"/records.jsonl "$FXT"/list-stale "$FXT"/comments-fail-*
   cp "$FXT/search.base.json" "$FXT/search.json"; cp "$FXT/search.base.json" "$FXT/search.record.json"
-  modes; feed
+  modes; feed; fxg_reset
 }
 # tick <offset-s> [VAR=val...] — the shipped entry point; the gate clock is NOWR + offset.
 # Each tick starts with empty call logs.
 tick() {
   local off="$1"; shift
   rm -f "$FXT/gh-calls.txt" "$FXT/jobs.log" "$FXT/records.jsonl" "$FXT/seq.log"
-  env -u GH_SOURCE HARNESS="$H" FXT="$FXT" UNBLOCK_FIXTURE="$T/fx.sh" HARNESS_TEST_SANDBOX=1 \
+  env -u GH_SOURCE -u UNBLOCK_GATE_BACKSTOP_S HARNESS="$H" FXT="$FXT" UNBLOCK_FIXTURE="$T/fx.sh" HARNESS_TEST_SANDBOX=1 \
+    FXG_DIR="$FXG_DIR" GATE_NOW=$((UNOW + off)) GATE_FAKE="$REPO/tests/lib/unblock-gate-fake.bh-10197.sh" \
     LANE_GATE_DISABLE=1 LANE_GATE_NOW=$UNOW LANE_GATE_CACHE_S=60 UNBLOCK_TIMED=1 JOBS_URL= HARNESS_SECRET= \
     UNBLOCK_NOW=$UNOW WAKE_BACKSTOP_NOW=$((NOWR + off)) PR_SNAPSHOT=1 PR_SNAPSHOT_TTL_S=600 \
     LANE_REGISTRY="$T/lanes.json" PATH="$FB:$PATH" "$@" \
@@ -247,6 +261,7 @@ eq "L1 no alert" "$(cnt . "$T/alerts.log")" 0
 
 # ═════ L2: one pr wake for #3 reads only #3 ═══════════════════════════════════
 feed "pr:3:$((NOWR + 90))"
+fxg_wake pr 3 $((UNOW + 90))  # BH-10197: the same wake in the worker's wakes (the change gate's mark)
 tick 120 GH_SOURCE=record
 G=$(gh_calls)
 [ "$G" -ge 1 ] && ok || bad "L2 the wake of #3 reads #3 (got 0 calls)"
@@ -322,7 +337,7 @@ eq "L6 and only that" "$(gh_calls)" 1
 reset
 tick 0 GH_SOURCE=record
 cp "$FXT/gh-calls.txt" "$T/l7-first.txt"
-tick 1900 GH_SOURCE=record
+tick 1900 GH_SOURCE=record UNBLOCK_GATE_BACKSTOP_S=1800  # BH-10197: the change gate's backstop is the outer one now
 eq "L7 caches older than 1800 s: every gated read again" \
   "$(grep -E 'reviews|comments|state=closed' "$FXT/gh-calls.txt" | sort)" "$(grep -E 'reviews|comments|state=closed' "$T/l7-first.txt" | sort)"
 tick 1960 GH_SOURCE=record UNBLOCK_PRR_BACKSTOP_S=86400

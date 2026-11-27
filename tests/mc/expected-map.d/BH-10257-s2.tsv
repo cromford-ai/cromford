@@ -1,0 +1,5 @@
+# tests/mc/expected-map.d/BH-10257-s2.tsv — BH-10257 slice 2: the view and the
+# CR read of a QUEUED row through the PR record (queue, beside
+# mc_queue_state_rec); origin=lib because they are new module functions.
+queue	mc_queued_view_rec	lib
+queue	mc_cr_standing_rec	lib

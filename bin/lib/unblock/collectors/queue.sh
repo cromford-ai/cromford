@@ -4,7 +4,8 @@
 # the unblock agent (BH-7723, UNB-1). Sourced, never run. On source it only
 # loads bin/lib/unblock/prr.sh (functions only) and defines functions.
 #
-# It READS and prints JSONL stall records. It makes 0 writes and 0 model calls.
+# It READS and prints JSONL stall records. It makes 0 model calls, and its one
+# write is the change gate's commit of change marks (BH-10197).
 # Every GitHub call is `gh_rest GET` (the caller sources bin/lib/gh-rest.sh and
 # arms the identity). The other inputs are read through functions the caller
 # may have loaded: vd_standing (bin/lib/verdicts.sh), mc_attempt_has and
@@ -125,6 +126,19 @@
 #   time is pr_record_head_commit_time (each reads GitHub once per head).
 #   Stay on GitHub in every step: _ubq_owners's files WITH patches and
 #   ubq_batch_failure (the record holds neither).
+#
+# THE CHANGE GATE (BH-10197, bin/lib/unblock/change-gate.sh, site queue). After
+# the open list, one check per tick for the PRs the U4 loop reads (issue =
+# <n> from a ticket/bh-<n> branch). In step record a PR that is not due takes
+# changes_requested_open (cr), touches_tests (tt) and the head commit time
+# (cdate) from its unblock_change_marks row: no reviews, files or commit read.
+# A field the row lacks is read alone. The verdict, mergeable_state, the CI
+# word and every clock field are read each tick, so the records do not change.
+# A failed check in step record is one queue-unreadable record with input
+# change-gate, and no pr-approved-idle or pr-verdict-old-head record for that
+# repo this tick (unknown, never unchanged). One commit per tick stores the
+# marks of the PRs whose gated reads all succeeded. Steps off and shadow read
+# every PR as before.
 # gh-rest: no-graphql
 
 # The record reads (BH-10158). No lib: today's GitHub reads.
@@ -133,6 +147,13 @@
 declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
 declare -F ubp_cached >/dev/null || ubp_cached() { shift 5; "$@"; }
 _ubq_step() { if declare -F ubp_step >/dev/null; then ubp_step; else echo off; fi; }
+# The change gate (BH-10197). No lib: every PR is read (step off).
+# shellcheck source=bin/lib/unblock/change-gate.sh
+. "${BASH_SOURCE[0]%/*}/../change-gate.sh" 2>/dev/null || true
+if ! declare -F ubg_check >/dev/null; then
+  ubg_check() { return 3; }; ubg_skip() { return 1; }; ubg_stored() { return 1; }; ubg_fresh() { return 1; }
+  ubg_put() { :; }; ubg_commit() { :; }; ubg_log() { :; }
+fi
 
 # The GitHub side of each read (prr_read's github-fn, or ubp_cached's cmd).
 _ubq_pull_gh() { gh_rest GET "repos/$2/pulls/$3" > "$1" 2>/dev/null; }
@@ -486,6 +507,21 @@ _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
     _ubq_unreadable "$proj" "$slug" open-pulls; return 0
   fi
   t=$(jq 'length >= 100' "$f")
+  # The change gate: one check for the PRs this loop reads.
+  local g="$d/gate-queue" grc=0 nc fresh
+  mkdir -p "$g"
+  jq -c '.[] | select((.draft // false) == false)
+      | [.labels[]?.name] as $l
+      | select(($l | index("merge-queue") or index("queued") or index("checking")) | not)
+      | ((.head.sha // "") | ascii_downcase) as $h | select($h != "")
+      | ([(.head.ref // "") | capture("^ticket/bh-(?<n>[1-9][0-9]{0,8})(-r[0-9]+)?$"; "i").n] | first) as $i
+      | {pr: .number, head: $h} + (if $i == null then {} else {issue: ($i | tonumber)} end)' "$f" > "$g/items.jsonl" 2>/dev/null
+  ubg_check "$slug" queue "$g/items.jsonl" "$g" || grc=$?
+  if [ "$grc" = 1 ] && [ "$(_ubq_step)" = record ]; then
+    _ubq_unreadable "$proj" "$slug" change-gate
+    ubg_log "$g" "$(grep -c . "$g/items.jsonl")"
+    return 0
+  fi
   knob=$(_ubq_int "${UNBLOCK_APPROVED_IDLE_MIN:-}" 20)
   sa=null
   if type setting_get >/dev/null 2>&1; then
@@ -496,8 +532,8 @@ _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
     [ -n "$n" ] || continue
     v=$(_ubq_verdict "$slug" "$n" "$head") || { vunread+=("$n"); continue; }
     word=${v%%$'\t'*}; at=${v#*$'\t'}
-    if [ "$word" = none ]; then _ubq_old_head "$proj" "$slug" "$d" "$n" "$head" "$labels"; continue; fi
-    case "$word" in MERGE|MERGE-WITH-NOTES) ;; *) continue ;; esac
+    if [ "$word" = none ]; then _ubq_old_head "$proj" "$slug" "$d" "$n" "$head" "$labels" "$g"; continue; fi
+    case "$word" in MERGE|MERGE-WITH-NOTES) ;; *) ubg_put "$g" "$n" "$head" '{}'; continue ;; esac
     unread=()
     [ "$sa" = null ] && unread+=(standing_approval)
     idle=$(jq -n --arg at "$at" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
@@ -510,15 +546,28 @@ _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
        && checks=$(jq -c '.word' "$d/checks-$n.json" 2>/dev/null) && [ -n "$checks" ]; then
       [ "$checks" = null ] && unread+=(checks)
     else checks=null; unread+=(checks); fi
-    if ubp_cached "$slug" "$n" "$head" reviews "$d/reviews-$n.json" _ubq_get "$d/reviews-$n.json" "repos/$slug/pulls/$n/reviews?per_page=100" \
-       && cr=$(jq -c 'if length >= 100 then null else
-                 [.[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))]
-                 | group_by(.user.login) | map(sort_by(.submitted_at) | last) | any(.state == "CHANGES_REQUESTED") end' "$d/reviews-$n.json"); then
-      [ "$cr" = null ] && unread+=(reviews)
-    else cr=null; unread+=(reviews); fi
-    if tt=$(_ubq_touches_tests "$slug" "$n" "$head" "$d"); then
-      [ "$tt" = null ] && unread+=(files)
-    else tt=null; unread+=(files); fi
+    # The GitHub-only reads, through the change gate (BH-10197).
+    nc=$(ubg_fresh "$g" "$n") || nc=""
+    fresh='{}'
+    if ubg_skip "$g" "$n" cr tt; then
+      cr=$(ubg_stored "$g" "$n" cr); tt=$(ubg_stored "$g" "$n" tt)
+    else
+      if cr=$(ubg_stored "$g" "$n" cr); then :
+      elif UBP_FRESH=$nc ubp_cached "$slug" "$n" "$head" reviews "$d/reviews-$n.json" _ubq_get "$d/reviews-$n.json" "repos/$slug/pulls/$n/reviews?per_page=100" \
+         && cr=$(jq -c 'if length >= 100 then null else
+                   [.[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))]
+                   | group_by(.user.login) | map(sort_by(.submitted_at) | last) | any(.state == "CHANGES_REQUESTED") end' "$d/reviews-$n.json"); then
+        [ "$cr" = null ] && unread+=(reviews)
+        fresh=$(jq -c --argjson v "$cr" '. + {cr: $v}' <<<"$fresh")
+      else cr=null; unread+=(reviews); fi
+      if tt=$(ubg_stored "$g" "$n" tt); then :
+      elif tt=$(_ubq_touches_tests "$slug" "$n" "$head" "$d"); then
+        [ "$tt" = null ] && unread+=(files)
+        fresh=$(jq -c --argjson v "$tt" '. + {tt: $v}' <<<"$fresh")
+      else tt=null; unread+=(files); fi
+      # Store only when every gated read of the PR succeeded (D9).
+      [ "$cr" != null ] && [ "$tt" != null ] && ubg_put "$g" "$n" "$head" "$fresh"
+    fi
     jq -nc --arg proj "$proj" --arg slug "$slug" --argjson n "$n" --arg head "$head" --arg word "$word" --arg at "$at" \
       --argjson idle "$idle" --argjson knob "$knob" --argjson sa "$sa" --argjson mstate "$mstate" --argjson checks "$checks" \
       --argjson cr "$cr" --argjson tt "$tt" --argjson labels "$labels" --argjson t "$t" \
@@ -537,6 +586,9 @@ _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
   if [ "${#vunread[@]}" -gt 0 ]; then
     _ubq_unreadable "$proj" "$slug" verdicts | jq -c --argjson prs "$(printf '%s\n' "${vunread[@]}" | jq -sc .)" '. + {prs: $prs}'
   fi
+  # One commit of the marks, AFTER the reads (a failed commit moves no mark).
+  ubg_commit "$g"
+  ubg_log "$g" 0
 }
 
 # THE TWO JOBS SEAMS (BH-8390), each rc 1 when unread or not loaded:
@@ -552,15 +604,20 @@ ubq_lead_open() {
   JOBS_ALERT=0 _jobs_req GET "/api/lead-reviews?status=requested,running&repo=$1" 2>/dev/null
 }
 
-# _ubq_old_head <project> <slug> <tmpdir> <num> <head> <labels-json>: one
+# _ubq_old_head <project> <slug> <tmpdir> <num> <head> <labels-json> [gate-dir]: one
 # pr-verdict-old-head record when nothing stands on the head, the PR's newest
 # lead or human verdict is a MERGE or MERGE-WITH-NOTES on an OLDER head (a
 # restamp or a main merge moved the head), and no lead request is open for
 # this head. A verdict history that is unread or does not parse is one
 # queue-unreadable record for the PR (subject_kind pr), never silence.
+# [gate-dir]: the change gate of _ubq_approved (BH-10197) for the head commit
+# time (field cdate).
 _ubq_old_head() {
-  local proj="$1" slug="$2" d="$3" n="$4" head="$5" labels="$6" rows old lo=null lid=null cdate idle=null knob pri
+  local proj="$1" slug="$2" d="$3" n="$4" head="$5" labels="$6" g="${7:-}" cfresh=1 rows old lo=null lid=null cdate idle=null knob pri
   local -a unread=()
+  # The change gate (BH-10197): a PR that leaves before the commit read has no
+  # gated read; a failed commit read below takes the put back.
+  [ -n "$g" ] && ubg_put "$g" "$n" "$head" '{}'
   rows=$(ubq_verdict_rows "$slug" "$n") || { _ubq_unreadable_pr "$proj" "$slug" verdict-history "$n"; return 0; }
   old=$(jq -c --arg h "$head" '[(if type == "object" then .rows else . end)[]? | select(type == "object" and ((.source // "") | IN("lead", "human")))]
       | first // null | if . == null or .head_sha == $h then null else {verdict, head_sha, id, created_at} end' <<< "$rows" 2>/dev/null) \
@@ -580,7 +637,11 @@ _ubq_old_head() {
           | if type == "string" and . != "" and . != "none" then . else null end
         else null end' "$d/lead-open.json" 2>/dev/null) || lid=null
   [ -n "$lid" ] || lid=null
-  if [ "$(_ubq_step)" = record ] && declare -F pr_record_head_commit_time >/dev/null; then
+  if [ -n "$g" ] && ubg_skip "$g" "$n" cdate && cdate=$(ubg_stored "$g" "$n" cdate) && cdate=$(jq -r 'strings' <<<"$cdate") && [ -n "$cdate" ]; then
+    # BH-10197: the PR is not due; the head commit time comes from its row.
+    cfresh=0
+    idle=$(jq -n --arg at "$cdate" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
+  elif [ "$(_ubq_step)" = record ] && declare -F pr_record_head_commit_time >/dev/null; then
     # BH-10158: step record reads the head commit time from the PR record
     # (one GitHub read per head, stored).
     cdate=""
@@ -591,6 +652,10 @@ _ubq_old_head() {
     idle=$(jq -n --arg at "$cdate" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
   fi
   [ "$idle" = null ] && unread+=(head_commit)
+  if [ -n "$g" ] && [ "$cfresh" = 1 ]; then
+    rm -f "$g/put-$n.json"
+    [ "$idle" != null ] && ubg_put "$g" "$n" "$head" "$(jq -nc --arg c "$cdate" '{cdate: $c}')"
+  fi
   knob=$(_ubq_int "${UNBLOCK_RESTAMP_IDLE_MIN:-}" 20)
   pri=$(_ubq_int "${UNBLOCK_RERQ_PRIORITY:-}" 900)
   jq -nc --arg proj "$proj" --arg slug "$slug" --argjson n "$n" --arg head "$head" --argjson old "$old" --argjson lo "$lo" --argjson lid "$lid" \

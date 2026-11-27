@@ -31,6 +31,9 @@ command -v python3 >/dev/null || { echo "python3 missing — skipping"; exit 0; 
 PURE_ALLOW=(
   gh_rest_path_class   # bin/lib/gh-rest-ledger.sh: classifies a path string
   gh_rest_etag_report  # bin/lib/gh-rest-etag.sh: writes a log line
+  gh_rest_budget_empty # bin/lib/gh-rest-empty.sh: reads the .quota- file, rc only (BH-10196)
+  gh_rest_empty_lane   # bin/lib/gh-rest-empty.sh: prints the lane id from LANE_GATE_RUN
+  gh_rest_empty_switch # bin/lib/gh-rest-empty.sh: reads one settings row, rc only
 )
 
 # ── the enumeration: every definition under bin/lib/gh-rest*.sh ─────────────

@@ -1,0 +1,11 @@
+{
+  "env": "TICKETS_SNAPSHOT_NOT_MERGED_MAX_AGE_S",
+  "type": "int",
+  "default": 21600,
+  "min": 600,
+  "max": 604800,
+  "unit": "seconds",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10217: the oldest a stored 'no merged PR for this branch' answer can be and still skip the GitHub closed-PR lookup. The answer also ends when the branch tip moves or the PR record gets a closed or merged row for the branch; this age is the backstop for a merge the PR record never saw (a lost webhook). Not a whole number in 600..604800 falls back to 21600."
+}

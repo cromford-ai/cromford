@@ -54,6 +54,13 @@
 #   ph_payload_github <file> <slug> <n>
 #       sdq_payload_last <slug> <n> > <file>. rc 1 no payload, rc 2 unread;
 #       rc 2 when sdq_payload_last is not defined.
+#   ph_payload_note <file> <github-rc> <why> <slug> <n>   (BH-10213)
+#       Called by prr_read once after a record-step miss (prr_note_payload):
+#       GitHub rc 0 writes the chosen comment (<file>.comment, kept by
+#       ph_payload_github under PRR_NOTE) back into the record; rc 1 (no
+#       payload comment) writes the "checked, empty" marker; any other rc
+#       writes nothing. It always removes <file>.comment. A fresh marker
+#       makes ph_payload_record print `hit-rc:1` (prr_read answers rc 1).
 #   ph_payload_norm <file>
 #       [{n: "payload", state, cid}]. The epoch is not compared: GitHub uses
 #       the comment's updated_at, the record its created_at.
@@ -77,6 +84,11 @@
 #       reader's PRR_MISS_WHY (unreadable, unknown, no-head, none).
 #   ph_status_github <file> <slug> <n> <head>
 #       gh api repos/<slug>/commits/<head>/status > <file>.
+#   ph_status_note <file> <github-rc> <why> <slug> <n> <head>   (BH-10213)
+#       After a record-step miss (prr_note_statuses): GitHub rc 0 with a
+#       .statuses array writes the list for <head> back into the record (an
+#       empty list is the "checked, empty" marker, which ph_status_record
+#       then serves as {"statuses": []} while it is fresh). Else nothing.
 #   ph_status_norm <file>
 #       [{n: <context>, v: <state>}] for lead-verdict and harness-verdict, the
 #       first entry of each context.
@@ -91,7 +103,7 @@ ph_prr() {
   f=$(mktemp "${TMPDIR:-/tmp}/ph-prr.XXXXXX") || return 75
   prr_read pipeline-health "$key" "$f" "ph_${x}_record" "ph_${x}_github" "ph_${x}_norm" "$@" || rc=$?
   [ "$rc" = 0 ] && cat "$f"
-  rm -f "$f"
+  rm -f "$f" "$f.comment"
   return "$rc"
 }
 
@@ -178,6 +190,8 @@ ph_payload_record() {
   # A plain command with `> file`: PRR_MISS_WHY must reach this shell.
   PRR_MISS_WHY=""
   pr_record_mergify "$slug" "$n" > "$tmp"; rc=$?
+  # BH-10213: a fresh "checked, empty" marker is GitHub's "no payload" (rc 1).
+  if [ "$rc" != 0 ] && [ "$PRR_MISS_WHY" = empty ]; then rm -f "$tmp"; : > "$f"; echo hit-rc:1; return 0; fi
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
   # BH-9938 C1: the epoch is the comment's updated_at, the time
   # sdq_payload_last reads from GitHub. A row written before C1 has no such
@@ -195,7 +209,16 @@ ph_payload_github() {
   local f="${1:-}"
   [ -n "$f" ] || return 2
   command -v sdq_payload_last >/dev/null 2>&1 || return 2
-  sdq_payload_last "${2:-}" "${3:-}" > "$f"
+  # BH-10213: under PRR_NOTE (a record-step miss) keep the chosen comment for ph_payload_note.
+  SDQ_PAYLOAD_COMMENT_OUT="${PRR_NOTE:+$f.comment}" sdq_payload_last "${2:-}" "${3:-}" > "$f"
+}
+
+ph_payload_note() {
+  local c="${1:-}.comment"
+  [ -n "${1:-}" ] || return 0
+  prr_note_payload "$c" "${2:-}" "${4:-}" "${5:-}"
+  rm -f "$c"
+  return 0
 }
 
 ph_payload_norm() {
@@ -245,6 +268,8 @@ ph_status_record() {
   # A plain command with `> file`: PRR_MISS_WHY must reach this shell.
   PRR_MISS_WHY=""
   pr_record_statuses "$slug" "$n" "$head" row-head > "$tmp"; rc=$?
+  # BH-10213: a fresh "checked, empty" marker is GitHub's empty status list.
+  if [ "$rc" != 0 ] && [ "$PRR_MISS_WHY" = empty ]; then rm -f "$tmp"; printf '{"statuses":[]}\n' > "$f"; return 0; fi
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
   # BH-9938 C1: a hit needs the verdict context itself for this head. Other
   # contexts alone are a miss, never "no verdict" (the GitHub read decides).
@@ -261,6 +286,11 @@ ph_status_github() {
   local f="${1:-}"
   [ -n "$f" ] || return 2
   gh api "repos/${2:-}/commits/${4:-}/status" > "$f" 2>/dev/null
+}
+
+ph_status_note() {
+  prr_note_statuses "${1:-}" "${2:-}" "${4:-}" "${5:-}" "${6:-}"
+  return 0
 }
 
 ph_status_norm() {

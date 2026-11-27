@@ -278,8 +278,18 @@ _pdg_resolve() {
 # gh_rest's: 0 / 44 / 75. GH_REST_OPTIONAL is shadowed EMPTY: a merge-gate read
 # is decision-critical, and the reserve gate must never refuse it even when the
 # calling lane exported the optional marker for its own reads.
+# BH-10316: a `repos/<slug>/pulls/<n>` read goes through the merge conductor's
+# tick memo when it is armed (mc_tm_pull); every other read, and every other
+# lane, is the gh_rest_var read above.
 _pdg_rest_get() {
-  local GH_REST_OPTIONAL=
+  local GH_REST_OPTIONAL= _pdg_t _pdg_rc=0
+  if [[ "${2:-}" =~ ^repos/([^/]+/[^/]+)/pulls/([0-9]+)$ ]] && command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on \
+     && _pdg_t=$(mktemp "${TMPDIR:-/tmp}/pdg-pr.XXXXXX" 2>/dev/null); then
+    mc_tm_pull "$_pdg_t" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" || _pdg_rc=$?
+    if [ "$_pdg_rc" = 0 ]; then printf -v "$1" '%s' "$(cat "$_pdg_t")"; else printf -v "$1" '%s' ""; fi
+    rm -f "$_pdg_t"
+    return "$_pdg_rc"
+  fi
   gh_rest_var "${1:-}" GET "${2:-}"
 }
 # THE PER-TICK MEMO (BH-1735). Every lane calls pdg_hold inside `$(...)`, so

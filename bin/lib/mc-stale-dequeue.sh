@@ -36,22 +36,31 @@ SDQ_PAYLOAD_RE='-\*- Mergify Payload -\*-(?<p>[\s\S]*?)-\*- Mergify Payload End 
 #           mergify[bot] comment carrying a payload block
 #   rc 1 -> no such comment
 #   rc 2 -> the read failed, or that payload does not parse to a string state
+#   BH-10213: when SDQ_PAYLOAD_COMMENT_OUT names a file, an rc 0 also writes
+#   the chosen comment there as one JSON object {id, created_at, updated_at,
+#   body, login} (from the same jq pass, no second read), for the record
+#   write-back of the prr-shadow seams. stdout and rc do not change.
 sdq_payload_last() {
-  local slug="$1" num="$2" raw line _s _t
+  local slug="$1" num="$2" raw res line cm="" _s _t cout="${SDQ_PAYLOAD_COMMENT_OUT:-}"
   case "$num" in ''|*[!0-9]*) return 2 ;; esac
   raw=$(gh api --paginate "repos/$slug/issues/$num/comments?per_page=100" 2>/dev/null) || return 2
-  line=$(printf '%s' "$raw" | jq -sr --arg re "$SDQ_PAYLOAD_RE" '
+  res=$(printf '%s' "$raw" | jq -sr --arg re "$SDQ_PAYLOAD_RE" --arg want "${cout:+1}" '
     [ .[] | if type == "array" then .[] else error("not a comment list") end
       | select(type == "object" and (.user.login // "") == "mergify[bot]"
                and ((.body // "") | type == "string") and ((.body // "") | test($re))) ]
     | sort_by([(.created_at // ""), (.id // 0)]) | last
-    | if . == null then "NONE"
-      else [ ((.body | capture($re).p | fromjson? | .state) // "-" | if type == "string" and . != "" then . else "-" end),
-             ((.updated_at // .created_at // "") | sub("\\.[0-9]+"; "") | (fromdateiso8601? // "")),
-             (.id | tostring) ] | @tsv end' 2>/dev/null) || return 2
+    | (if . == null then "NONE"
+       else [ ((.body | capture($re).p | fromjson? | .state) // "-" | if type == "string" and . != "" then . else "-" end),
+              ((.updated_at // .created_at // "") | sub("\\.[0-9]+"; "") | (fromdateiso8601? // "")),
+              (.id | tostring) ] | @tsv end),
+      (if $want == "1" and . != null
+       then {id, created_at, updated_at, body, login: .user.login} | tojson else empty end)' 2>/dev/null) || return 2
+  line=${res%%$'\n'*}
+  [ "$line" = "$res" ] || cm=${res#*$'\n'}
   [ "$line" = NONE ] && return 1
   IFS=$'\t' read -r _s _t _ <<<"$line"
   [ "$_s" != - ] && [[ "$_t" =~ ^[0-9]+$ ]] || return 2
+  [ -n "$cout" ] && [ -n "$cm" ] && { printf '%s\n' "$cm" > "$cout"; } 2>/dev/null
   printf '%s\n' "$line"
 }
 

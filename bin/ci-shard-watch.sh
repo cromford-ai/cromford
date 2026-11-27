@@ -44,6 +44,9 @@ for _L in gh-budget.sh gh-ci-read.sh gh-repo-token.sh; do
   # shellcheck source=/dev/null
   if [ -r "$BIN/lib/$_L" ]; then . "$BIN/lib/$_L"; elif [ -r "$H/bin/lib/$_L" ]; then . "$H/bin/lib/$_L"; fi
 done
+# BH-10218: the ladder's visibility probe answers from the repo-meta memo until a
+# push or repository wake for the repo (or REPO_META_BACKSTOP_S). Fail-open.
+{ { [ -r "$BIN/lib/repo-meta.sh" ] && . "$BIN/lib/repo-meta.sh"; } || { [ -r "$H/bin/lib/repo-meta.sh" ] && . "$H/bin/lib/repo-meta.sh"; }; } 2>/dev/null && repo_meta_arm 2>/dev/null || :
 DRY=""; [ "${1:-}" = "--dry-run" ] && DRY=1
 # The clock seam is a test hook, not a knob: no settings row carries it.
 NOW="${CI_SHARD_WATCH_NOW-}"

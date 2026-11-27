@@ -1,0 +1,23 @@
+{
+  "libs": [
+    {
+      "id": "repo-meta",
+      "file": "bin/lib/repo-meta.sh",
+      "note": "BH-10218: the repo metadata memo. repo_meta_get <slug> default_branch answers from the BH-9938 default-branch memo (state/prr-default-branch/) and repo_meta_arm arms the token ladder's visibility memo (bin/lib/gh-repo-token.sh, state/repo-meta/probe/) for main-red-pr-pair, pr-owner-sweep, overlap-guard, ci-shard-watch and fly-pool. Both read GitHub once, then serve until a push (default branch) or repository wake for the repo arrives in the wake mirror (bin/lib/repo-change-mark.sh), or until REPO_META_BACKSTOP_S passes. A feed that cannot tell reads GitHub. Resolved once per process with lib_env_apply repo-meta in a subshell; docs/notes/2026-11-26-BH-10218-small-lanes-reads.md.",
+      "knobs": [
+        {
+          "env": "REPO_META_BACKSTOP_S",
+          "type": "int",
+          "default": 86400,
+          "min": 0,
+          "max": 604800,
+          "unit": "seconds",
+          "zero_means": "off",
+          "required": false,
+          "read_in": "bin/lib/repo-meta.sh",
+          "note": "The longest a repo metadata memo (default branch, token-ladder visibility) is served with no push or repository wake for the repo. 0 = no memo: every call reads GitHub, as before BH-10218. The mirror keeps 3 days of wake rows, so a value past about 71 hours serves only while the mirror still covers the memo's stamp; past that the feed answers cannot tell and the memo reads GitHub. Code fallback 86400 (bin/lib/repo-meta.sh REPO_META_BACKSTOP_DEFAULT)."
+        }
+      ]
+    }
+  ]
+}

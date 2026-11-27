@@ -1,8 +1,9 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/unblock/collectors/review.sh — the PR unblock agent's review-family
-# collector (UNB-2). READ ONLY: it makes no model call and no GitHub or worker
-# write, and the only file it writes is one line in logs/unblock.log.
+# collector (UNB-2). It makes no model call and no GitHub write. Its one worker
+# write is the change gate's commit of change marks (BH-10197, steps shadow and
+# record), and the only file it writes is its lines in logs/unblock.log.
 #
 #   review.sh --project <p> --repo <owner/name>          (the CLI)
 #   . review.sh; unblock_collect_review --project <p> --repo <owner/name>
@@ -58,6 +59,16 @@
 # wake since its last read is served from state/unblock-prr/, 0 GitHub calls.
 # Steps off and shadow read GitHub as before.
 #
+# THE CHANGE GATE (BH-10197, bin/lib/unblock/change-gate.sh, site review). One
+# check per tick runs beside R3. In step record a PR that is not due takes the
+# compact CR reviews (rv) and the findings-comment test (fc) from its
+# unblock_change_marks row: no reviews or comments read. A field the row lacks
+# is read alone. A failed check in step record names change-gate#<pr> in the
+# meta unreadable for each open PR, and no R4/R5 read or record is made for
+# it (unknown, never unchanged). One commit at the end stores the marks of the
+# PRs whose gated reads all succeeded. When the check answered, the log line
+# ends with gate=<checked>/<skipped>.
+#
 # NO ROOT DEFAULT (D43): the root is $HARNESS, then $H; with neither it is rc 2.
 
 _UCR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,6 +79,26 @@ _UCR_TMP=""
 . "$_UCR_DIR/../prr.sh" 2>/dev/null || true
 declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
 declare -F ubp_cached >/dev/null || ubp_cached() { shift 5; "$@"; }
+# The change gate (BH-10197). No lib: every PR is read (step off).
+# shellcheck source=bin/lib/unblock/change-gate.sh
+. "$_UCR_DIR/../change-gate.sh" 2>/dev/null || true
+if ! declare -F ubg_check >/dev/null; then
+  ubg_check() { return 3; }; ubg_skip() { return 1; }; ubg_stored() { return 1; }; ubg_fresh() { return 1; }
+  ubg_put() { :; }; ubg_commit() { :; }; ubg_log() { :; }
+fi
+
+# The compact CHANGES_REQUESTED reviews (rv, BH-10197): every field U5, U6 and
+# U11 read, with the body cut to the one marker it carries. The records use it
+# for a fresh read and for a stored one alike, so they cannot differ.
+_UCR_RVC='if type == "array" then [.[] | select(.state == "CHANGES_REQUESTED")
+    | {id, state, commit_id, submitted_at, user: {login: (.user.login // null)},
+       body: ((.body // "") as $t | if ($t | contains("<!-- review-verdict:block ")) then "<!-- review-verdict:block "
+              elif ($t | contains("<!-- tackler:")) then "<!-- tackler:" else "" end)}][:100] else null end'
+# fc: a findings comment on the head (the comments test of U5), from the comments.
+_UCR_FC='if type == "array" then ($h[0:12]) as $h12 | any(.[]; (.body // "") as $t
+    | ($t | contains("<!-- review-verdict:block " + $h))
+      or (($t | contains("<!-- tackler:")) and ($t | contains($h12)))
+      or (($t | test("(^|\\n)\\s*- \\[BLOCK")) and ($t | contains($h12)))) else null end'
 
 _ucr_log() {
   local h="${HARNESS:-${H:-}}"
@@ -176,6 +207,18 @@ unblock_collect_review() {
     crset=""; unreadable+=(search)
   fi
 
+  # The change gate: one check, beside R3 (independent reads).
+  local g="$tmp/gate" gunk=0 v nc fresh fc
+  mkdir -p "$g"
+  if [ -f "$tmp/pulls.ok" ]; then
+    jq -c --argjson m "$prmax" '.[:$m][] | ((.head.sha // "") | ascii_downcase) as $h | select($h != "")
+        | ([(.head.ref // "") | capture("^ticket/bh-(?<n>[1-9][0-9]{0,8})(-r[0-9]+)?$"; "i").n] | first) as $i
+        | {pr: .number, head: $h} + (if $i == null then {} else {issue: ($i | tonumber)} end)' "$tmp/pulls.json" > "$g/items.jsonl" 2>/dev/null
+  else
+    : > "$g/items.jsonl"
+  fi
+  ubg_check "$slug" review "$g/items.jsonl" "$g" &
+
   # R3 the verdict of each open PR on its head (standing + history rows).
   local pr head
   while IFS=$'\t' read -r pr head; do
@@ -184,6 +227,7 @@ unblock_collect_review() {
     { _ucr_worker "$tmp" "$tmp/vd-$pr.json" "/api/verdicts?repo=$slug&pr=$pr&head=$head" && echo 0 > "$tmp/vd-$pr.ok"; } &
   done < <(jq -r '.[] | [.pr, .head] | @tsv' <<<"$prs")
   wait
+  [ "$(cat "$g/status" 2>/dev/null)" = unknown ] && gunk=1
 
   # R4 for a lead BLOCK: the report, the reviews and the comments. R5 for a
   # MERGE* PR in the CR set: the reviews.
@@ -191,33 +235,45 @@ unblock_collect_review() {
   while IFS=$'\t' read -r pr head; do
     [ -n "$pr" ] || continue
     if [ ! -f "$tmp/vd-$pr.ok" ]; then unreadable+=("verdicts#$pr"); continue; fi
+    # Rule 1 (BH-10197): a failed check in step record is unknown: no read.
+    if [ "$gunk" = 1 ]; then unreadable+=("change-gate#$pr"); continue; fi
     sv=$(jq -r '.standing.verdict // ""' "$tmp/vd-$pr.json"); ss=$(jq -r '.standing.source // ""' "$tmp/vd-$pr.json")
+    nc=$(ubg_fresh "$g" "$pr") || nc=""
     if [ "$sv" = BLOCK ] && [ "$ss" = lead ]; then
       job=$(jq -r '.standing.note // ""' "$tmp/vd-$pr.json" | grep -oE '(^| )lead-job:[^ ]+' | head -1 | sed 's/.*lead-job://')
       echo "$job" > "$tmp/job-$pr"
+      ubg_skip "$g" "$pr" rv fc
+      v=$(ubg_stored "$g" "$pr" rv) && { printf '%s\n' "$v" > "$tmp/rv-$pr.json"; echo 0 > "$tmp/rv-$pr.ok"; }
+      v=$(ubg_stored "$g" "$pr" fc) && printf '%s\n' "$v" > "$tmp/fc-$pr"
       _ucr_par "$par"
       { [ -z "$job" ] || { _ucr_worker "$tmp" "$tmp/art-$pr.json" "/api/jobs/$job/artifacts" && echo 0 > "$tmp/art-$pr.ok"; }
-        ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
-          _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"
-        ubp_cached "$slug" "$pr" "$head" comments "$tmp/cm-$pr.json" \
-          _ucr_gh "$tmp" "$tmp/cm-$pr.json" "repos/$slug/issues/$pr/comments?per_page=100" && echo 0 > "$tmp/cm-$pr.ok"; } &
+        [ -f "$tmp/rv-$pr.ok" ] || { UBP_FRESH=$nc ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
+          _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok" && : > "$tmp/rv-$pr.fresh"; }
+        [ -f "$tmp/fc-$pr" ] || { UBP_FRESH=$nc ubp_cached "$slug" "$pr" "$head" comments "$tmp/cm-$pr.json" \
+          _ucr_gh "$tmp" "$tmp/cm-$pr.json" "repos/$slug/issues/$pr/comments?per_page=100" && echo 0 > "$tmp/cm-$pr.ok"; }; } &
     elif [[ $sv == MERGE* ]] && [ -n "$crset" ] && jq -e --argjson n "$pr" 'index($n) != null' <<<"$crset" >/dev/null; then
-      _ucr_par "$par"
-      { ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
-          _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"; } &
+      ubg_skip "$g" "$pr" rv
+      v=$(ubg_stored "$g" "$pr" rv) && { printf '%s\n' "$v" > "$tmp/rv-$pr.json"; echo 0 > "$tmp/rv-$pr.ok"; }
+      if [ ! -f "$tmp/rv-$pr.ok" ]; then
+        _ucr_par "$par"
+        { UBP_FRESH=$nc ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
+            _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok" && : > "$tmp/rv-$pr.fresh"; } &
+      fi
     fi
   done < <(jq -r '.[] | [.pr, .head] | @tsv' <<<"$prs")
   wait
 
   # The records.
-  local base fr detail report readable reviews comments rec
+  local base fr detail report readable reviews rec
   local -a eowned=()
   while IFS=$'\t' read -r pr head; do
-    [ -n "$pr" ] && [ -f "$tmp/vd-$pr.ok" ] || continue
+    [ -n "$pr" ] && [ -f "$tmp/vd-$pr.ok" ] && [ "$gunk" = 0 ] || continue
     sv=$(jq -r '.standing.verdict // ""' "$tmp/vd-$pr.json"); ss=$(jq -r '.standing.source // ""' "$tmp/vd-$pr.json")
     base=$(jq -nc --arg proj "$project" --arg r "$slug" --argjson p "$pr" --arg h "$head" \
       '{family: "review", project: $proj, repo: $r, pr: $p, subject_kind: "pr", subject: "\($r)#\($p)", head: $h}')
-    reviews=null; [ -f "$tmp/rv-$pr.ok" ] && reviews=$(jq -c 'if type == "array" then . else null end' "$tmp/rv-$pr.json")
+    reviews=null; [ -f "$tmp/rv-$pr.ok" ] && { reviews=$(jq -c "$_UCR_RVC" "$tmp/rv-$pr.json" 2>/dev/null) || reviews=null; }
+    [ -n "$reviews" ] || reviews=null
+    fresh='{}'; [ -f "$tmp/rv-$pr.fresh" ] && [ "$reviews" != null ] && fresh=$(jq -c --argjson v "$reviews" '{rv: $v}' <<<"$fresh")
     if [ "$sv" = BLOCK ] && [ "$ss" = lead ]; then
       job=$(cat "$tmp/job-$pr" 2>/dev/null)
       # The report: readable only when the artifact holds a whole body (a cut
@@ -228,20 +284,26 @@ unblock_collect_review() {
         report=$(jq -c 'if (.body | type) == "string" and .truncated != true then .body else null end' <<<"$detail" 2>/dev/null) || report=null
         [ -n "$report" ] || report=null
       fi
-      comments=null; [ -f "$tmp/cm-$pr.ok" ] && comments=$(jq -c 'if type == "array" then . else null end' "$tmp/cm-$pr.json")
+      # fc from the comments read now, else from the row (BH-10197).
+      fc=null
+      if [ -f "$tmp/cm-$pr.ok" ]; then
+        fc=$(jq -c --arg h "$head" "$_UCR_FC" "$tmp/cm-$pr.json" 2>/dev/null) || fc=null
+        [ -n "$fc" ] || fc=null
+        [ "$fc" != null ] && fresh=$(jq -c --argjson v "$fc" '. + {fc: $v}' <<<"$fresh")
+      elif [ -f "$tmp/fc-$pr" ]; then
+        fc=$(jq -c 'if type == "boolean" then . else null end' "$tmp/fc-$pr" 2>/dev/null) || fc=null
+        [ -n "$fc" ] || fc=null
+      fi
+      [ "$reviews" != null ] && [ "$fc" != null ] && ubg_put "$g" "$pr" "$head" "$fresh"
       fr=$(_ucr_fix_round "$h" "$project" "$slug" "$pr")
       readable=true; [ "$report" = null ] && readable=null
       rec=$(jq -c --argjson b "$base" --argjson st "$(jq -c .standing "$tmp/vd-$pr.json")" --arg job "$job" \
-            --argjson body "$report" --argjson rv "${reviews:-null}" --argjson cm "${comments:-null}" \
+            --argjson body "$report" --argjson rv "${reviews:-null}" --argjson fc "$fc" \
             --argjson fr "$fr" --argjson readable "$readable" --argjson blmax "$blmax" -n '
-        ($b.head) as $h | ($h[0:12]) as $h12
+        ($b.head) as $h
         | (if $body == null then null else [$body | split("\n")[] | select(test("^- \\[BLOCK"))] end) as $bl
         | (if $body == null then null else ([$body | split("\n")[] | select(test("^- outcome cap: "))] | first // null) end) as $cap
         | (if $rv == null then null else any($rv[]; .state == "CHANGES_REQUESTED" and .commit_id == $h) end) as $cr
-        | (if $cm == null then null else any($cm[]; (.body // "") as $t
-             | ($t | contains("<!-- review-verdict:block " + $h))
-               or (($t | contains("<!-- tackler:")) and ($t | contains($h12)))
-               or (($t | test("(^|\\n)\\s*- \\[BLOCK")) and ($t | contains($h12)))) end) as $fc
         | if $cr == true or $fc == true then empty
           elif $body != null and ($bl | length) == 0 and $cap == null then "empty-owned" else
           ($cap != null and $bl != null and ($bl | length) == 0) as $caponly
@@ -250,7 +312,7 @@ unblock_collect_review() {
               stall_at: $st.created_at,
               unknown: ([if $job == "" or $body == null then "report" else empty end,
                          if $rv == null then "reviews" else empty end,
-                         if $cm == null then "comments" else empty end,
+                         if $fc == null then "comments" else empty end,
                          if $fr == null then "fix_round" else empty end]),
               verdict_id: $st.id, job_id: (if $job == "" then null else $job end),
               report_readable: $readable,
@@ -262,6 +324,7 @@ unblock_collect_review() {
           end')
       if [ "$rec" = '"empty-owned"' ]; then eowned+=("$pr"); elif [ -n "$rec" ]; then printf '%s\n' "$rec" >> "$tmp/out.jsonl"; fi
     elif [[ $sv == MERGE* ]] && [ -f "$tmp/rv-$pr.ok" ] && [ "$reviews" != null ]; then
+      ubg_put "$g" "$pr" "$head" "$fresh"
       jq -c --argjson b "$base" --argjson rv "$reviews" --arg sv "$sv" --arg logins "$logins" -n '
         ($logins | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $ls
         | $rv[] | select(.state == "CHANGES_REQUESTED" and .commit_id != $b.head)
@@ -275,8 +338,12 @@ unblock_collect_review() {
                 review_marker: $mk, review_author_listed: $listed, standing_verdict: $sv}' >> "$tmp/out.jsonl"
     elif [[ $sv == MERGE* ]] && [ -n "$crset" ] && jq -e --argjson n "$pr" 'index($n) != null' <<<"$crset" >/dev/null; then
       unreadable+=("reviews#$pr")
+    elif [[ $sv != MERGE* ]] || [ -n "$crset" ]; then
+      # No gated read is needed for this PR this tick.
+      ubg_put "$g" "$pr" "$head" '{}'
     fi
   done < <(jq -r '.[] | [.pr, .head] | @tsv' <<<"$prs")
+  [ "$gunk" = 1 ] || ubg_commit "$g"
 
   # U7: a running request whose heartbeat is older than the stale limit, on an
   # open PR. head_current says whether it still reviews the PR's head.
@@ -305,7 +372,11 @@ unblock_collect_review() {
   jq -nc --arg r "$slug" --argjson n "$(jq 'length' <<<"$prs")" --argjson t "$truncated" \
     --argjson u "$(printf '%s\n' ${unreadable[@]+"${unreadable[@]}"} | jq -R . | jq -sc 'map(select(. != ""))')" \
     '{kind: "collector-meta", family: "review", repo: $r, prs_seen: $n, truncated: $t, unreadable: $u}'
-  _ucr_log "$slug prs=$(jq 'length' <<<"$prs") records=$nrec unknown=$nunk rest=$nrest worker=$nwork${unreadable[*]:+ unreadable=${unreadable[*]}}${eowned[*]:+ empty_owned=${#eowned[@]}:$(IFS=,; echo "${eowned[*]}")}"
+  local gtail=""
+  # gate=<checked>/<skipped> only when the check answered.
+  [ -f "$g/ans.json" ] && gtail=" gate=$(jq '.items | length' "$g/ans.json" 2>/dev/null)/$(find "$g" -maxdepth 1 -name 'skip-*' | wc -l)"
+  ubg_log "$g" "$([ "$gunk" = 1 ] && grep -c . "$g/items.jsonl" || echo 0)"
+  _ucr_log "$slug prs=$(jq 'length' <<<"$prs") records=$nrec unknown=$nunk rest=$nrest worker=$nwork${unreadable[*]:+ unreadable=${unreadable[*]}}${eowned[*]:+ empty_owned=${#eowned[@]}:$(IFS=,; echo "${eowned[*]}")}$gtail"
   rm -rf "$tmp"
   return 0
 }

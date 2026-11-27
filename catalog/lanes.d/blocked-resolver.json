@@ -187,12 +187,12 @@
     {
       "env": "BR_MAX_FIXROUNDS",
       "type": "int",
-      "default": 1,
+      "default": 2,
       "min": 0,
       "max": 10,
       "unit": "rounds",
       "zero_means": null,
-      "note": "Fix-agent rounds per ticket."
+      "note": "Fix-agent rounds per ticket for the large shape (BH-10057: at least 2 for every ladder class). The code fallback 1 answers only when the lane registry does not load (a scratch tree), as MAX_REGEN."
     },
     {
       "env": "BR_REVIEW_FIX_ROUNDS",

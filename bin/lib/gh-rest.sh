@@ -122,7 +122,7 @@ gh_rest() { # gh_rest <method> <path> [extra args for the REST call...]
   if command -v _gh_auth_gate >/dev/null 2>&1 && ! _gh_auth_gate; then GH_REST_STATUS=401; GH_REST_REASON=auth-skipped; return 75; fi
   # BH-1484. BEFORE the request, and before the mktemp, so a refused read costs
   # nothing at all. Only a caller that marked itself optional is ever refused.
-  if command -v _gh_quota_gate >/dev/null 2>&1 && ! _gh_quota_gate "$p"; then GH_REST_REASON=quota-reserve; return 75; fi
+  if command -v _gh_quota_gate >/dev/null 2>&1 && ! _gh_quota_gate "$p" "$m"; then GH_REST_REASON=quota-reserve; return 75; fi
   [ "$m" = GET ] && [ "${GH_ETAG:-1}" != 0 ] && command -v _gh_etag_key >/dev/null 2>&1 && use_etag=1
   # BH-1574: the only exit between the gate and the request; it clears the gate's GH_LEDGER_BY_CALLER marker.
   tmp=$(mktemp "${TMPDIR:-/tmp}/gh-rest.XXXXXX") || { unset GH_LEDGER_BY_CALLER; return 75; }

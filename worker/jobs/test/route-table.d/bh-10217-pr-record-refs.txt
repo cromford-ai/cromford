@@ -1,0 +1,6 @@
+# BH-10217: the closed and merged PR record rows for a list of head refs of
+# one repo. Writer: none (it reads pr_records, which webhook intake, the
+# pr_record_put lib and the list sync write). Reader: the hub lane
+# bin/tickets-snapshot-push.sh through tsp_ref_states
+# (bin/lib/prr-shadow.d/tickets-snapshot-push.sh). Read-only, bearer-gated.
+GET /api/pr-record-refs

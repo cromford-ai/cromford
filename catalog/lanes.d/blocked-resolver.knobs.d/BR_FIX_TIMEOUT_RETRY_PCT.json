@@ -1,0 +1,11 @@
+{
+  "env": "BR_FIX_TIMEOUT_RETRY_PCT",
+  "type": "int",
+  "default": 150,
+  "min": 110,
+  "max": 400,
+  "unit": "percent",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-10057-timeout-budget.sh",
+  "note": "BH-10057: the agent budget of a fix round that BH-9404 retries after a timeout (agent rc 124), as a percent of BR_FIX_AGENT_TIMEOUT. 150 gives the retry 5400 s for a 3600 s base, so a round that ran out gets more room. The min 110 keeps the retry larger than the round that ran out; bin/lib/fix-retry-budget.sh clamps to 110..400 and uses 150 for a value that is not a whole number. Also read by bin/fix-round-claim.sh frc_bound and br_fix_bound (bin/lib/br/cap.sh): when BR_FIX_TIMEOUT_RETRIES > 0 the round bound uses the retry budget, 5400 + 2700 + 300 = 8400 s at the defaults (the claim's stale cutoff stays A + V + M, stale_min 110: a re-offer of a live retry runs nothing), so the unclaimed and stale-claim pages fire at 8400 s instead of 6600 s. 200 makes the bound 10200 s."
+}

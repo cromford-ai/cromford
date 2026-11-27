@@ -88,6 +88,13 @@ function reviewEntry(v) {
   if (commit === undefined || at === undefined) return undefined;
   return { state: v.state, commit_id: commit, at };
 }
+// BH-10257: the reviews_sync object {head_sha, at, cr}, as JSON text; or undefined.
+export function reviewsSyncValue(v) {
+  if (!isObj(v) || !Object.keys(v).every((k) => ["head_sha", "at", "cr"].includes(k))) return undefined;
+  const h = sha(v.head_sha), at = isoAt(v.at);
+  if (h === undefined || at === undefined || ![0, 1].includes(v.cr)) return undefined;
+  return JSON.stringify({ head_sha: h, at, cr: v.cr });
+}
 // The reviews object, checked and normalized, as JSON text; or undefined.
 export function reviewsValue(v) {
   if (!isObj(v)) return undefined;
@@ -129,10 +136,12 @@ export const VALUE_FIELDS = {
   // BH-8481 (core.d/bh-8481-pr-records-reviews.js).
   merged_at: isoAt,
   reviews: reviewsValue,
+  // BH-10257 (core.d/bh-10257-pr-records-reviews-sync.js).
+  reviews_sync: reviewsSyncValue,
   // BH-9935: statuses, mergify_queue, head_commit, files (lib/pr-record-fields.js).
   ...fieldValues(CHECKS_MAX),
 };
-const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at", "statuses", "mergify_queue", "head_commit", "files"];
+const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at", "statuses", "mergify_queue", "head_commit", "files", "reviews_sync"];
 // The columns where null is a value: "unknown, ask GitHub on the next read"
 // (case 2 of the read rule in bin/lib/pr-record.sh).
 export const NULLABLE_FIELDS = ["mergeable_state"];

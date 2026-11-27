@@ -240,6 +240,9 @@ fi
 # exactly like a repo with no open PRs (the 2026-09-12 project-5 silence).
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh" 2>/dev/null
+# BH-10218: the ladder's visibility probe answers from the repo-meta memo until a
+# push or repository wake for the repo (or REPO_META_BACKSTOP_S). Fail-open.
+{ [ -r "$H/bin/lib/repo-meta.sh" ] && . "$H/bin/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
 # shellcheck source=bin/lib/gh-app-auth.sh
 [ -r "$H/bin/lib/gh-app-auth.sh" ] && . "$H/bin/lib/gh-app-auth.sh"   # App token per repo (#425); unarmed box untouched
 # shellcheck source=/dev/null
@@ -475,11 +478,17 @@ po_lists_record() {
   [ "$PL_ON" = 1 ] && [ "$PL_MAX" -gt 0 ] && [ "$PL_FLOOR" -gt 0 ] || return 1
   command -v pr_record_list >/dev/null 2>&1 && command -v wb_due >/dev/null 2>&1 || return 1
   e=$(cut -f2 "$PL_DIR/openlist.meta" 2>/dev/null); now=$(po_lists_now)
-  if ! [[ "$e" =~ ^[0-9]{1,12}$ ]] || [ "$((now - 10#$e))" -lt 0 ] || [ "$((now - 10#$e))" -gt "$PL_FLOOR" ]; then
-    po_lists_record_miss floor; return 1
-  fi
   pr_record_list "$SLUG" open "$TD/rec-open.json" "$PL_NEED_OPEN" "$PR_LIMIT" >/dev/null || return 1
   pr_record_list "$SLUG" merged "$TD/rec-merged.json" "$PL_NEED_MERGED" "$PR_LIMIT" >/dev/null || return 1
+  # The floor (BH-10196): past it, or with no GitHub read of our own yet, the
+  # record is a miss only when an open row has an unknown mergeable_state —
+  # the gap the floor exists for. A record whose open rows are all known is
+  # used with no GitHub list read, first tick included.
+  if ! [[ "$e" =~ ^[0-9]{1,12}$ ]] || [ "$((now - 10#$e))" -lt 0 ] || [ "$((now - 10#$e))" -gt "$PL_FLOOR" ]; then
+    if ! jq -e 'type == "array" and all(.[]; (.mergeable_state // "unknown") | IN("dirty", "clean", "blocked", "behind", "unstable", "has_hooks"))'          "$TD/rec-open.json" >/dev/null 2>&1; then
+      po_lists_record_miss floor; return 1
+    fi
+  fi
   so=$(date -u -d "$(cat "$TD/rec-open.json.sync")" +%s 2>/dev/null)
   sm=$(date -u -d "$(cat "$TD/rec-merged.json.sync")" +%s 2>/dev/null)
   [[ "$so" =~ ^[0-9]+$ ]] && [[ "$sm" =~ ^[0-9]+$ ]] || { po_lists_record_miss malformed; return 1; }
@@ -535,8 +544,16 @@ po_lists_sync() {
 # ---- per repo ---------------------------------------------------------------
 SWEPT=0
 PO_TICK_NOW=$(date -u +%s)   # one clock per run, read by the health rollup
+# PO_GH_EMPTY=1: the GitHub core budget read 0 (bin/lib/gh-rest-empty.sh), so
+# the tick stops: no next repo or PR, no rollup of a partial input.
+PO_GH_EMPTY=0
 while read -r PROJECT SLUG; do
   [ -n "${SLUG:-}" ] || continue
+  if command -v gh_rest_budget_empty >/dev/null 2>&1 && gh_rest_budget_empty "repos/$SLUG"; then
+    PO_GH_EMPTY=1
+    say "$SLUG: GitHub core budget empty — tick stopped before this repo; no list, owner or hook read"
+    break
+  fi
   if command -v gh_repo_use_token >/dev/null 2>&1; then
     gh_repo_use_token "$SLUG" || {
       command -v gh_repo_invisible_alert >/dev/null 2>&1 &&
@@ -1091,6 +1108,10 @@ PYEOF
   [ "$PO_MC_OK" = 1 ] || PO_REPO_UNREAD=1
   R_OWNED=0; R_ENR=0; R_OWNERLESS=0; R_SUP=0; R_STALE=0
   while IFS=$'\t' read -r NUM STATE ACTION KEY REASON URL AUTHOR CREATED DRAFT MERGEABLE HEAD EKEY MERGED_DUP KEEPER MCSTATE BRANCH STACKED; do
+    if command -v gh_rest_budget_empty >/dev/null 2>&1 && gh_rest_budget_empty "repos/$SLUG"; then
+      say "$SLUG#$NUM: GitHub core budget empty — tick stopped at this PR; it and the PRs after it are left as they are"
+      PO_GH_EMPTY=1; break
+    fi
     # THE HOOKS (BH-3932), on every PR whatever its class: superseded first (rc 0
     # = it closed the PR, nothing else runs for it), then enroll, stale, health.
     PO_PROJECT="$PROJECT" PO_SLUG="$SLUG" PO_NUM="$NUM" PO_HEAD="$HEAD" PO_AUTHOR="$AUTHOR"
@@ -1183,14 +1204,14 @@ _bin/pr-owner-sweep.sh_" \
   # such merge came before the PR was opened (BH-6717).
   SPARED=$(sed 's/^/#/' "$TD/spared-later.txt" 2>/dev/null | paste -sd, -)
   say "$SLUG: open=$N_OPEN owned=$N_OWNED external=$N_EXT parked=$N_PARK orphans=$N_ORPH conductor-unread=$N_UNREAD conductor=$MC_SRC closed=${CLOSED:--} stale=${STALE:--} handed-back=${HANDED:--} held=${HELD:--} spared-later=${SPARED:--}$DRYNOTE"
-  po_health_flush "$PROJECT" "$SLUG" </dev/null || true
+  [ "$PO_GH_EMPTY" = 0 ] && { po_health_flush "$PROJECT" "$SLUG" </dev/null || true; }
   T_REPOS=$((T_REPOS+1)); T_OPEN=$((T_OPEN+N_OPEN)); T_OWNED=$((T_OWNED+R_OWNED)); T_EXT=$((T_EXT+N_EXT))
   T_ENR=$((T_ENR+R_ENR)); T_OWNERLESS=$((T_OWNERLESS+R_OWNERLESS)); T_SUP=$((T_SUP+R_SUP)); T_STALE=$((T_STALE+R_STALE))
-  [ "$R_OWNERLESS" -gt 0 ] && say "$SLUG: ownerless=$R_OWNERLESS ($OWNERLESS_NUMS)"
+  [ "$R_OWNERLESS" -gt 0 ] && [ "$PO_GH_EMPTY" = 0 ] && say "$SLUG: ownerless=$R_OWNERLESS ($OWNERLESS_NUMS)"
 
   # THE OWNERLESS CLOCK, per repo, on the fleet-wide run only. A repo GitHub
   # could not be read for this tick neither advances nor resets it.
-  if [ "$PO_ENROLL_LIVE" = 1 ] && [ "$PO_REPO_UNREAD" = 0 ]; then
+  if [ "$PO_ENROLL_LIVE" = 1 ] && [ "$PO_REPO_UNREAD" = 0 ] && [ "$PO_GH_EMPTY" = 0 ]; then
     OL_ACTIVE=0; [ "$R_OWNERLESS" -gt 0 ] && OL_ACTIVE=1
     if ph_streak "pr-owner-ownerless:$SLUG" "$OL_ACTIVE" "$PO_OWNERLESS_ALERT_H" 2>>"$LOG"; then
       if "$H/bin/lane-alert.sh" --id "pr-owner-ownerless:$SLUG" pr-owner-sweep \
@@ -1214,6 +1235,7 @@ _bin/pr-owner-sweep.sh_" \
       >/dev/null 2>&1 || true
   fi
   command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
+  [ "$PO_GH_EMPTY" = 1 ] && break
 done <<< "$PAIRS"
 
 [ "$SWEPT" = 0 ] && say "swept no repo this run (nothing visible, or every ledger read failed)"
@@ -1225,7 +1247,7 @@ command -v hb_done >/dev/null 2>&1 && hb_done pr-owner-sweep
 # ONE keyed conductor run per tick for every PR enrolled READY. It merges or not
 # on its own gates; a spawn that never ran is the backstop's (READY rows with
 # head = reviewed, every 5 minutes).
-if [ -n "$PO_ENROLLED_KEYS" ] && [ "$PO_ENROLL_LIVE" = 1 ]; then
+if [ -n "$PO_ENROLLED_KEYS" ] && [ "$PO_ENROLL_LIVE" = 1 ] && [ "$PO_GH_EMPTY" = 0 ]; then
   MC_ONLY_PR="$PO_ENROLLED_KEYS" lock_spawn_unheld timeout 240 "$H/bin/merge-conductor.sh" \
     </dev/null >>"$H/logs/merge-conductor-cron.log" 2>&1
   say "keyed conductor run spawned: $PO_ENROLLED_KEYS"

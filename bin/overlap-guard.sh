@@ -126,6 +126,32 @@ launch() { say "LAUNCH — $1"; printf 'LAUNCH %s %s\n' "$KEY" "$1"; exit 0; }
 # state/overlap-guard/<p>-prs.incomplete is written; while it exists the launch
 # check DEFERs every ticket (fail closed, never "no overlap"), one ALERTS line
 # per project per UTC day. A complete refresh deletes the marker.
+# og_prr_arm — BH-10218 W4: load bin/lib/prr-shadow.sh and this guard's seam
+# (bin/lib/prr-shadow.d/overlap-guard.sh) and pin the step once. overlap-guard
+# is not a lane, so its knob GH_SOURCE is the lib row lib.overlap-guard.gh_source
+# (catalog/lanes.d/_lib.overlap-guard.json, default shadow), resolved with
+# lib_env_apply in a subshell. A GH_SOURCE a parent lane pinned for itself
+# (GH_SOURCE_LANE=<parent>) is not this guard's step. rc 1 = no seam: the
+# caller makes today's read.
+OG_PRR=""
+og_prr_arm() {
+  local v _d
+  [ -n "$OG_PRR" ] && { [ "$OG_PRR" = 1 ]; return; }
+  OG_PRR=0
+  _d=$(dirname "$0")
+  # shellcheck source=bin/lib/prr-shadow.sh
+  . "$_d/lib/prr-shadow.sh" 2>/dev/null && prr_seam_load overlap-guard 2>/dev/null || return 1
+  if [ -n "${GH_SOURCE_LANE:-}" ] && [ "$GH_SOURCE_LANE" != overlap-guard ]; then unset GH_SOURCE GH_SOURCE_LANE; fi
+  v=$(
+    unset GH_SOURCE
+    command -v lib_env_apply >/dev/null 2>&1 || . "$_d/lib/lane-gate.sh" >/dev/null 2>&1 || exit 0
+    lib_env_apply overlap-guard >/dev/null 2>&1
+    printf '%s' "${GH_SOURCE:-}")
+  [ -n "$v" ] && GH_SOURCE="$v"
+  prr_pin overlap-guard && OG_PRR=1
+  [ "$OG_PRR" = 1 ]
+}
+
 og_refresh() {
   local slug lim mainmin cdir cf fdir t rc=0 n sha ref draft who url ff nm=0 np=0 day af cut bucket since got inc=""
   slug=$("$HARNESS/bin/fleet-conf.sh" "$PROJECT" repo 2>/dev/null)
@@ -153,12 +179,19 @@ og_refresh() {
     # shellcheck source=bin/lib/gh-repo-token.sh
     [ -r "$_P" ] && { . "$_P" 2>/dev/null; break; }
   done
+  # BH-10218: the visibility probe answers from the repo-meta memo until a push
+  # or repository wake (or REPO_META_BACKSTOP_S). Fail-open: no lib = no memo.
+  { . "$(dirname "$0")/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
   command -v gh_repo_use_token >/dev/null 2>&1 && { gh_repo_use_token "$slug" >/dev/null 2>&1 || :; }
   cdir="$HARNESS/state/overlap-guard"; cf="$cdir/$PROJECT-prs.json"; fdir="$cdir/$PROJECT-files"
   mkdir -p "$fdir" 2>/dev/null || { echo "REFRESH $PROJECT skipped: $fdir not writable"; return 0; }
   t=$(mktemp -d "${TMPDIR:-/tmp}/og-refresh-XXXXXX") || return 0
   : > "$t/rows.jsonl"; : > "$t/keep"
-  gh_rest_pr_list_all "$slug" open "$((lim + 1))" > "$t/list" || rc=$?
+  if og_prr_arm; then
+    prr_read overlap-guard "$slug#open" "$t/list" og_open_record og_open_github og_open_norm "$slug" "$((lim + 1))" || rc=$?
+  else
+    gh_rest_pr_list_all "$slug" open "$((lim + 1))" > "$t/list" || rc=$?
+  fi
   if [ "$rc" = 0 ]; then
     got=$(jq 'length' "$t/list" 2>/dev/null) || rc=75
     case "$got" in ''|*[!0-9]*) rc=75 ;; esac
@@ -611,6 +644,8 @@ if [ -n "$SLUG" ] && command -v gh >/dev/null 2>&1; then
     # repo. "unknown" means the lib is not on this box, so nobody asked — and an
     # unasked question must not be answered as though it had been.
     VISIBLE=unknown
+    # BH-10218: the repo-meta memo for the ladder's visibility probe (fail-open).
+    { . "$(dirname "$0")/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
     if command -v gh_repo_use_token >/dev/null 2>&1; then
       if gh_repo_use_token "$SLUG" >/dev/null 2>&1; then VISIBLE=yes; else VISIBLE=no; fi
     fi
@@ -623,8 +658,15 @@ if [ -n "$SLUG" ] && command -v gh >/dev/null 2>&1; then
       # helper, and a command substitution would leave the status behind in a
       # dead subshell — the DEFER line below would then name HTTP 000 for a 403.
       PRRC=0
-      harness_pr_list "$SLUG" open "number,url,headRefName,isDraft,files" "$PR_LIMIT" \
-        > "$TMP/prlist" 2>/dev/null || PRRC=$?
+      # The record cannot answer this list (it asks for files: og_check_record
+      # is always field:files), so shadow has nothing to compare and makes
+      # today's read with no log line; record logs its PRR_MISS and reads GitHub.
+      if og_prr_arm && [ "${GH_SOURCE:-}" = record ]; then
+        prr_read overlap-guard "$SLUG#check" "$TMP/prlist" og_check_record og_check_github og_check_norm "$SLUG" "$PR_LIMIT" || PRRC=$?
+      else
+        harness_pr_list "$SLUG" open "number,url,headRefName,isDraft,files" "$PR_LIMIT" \
+          > "$TMP/prlist" 2>/dev/null || PRRC=$?
+      fi
       if [ "$PRRC" = 0 ] && [ -s "$TMP/prlist" ]; then
         # WRITE ON SUCCESS ONLY. An unreadable read must never overwrite a
         # cache that still holds real PRs.

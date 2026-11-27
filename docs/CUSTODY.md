@@ -114,4 +114,6 @@ per-project mode rows: the per-project flip is the operator's choice (BH-7727).
 Deferred to the slices after #9554 (the custody table, the lease and the
 custodian dispatch): `plan_stale` requeue, `plan_blocked` defaults, orphaned
 build retries, `ABANDONED` release and re-plan, parked queue rows and the
-un-ingested results deadline. The resolver timeout ladder is the next slice.
+un-ingested results deadline. BH-10057 slice C0 shipped the resolver timeout ladder: a
+timed-out fix round is retried with a larger agent budget (`BR_FIX_TIMEOUT_RETRY_PCT`, 150 %)
+and a large park buys 2 fix rounds (`BR_MAX_FIXROUNDS`, registry default 2).

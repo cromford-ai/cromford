@@ -83,14 +83,20 @@ br_env_for_project() {
 }
 
 # br_fix_bound — prints the longest a box runs one fix round, in seconds
-#   (BH-9906): BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN,
-#   the bound bin/fix-round-claim.sh uses and its claim's stale cutoff. Either
-#   of the first two not a number: the fallback BR_FIX_LANE_TIMEOUT +
-#   BR_FIX_HOP_MARGIN. rc 1 (nothing printed) when no bound reads as a number.
+#   (BH-9906): A + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN, the bound
+#   bin/fix-round-claim.sh uses and its claim's stale cutoff. A is
+#   BR_FIX_AGENT_TIMEOUT, or the timeout retry's larger agent budget when
+#   BR_FIX_TIMEOUT_RETRIES > 0 (BH-10057, brtb_agent_max: 5400 s, bound 8400 s
+#   at the defaults). A suite that lifts this function alone has no
+#   brtb_agent_max and keeps BR_FIX_AGENT_TIMEOUT. Either of the first two not
+#   a number: the fallback BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN. rc 1
+#   (nothing printed) when no bound reads as a number.
 br_fix_bound() {
+  local a
   case "$FIX_HOP_MARGIN" in ''|*[!0-9]*) return 1 ;; esac
-  if [[ "${FIX_AGENT_TIMEOUT:-}" =~ ^[0-9]+$ ]] && [[ "${FIX_VERIFY_TIMEOUT:-}" =~ ^[0-9]+$ ]]; then
-    echo $((FIX_AGENT_TIMEOUT + FIX_VERIFY_TIMEOUT + FIX_HOP_MARGIN)); return 0
+  a="${FIX_AGENT_TIMEOUT:-}"; command -v brtb_agent_max >/dev/null 2>&1 && a=$(brtb_agent_max)
+  if [[ "$a" =~ ^[0-9]+$ ]] && [[ "${FIX_VERIFY_TIMEOUT:-}" =~ ^[0-9]+$ ]]; then
+    echo $((a + FIX_VERIFY_TIMEOUT + FIX_HOP_MARGIN)); return 0
   fi
   [[ "${FIX_LANE_TIMEOUT:-}" =~ ^[0-9]+$ ]] || return 1
   echo $((FIX_LANE_TIMEOUT + FIX_HOP_MARGIN))

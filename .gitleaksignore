@@ -35,8 +35,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -278,6 +278,9 @@ worker/jobs/test/pr-record-intake.bh-8151.test.js:generic-api-key:22
 worker/jobs/test/pr-record-lists.bh-8452.test.js:generic-api-key:36
 worker/jobs/test/pr-record-mergify-parse.bh-9938.test.js:generic-api-key:21
 worker/jobs/test/pr-record-mergify-run.bh-9938.test.js:generic-api-key:21
+worker/jobs/test/pr-record-notes.bh-10213.test.js:generic-api-key:32
+worker/jobs/test/pr-record-refs.bh-10217.test.js:generic-api-key:23
+worker/jobs/test/pr-record-reviews-sync.bh-10257.test.js:generic-api-key:24
 worker/jobs/test/pr-record-reviews.bh-8481.test.js:generic-api-key:32
 worker/jobs/test/pr-records.bh-8067.test.js:generic-api-key:26
 worker/jobs/test/project-secrets.bh-8317.test.js:generic-api-key:19

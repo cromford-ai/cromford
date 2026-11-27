@@ -752,7 +752,13 @@ _hpl_fallback_on() {
 # assignment on a function is exported for its duration and no longer): it says
 # "the list's own per-PR read", explicitly, to anything that has to tell it
 # apart from a lane's decision read of the same path (tests/lib/gh-list-bridge.sh).
+# BH-10316: the PR object itself goes through the merge conductor's tick memo
+# when it is armed (mc_tm_pull), so the visit's later reads of the same PR in
+# the same tick make no second GitHub call. Every other lane reads as before.
 _hpl_pr_get() { # _hpl_pr_get <slug> <num> <sub-path-or-empty> <outfile>
+  if [ -z "${3:-}" ] && command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on; then
+    HPL_READ_ROLE=list-lazy mc_tm_pull "$4" "$1" "$2"; return
+  fi
   HPL_READ_ROLE=list-lazy gh_rest GET "repos/$1/pulls/$2${3:+/$3}" > "$4"
 }
 

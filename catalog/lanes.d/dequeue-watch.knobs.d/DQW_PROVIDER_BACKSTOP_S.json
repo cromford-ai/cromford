@@ -1,0 +1,12 @@
+{
+  "env": "DQW_PROVIDER_BACKSTOP_S",
+  "read_in": "bin/lib/dequeue-watch/provider-memo.sh",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-10218: settings row lane.dequeue-watch.dqw_provider_backstop_s. The longest dequeue-watch serves a repo's stored merge-queue provider word (state/dequeue-watch/provider/) with no push wake to the repo's default branch. After it, or after a push, the tick asks mc_queue_provider again (.mergify.yml and rulesets through gh_rest, ETag on). Only a real read is stored; a failed read stores nothing. 0 = no store: every tick reads, as before BH-10218. Code fallback 21600 (DQW_PROVIDER_BACKSTOP_DEFAULT in bin/lib/dequeue-watch/provider-memo.sh)."
+}

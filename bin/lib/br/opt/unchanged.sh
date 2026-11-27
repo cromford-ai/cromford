@@ -34,7 +34,8 @@
 # abandoned ticket. Those are seen at most BR_UNCHANGED_RECHECK_S late.
 #
 # THE LEDGER is one file per row, $ST/<p>/.looks/<rkey>, one line
-# `fp<TAB>class<TAB>epoch`, written by temp file + mv. br_opt_unchanged_forget
+# `fp<TAB>class<TAB>epoch<TAB>wm<TAB>rv` (wm and rv: the BH-10198 change mark,
+# bin/blocked-resolver.d/bh-10198-read-after-change.sh), written by temp file + mv. br_opt_unchanged_forget
 # removes it at the dispatch line, so a row that took a rung is always looked
 # at on the next run. Lines older than twice BR_UNCHANGED_RECHECK_S are pruned,
 # once per BR_UNCHANGED_RECHECK_S per project.
@@ -106,22 +107,45 @@ br_opt_unchanged_fp() {
 # and br_one returns 3 with no call. Counts `unchanged`; writes no log line
 # (600 lines a run would bury the log; the `prof:` line carries the count).
 br_opt_unchanged_skip() {
-  local p="$1" rkey="$2" tkey="${6:--}" ck lf line fp class epoch now age max
+  # BH-10198 (bin/blocked-resolver.d/bh-10198-read-after-change.sh): prime the
+  # wakes mirror; a row that will be read takes its change mark (the wakes
+  # watermark and the PR record version) here, before any GitHub read.
+  command -v br_rac_begin >/dev/null 2>&1 && br_rac_begin "${1:-}"
+  _br_uc_skip "$@" && return 0
+  command -v br_rac_pre >/dev/null 2>&1 && br_rac_pre "${1:-}" "${2:-}" "${4:--}"
+  return 1
+}
+
+# _br_uc_skip — the decision of br_opt_unchanged_skip, same arguments and rc.
+_br_uc_skip() {
+  local p="$1" rkey="$2" tkey="${6:--}" ck lf line fp class epoch wm rv rac=unknown now age max
   case "${3:-}" in external-*) return 1 ;; esac
   lf=$(_br_uc_ledger "$p" "$rkey")
   [ -s "$lf" ] || return 1
-  IFS=$'\t' read -r fp class epoch < "$lf" || return 1
+  IFS=$'\t' read -r fp class epoch wm rv < "$lf" || return 1
   _br_uc_class_ok "$class" || return 1
   case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
   max="${BR_UNCHANGED_RECHECK_S:-1800}"
   case "$max" in ''|*[!0-9]*) max=1800 ;; esac
   now="${EPOCHSECONDS:-$(date -u +%s)}"
   age=$(( now - epoch ))
-  [ "$age" -ge 0 ] && [ "$age" -lt "$max" ] || return 1
+  [ "$age" -ge 0 ] || return 1
+  # BH-10198: asked only past today's window (inside it the skip already
+  # holds, and the record peek would cost a jobs GET a row). changed = read
+  # now; quiet = skip up to the backstop; unknown (a source that cannot
+  # answer, no PR record, an old ledger line) = read, as today.
+  [ "$age" -ge "$max" ] && command -v br_rac_due >/dev/null 2>&1 \
+    && rac=$(br_rac_due "$p" "$tkey" "${4:--}" "${wm:-}" "${rv:-}" "$class")
+  case "$rac" in
+    changed) br_count rac-changed; return 1 ;;
+    quiet)   [ "$age" -lt "$max" ] || [ "$age" -lt "$(br_rac_backstop)" ] || return 1 ;;
+    *)       [ "$age" -lt "$max" ] || return 1 ;;
+  esac
   ck=$(br_cap_key "$p" "$rkey" "$tkey")
   line=$(br_opt_unchanged_fp "$p" "$rkey" "${3:--}" "${4:--}" "${5:--}" "$tkey" "${7:--}" "$ck")
   [ -n "$line" ] && [ "$line" = "$fp" ] || return 1
   br_count unchanged
+  [ "$rac" = quiet ] && [ "$age" -ge "$max" ] && br_count rac-quiet
   return 0
 }
 
@@ -129,15 +153,18 @@ br_opt_unchanged_skip() {
 #   — store the row's fingerprint as it is NOW, after the quiet look. A class
 #   that is not on the allowlist stores nothing.
 br_opt_unchanged_mark() {
-  local class="$1" p="${2:-}" rkey="${3:-}" lf fp now
+  local class="$1" p="${2:-}" rkey="${3:-}" lf fp now wm=- rv=-
   [ -n "$p" ] && [ -n "$rkey" ] && [ -n "${9:-}" ] || return 0
   _br_uc_class_ok "$class" || return 0
   fp=$(br_opt_unchanged_fp "$p" "$rkey" "${4:--}" "${5:--}" "${6:--}" "${7:--}" "${8:--}" "$9")
   [ -n "$fp" ] || return 0
+  # BH-10198: the change mark br_rac_pre took before the reads (`-` and empty
+  # when it did not run for this row: the next skip then answers unknown).
+  command -v br_rac_mark >/dev/null 2>&1 && IFS=$'\t' read -r wm rv <<<"$(br_rac_mark "$rkey")"
   lf=$(_br_uc_ledger "$p" "$rkey")
   now="${EPOCHSECONDS:-$(date -u +%s)}"
   mkdir -p "$(dirname "$lf")" 2>/dev/null || return 0
-  printf '%s\t%s\t%s\n' "$fp" "$class" "$now" > "$lf.tmp.$BASHPID" 2>/dev/null \
+  printf '%s\t%s\t%s\t%s\t%s\n' "$fp" "$class" "$now" "${wm:--}" "$rv" > "$lf.tmp.$BASHPID" 2>/dev/null \
     && mv -f "$lf.tmp.$BASHPID" "$lf" 2>/dev/null
   rm -f "$lf.tmp.$BASHPID" 2>/dev/null
   _br_uc_prune "$(dirname "$lf")" "$now"
@@ -146,17 +173,26 @@ br_opt_unchanged_mark() {
 
 # _br_uc_prune <looks-dir> <now> — at most once per BR_UNCHANGED_RECHECK_S per
 # project (the .pruned marker's mtime), remove the ledger lines older than twice
-# that. A line that old can never answer a skip, and a row no source offers any
+# that, or than BR_RAC_BACKSTOP_S when the BH-10198 fragment is on and that is
+# longer. A line that old can never answer a skip, and a row no source offers any
 # more would otherwise leave its file behind for good.
 _br_uc_prune() {
-  local d="$1" now="$2" max m mt
+  local d="$1" now="$2" max m mt keep b
   max="${BR_UNCHANGED_RECHECK_S:-1800}"
   case "$max" in ''|*[!0-9]*|0) return 0 ;; esac
   m="$d/.pruned"
   mt=$(stat -c %Y "$m" 2>/dev/null) || mt=0
   [ $(( now - mt )) -ge "$max" ] || return 0
   : > "$m" 2>/dev/null || return 0
-  find "$d" -maxdepth 1 -type f ! -name .pruned ! -name '*.tmp.*' -mmin +$(( (2 * max + 59) / 60 )) -delete 2>/dev/null
+  # BH-10198: a quiet skip does not rewrite the line, so with the
+  # read-after-change fragment on a line must live to its backstop
+  # (BR_RAC_BACKSTOP_S), the longest a line can still answer a skip.
+  keep=$(( 2 * max ))
+  if command -v br_rac_backstop >/dev/null 2>&1; then
+    b=$(br_rac_backstop)
+    case "$b" in ''|*[!0-9]*) ;; *) [ "$b" -gt "$keep" ] && keep="$b" ;; esac
+  fi
+  find "$d" -maxdepth 1 -type f ! -name .pruned ! -name '*.tmp.*' -mmin +$(( (keep + 59) / 60 )) -delete 2>/dev/null
   return 0
 }
 

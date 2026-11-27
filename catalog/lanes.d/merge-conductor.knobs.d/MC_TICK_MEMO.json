@@ -1,0 +1,11 @@
+{
+  "env": "MC_TICK_MEMO",
+  "read_in": "bin/lib/mc/tick-memo.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-10316: 1 = the conductor keeps its GitHub reads of a PR's review list and of pulls/<n> for the rest of one tick (a file memo in a temp dir the tick removes). Only a good read is kept; any conductor write to the PR (label, comment, review, queue command, merge, push) or a head move clears that PR's entries. 0 = off: every step reads GitHub, as before BH-10316. Settings row: lane.merge-conductor.mc_tick_memo."
+}

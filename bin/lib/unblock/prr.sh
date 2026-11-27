@@ -35,6 +35,13 @@
 #           HARNESS_TEST_SANDBOX=1), then <cmd...>. When it is rc 0 AND <out>
 #           is valid JSON, wb_cache_put <base> "<head or ->\t<start>" < <out>.
 #           A failed read writes no cache file. Returns the cmd's rc.
+#       UBP_FRESH=<mark> (BH-10197): the change gate
+#       (bin/lib/unblock/change-gate.sh ubg_fresh) sets it for a PR it let
+#       through on a change. The key is <head>@<mark>, and a cache file is
+#       served only when its read started in this tick (at or after _UBP_T0),
+#       so a stale file is never stored under a newer change mark. The review
+#       collector still reuses the reviews the queue collector read in the
+#       same tick under the same mark. A mark that is not digits is 0.
 #       <n> `-` is the repo-wide key: any `pr` wake of the repo makes it due.
 #       <back> is the knob UNBLOCK_PRR_BACKSTOP_S (int, default 1800, 0 =
 #       always read; catalog/lanes.d/unblock.knobs.d/UNBLOCK_PRR_BACKSTOP_S.json).
@@ -53,6 +60,7 @@
 [ -n "${_UBP_LOADED:-}" ] && return 0
 _UBP_LOADED=1
 _UBP_DIR="${BASH_SOURCE[0]%/*}"
+_UBP_T0=""
 # fallback only: the knob is UNBLOCK_PRR_BACKSTOP_S in catalog/lanes.d/unblock.knobs.d/UNBLOCK_PRR_BACKSTOP_S.json
 _UBP_DEFAULT_BACKSTOP_S=1800
 
@@ -97,8 +105,15 @@ ubp_read() {
   "$gfn" "$out" "$@"
 }
 
+# _ubp_this_tick <base>: rc 0 when the cache meta's read start is at or after
+# _UBP_T0 (the tick start on the gate clock). No T0: rc 1.
+_ubp_this_tick() {
+  local u e
+  [ -n "$_UBP_T0" ] && IFS=$'\t' read -r u e < "$1.meta" 2>/dev/null && [[ $e =~ ^[0-9]+$ ]] && [ "$e" -ge "$_UBP_T0" ]
+}
+
 ubp_cached() {
-  local repo="${1:-}" n="${2:-}" head="${3:-}" kind="${4:-}" out="${5:-}" root base start rc
+  local repo="${1:-}" n="${2:-}" head="${3:-}" kind="${4:-}" out="${5:-}" root base start rc fresh="${UBP_FRESH:-}"
   shift 5 2>/dev/null || return 2
   [ "$#" -gt 0 ] || return 2
   root=$(_ubp_root)
@@ -108,7 +123,9 @@ ubp_cached() {
     "$@"; return $?
   fi
   base="$root/state/unblock-prr/${repo%%/*}_${repo#*/}/${n/#-/repo}-$kind"
-  if wb_cache_get "$base" "$repo" pr "$n" "$(_ubp_back)" "$head" && cp "$base.json" "$out" 2>/dev/null; then
+  if [ -n "$fresh" ]; then [[ $fresh =~ ^[0-9]{1,15}$ ]] || fresh=0; head="$head@$fresh"; fi
+  if wb_cache_get "$base" "$repo" pr "$n" "$(_ubp_back)" "$head" && { [ -z "$fresh" ] || _ubp_this_tick "$base"; } \
+     && cp "$base.json" "$out" 2>/dev/null; then
     return 0
   fi
   start=$(_wb_now)
@@ -118,6 +135,17 @@ ubp_cached() {
   fi
   return "$rc"
 }
+
+# The tick start, once, on the clock of _wb_now (bin/lib/wake-backstop.sh:
+# WAKE_BACKSTOP_NOW under HARNESS_TEST_SANDBOX=1, else the box clock). The rule
+# is copied, not loaded: loading that lib reads the lane settings. bin/unblock.sh
+# sources this lib (through ticket-pr.sh) before the collectors, whose
+# subshells inherit it. A collector that sources it first takes its own start.
+if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ] && [[ ${WAKE_BACKSTOP_NOW:-} =~ ^[0-9]+$ ]]; then
+  _UBP_T0=$((10#$WAKE_BACKSTOP_NOW))
+else
+  _UBP_T0=$(date +%s)
+fi
 
 ubp_prepare() {
   [ "$(ubp_step)" = record ] && _ubp_wb

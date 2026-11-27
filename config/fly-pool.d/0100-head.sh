@@ -689,6 +689,9 @@ declare -A _POOL_PR_ANY_CACHE=()
 # a previous iteration had exported.
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$HARNESS/bin/lib/gh-repo-token.sh" ] && . "$HARNESS/bin/lib/gh-repo-token.sh"
+# BH-10218: the ladder's visibility probe answers from the repo-meta memo until a
+# push or repository wake for the repo (or REPO_META_BACKSTOP_S). Fail-open.
+{ [ -r "$HARNESS/bin/lib/repo-meta.sh" ] && . "$HARNESS/bin/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
 # >>> gh default auth
 # THE TICK'S OWN IDENTITY (BH-470, #424), for the `gh` calls this dispatcher
 # makes itself — the reap-time PR verify reads. BELOW the two libs above on

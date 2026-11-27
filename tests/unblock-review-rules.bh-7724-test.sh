@@ -78,6 +78,10 @@ while [ $# -gt 0 ]; do
 done
 p="${url#"$JOBS_URL"}"
 echo "$m $p" >> "$C/curl.calls"
+# BH-10197: the change gate's check is a read sent as POST. It is logged to
+# gate.calls, not writes.txt, and refused (500), so the gate has no effect
+# (shadow) and makes no commit. Every other non-GET is still a write.
+if [ "$m $p" = "POST /api/unblock/change-marks/check" ]; then echo "curl $m $p" >> "$C/gate.calls"; printf '{"error":"refused by the stub"}\n500'; exit 0; fi
 if [ "$m" != GET ]; then echo "curl $m $p" >> "$C/writes.txt"; printf '{"error":"write refused by the stub"}\n500'; exit 0; fi
 path="${p%%\?*}"; key=""
 case "$path" in
@@ -545,6 +549,9 @@ for c in $CASES; do
   fi
 done
 [ "$W" = 0 ] && ok || bad "C13: $W GitHub or worker writes: $(cat "$T"/*/writes.txt)"
+# BH-10197: the gate's checks were refused, so no case may show a commit.
+GC=$(cat "$T"/*/gate.calls 2>/dev/null)
+[ -n "$GC" ] && [ -z "$(grep -v '^curl POST /api/unblock/change-marks/check$' <<<"$GC")" ] && ok || bad "C13: the gate calls are refused checks only: $GC"
 [ "$G" -gt 0 ] && [ "$K" -gt 0 ] && ok || bad "C13: the stubs answered no read (gh $G, worker $K): the suite ran nothing"
 [ -z "$X" ] && ok || bad "C13: files written outside the log and the judge ledger: $X"
 

@@ -1597,6 +1597,7 @@ mc_rebase() {
     mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3
   fi
   prr_note_push "$slug" "$(mc_num_of_url "$url")" "$prat" "$wt" HEAD "$head"
+  command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$slug" "$(mc_num_of_url "$url")"   # BH-10316: a push moves the head
   # A UNION-RESOLVED MERGE IS NOT A CLEAN MAIN MERGE (BH-4641, iron guardrail 1).
   # The resolution wrote code no reviewer has read, so the approval stays on the
   # old head: no reviewed-sha write, no ledger rebind, rc 5. Every caller already
@@ -1800,6 +1801,7 @@ mc_restack() {
     mc_rebase_cleanup "$repo" "$wt" "$cloned"; return 3
   fi
   prr_note_push "$slug" "$(mc_num_of_url "$url")" "$prat" "$wt" HEAD "$head"
+  command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$slug" "$(mc_num_of_url "$url")"   # BH-10316: a push moves the head
   for kid in $kids; do
     if mc_stack_pending_put "$slug" "$kid" "${url##*/}" "$url" "$br" "$head" "$br"; then
       mc_log "$url restack: $slug#$kid is based on $br — owed a restack from its old head ${head:0:8} onto the new ${new:0:8}"

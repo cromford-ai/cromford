@@ -196,10 +196,15 @@ mc_rest_slug_num() {
 # traffic the ETag cache exists for) reported fetched=0 cached=0 forever.
 # Read through a FILE instead, the same idiom `_gh_rest_field` and
 # gh-pr-list.sh's `_gh_rest_list` already use.
+#
+# BH-10316: with the conductor's tick memo armed, the read goes through
+# mc_tm_pull (bin/lib/mc/tick-memo.sh): one GitHub read of
+# the PR per tick until the conductor writes to it. Same rc, same body.
 mc_rest_pr_json() {
   local t rc=0
   t=$(mktemp "${TMPDIR:-/tmp}/mc-pr.XXXXXX") || return 75
-  gh_rest GET "repos/${1:?slug}/pulls/${2:?num}" > "$t" || rc=$?
+  if command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on; then mc_tm_pull "$t" "${1:?slug}" "${2:?num}" || rc=$?
+  else gh_rest GET "repos/${1:?slug}/pulls/${2:?num}" > "$t" || rc=$?; fi
   if [ "$rc" != 0 ]; then rm -f "$t"; return "$rc"; fi
   jq -c "$MC_REST_NORM" "$t" 2>/dev/null || { rm -f "$t"; return 75; }
   rm -f "$t"
@@ -2713,6 +2718,8 @@ mc_pr_live_head() {
   mc_rest_var _plh gh_rest GET "repos/$slug/pulls/$num" || return 1
   sha=$(jq -r '.head.sha // ""' <<<"$_plh" 2>/dev/null)
   [ -n "$sha" ] || return 1
+  # BH-10316: a head move this live read sees clears the PR's tick memo.
+  command -v mc_tm_note_head >/dev/null 2>&1 && mc_tm_note_head "$slug" "$num" "$sha"
   printf '%s\n' "$sha"
 }
 

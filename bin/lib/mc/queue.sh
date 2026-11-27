@@ -636,6 +636,52 @@ mc_queue_state_rec() {
   mc_queue_state "$url" "$head"
 }
 
+# mc_queued_view_rec <pr-url> <head-sha> — the QUEUED pass's PR view
+#   (`<STATE> <head-ref> <head-sha>`, mc_pr_view's shape) for a row the open
+#   list does not hold at its QUEUED head, through the PR record (BH-10257
+#   slice 2): prr_read merge-conductor "<slug>#<n>@<head12>:view" with
+#   mc_qv_record / mc_qv_github / mc_qv_norm. The record answers only OPEN on
+#   the QUEUED head; every other case reads GitHub. rc 0 and the line, or the
+#   GitHub read's rc and nothing. No 40-hex head, or no seam: mc_pr_view.
+mc_queued_view_rec() {
+  local url="$1" head="${2:-}" slug num qvf w rc=0
+  slug=$(mc_slug_of_url "$url"); num=$(mc_num_of_url "$url")
+  if [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]] && [[ "$num" =~ ^[0-9]+$ ]] && [[ "$slug" == */* ]] \
+     && command -v _mc_ci_prr_load >/dev/null 2>&1 && _mc_ci_prr_load && command -v mc_qv_record >/dev/null 2>&1 \
+     && qvf=$(mktemp "${TMPDIR:-/tmp}/mc-qv.XXXXXX"); then
+    prr_read merge-conductor "$slug#$num@${head:0:12}:view" "$qvf" mc_qv_record mc_qv_github mc_qv_norm "$url" "$head" "$slug" "$num" || rc=$?
+    w=$(head -1 "$qvf" 2>/dev/null); rm -f "$qvf"
+    [ "$rc" = 0 ] || return "$rc"
+    [ -n "$w" ] || return 75
+    printf '%s' "$w"
+    return 0
+  fi
+  mc_pr_view "$url" '"\(.STATE) \(.head.ref) \(.head.sha // "")"' 2>/dev/null
+}
+
+# mc_cr_standing_rec <owner/repo> <num> <pr-url> <head-sha> — bg_cr_standing
+#   with no PR thread (mc_cr_dequeue's first read) through the PR record
+#   (BH-10257 slice 2): prr_read merge-conductor "<slug>#<n>@<head12>:cr" with
+#   mc_cr_record / mc_cr_github / mc_cr_norm. bg_cr_standing's contract: rc 0
+#   and the scan line (a CR stands), rc 1 (none), rc 2 (unreadable). The
+#   record answers only rc 1, and only from a complete review set (see
+#   mc_cr_record). No 40-hex head, or no seam: bg_cr_standing, as before.
+mc_cr_standing_rec() {
+  local slug="$1" num="$2" url="$3" head="${4:-}" crf w line
+  if [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]] && [[ "$num" =~ ^[0-9]+$ ]] && [[ "$slug" == */* ]] \
+     && command -v _mc_ci_prr_load >/dev/null 2>&1 && _mc_ci_prr_load && command -v mc_cr_record >/dev/null 2>&1 \
+     && crf=$(mktemp "${TMPDIR:-/tmp}/mc-cr.XXXXXX"); then
+    prr_read merge-conductor "$slug#$num@${head:0:12}:cr" "$crf" mc_cr_record mc_cr_github mc_cr_norm "$slug" "$num" "$url" "$head"
+    w=$(head -1 "$crf" 2>/dev/null); line=$(sed -n '2p' "$crf" 2>/dev/null); rm -f "$crf"
+    case "$w" in
+      stands) [ -n "$line" ] || return 2; printf '%s' "$line"; return 0 ;;
+      none) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
+  bg_cr_standing "$slug" "$num" "$url" "$head" ""
+}
+
 # mc_queue_left_why <owner/repo> <pr-url> <head-sha>
 #   -> merged | paused | merging | ejected | nowitness | unknown, always rc 0 (BH-4562)
 #
@@ -1704,7 +1750,7 @@ mc_cr_dequeue() {
   num=$(mc_num_of_url "$url")
   if [ -z "$line" ]; then
     command -v bg_cr_standing >/dev/null 2>&1 || return 1
-    line=$(bg_cr_standing "$slug" "$num" "$url" "$head" "") || return 1
+    line=$(mc_cr_standing_rec "$slug" "$num" "$url" "$head") || return 1   # BH-10257: the PR record first
     c=$(bg_read "repos/$slug/issues/$num/comments" created_at 2>/dev/null) || c=""
     if [ -n "$c" ]; then line=$(bg_cr_standing "$slug" "$num" "$url" "$head" "$c") || return 1; fi
   fi

@@ -216,11 +216,28 @@ bg_newer() {
 # LOOKS like it carries a number would refuse its merge on every tick for ever.
 # Every other read stays fail-closed: a 404 on the PR's OWN comments means the
 # token cannot see the repo, which is precisely when not to merge.
+#
+# THE FOURTH ARGUMENT (BH-10316) is the head a PR's review list is read for. In
+# the merge conductor with its tick memo armed (bin/lib/mc/tick-memo.sh),
+# `repos/<slug>/pulls/<n>/reviews` comes from
+# mc_tm_reviews (one GitHub read per PR and head per tick) and the same filter
+# runs over that list; a failed read is rc 1, as here. Every other lane, and
+# every other path, reads as before.
 bg_read() {
-  local path="$1" tf="$2" soft="${3:-}" out rc errf
+  local path="$1" tf="$2" soft="${3:-}" out rc errf mf
+  local q=".[] | select(.$tf != null) | [(.id|tostring), .$tf, (.user.login // \"-\"), (if (.html_url // \"\") == \"\" then \"-\" else .html_url end), (.body // \"\" | @base64)] | @tsv"
+  if [[ "$path" =~ ^repos/([^/]+/[^/]+)/pulls/([0-9]+)/reviews$ ]] && command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on \
+     && mf=$(mktemp "${TMPDIR:-/tmp}/bg-read-rv.XXXXXX" 2>/dev/null); then
+    rc=0; mc_tm_reviews "$mf" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${4:--}" || rc=$?
+    [ "$rc" = 0 ] && { out=$(jq -r "$q" "$mf" 2>/dev/null) || rc=1; }
+    rm -f "$mf"
+    [ "$rc" = 0 ] || return 1
+    [ -z "$out" ] || awk -F'\t' 'NF!=5{exit 1}' <<<"$out" || return 1
+    printf '%s' "$out" | tr '\t' '\037'
+    return 0
+  fi
   errf="${TMPDIR:-/tmp}/bg-read.$$.$RANDOM"
-  out=$(gh api "$path" --paginate \
-        -q ".[] | select(.$tf != null) | [(.id|tostring), .$tf, (.user.login // \"-\"), (if (.html_url // \"\") == \"\" then \"-\" else .html_url end), (.body // \"\" | @base64)] | @tsv" 2>"$errf"); rc=$?
+  out=$(gh api "$path" --paginate -q "$q" 2>"$errf"); rc=$?
   if [ "$rc" -ne 0 ]; then
     if [ "$soft" = no-thread-is-empty ] && grep -qE 'HTTP 404|Not Found' "$errf" 2>/dev/null; then
       rm -f "$errf"; return 0
@@ -360,19 +377,36 @@ bg_reviewer_can_write() {
 #   rc 1  none stands
 #   rc 2  the reviews could not be read — never rc 1: a lane that cannot see
 #         the reviews does not merge this tick.
+#   Sets BG_CR_ROWS (the rows of the reviews list) and BG_CR_ROWS_OK (1 when
+#   that list was read whole and parsed) in the caller's shell (BH-10257).
 bg_cr_standing() {
   local slug="$1" num="$2" url="$3" head="$4" comments="${5:-}"
   local rows cands US=$'\037' NL=$'\n' base="" hfp="" bfp
   local id at login commit rurl cid cat clogin curl cb64 cleared
   head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
-  rows=$(gh api -X GET "repos/$slug/pulls/$num/reviews?per_page=100" --paginate -q '.[] | [
+  local q='.[] | [
       (.id|tostring), (.submitted_at // "-"), (.user.login // "-"), (.user.type // "-"),
       (.author_association // "-"), (.state // "-"), ((.commit_id // "-") | ascii_downcase),
       (if (.html_url // "") == "" then "-" else .html_url end),
       (if ((.body // "") | contains("Automated harness review (")) then "1" else "0" end)
-    ] | @tsv' 2>/dev/null) || return 2
-  [ -n "$rows" ] || return 1
+    ] | @tsv' mf="" tm=0
+  # BH-10316: in the conductor with its tick memo armed, the list and the base
+  # below come from the tick memo (mc_tm_reviews, mc_tm_pull), and the same
+  # filter runs over the list. Anywhere else, the reads of before.
+  if command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on && mf=$(mktemp "${TMPDIR:-/tmp}/bg-cr.XXXXXX" 2>/dev/null); then
+    tm=1
+    mc_tm_reviews "$mf" "$slug" "$num" "$head" && rows=$(jq -r "$q" "$mf" 2>/dev/null) || { rm -f "$mf"; return 2; }
+    rm -f "$mf"
+  else
+    rows=$(gh api -X GET "repos/$slug/pulls/$num/reviews?per_page=100" --paginate -q "$q" 2>/dev/null) || return 2
+  fi
+  # BH-10257: the whole list this answer came from, for a caller in the same
+  # shell (mc_cr_github writes it into the PR record). OK=1 only for a list
+  # whose every row parsed.
+  BG_CR_ROWS="$rows"; BG_CR_ROWS_OK=0
+  [ -n "$rows" ] || { BG_CR_ROWS_OK=1; return 1; }
   awk -F'\t' 'NF!=9{exit 1}' <<<"$rows" || return 2
+  BG_CR_ROWS_OK=1
   # The latest standing-relevant review per eligible login, then only the CRs.
   cands=$(LC_ALL=C sort -s -t$'\t' -k2,2 <<<"$rows" | awk -F'\t' '
     $6 !~ /^(APPROVED|CHANGES_REQUESTED|DISMISSED)$/ { next }
@@ -404,7 +438,10 @@ bg_cr_standing() {
     # On which head: the live one, or one whose own diff this head still carries.
     if [ "$commit" != "$head" ]; then
       if [ -z "$base" ]; then
-        base=$(gh api -X GET "repos/$slug/pulls/$num" -q '.base.ref // empty' 2>/dev/null) || base=""
+        if [ "$tm" = 1 ] && mf=$(mktemp "${TMPDIR:-/tmp}/bg-cr.XXXXXX" 2>/dev/null); then
+          if mc_tm_pull "$mf" "$slug" "$num"; then base=$(jq -r '.base.ref // empty' "$mf" 2>/dev/null) || base=""; else base=""; fi
+          rm -f "$mf"
+        else base=$(gh api -X GET "repos/$slug/pulls/$num" -q '.base.ref // empty' 2>/dev/null) || base=""; fi
       fi
       if [ -n "$base" ] && bfp=$(bg_own_diff_fp "$slug" "$base" "$commit"); then
         [ -n "$hfp" ] || hfp=$(bg_own_diff_fp "$slug" "$base" "$head") || hfp="${NL}unknown"
@@ -483,7 +520,7 @@ bg_scan_read() {
     esac
   fi
   c=$(bg_read "repos/$slug/issues/$num/comments" created_at)  || { printf 'comments'; return 2; }
-  r=$(bg_read "repos/$slug/pulls/$num/reviews" submitted_at)  || { printf 'reviews'; return 2; }
+  r=$(bg_read "repos/$slug/pulls/$num/reviews" submitted_at "" "$head")  || { printf 'reviews'; return 2; }
   i=""
   if [ -n "$issue" ] && [ "$issue" != "$num" ]; then
     i=$(bg_read "repos/$slug/issues/$issue/comments" created_at no-thread-is-empty) \

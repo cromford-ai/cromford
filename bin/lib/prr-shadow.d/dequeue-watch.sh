@@ -40,6 +40,13 @@
 #       failed; rc 3 the comment read failed; rc 4 the comment does not parse
 #       as dequeued. epoch is the comment's updated_at. Sets DQW_PAYLOAD_CID
 #       to the comment id it read, for the caller's skip line.
+#   dqw_payload_note <file> <github-rc> <why> <slug> <n>   (BH-10213)
+#       Called by prr_read once after a record-step miss: GitHub rc 0 writes
+#       the chosen comment (<file>.comment, kept by dqw_payload_github under
+#       PRR_NOTE) back into the record; rc 1 (no payload comment) writes the
+#       "checked, empty" marker; any other rc writes nothing. It always
+#       removes <file>.comment. A fresh marker makes dqw_payload_record print
+#       `hit-rc:1`: prr_read then answers rc 1 ("no payload") from the record.
 #   dqw_payload_norm <file>
 #       [{n:"payload", state, cid}] plus draft, run, left and checks for a
 #       dequeued state. The epoch is not compared: since BH-9938 C1 both
@@ -55,6 +62,11 @@
 #       for the head: other contexts alone are never "no verdict".
 #   dqw_status_github <file> <slug> <n> <head>
 #       repos/<slug>/commits/<head>/status.
+#   dqw_status_note <file> <github-rc> <why> <slug> <n> <head>   (BH-10213)
+#       After a record-step miss: GitHub rc 0 with a .statuses array writes
+#       the list for <head> back into the record (an empty list is the
+#       "checked, empty" marker, which dqw_status_record then serves as
+#       {"statuses": []} while it is fresh). Any other rc or shape: nothing.
 #   dqw_status_norm <file>
 #       [{n: <context>, v: <state>}] of the vs_context context (default
 #       lead-verdict) only.
@@ -118,6 +130,8 @@ dqw_payload_record() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/dqw-payload.XXXXXX") || { echo unreadable; return 1; }
   PRR_MISS_WHY=""
   pr_record_mergify "$slug" "$n" > "$tmp"; rc=$?
+  # BH-10213: a fresh "checked, empty" marker is GitHub's "no payload" (rc 1).
+  if [ "$rc" != 0 ] && [ "$PRR_MISS_WHY" = empty ]; then rm -f "$tmp"; : > "$f"; echo hit-rc:1; return 0; fi
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
   # BH-9938 C1: the epoch is the comment's updated_at, the time
   # sdq_payload_last reads from GitHub (a row written before C1 has no such
@@ -149,7 +163,8 @@ dqw_payload_github() {
   local f="${1:-}" slug="${2:-}" n="${3:-}" line state epoch cid body tsv c
   [ -n "$f" ] || return 2
   : > "$f"
-  line=$(sdq_payload_last "$slug" "$n"); case $? in
+  # BH-10213: under PRR_NOTE (a record-step miss) keep the chosen comment for dqw_payload_note.
+  line=$(SDQ_PAYLOAD_COMMENT_OUT="${PRR_NOTE:+$f.comment}" sdq_payload_last "$slug" "$n"); case $? in
     0) ;;
     1) return 1 ;;
     *) return 2 ;;
@@ -166,6 +181,14 @@ dqw_payload_github() {
     && body=$(jq -er '.body | strings' "$c" 2>/dev/null) || return 3
   tsv=$(dqw_parse_payload_md "$body") || return 4
   printf '%s\t%s\t%s\t%s\n' "$state" "$epoch" "$cid" "$tsv" > "$f"
+}
+
+dqw_payload_note() {
+  local c="${1:-}.comment"
+  [ -n "${1:-}" ] || return 0
+  prr_note_payload "$c" "${2:-}" "${4:-}" "${5:-}"
+  rm -f "$c"
+  return 0
 }
 
 dqw_payload_norm() {
@@ -187,6 +210,8 @@ dqw_status_record() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/dqw-status.XXXXXX") || { echo unreadable; return 1; }
   PRR_MISS_WHY=""
   pr_record_statuses "$slug" "$n" "$head" row-head > "$tmp"; rc=$?
+  # BH-10213: a fresh "checked, empty" marker is GitHub's empty status list.
+  if [ "$rc" != 0 ] && [ "$PRR_MISS_WHY" = empty ]; then rm -f "$tmp"; printf '{"statuses":[]}\n' > "$f"; return 0; fi
   if [ "$rc" != 0 ]; then rm -f "$tmp"; echo "${PRR_MISS_WHY:-unreadable}"; return 1; fi
   # BH-9938 C1: a hit needs the verdict context itself for this head. Other
   # contexts alone are a miss, never "no verdict" (the GitHub read decides).
@@ -202,6 +227,11 @@ dqw_status_github() {
   local f="${1:-}" slug="${2:-}" head="${4:-}"
   [ -n "$f" ] || return 2
   gh_rest GET "repos/$slug/commits/$head/status" > "$f"
+}
+
+dqw_status_note() {
+  prr_note_statuses "${1:-}" "${2:-}" "${4:-}" "${5:-}" "${6:-}"
+  return 0
 }
 
 dqw_status_norm() {

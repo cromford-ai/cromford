@@ -111,6 +111,13 @@ flock -n 8 || { line "skipped (running)"; exit 0; }
 . "$SELF/lib/trk-lane.sh" 2>/dev/null
 # shellcheck source=bin/lib/stack-wait.sh
 . "$SELF/lib/stack-wait.sh" 2>/dev/null
+# BH-10218 W4: the stack parent lookup through the prr-shadow seam (step row
+# lane.scheduler.gh_source, default shadow), pinned once. No seam: today's read.
+SCHED_PRR=0
+# shellcheck source=bin/lib/prr-shadow.sh
+if . "$SELF/lib/prr-shadow.sh" 2>/dev/null && prr_seam_load scheduler 2>/dev/null; then
+  prr_pin scheduler && SCHED_PRR=1
+fi
 # shellcheck source=bin/lib/scheduler.sh
 . "$SELF/lib/scheduler.sh" || { line "skipped (no scheduler lib)"; exit 0; }
 
@@ -279,7 +286,12 @@ tick() {
       if [ "$reads" -ge "$READS_MAX" ]; then printf '%s\tunknown\n' "$k" >> "$D/parents"; continue; fi
       reads=$((reads + 1))
       br="ticket/${PFX,,}-$k"
-      out=$(sw_parent_pr "$SLUG" "$br")
+      if [ "$SCHED_PRR" = 1 ]; then
+        prr_read scheduler "$SLUG#$br" "$D/parent.out" sched_parent_record sched_parent_github sched_parent_norm "$SLUG" "$br"
+        out=$(cat "$D/parent.out" 2>/dev/null)
+      else
+        out=$(sw_parent_pr "$SLUG" "$br")
+      fi
       case "${out%% *}" in
         merged) st=merged ;; open) st=open ;; closed|none) st=d ;; *) st=unknown ;;
       esac

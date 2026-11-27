@@ -20,7 +20,12 @@
 #   not claim stays queued. At most FIX_ROUND_CLAIM_MAX claims a pass, each
 #   through fix_round_claim <box> <stale_min>, where stale_min is ceil(T / 60)
 #   and T = BR_FIX_AGENT_TIMEOUT + BR_FIX_VERIFY_TIMEOUT + BR_FIX_HOP_MARGIN
-#   (the round bound below; when the agent or verify knob is not a number, the
+#   (stale_min 110 at the defaults). The round bound of a run uses the timeout
+#   retry's larger agent budget in place of BR_FIX_AGENT_TIMEOUT when
+#   BR_FIX_TIMEOUT_RETRIES > 0 (BH-10057: BR_FIX_AGENT_TIMEOUT *
+#   BR_FIX_TIMEOUT_RETRY_PCT / 100, bin/lib/fix-retry-budget.sh; 8400 s at the
+#   defaults); a re-offer of a live retry runs nothing, as frc_bound says (see
+#   frc_bound below; when the agent or verify knob is not a number, the
 #   fallback BR_FIX_LANE_TIMEOUT + BR_FIX_HOP_MARGIN; neither a number: no
 #   cutoff is sent, so a claimed row is never re-offered). Each claimed row is
 #   written to a temp file and handed to a `setsid ... --run` child; the pass
@@ -124,19 +129,35 @@ frc_knob() {
 }
 
 # frc_bound [project] — sets FRC_T (the round bound, seconds) and FRC_STALE_S
-#   (the claim's stale cutoff, seconds): A + V + M for both. Either A or V not a
-#   number: the fallback BR_FIX_LANE_TIMEOUT for the round and LANE + M for the
-#   cutoff. Neither: both empty.
+#   (the claim's stale cutoff, seconds). FRC_T is AX + V + M, AX being the
+#   agent budget of the longest round: the timeout retry's (BH-10057,
+#   frb_agent_max) when BR_FIX_TIMEOUT_RETRIES > 0, else BR_FIX_AGENT_TIMEOUT,
+#   so the runner never kills a retry. FRC_STALE_S stays A + V + M with A =
+#   BR_FIX_AGENT_TIMEOUT: a stale claim is re-offered to the SAME box only, and
+#   a re-offer of a live round (a retry past A + V + M) runs nothing (the
+#   fix-round-<p>-<ck>.lock its round holds; on the Fly pool its pool key), so
+#   a dead claim is still re-offered as soon as before (BH-10115 F4). Either A
+#   or V not a number: the fallback BR_FIX_LANE_TIMEOUT for the round and
+#   LANE + M for the cutoff. Neither: both empty.
 frc_bound() {
-  local a v m l
+  local a v m l ax=""
   a=$(lane_knob blocked-resolver BR_FIX_AGENT_TIMEOUT "${1:-}")
+  # BR_FIX_TIMEOUT_RETRIES: lane.blocked-resolver.BR_FIX_TIMEOUT_RETRIES (fallback 1, as brtr_knob);
+  # BR_FIX_TIMEOUT_RETRY_PCT: lane.blocked-resolver.BR_FIX_TIMEOUT_RETRY_PCT (fallback 150, frb_pct)
+  if command -v frb_agent_max >/dev/null 2>&1 \
+     && ax=$(frb_agent_max "$a" "$(lane_knob blocked-resolver BR_FIX_TIMEOUT_RETRIES "${1:-}")" \
+          "$(frb_pct "$(lane_knob blocked-resolver BR_FIX_TIMEOUT_RETRY_PCT "${1:-}")")"); then
+    :
+  else
+    ax=$a
+  fi
   v=$(lane_knob blocked-resolver BR_FIX_VERIFY_TIMEOUT "${1:-}")
   m=$(lane_knob blocked-resolver BR_FIX_HOP_MARGIN "${1:-}")
   l=$(lane_knob blocked-resolver BR_FIX_LANE_TIMEOUT "${1:-}")
   FRC_T=""; FRC_STALE_S=""
   case "$m" in ''|*[!0-9]*) m="" ;; esac
   if [ -n "$m" ] && [[ "$a" =~ ^[0-9]+$ ]] && [[ "$v" =~ ^[0-9]+$ ]]; then
-    FRC_T=$((a + v + m)); FRC_STALE_S=$FRC_T
+    FRC_T=$((ax + v + m)); FRC_STALE_S=$((a + v + m))
   elif [[ "$l" =~ ^[0-9]+$ ]]; then
     FRC_T=$l; [ -n "$m" ] && FRC_STALE_S=$((l + m))
   fi
@@ -565,6 +586,8 @@ set -a +u; . "$HENV/global.env" 2>/dev/null; set +a -u
 # shellcheck disable=SC1091
 . "$H/bin/lib/lane-gate.sh" 2>/dev/null || true
 command -v lane_knob >/dev/null 2>&1 || lane_knob() { local v="${!2:-}"; printf '%s' "$v"; }
+# shellcheck source=lib/fix-retry-budget.sh
+. "$H/bin/lib/fix-retry-budget.sh" 2>/dev/null || true   # BH-10057: frc_bound's retry agent budget
 
 if [ "${1:-}" = --run-pool ]; then
   shift

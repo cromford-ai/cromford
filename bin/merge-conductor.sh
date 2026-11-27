@@ -1742,6 +1742,8 @@ pr_worker() {
   CRHOLD=0
   if [ "$STATE" = READY ] && [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && command -v bg_cr_standing >/dev/null 2>&1 \
      && { mc_attempt_has "crdequeue $KEY $HEAD" 2>/dev/null || grep -qE '(^|,)dequeued(,|$)' <<<"${RAWLBL:-}"; }; then
+    # BH-10316: this check can re-queue the row, so it reads the reviews live.
+    command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$SLUG" "$NUM"
     CRTHREAD=$(bg_read "repos/$SLUG/issues/$NUM/comments" created_at 2>/dev/null) || CRTHREAD=""
     CRRC=0; bg_cr_standing "$SLUG" "$NUM" "$URL" "$HEAD" "$CRTHREAD" >/dev/null || CRRC=$?
     if [ "$CRRC" != 1 ]; then
@@ -2378,6 +2380,9 @@ pr_worker() {
       # ABSTAINS on it; the bare template would print the word `null`, which is
       # not a branch name and would refuse every merge on the fleet.
       mc_step state-guard
+      # BH-10316: the guard below and the block gate after it read GitHub live,
+      # never the tick memo's answer from earlier in the tick (bin/lib/mc/tick-memo.sh).
+      command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$SLUG" "$NUM"
       # >>> pre-merge state guard
       # THIS READ IS REST, NEVER `gh pr view` (BH-994, 2026-09-19; the whole
       # merge family followed it in BH-784). It is the read that actually stops
@@ -2939,7 +2944,7 @@ tick_project() {
       # carries the branch the issue close needs), then, only for a PR that is
       # still OPEN, the provider-aware question "does the queue still hold it".
       QV=$(mc_queued_list_view "$QOPEN" "${QKEY##*#}" "$QHEAD") \
-        || QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref) \(.head.sha // "")"' 2>/dev/null) || QV=""
+        || QV=$(mc_queued_view_rec "$QURL" "$QHEAD") || QV=""   # BH-10257 slice 2: the PR record first
       read -r QPS QBR QLIVE <<<"$QV"
       [ -n "${QPS:-}" ] || { mc_log "$QKEY still QUEUED: GitHub read UNVERIFIABLE (HTTP $(mc_rest_status)) — row left as-is"; continue; }
       QREC=$(mc_record_for "$QURL" || true)
@@ -3599,13 +3604,17 @@ mc_tick_main_red
 # project subshell below re-exports GH_ETAG_COUNT_FILE and sets its own trap,
 # so neither can remove the other's file.
 export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$$"
-trap 'rm -f "$GH_ETAG_COUNT_FILE"; [ -n "${BG_PERM_MEMO_DIR:-}" ] && rm -rf -- "$BG_PERM_MEMO_DIR"' EXIT
+# BH-10316: the tick memo of the review list and pulls/<n> (bin/lib/mc/
+# tick-memo.sh), a temp dir this trap removes with the tick.
+command -v mc_tm_arm >/dev/null 2>&1 && mc_tm_arm
+trap 'rm -f "$GH_ETAG_COUNT_FILE"; [ -n "${BG_PERM_MEMO_DIR:-}" ] && rm -rf -- "$BG_PERM_MEMO_DIR"; [ -n "${_mc_tm_dir:-}" ] && rm -rf -- "$_mc_tm_dir"' EXIT
 
 # THE PER-PROJECT FAN-OUT (BH-7879): the held-page flush, the project gate and
 # one backgrounded tick_project subshell per project live in mc_tick_fanout
 # (bin/lib/mc/tick-scope.sh). It runs after the parent GH_ETAG_COUNT_FILE
 # trap above and returns when every project subshell is done.
 mc_tick_fanout
+command -v mc_tm_report >/dev/null 2>&1 && mc_tm_report
 # The *_gc housekeeping and mc_dv_reap are fleet sweeps: the cron tick's alone.
 if [ "$MC_FLEET_SWEEPS" != 1 ]; then
   command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor

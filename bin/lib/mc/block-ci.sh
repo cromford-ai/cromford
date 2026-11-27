@@ -181,8 +181,15 @@ _mc_bci_post() {
 #   CI-only clear read off it would drop the lead's real findings for good.
 #   rc 1 when there is none or the read failed.
 _mc_bci_head_review_body() {
-  local j="" b=""
-  _mc_bci_get j "repos/$1/pulls/$2/reviews?per_page=100" || return 1
+  local j="" b="" f
+  # BH-10316: the conductor's tick memo holds the review list the block gate
+  # just read (every page); without it, the first page as before.
+  if command -v mc_tm_on >/dev/null 2>&1 && mc_tm_on && f=$(mktemp "${TMPDIR:-/tmp}/mc-bci-rv.XXXXXX" 2>/dev/null); then
+    mc_tm_reviews "$f" "$1" "$2" "$3" && j=$(cat "$f" 2>/dev/null) || { rm -f "$f"; return 1; }
+    rm -f "$f"
+  else
+    _mc_bci_get j "repos/$1/pulls/$2/reviews?per_page=100" || return 1
+  fi
   b=$(jq -r --arg h "$3" --arg t "# Lead review lr-$2-${3:0:12} (" '
         [ .[]? | select(.commit_id == $h and (.user.type // "") == "Bot")
                | select((.body // "") as $b

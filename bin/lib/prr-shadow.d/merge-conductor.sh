@@ -256,3 +256,215 @@ mc_qs_norm() {
   w=$(head -1 "${1:-}" 2>/dev/null)
   [ -n "$w" ] && printf '[{"n":"queue","v":"%s"}]\n' "$w"
 }
+
+# ── BH-10257 slice 2: the QUEUED pass's PR view and its reviews read ──────────
+# _mc_rec_put_gh <slug> <n> <pulls-json-file> <at> — in step record, the
+#   GitHub pulls/<n> read in <file> is written back into the record
+#   (pr_record_put, source github, at = the read's start), the slice 1 rule,
+#   so the next reads of an idle QUEUED PR come from the record.
+_mc_rec_put_gh() {
+  local mapped
+  command -v prr_step >/dev/null 2>&1 && [ "$(prr_step merge-conductor)" = record ] || return 0
+  command -v _prr_map >/dev/null 2>&1 && command -v pr_record_put >/dev/null 2>&1 || return 0
+  mapped=$(_prr_map < "$3")
+  [ -n "$mapped" ] && [ "$mapped" != "{}" ] \
+    && pr_record_put "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" "$2" github "$mapped" "$4" >/dev/null 2>&1
+  return 0
+}
+
+# _mc_rec_row <slug> <n> — the fresh record row of a PR (pr_record_peek), or a
+#   miss word on stdout and rc 1: unknown (no row or no read), stale (age_s
+#   not in 0..MC_RECORD_MAX_AGE_S; a knob of 0 trusts no row).
+_mc_rec_row() {
+  local row age max
+  command -v pr_record_peek >/dev/null 2>&1 || { echo unknown; return 1; }
+  row=$(pr_record_peek "$1" "$2") || { echo unknown; return 1; }
+  age=$(jq -r '.age_s // empty' <<<"$row" 2>/dev/null)
+  max=$(mc_record_max_age_s)
+  { [[ "$age" =~ ^[0-9]+$ ]] && [ "$max" -gt 0 ] && [ "$age" -le "$max" ]; } || { echo stale; return 1; }
+  printf '%s\n' "$row"
+}
+
+# The view of a QUEUED row. mc_queued_view_rec <url> <head> (bin/lib/mc/queue.sh)
+# calls prr_read merge-conductor "<slug>#<n>@<head12>:view" <file> mc_qv_record
+# mc_qv_github mc_qv_norm <url> <head> <slug> <n>. It replaces the pulls/<n>
+# read of a QUEUED row the open list does not hold at its QUEUED head.
+#   mc_qv_record <file> <url> <head> <slug> <n>
+#       `OPEN <head_ref> <head>` in <file>, rc 0, only when the row is fresh,
+#       state is open, head_sha is <head>, head_ref is set, AND the state and
+#       head_sha fields themselves are young: fields_at.state and
+#       fields_at.head_sha (the time a whole-PR source, a pull_request webhook
+#       or a GitHub pulls read, last wrote them) are 0..MC_RECORD_MAX_AGE_S
+#       old. age_s alone is not enough: a PUT of other fields (the CR read's
+#       reviews write-back) moves refreshed_at, so a row whose closed webhook
+#       was lost would stay "fresh" and OPEN forever, and a merged PR would
+#       never settle. OPEN changes
+#       nothing on its own: the row goes on to the reviews read and the queue
+#       word, each with its own rule. The record never answers MERGED or
+#       CLOSED, so it never settles or closes a row. Misses: unknown, stale,
+#       state, head, field:head_ref, state-age, malformed.
+#   mc_qv_github <file> <url> <head> <slug> <n>
+#       Today's read: ONE pulls/<n> GET (mc_rest_pr_json), the line
+#       `<STATE> <head.ref> <head.sha>` in <file>, the read's rc (75 for an
+#       answer with no state). Written back in step record.
+#   mc_qv_norm <file>   [{"n":"view","v":"<line>"}]
+mc_qv_record() {
+  local f="${1:-}" head="${3:-}" slug="${4:-}" n="${5:-}" row w max now
+  [ -n "$f" ] || return 2
+  row=$(_mc_rec_row "$slug" "$n") || { printf '%s\n' "$row"; return 1; }
+  head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+  max=$(mc_record_max_age_s); now=$(date -u +%s)
+  w=$(jq -r --arg h "$head" --argjson max "$max" --argjson now "$now" '
+    def fage($k): ((.fields_at // {})[$k] // "") as $t
+      | if ($t | type) != "string" or $t == "" then -1 else ($now - ($t | fromdateiso8601)) end;
+    if (.state // "") != "open" then "state"
+    elif ((.head_sha // "") | ascii_downcase) != $h then "head"
+    elif ((.head_ref // "") | type) != "string" or (.head_ref // "") == "" or ((.head_ref // "") | test("\\s")) then "field:head_ref"
+    elif ([fage("state"), fage("head_sha")] | any(. < 0 or . > $max)) then "state-age"
+    else "OPEN \(.head_ref) \($h)" end' <<<"$row" 2>/dev/null) || w=malformed
+  case "$w" in "OPEN "*) printf '%s\n' "$w" > "$f"; return 0 ;; esac
+  echo "${w:-malformed}"; return 1
+}
+
+mc_qv_github() {
+  local f="${1:-}" slug="${4:-}" n="${5:-}" t rc=0 j="" at
+  [ -n "$f" ] || return 2
+  t=$(mktemp "${TMPDIR:-/tmp}/mc-qv-gh.XXXXXX") || return 75
+  at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  mc_rest_pr_json "$slug" "$n" > "$t" 2>/dev/null || rc=$?
+  if [ "$rc" = 0 ]; then
+    j=$(jq -r '"\(.STATE) \(.head.ref) \(.head.sha // "")"' "$t" 2>/dev/null) || j=""
+    [ -n "$j" ] && _mc_rec_put_gh "$slug" "$n" "$t" "$at"
+  fi
+  rm -f "$t"
+  [ "$rc" = 0 ] || return "$rc"
+  [ -n "$j" ] || return 75
+  printf '%s\n' "$j" > "$f"
+}
+
+mc_qv_norm() {
+  local w
+  w=$(head -1 "${1:-}" 2>/dev/null)
+  [ -n "$w" ] && jq -nc --arg v "$w" '[{n:"view", v:$v}]'
+}
+
+# Is a CHANGES_REQUESTED standing on a QUEUED row (mc_cr_dequeue's first
+# read). mc_cr_standing_rec (bin/lib/mc/queue.sh) calls prr_read
+# merge-conductor "<slug>#<n>@<head12>:cr" <file> mc_cr_record mc_cr_github
+# mc_cr_norm <slug> <n> <url> <head>. <file>: line 1 none | stands |
+# unreadable, line 2 the scan line of a standing CR.
+#   mc_cr_record <file> <slug> <n> <url> <head>
+#       `none`, rc 0, only from a COMPLETE review set. The record proves it
+#       with reviews_sync {head_sha, at, cr}: the conductor's own whole GitHub
+#       reviews read (bg_cr_standing, every page) of <head>, written by
+#       mc_cr_github. ALL must hold: the row is fresh, open, on <head>;
+#       reviews is an object (not NULL: a NULL object drops review webhooks,
+#       so a later review could not show); reviews_sync.head_sha is <head>;
+#       reviews_sync.cr is 0 (bg_cr_standing said none); reviews_sync.at is
+#       0..MC_RECORD_MAX_AGE_S old; and no review was delivered at or after
+#       the sync (fields_at.reviews, which every review webhook moves to its
+#       submitted_at, is earlier than reviews_sync.at). reviews_sync.at is the
+#       read's start minus MC_CR_SYNC_SKEW_S (a review submitted just before
+#       the read, or inside the box-to-GitHub clock skew, counts as after it),
+#       and the write-back's own `at` is one second before that, so the
+#       write-back itself never looks like a later review. A dismissal never
+#       makes a CR stand, so a missed one only holds a PR back. The record
+#       never answers `stands`: a standing CR, a sync that said one stood and
+#       every miss read GitHub. Misses: unknown, stale, state, head,
+#       field:reviews, no-sync, sync-head, sync-cr, sync-old, sync-later,
+#       malformed.
+#   mc_cr_github <file> <slug> <n> <url> <head>
+#       Today's read: bg_cr_standing <slug> <n> <url> <head> "" (bin/lib/
+#       block-gate.sh, one paginated pulls/<n>/reviews read). In step record,
+#       an answer (none or stands) is written back with source github and
+#       at = reviews_sync.at - 1 s: reviews (the BH-8481 shape, the latest review
+#       per bare lowercase login, from BG_CR_ROWS) and reviews_sync {head_sha,
+#       at, cr}. More than _MC_REVIEWERS_MAX logins, or a login the record
+#       cannot key, writes nothing (the next tick reads GitHub again).
+#   mc_cr_norm <file>   [{"n":"cr","v":"<word>"}]
+_MC_REVIEWERS_MAX=100   # input shape bound: REVIEWERS_MAX of worker/jobs/src/routes/pr-records.js
+_MC_DEFAULT_CR_SYNC_SKEW_S=30   # fallback only: the knob is MC_CR_SYNC_SKEW_S in catalog/lanes.d/merge-conductor.knobs.d/
+
+# mc_cr_sync_skew_s — the knob MC_CR_SYNC_SKEW_S: lane_knob merge-conductor,
+#   else the environment, else 30.
+mc_cr_sync_skew_s() {
+  local v=""
+  if command -v lane_knob >/dev/null 2>&1; then v=$(lane_knob merge-conductor MC_CR_SYNC_SKEW_S 2>/dev/null | tr -d '[:space:]'); fi
+  [ -n "$v" ] || v="${MC_CR_SYNC_SKEW_S:-}"
+  [[ "$v" =~ ^[0-9]+$ ]] || v="$_MC_DEFAULT_CR_SYNC_SKEW_S"
+  printf '%s\n' "$((10#$v))"
+}
+
+# _mc_iso_of <epoch> — the UTC time of an epoch, YYYY-MM-DDTHH:MM:SSZ.
+_mc_iso_of() { date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r "$1" '+%Y-%m-%dT%H:%M:%SZ'; }
+
+mc_cr_record() {
+  local f="${1:-}" slug="${2:-}" n="${3:-}" head="${5:-}" row w max now
+  [ -n "$f" ] || return 2
+  row=$(_mc_rec_row "$slug" "$n") || { printf '%s\n' "$row"; return 1; }
+  head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+  max=$(mc_record_max_age_s); now=$(date -u +%s)
+  w=$(jq -r --arg h "$head" --argjson max "$max" --argjson now "$now" '
+    (.reviews_sync // null) as $s
+    | if (.state // "") != "open" then "state"
+    elif ((.head_sha // "") | ascii_downcase) != $h then "head"
+    elif (.reviews | type) != "object" then "field:reviews"
+    elif ($s | type) != "object" then "no-sync"
+    elif (($s.head_sha // "") | ascii_downcase) != $h then "sync-head"
+    elif $s.cr != 0 then "sync-cr"
+    elif (($s.at // "") | type) != "string" then "malformed"
+    elif ($now - ($s.at | fromdateiso8601)) as $a | ($a < 0 or $a > $max or $max == 0) then "sync-old"
+    elif ((.fields_at // {}).reviews // "") as $fr | ($fr != "" and $fr >= $s.at) then "sync-later"
+    else "hit" end' <<<"$row" 2>/dev/null) || w=malformed
+  [ "$w" = hit ] || { echo "${w:-malformed}"; return 1; }
+  printf 'none\n' > "$f"
+}
+
+# _mc_cr_reviews_obj — BG_CR_ROWS (bg_cr_standing's rows: id, submitted_at,
+#   login, type, association, state, commit, url, marker) on stdin -> the
+#   record's reviews object, or rc 1.
+_mc_cr_reviews_obj() {
+  jq -R -s -c --argjson max "$_MC_REVIEWERS_MAX" '
+    [split("\n")[] | select(length > 0) | split("\t") | select(length == 9)
+     | {id: (.[0] | tonumber? // 0), at: .[1], login: .[2], state: .[5], commit: .[6]}
+     | .key = (.login | ascii_downcase | sub("^app/"; "") | sub("\\[bot\\]$"; ""))]
+    | if any(.[]; (.key | test("^[a-z0-9-]{1,39}$") | not)
+                 or (.state | IN("APPROVED","CHANGES_REQUESTED","COMMENTED","DISMISSED","PENDING") | not)) then error("key")
+      else . end
+    | group_by(.key) | map(sort_by(.at, .id) | last)
+    | if length > $max then error("max") else . end
+    | map({key: .key, value: {state: .state,
+        commit_id: (if (.commit | test("^[0-9a-f]{40}$")) then .commit else null end),
+        at: (if .at == "-" then null else (.at | sub("\\.[0-9]+Z$"; "Z")) end)}})
+    | from_entries' 2>/dev/null
+}
+
+mc_cr_github() {
+  local f="${1:-}" slug="${2:-}" n="${3:-}" url="${4:-}" head="${5:-}" t rc=0 at sat t0 obj fields
+  [ -n "$f" ] || return 2
+  t=$(mktemp "${TMPDIR:-/tmp}/mc-cr-gh.XXXXXX") || { printf 'unreadable\n' > "$f"; return 0; }
+  t0=$(( $(date -u +%s) - $(mc_cr_sync_skew_s) ))
+  sat=$(_mc_iso_of "$t0"); at=$(_mc_iso_of "$((t0 - 1))")
+  BG_CR_ROWS=""; BG_CR_ROWS_OK=0
+  bg_cr_standing "$slug" "$n" "$url" "$head" "" > "$t" || rc=$?
+  case "$rc" in
+    0) { printf 'stands\n'; head -1 "$t"; printf '\n'; } > "$f" ;;
+    1) printf 'none\n' > "$f" ;;
+    *) printf 'unreadable\n' > "$f" ;;
+  esac
+  rm -f "$t"
+  if { [ "$rc" = 0 ] || [ "$rc" = 1 ]; } && [ "$BG_CR_ROWS_OK" = 1 ] && [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]] \
+     && command -v prr_step >/dev/null 2>&1 && [ "$(prr_step merge-conductor)" = record ] \
+     && command -v pr_record_put >/dev/null 2>&1 && obj=$(printf '%s' "$BG_CR_ROWS" | _mc_cr_reviews_obj) && [ -n "$obj" ]; then
+    fields=$(jq -nc --argjson r "$obj" --arg h "$(printf '%s' "$head" | tr 'A-F' 'a-f')" --arg at "$sat" --argjson cr "$([ "$rc" = 0 ] && echo 1 || echo 0)" \
+      '{reviews: $r, reviews_sync: {head_sha: $h, at: $at, cr: $cr}}') \
+      && pr_record_put "$(printf '%s' "$slug" | tr 'A-Z' 'a-z')" "$n" github "$fields" "$at" >/dev/null 2>&1
+  fi
+  return 0
+}
+
+mc_cr_norm() {
+  local w
+  w=$(head -1 "${1:-}" 2>/dev/null)
+  [ -n "$w" ] && jq -nc --arg v "$w" '[{n:"cr", v:$v}]'
+}

@@ -165,16 +165,86 @@ merged_remember() { # merged_remember <repo> <ref> <sha> <claim JSON> — best e
 # older than TICKETS_SNAPSHOT_MERGED_KEEP_DAYS (a required lane knob, no literal
 # here) is dropped once per run. A pruned branch that is still around is simply
 # asked again. An unclear knob value prunes nothing.
+# merged_prune [file] (BH-10217) prunes any of the lane's three answer files:
+# the write epoch is the LAST column of each (column 5 here).
 merged_prune() {
-  local days="${TICKETS_SNAPSHOT_MERGED_KEEP_DAYS:-}" cutoff
+  local days="${TICKETS_SNAPSHOT_MERGED_KEEP_DAYS:-}" cutoff db="${1:-$MERGED_DB}"
   case "$days" in ''|*[!0-9]*|0) return 0 ;; esac
-  [ -s "$MERGED_DB" ] || return 0
+  [ -s "$db" ] || return 0
   cutoff=$(( $(date +%s) - days * 86400 ))
-  awk -F'\t' -v c="$cutoff" '($5 + 0) >= c' "$MERGED_DB" > "$MERGED_DB.$$" 2>/dev/null \
-    && mv -f "$MERGED_DB.$$" "$MERGED_DB" 2>/dev/null || rm -f "$MERGED_DB.$$" 2>/dev/null
+  awk -F'\t' -v c="$cutoff" '($NF + 0) >= c' "$db" > "$db.$$" 2>/dev/null \
+    && mv -f "$db.$$" "$db" 2>/dev/null || rm -f "$db.$$" 2>/dev/null
+  return 0
+}
+
+# THE BRANCH ANSWERS ARE KEPT TOO (BH-10217). A branch-only ticket cost 2
+# GitHub reads per tick: the closed-PR lookup and the tip commit. Neither
+# answer changes while nothing happens to the branch.
+#   branch-commits.tsv  repo, sha, {actor,at} JSON, written epoch. A commit's
+#     author and date never change for a sha, so a sha seen before costs 0.
+#   not-merged.tsv  repo, ref, tip sha, fingerprint, written epoch. One row per
+#     (repo, ref). "No merged PR" stays true until the tip moves, the PR record
+#     gets a closed or merged row for that exact head ref (the fingerprint, the
+#     sorted <number>:<state> of those rows, `-` for none, from
+#     GET /api/pr-record-refs through tsp_ref_states), or the row is older than
+#     TICKETS_SNAPSHOT_NOT_MERGED_MAX_AGE_S (the backstop for a merge the record
+#     never saw). A record read that fails is unknown: GitHub is read as before
+#     and no row is written.
+# Both are caches: a lost or pruned row costs 1 GitHub read, never a wrong claim.
+# TICKETS_SNAPSHOT_BRANCH_CACHE=0 neither reads nor writes them. Knob files:
+# catalog/lanes.d/tickets-snapshot-push.knobs.d/TICKETS_SNAPSHOT_BRANCH_CACHE.json
+# (fallback 1) and .../TICKETS_SNAPSHOT_NOT_MERGED_MAX_AGE_S.json (fallback 21600).
+COMMITS_DB="$H/state/tickets-snapshot/branch-commits.tsv"
+NOTMERGED_DB="$H/state/tickets-snapshot/not-merged.tsv"
+BCACHE="${TICKETS_SNAPSHOT_BRANCH_CACHE:-1}"
+case "$BCACHE" in 0|1) ;; *) BCACHE=1 ;; esac
+NM_MAX_AGE="${TICKETS_SNAPSHOT_NOT_MERGED_MAX_AGE_S:-21600}"
+case "$NM_MAX_AGE" in ''|*[!0-9]*) NM_MAX_AGE=21600 ;; esac
+{ [ "${#NM_MAX_AGE}" -le 6 ] && [ "$NM_MAX_AGE" -ge 600 ] && [ "$NM_MAX_AGE" -le 604800 ]; } || NM_MAX_AGE=21600
+commit_known() { # commit_known <repo> <sha> -> the stored {actor,at} JSON, or nothing
+  awk -F'\t' -v r="$1" -v s="$2" '$1==r && $2==s {c=$3} END {if (c != "") print c}' "$COMMITS_DB" 2>/dev/null
+}
+commit_remember() { # commit_remember <repo> <sha> <JSON> — best effort
+  mkdir -p "${COMMITS_DB%/*}" 2>/dev/null
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(printf '%s' "$3" | tr -d '\t\n')" "$(date +%s)" >> "$COMMITS_DB" 2>/dev/null || true
+}
+notmerged_valid() { # notmerged_valid <repo> <ref> <sha> <fingerprint> — rc 0 when the row still holds
+  local c=$(( $(date +%s) - NM_MAX_AGE ))
+  awk -F'\t' -v r="$1" -v b="$2" -v s="$3" -v f="$4" -v c="$c" \
+    '$1==r && $2==b {ok = ($3==s && $4==f && ($5 + 0) > c)} END {exit ok ? 0 : 1}' "$NOTMERGED_DB" 2>/dev/null
+}
+notmerged_del() { # notmerged_del <repo> <ref> — drop the row of (repo, ref)
+  [ -s "$NOTMERGED_DB" ] || return 0
+  awk -F'\t' -v r="$1" -v b="$2" '!($1==r && $2==b)' "$NOTMERGED_DB" > "$NOTMERGED_DB.$$" 2>/dev/null \
+    && mv -f "$NOTMERGED_DB.$$" "$NOTMERGED_DB" 2>/dev/null || rm -f "$NOTMERGED_DB.$$" 2>/dev/null
+  return 0
+}
+notmerged_put() { # notmerged_put <repo> <ref> <sha> <fingerprint> — replace the row of (repo, ref)
+  mkdir -p "${NOTMERGED_DB%/*}" 2>/dev/null
+  { awk -F'\t' -v r="$1" -v b="$2" '!($1==r && $2==b)' "$NOTMERGED_DB" 2>/dev/null
+    printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$(date +%s)"; } > "$NOTMERGED_DB.$$" 2>/dev/null \
+    && mv -f "$NOTMERGED_DB.$$" "$NOTMERGED_DB" 2>/dev/null || rm -f "$NOTMERGED_DB.$$" 2>/dev/null
+  return 0
+}
+# notmerged_gc <repo> <refs-tsv> — retention by branch: <refs-tsv> is this
+# tick's full branch list of <repo> (ref<TAB>sha, never empty). A not-merged row
+# whose (ref, sha) is gone and a commit row whose sha is no tip leave the files.
+# Called only after a list read that succeeded and was not empty: an unknown
+# list is never "no branches".
+notmerged_gc() {
+  [ -s "$2" ] || return 0
+  if [ -s "$NOTMERGED_DB" ]; then
+    awk -F'\t' -v r="$1" 'NR==FNR {k[$1 "\t" $2]=1; next} $1!=r || (($2 "\t" $3) in k)' "$2" "$NOTMERGED_DB" > "$NOTMERGED_DB.$$" 2>/dev/null \
+      && mv -f "$NOTMERGED_DB.$$" "$NOTMERGED_DB" 2>/dev/null || rm -f "$NOTMERGED_DB.$$" 2>/dev/null
+  fi
+  if [ -s "$COMMITS_DB" ]; then
+    awk -F'\t' -v r="$1" 'NR==FNR {t[$2]=1; next} $1!=r || ($2 in t)' "$2" "$COMMITS_DB" > "$COMMITS_DB.$$" 2>/dev/null \
+      && mv -f "$COMMITS_DB.$$" "$COMMITS_DB" 2>/dev/null || rm -f "$COMMITS_DB.$$" 2>/dev/null
+  fi
   return 0
 }
 merged_prune
+[ "$BCACHE" = 1 ] && { merged_prune "$COMMITS_DB"; merged_prune "$NOTMERGED_DB"; }
 
 # THE OPEN PR LIST, RECORD FIRST (BH-9926 wave 1, BH-9933). The list of each
 # board repo's open PRs goes through prr_read (bin/lib/prr-shadow.sh), stepped
@@ -202,7 +272,7 @@ tsp_open_github() {
 PRR_ON=0
 command -v prr_read >/dev/null 2>&1 && prr_seam_load tickets-snapshot-push 2>/dev/null \
   && command -v tsp_open_record >/dev/null 2>&1 && PRR_ON=1
-OPEN_F=$(mktemp); trap 'rm -f "$OUT" "$OPEN_F"' EXIT
+OPEN_F=$(mktemp); REC_F=$(mktemp); trap 'rm -f "$OUT" "$OPEN_F" "$REC_F" "$REC_F.refs"' EXIT
 
 for P in $BOARD_PROJECTS; do
   [ -s "/tmp/snap-$P.json" ] || continue
@@ -215,10 +285,10 @@ for P in $BOARD_PROJECTS; do
   fi
   PRS=$(cat "$OPEN_F" 2>/dev/null)
   [ -n "$PRS" ] || PRS='[]'
-  snap_get REFS "repos/$R/git/matching-refs/heads/" \
-    && REFS=$(jq -c '[.[]|{ref:(.ref|sub("refs/heads/";"")),sha:.object.sha}]' <<<"$REFS" 2>/dev/null)
-  [ -n "$REFS" ] || REFS='[]'
-  CLM='{}'
+  # Pass 1 (BH-10217): each in_progress/review key's open-PR claim. The branch
+  # list is read only when 1 or more keys have none: the open-PR record is
+  # enough for the rest, and no other code here reads REFS.
+  KS=(); RXS=(); OPC=(); BRS=(); NEED=0
   for K in $(jq -r '.tickets[]|select(.status=="in_progress" or .status=="review")|.key' "/tmp/snap-$P.json" 2>/dev/null); do
     # Pure-numeric keys (a board's .number fallback — project-4 returns key:null)
     # collide with anything ("6" matched an unrelated PR title on first live
@@ -231,10 +301,35 @@ for P in $BOARD_PROJECTS; do
     C=$(jq -c --arg rx "$RX" \
         '[.[]|select((.br+" "+.t)|test($rx;"i"))]|sort_by(.up)|if length>0 then (last|{actor:.by,kind:"pr",state:"open",ref:.br,pr:.n,pr_url:.url,at:.up}) else empty end' \
         <<<"$PRS" 2>/dev/null)
+    KS+=("$K"); RXS+=("$RX"); OPC+=("$C"); BRS+=("")
+    [ -n "$C" ] || NEED=$((NEED + 1))
+  done
+  REFS=""; REFS_OK=0
+  if [ "$NEED" -gt 0 ]; then
+    snap_get REFS "repos/$R/git/matching-refs/heads/" \
+      && REFS=$(jq -c '[.[]|{ref:(.ref|sub("refs/heads/";"")),sha:.object.sha}]' <<<"$REFS" 2>/dev/null) && REFS_OK=1
+  fi
+  [ -n "$REFS" ] || { REFS='[]'; REFS_OK=0; }
+  # Each branch-only key's branch, then ONE record read of their closed and
+  # merged rows (tsp_ref_states). REC_OK=1 only when that read answered.
+  RECREFS=()
+  for i in "${!KS[@]}"; do
+    [ -z "${OPC[$i]}" ] || continue
+    BRS[$i]=$(jq -r --arg rx "${RXS[$i]}" \
+         '[.[]|select(.ref|test($rx;"i"))]|if length>0 then (last|.sha+" "+.ref) else empty end' \
+         <<<"$REFS" 2>/dev/null)
+    [ -z "${BRS[$i]}" ] || RECREFS+=("${BRS[$i]#* }")
+  done
+  REC_OK=0
+  if [ "$BCACHE" = 1 ] && [ "${#RECREFS[@]}" -gt 0 ] && command -v tsp_ref_states >/dev/null 2>&1; then
+    mapfile -t RECREFS < <(printf '%s\n' "${RECREFS[@]}" | sort -u)
+    tsp_ref_states "$REC_F" "$R" "${RECREFS[@]}" >/dev/null 2>&1 && REC_OK=1
+  fi
+  CLM='{}'
+  for i in "${!KS[@]}"; do
+    K=${KS[$i]}; C=${OPC[$i]}
     if [ -z "$C" ]; then
-      BR=$(jq -r --arg rx "$RX" \
-           '[.[]|select(.ref|test($rx;"i"))]|if length>0 then (last|.sha+" "+.ref) else empty end' \
-           <<<"$REFS" 2>/dev/null)
+      BR=${BRS[$i]}
       if [ -n "$BR" ]; then
         SHA=${BR%% *}; REF=${BR#* }
         # A branch with no OPEN PR is not necessarily abandoned work: the PR may
@@ -248,14 +343,29 @@ for P in $BOARD_PROJECTS; do
         # a lane nobody is running.
         OWNER=${R%%/*}
         C=$(merged_known "$R" "$REF" "$SHA")
-        if [ -z "$C" ]; then
-          snap_get C "repos/$R/pulls?state=closed&head=$OWNER:$REF&per_page=5" \
-            && C=$(jq -c '[.[]|select(.merged_at != null)]|sort_by(.merged_at)|if length>0 then (last|{actor:.user.login,kind:"pr",state:"merged",ref:.head.ref,pr:.number,pr_url:.html_url,at:.merged_at}) else empty end' <<<"$C" 2>/dev/null)
-          [ -n "$C" ] && merged_remember "$R" "$REF" "$SHA" "$C"
+        FP=""; NMV=0
+        if [ -z "$C" ] && [ "$REC_OK" = 1 ]; then
+          FP=$(jq -r --arg ref "$REF" '[.[]|select(.head_ref==$ref and (.state=="closed" or .state=="merged"))|"\(.number):\(.state)"]|sort|if length>0 then join(",") else "-" end' "$REC_F" 2>/dev/null)
+          [ -n "$FP" ] && notmerged_valid "$R" "$REF" "$SHA" "$FP" && NMV=1
+        fi
+        if [ -z "$C" ] && [ "$NMV" = 0 ]; then
+          CRC=0; snap_get C "repos/$R/pulls?state=closed&head=$OWNER:$REF&per_page=5" || CRC=$?
+          [ "$CRC" = 0 ] && { C=$(jq -c '[.[]|select(.merged_at != null)]|sort_by(.merged_at)|if length>0 then (last|{actor:.user.login,kind:"pr",state:"merged",ref:.head.ref,pr:.number,pr_url:.html_url,at:.merged_at}) else empty end' <<<"$C" 2>/dev/null) || CRC=1; }
+          if [ -n "$C" ]; then
+            merged_remember "$R" "$REF" "$SHA" "$C"
+            [ "$BCACHE" = 1 ] && notmerged_del "$R" "$REF"
+          elif [ "$CRC" = 0 ] && [ "$BCACHE" = 1 ] && [ "$REC_OK" = 1 ] && [ -n "$FP" ]; then
+            notmerged_put "$R" "$REF" "$SHA" "$FP"
+          fi
         fi
         if [ -z "$C" ]; then
-          snap_get C "repos/$R/commits/$SHA" \
-            && C=$(jq -c '{actor:(.author.login // .commit.author.name),at:.commit.committer.date}' <<<"$C" 2>/dev/null)
+          [ "$BCACHE" = 1 ] && C=$(commit_known "$R" "$SHA")
+          if [ -z "$C" ]; then
+            KRC=0; snap_get C "repos/$R/commits/$SHA" || KRC=$?
+            [ "$KRC" = 0 ] && C=$(jq -c '{actor:(.author.login // .commit.author.name),at:.commit.committer.date}' <<<"$C" 2>/dev/null)
+            [ "$BCACHE" = 1 ] && [ "$KRC" = 0 ] && jq -e 'type == "object" and length > 0' <<<"$C" >/dev/null 2>&1 \
+              && commit_remember "$R" "$SHA" "$C"
+          fi
           [ -n "$C" ] && C=$(jq -c --arg ref "$REF" '. + {kind:"branch",ref:$ref,pr:null,pr_url:null}' <<<"$C" 2>/dev/null)
         fi
       fi
@@ -263,6 +373,14 @@ for P in $BOARD_PROJECTS; do
     [ -n "$C" ] && CLM=$(jq -c --arg k "$K" --argjson c "$C" --argjson fa "$FLEET_ACTORS" \
         '. + {($k): ($c + {fleet:(($fa | index($c.actor)) != null)})}' <<<"$CLM" 2>/dev/null || echo "$CLM")
   done
+  # Retention by branch (BH-10217): only after a branch list read that answered
+  # with 1 or more branches.
+  if [ "$BCACHE" = 1 ] && [ "$REFS_OK" = 1 ] \
+     && jq -r '.[] | select(.ref != null and .sha != null) | .ref + "\t" + .sha' <<<"$REFS" > "$REC_F.refs" 2>/dev/null \
+     && [ -s "$REC_F.refs" ]; then
+    notmerged_gc "$R" "$REC_F.refs"
+  fi
+  rm -f "$REC_F.refs"
   jq -c --argjson clm "$CLM" \
      '.tickets = [.tickets[] | if $clm[.key] then . + {claim:$clm[.key]} else . end]
       | . + {external_lanes:[ $clm | to_entries[] | select(.value.fleet|not) | {ticket:.key} + .value ]}' \

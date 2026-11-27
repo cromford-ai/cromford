@@ -1,0 +1,3 @@
+[
+    {"path": "repo-meta", "class": "cache", "authority": "the token ladder's visibility verdict per repo, with the repo's change mark (BH-10218)", "note": "state/repo-meta/probe/<owner_repo>.<app|pat>: one line `<epoch>\\t<word>\\t<mark>`, written tmp+mv by bin/lib/gh-repo-token.sh _ghrt_memo_put when a lane ran repo_meta_arm (bin/lib/repo-meta.sh). Served until a push or repository wake above <mark> (bin/lib/repo-change-mark.sh) or REPO_META_BACKSTOP_S. The same lib writes the stamp state/prr-default-branch/<owner_repo>.meta (`<epoch>\\t<mark>`) beside the BH-9938 memo. A word, never a token. One file per repo and rung, no growth, no retention job. Losing it costs one visibility GET per repo. Machine-local, never carried"}
+]

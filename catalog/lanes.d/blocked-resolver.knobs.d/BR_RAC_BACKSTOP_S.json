@@ -1,0 +1,12 @@
+{
+  "env": "BR_RAC_BACKSTOP_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "read_in": "bin/blocked-resolver.d/bh-10198-read-after-change.sh",
+  "note": "BH-10198: the full-read backstop of a quiet park. A row that ended on a quiet exit and has no wake (issue, pr, checks) and no PR record change since its last read is not read from GitHub until this age. A wake or a record change reads it on the next tick. A wakes feed or a record that cannot answer keeps BR_UNCHANGED_RECHECK_S. 0 turns the gate off (today's 1800 s window)."
+}

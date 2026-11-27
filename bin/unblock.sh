@@ -186,6 +186,11 @@ done
 . "$SELF/lib/unblock/ticket-pr.sh" 2>/dev/null || true
 # shellcheck source=bin/lib/unblock/unreadable.sh
 . "$SELF/lib/unblock/unreadable.sh" 2>/dev/null || true
+# BH-10196: gh_rest and gh_rest_budget_empty (bin/lib/gh-rest-empty.sh, through
+# the ledger lib), so the tick can stop at the first empty-budget refusal.
+# Optional: not on the tree = no stop check, the tick runs as before.
+# shellcheck source=bin/lib/gh-rest.sh
+[ -r "$SELF/lib/gh-rest.sh" ] && . "$SELF/lib/gh-rest.sh" 2>/dev/null
 # The suite's seam. Sandbox only, and settable:false in the registry.
 COLLECTORS_DIR="$SELF/lib/unblock/collectors"
 if [ "${HARNESS_TEST_SANDBOX:-}" = 1 ]; then
@@ -383,6 +388,12 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   if ! unb_scope_lock "$P"; then ubt_log "tick $P: lock held (locks/unblock-$P.lock); skipped"; continue; fi
   REPO=$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null)
   [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { ubt_log "tick $P: no fleet.conf repo; skipped"; ubt_unlock; continue; }
+  # BH-10196: an empty GitHub bucket stops the tick. Nothing is read, decided
+  # or recorded, and no later project is tried (the bucket is shared).
+  if command -v gh_rest_budget_empty >/dev/null 2>&1 && gh_rest_budget_empty "repos/$REPO"; then
+    ubt_log "tick $P: GitHub core budget empty — tick stopped before collect; nothing read, decided or recorded"
+    ubt_unlock; break
+  fi
   CLAIMED=0 ROWS=0 DEFERRED=0 NDEC=0 WAITED=0 PAGED_DIRECT=0 ALERTED=""
   UBC_MAX=$MAXREC ubc_collect "$P" "$REPO" "$COLLECTORS_DIR" > "$TMPD/records.jsonl"
   # BH-9446: a ticket-subject record gets its open PR (pr, head, has_pr).
@@ -394,6 +405,12 @@ while IFS=$'\t' read -r -u 3 P MODE; do
     else
       ubt_log "tick $P: ticket PR resolve failed; records kept as collected"
     fi
+  fi
+  # BH-10196: a read in the resolve found the bucket empty. The records hold
+  # unread inputs, so no rule, decision, unreadable count or card sweep runs.
+  if command -v gh_rest_budget_empty >/dev/null 2>&1 && gh_rest_budget_empty "repos/$REPO"; then
+    ubt_log "tick $P: GitHub core budget empty — tick stopped after collect; no rule, decision, unreadable count or card sweep this tick"
+    ubt_unlock; break
   fi
   # BH-8748: a lane-wide batch_failure seam defect is one ALERT, never a card.
   SEAMD=$(ubs_fold "$P" "$TMPD/records.jsonl"); [[ $SEAMD =~ ^[0-9]+$ ]] || SEAMD=0

@@ -1,0 +1,3 @@
+[
+    {"path": "pr-snapshot", "class": "cache", "authority": "the PR snapshot and its webhook mirror feed (bin/lib/pr-snapshot.sh, bin/lib/pr-snapshot-wakes.sh; BH-4656, BH-4661)", "note": "state/pr-snapshot/<owner>_<repo>/: the pr-* snapshot files (deleted after 3 days by pr-snapshot.sh) and the wake mirror (wakes.wm watermark, changed.tsv rows of the last 3 days, wakes.state, wakes.lock). The mirror is a read-only copy of the worker's wakes table; it never acks. Losing the directory costs reads and rc 2 (cannot tell) answers, never a wrong quiet. BH-10218 makes more lanes read it through bin/lib/repo-change-mark.sh, so the path is classed here. Machine-local, never carried"}
+]

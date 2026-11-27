@@ -141,20 +141,39 @@ _ghl_real=$(_ghl_find_real) || {
 _ghl_through() { GH_LEDGER_DEPTH=$((_ghl_depth + 1)) exec "$_ghl_real" "$@"; }
 
 # _ghl_caller — the parent's program name, one field, never its arguments.
+# BH-10218: a WRAPPER program (`timeout 30 gh …`, gh_rest's `timeout -k 5 N gh`)
+# is not the caller; the walk steps to the wrapper's own parent (field 4 of
+# /proc/<pid>/stat, read after the last `)`), at most 3 hops, and unwraps that
+# the same way. A hop that cannot read /proc prints the wrapper, as before.
+# Twin: GSHIM_WRAPPERS in bin/gh-rest-shim; the two lists stay equal
+# (tests/gh-ledger-caller-wrapper.bh-10218-test.sh case T). A fixed list of
+# program names, not a tunable.
+_GHL_WRAPPERS="timeout gtimeout nice ionice setsid flock env stdbuf nohup chrt"
 _ghl_caller() {
-  local w0="" w1="" tok n=0
-  [ -r "/proc/$PPID/cmdline" ] || { printf '%s' '-'; return 0; }
-  while IFS= read -r -d '' tok; do
-    case "$n" in 0) w0="$tok" ;; 1) w1="$tok" ;; esac
-    n=$((n + 1)); [ "$n" -ge 2 ] && break
-  done < "/proc/$PPID/cmdline"
-  case "${w0##*/}" in
-    bash|sh|dash|zsh|ksh|node|python|python3|perl)
-      case "$w1" in ''|-*) ;; *) w0="$w1" ;; esac ;;
-  esac
-  w0="${w0##*/}"; w0="${w0//[[:space:]]/_}"
-  [ -n "$w0" ] || w0='-'
-  printf '%s' "${w0:0:80}"
+  local pid="$PPID" w0 w1 tok n hop=0 st name=""
+  while :; do
+    w0=""; w1=""; n=0
+    [ -r "/proc/$pid/cmdline" ] || break
+    while IFS= read -r -d '' tok; do
+      case "$n" in 0) w0="$tok" ;; 1) w1="$tok" ;; esac
+      n=$((n + 1)); [ "$n" -ge 2 ] && break
+    done < "/proc/$pid/cmdline"
+    case "${w0##*/}" in
+      bash|sh|dash|zsh|ksh|node|python|python3|perl)
+        case "$w1" in ''|-*) ;; *) w0="$w1" ;; esac ;;
+    esac
+    w0="${w0##*/}"; w0="${w0//[[:space:]]/_}"
+    [ -n "$w0" ] || break
+    name="$w0"
+    [ "$hop" -lt 3 ] || break
+    case " $_GHL_WRAPPERS " in *" $name "*) ;; *) break ;; esac
+    st=$(cat "/proc/$pid/stat" 2>/dev/null) || break
+    read -r _ pid _ <<<"${st##*) }"
+    case "$pid" in ''|*[!0-9]*|0|1) break ;; esac
+    hop=$((hop + 1))
+  done
+  [ -n "$name" ] || name='-'
+  printf '%s' "${name:0:80}"
 }
 
 # ── C2: THE APP IS THE DEFAULT IDENTITY (2026-09-24) ────────────────────────

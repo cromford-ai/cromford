@@ -7,8 +7,13 @@
 # round was recorded, the cap was spent, brfix/<ck> was deleted and
 # br_fix_terminal closed the PR after one try that never finished.
 #
-# WHAT. br_fix_round calls brtr_take in its failed-round branch, after the
-# "rounds remaining" exit and before the terminal. brtr_take takes the retry
+# WHAT. br_fix_round calls brtr_take in its failed-round branch, before the
+# "rounds remaining" exit (BH-10057: so a timed-out round that is not the last
+# one is retried with the larger budget too) and before the terminal. It runs
+# before the review park's owed-round hook (brlad_round_failed), which declines
+# rc 124 and must stay next to the exit (BH-9437 V9); so a taken retry copies
+# the round's verify output (arg 9) to $ST/<p>/<ck>.fix-verify.prev.txt, as that
+# hook does for every failed round, for the next round's brief. brtr_take takes the retry
 # only when the agent rc is exactly 124, the knob is above 0 and this head has
 # fewer timeout_retry marks than the knob. It then writes ONE record edit:
 #   .timeout_retry += [head]     (the mark; "-" when the head is unknown)
@@ -43,7 +48,7 @@ brtr_knob() {
 #   rc 0 = the retry was taken and recorded: the caller ends the round (return 0).
 #   rc 1 = no retry: the caller runs its terminal as before.
 brtr_take() {
-  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" head="${6:-}" arc="$7" bad="${8:-0}"
+  local p="$1" ck="$2" rkey="$3" reason="$4" url="$5" head="${6:-}" arc="$7" bad="${8:-0}" vout="${9:-}"
   local knob h h8 used
   [ "$arc" = 124 ] || return 1
   knob=$(brtr_knob "$p/$rkey [$reason]")
@@ -71,6 +76,8 @@ brtr_take() {
     say "$p/$rkey [$reason]: the fix round timed out on $h8, but the timeout retry was not recorded — the terminal runs as before"
     return 1
   fi
+  # BH-9437's previous-verify brief file, kept as brlad_round_failed keeps it (BH-10057: this call now runs first)
+  [ -n "$vout" ] && [ -s "$vout" ] && cp -f "$vout" "$ST/$p/$ck.fix-verify.prev.txt" 2>/dev/null
   br_wt_drop "the round timed out; one more round is owed"
   # A foreign-authored checkpoint is never reused (the rounds-remaining exit's rule).
   [ "$bad" = 1 ] && git -C "$REPOS/$p" branch -D "brfix/$ck" >/dev/null 2>&1

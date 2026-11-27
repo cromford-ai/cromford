@@ -1039,6 +1039,7 @@ for _br_of in "${_br_frags[@]}"; do
   # shellcheck source=/dev/null
   . "$_br_of" || say "fragment bin/blocked-resolver.d/$_br_o.sh failed on source (rc $?) — skipped, this tick runs without it"
 done; unset _br_frags _br_of _br_o
+command -v brge_tick_stop >/dev/null 2>&1 && brge_tick_stop && { hb_done blocked-resolver; exit 0; }  # BH-10196: empty GitHub bucket, no read this tick
 
 # THE DISPATCHER STOPS HERE (BH-5913): it needed only the libraries above (the
 # project hold gate among them). Nothing below this line runs in --dispatch.
@@ -5979,8 +5980,10 @@ $live$brief"
     say "$p/$rkey [$reason]: verify-only retry: the agent's commit $(git -C "$wt" rev-parse --short HEAD) from an earlier round on ${lease:0:8} — no agent call"
   else
   br_count llm
-  ( cd "$wt" && env ${gienv[@]+"${gienv[@]}"} AGENT_CALL_ROLE=build.execute.fallback HARNESS="$H" timeout -k 60 "$FIX_AGENT_TIMEOUT" "$H/bin/agent-call.sh" execute "$p" "$fix_model" \
-      "$FIX_AGENT_TIMEOUT" "$ST/$p/$ck.fix-run.txt" "$prompt" ) >>"$LOG" 2>&1 || rc=$?
+  brtb_to="$FIX_AGENT_TIMEOUT"; command -v brtb_agent_timeout >/dev/null 2>&1 && brtb_to=$(brtb_agent_timeout "$p" "$ck" "${head:-}")   # BH-10057: a timeout retry gets the larger budget
+  # agent-call-tools: the fix agent edits files, runs the suites and commits on the fix branch
+  ( cd "$wt" && env ${gienv[@]+"${gienv[@]}"} AGENT_CALL_ROLE=build.execute.fallback HARNESS="$H" timeout -k 60 "$brtb_to" "$H/bin/agent-call.sh" execute "$p" "$fix_model" \
+      "$brtb_to" "$ST/$p/$ck.fix-run.txt" "$prompt" ) >>"$LOG" 2>&1 || rc=$?
   [ "$rc" = 0 ] && command -v brvb_mark_agent_done >/dev/null 2>&1 && brvb_mark_agent_done "$p" "$ck" "$lease" "$wt" "${mref:-main}"   # BH-9906: kept before the verification
   fi
   # CHECKPOINT (b): the ask arrived WHILE the agent worked. Its commit is on
@@ -6120,6 +6123,12 @@ $live$brief"
     # sits with no round, no terminal and nobody told. Its remaining round is for
     # the next head, and for THIS head a failed round is the terminal.
     st=$(br_load "$p" "$ck"); cap=$(br_fix_cap "$st" "$reason" "$p")
+    # BH-10057: the timeout retry is taken BEFORE the rounds-remaining exit, so
+    # a timed-out round 1 of a cap-2 class is refunded and retried with the
+    # larger budget too, not only the last round. It sits before the review
+    # hook below (pinned next to the exit, BH-9437 V9); that hook declines rc 124,
+    # and brtr_take keeps this round's verify output for the next brief ($out).
+    command -v brtr_take >/dev/null 2>&1 && brtr_take "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$rc" "$br_author_bad" "$out" && return 0   # BH-9404: one more round after a timeout
     command -v brlad_round_failed >/dev/null 2>&1 && brlad_round_failed "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$rc" "$wt" "$n" "$out" && return 0   # BH-9437: a review park's owed round
     if [ "$reason" != review-changes-requested ] && [ "$((n+1))" -lt "$cap" ]; then
       say "$p/$rkey [$reason]: fix round $((n+1)) of $cap did not land — fix round $((n+2)) next tick (agent rc=$rc, verify rc=$vrc)"
@@ -6129,7 +6138,6 @@ $live$brief"
       mc_git_auth_clear 2>/dev/null
       return 0
     fi
-    command -v brtr_take >/dev/null 2>&1 && brtr_take "$p" "$ck" "$rkey" "$reason" "$url" "${head:-}" "$rc" "$br_author_bad" && return 0   # BH-9404: one more round after a timeout
     say "$p/$rkey [$reason]: fix round did not produce a verified commit (agent rc=$rc, verify rc=$vrc) — $(br_fix_terminal_word "$reason")"
     br_xpr_wait_line "$p" "$rkey" "$reason" "$n" "$cap"
     br_wt_drop "the round produced no verified commit"
@@ -8160,6 +8168,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
     continue
   fi
   # <<< project hold
+  command -v brge_row_empty >/dev/null 2>&1 && brge_row_empty "${URL:--}" && { STOPREASON=gh-budget-empty; BREAKAT="$LIDX"; break; }  # BH-10196
   # THE TICK'S WALL BUDGET (BH-1457). Asked BEFORE the rung budget, because a
   # tick that is out of time is out of time whatever its rungs say.
   #
@@ -8523,7 +8532,8 @@ if [ "$SAT_ENDED" = 1 ] && [ -z "${br_only_pr_run:-}" ]; then  # BH-9369: a one-
     fi
   } > "$SAT_TMP" 2>/dev/null && mv -f "$SAT_TMP" "$SAT_FILE"
   rm -f "$SAT_TMP" 2>/dev/null
-elif [ -z "${br_only_pr_run:-}" ]; then
+elif [ -z "${br_only_pr_run:-}" ] && [ "$STOPREASON" != gh-budget-empty ]; then
+  # An empty-budget stop (BH-10196) is neither: the streak is left as it is.
   # Drained, or an idle tick with no candidates at all. Either way this lane is
   # keeping up with its list and the episode is over.
   printf 'streak\t0\talerted\t0\n' > "$SAT_TMP" 2>/dev/null && mv -f "$SAT_TMP" "$SAT_FILE"
@@ -8537,7 +8547,9 @@ fi
 command -v br_pool_terminal_pass >/dev/null 2>&1 && br_pool_terminal_pass "$ONLY"
 exec 8>&-
 # THE HAND-OFF SWEEP (BH-5125), after everything above has had its say.
-[ "$BHW_ON" = 1 ] && bhw_sweep "$STOPREASON"
+# Not after an empty-budget stop (BH-10196): a tick that could not read GitHub
+# gives no HANDOFF-WAIT verdict and pages nothing.
+[ "$BHW_ON" = 1 ] && [ "$STOPREASON" != gh-budget-empty ] && bhw_sweep "$STOPREASON"
 command -v brpf_zero_alert >/dev/null 2>&1 && brpf_zero_alert  # BH-9253: 0 rungs while own hand-offs got no ack = one alert
 hb_done blocked-resolver
 exit "$BR_EXIT"

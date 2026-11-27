@@ -305,6 +305,9 @@ log "repos: $(wc -w <<<"$REPOS" | tr -d ' ') (from $REPOS_FROM)"
 
 # shellcheck source=bin/lib/gh-repo-token.sh
 [ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh" 2>/dev/null
+# BH-10218: the ladder's visibility probe answers from the repo-meta memo until a
+# push or repository wake for the repo (or REPO_META_BACKSTOP_S). Fail-open.
+{ [ -r "$H/bin/lib/repo-meta.sh" ] && . "$H/bin/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
 # shellcheck source=bin/lib/gh-app-auth.sh
 [ -r "$H/bin/lib/gh-app-auth.sh" ] && . "$H/bin/lib/gh-app-auth.sh"
 # shellcheck source=bin/lib/gh-pr-list.sh

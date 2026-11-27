@@ -1,0 +1,6 @@
+# BH-10213: a lane's GitHub read after a PR-record miss, written back into the
+# record (statuses of a head, the Mergify payload comment, or the "checked,
+# empty" marker pr_records.gh_empty). Written by bin/lib/pr-record.sh
+# pr_record_gh_note from the pipeline-health and dequeue-watch seams.
+# Bearer-gated.
+POST /api/pr-record-notes

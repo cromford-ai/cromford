@@ -66,6 +66,10 @@ while [ $# -gt 0 ]; do
 done
 p="${url#"$JOBS_URL"}"
 echo "$m $p" >> "$CASE/curl.calls"
+# BH-10197: the change gate's check is a read sent as POST. It is refused
+# (500), so the gate has no effect (shadow) and makes no commit; it is not
+# a write. Every other non-GET still is.
+if [ "$m $p" = "POST /api/unblock/change-marks/check" ]; then printf '{"error":"refused by the stub"}\n500'; exit 0; fi
 if [ "$m" != GET ]; then echo "curl $m $p" >> "$CASE/writes.txt"; printf '{"error":"write refused"}\n500'; exit 0; fi
 path="${p%%\?*}"; key=""
 case "$path" in

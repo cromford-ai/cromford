@@ -208,23 +208,55 @@ _ghrt_memo_ttl() {
   [[ "$t" =~ ^[0-9]{1,9}$ ]] || t=$_GHRT_PROBE_MEMO_TTL_DEFAULT
   printf '%s' "$((10#$t))"
 }
+# BH-10218: THE CHANGE MARK. A lane armed by bin/lib/repo-meta.sh
+# (repo_meta_arm) defines two hooks: _ghrt_memo_mark <slug> prints the repo's
+# change mark (a worker wake id, rc 0) and _ghrt_memo_changed <slug> <mark>
+# <epoch> answers rc 1 only when no push or repository wake arrived above the
+# mark. With the hooks defined, a row is `<epoch>\t<word>\t<mark>`: the mark is
+# read BEFORE the probe's GET (_ghrt_memo_premark, in the probe's own shell:
+# _ghrt_memo_get runs inside `$( )`), a row with no mark is no
+# memo, and a row is served only while the hook says quiet. With the hooks
+# undefined (merge-conductor, every other lane), the 2-column row and the TTL
+# are exactly as before; a 3rd column is ignored.
+_GHRT_PREMARK_SLUG=""; _GHRT_PREMARK=""
+_ghrt_memo_premark() { # <slug> — the mark _ghrt_memo_put writes, taken now
+  _GHRT_PREMARK_SLUG=""; _GHRT_PREMARK=""
+  [ -n "${_GHRT_PROBE_MEMO_DIR:-}" ] && declare -F _ghrt_memo_mark >/dev/null 2>&1 || return 0
+  _GHRT_PREMARK=$(_ghrt_memo_mark "$1" 2>/dev/null) || _GHRT_PREMARK=""
+  _GHRT_PREMARK_SLUG="$1"
+  return 0
+}
 _ghrt_memo_get() { # <slug> <app|pat> -> the stored word, rc 1 when none is fresh
-  local f ep v now ttl
+  local f ep v mk now ttl
   f=$(_ghrt_memo_file "$1" "$2") || return 1
   ttl=$(_ghrt_memo_ttl); [ "$ttl" -gt 0 ] || return 1
-  IFS=$'\t' read -r ep v < "$f" 2>/dev/null || return 1
+  IFS=$'\t' read -r ep v mk _ 2>/dev/null < "$f" || return 1
   [[ "$ep" =~ ^[0-9]{1,12}$ ]] || return 1
   now=$(date +%s)
   [ $((now - ep)) -ge 0 ] && [ $((now - ep)) -lt "$ttl" ] || return 1
+  if declare -F _ghrt_memo_changed >/dev/null 2>&1; then
+    [[ "${mk:-}" =~ ^[0-9]{1,18}$ ]] || return 1
+    _ghrt_memo_changed "$1" "$mk" "$ep" >/dev/null 2>&1
+    [ "$?" = 1 ] || return 1
+  fi
   case "$v" in app|default|default-file|admin) printf '%s' "$v" ;; *) return 1 ;; esac
 }
 _ghrt_memo_put() { # <slug> <app|pat> <word>
-  local f
+  local f mk=""
   case "${3:-}" in app|default|default-file|admin) ;; *) return 0 ;; esac
   f=$(_ghrt_memo_file "$1" "$2") || return 0
   [ "$(_ghrt_memo_ttl)" -gt 0 ] || return 0
+  if declare -F _ghrt_memo_changed >/dev/null 2>&1; then
+    # No mark taken before this probe's GET: write nothing (no memo).
+    [ "$_GHRT_PREMARK_SLUG" = "$1" ] && [[ "$_GHRT_PREMARK" =~ ^[0-9]{1,18}$ ]] || return 0
+    mk="$_GHRT_PREMARK"
+  fi
   mkdir -p "$_GHRT_PROBE_MEMO_DIR" 2>/dev/null || return 0
-  printf '%s\t%s\n' "$(date +%s)" "$3" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+  if [ -n "$mk" ]; then
+    printf '%s\t%s\t%s\n' "$(date +%s)" "$3" "$mk" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+  else
+    printf '%s\t%s\n' "$(date +%s)" "$3" > "$f.$$" 2>/dev/null && mv -f "$f.$$" "$f" 2>/dev/null
+  fi
   rm -f "$f.$$" 2>/dev/null
   return 0
 }
@@ -236,6 +268,7 @@ _ghrt_pat_probe() { # _ghrt_pat_probe <owner/repo> -> fills _GHRT_PAT_TOK[slug] 
   [ -n "${_GHRT_PAT_TOK[$slug]+x}" ] && return 0
   # A fresh memo answers without the GET, only while the credential it names
   # is still on this box.
+  _ghrt_memo_premark "$slug"
   case "$(_ghrt_memo_get "$slug" pat)" in
     default) _GHRT_PAT_TOK[$slug]="default"; return 0 ;;
     default-file) if _ghrt_file_pat >/dev/null; then _GHRT_PAT_TOK[$slug]="default"; _GHRT_VIA_FILE[$slug]=1; return 0; fi ;;
@@ -263,6 +296,7 @@ _ghrt_app_probe() { # _ghrt_app_probe <owner/repo>
   [ "$tok" = "$_GHRT_DEFAULT_TOK" ] && return 1
   [ -n "$_GHRT_ADMIN_TOK" ] && [ "$tok" = "$_GHRT_ADMIN_TOK" ] && return 1
   # The token is still minted every time; only the visibility GET is memoed.
+  _ghrt_memo_premark "$slug"
   if [ "$(_ghrt_memo_get "$slug" app)" != app ]; then
     GH_TOKEN="$tok" gh api "repos/$slug" -q .id >/dev/null 2>&1 || return 1
     _ghrt_memo_put "$slug" app app

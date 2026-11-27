@@ -2124,8 +2124,15 @@ project-5 #1315/#1383 sat seven hours that way. Now:
 
 **Caps are per TICKET** (`br_cap_key`), never per PR number: a rebuild produces a NEW PR, so a
 ladder counted on the number restarts at zero on every rung and never ends.
-`BR_MAX_MECHANICAL` (1), `BR_MAX_FIXROUNDS` (1), `BR_MAX_REBUILDS` (3), and `BR_LADDER=0`
+`BR_MAX_MECHANICAL` (1), `BR_MAX_FIXROUNDS` (2, the registry default since BH-10057; the code fallback 1 answers only when the lane registry does not load), `BR_MAX_REBUILDS` (3), and `BR_LADDER=0`
 restores exactly the pre-ladder behaviour — every branch reason straight to a rebuild.
+A fix round whose agent call ends rc 124 (timed out) gets one more round per PR head
+(BH-9404, `BR_FIX_TIMEOUT_RETRIES`, default 1), refunded so it does not count against the cap.
+Since BH-10057 that retry round runs with a larger agent budget: `BR_FIX_AGENT_TIMEOUT` ×
+`BR_FIX_TIMEOUT_RETRY_PCT` / 100 (default 150 %, 5400 s; clamped to 110..400). The round bound
+(`br_fix_bound`, `frc_bound`) and the claim's stale cutoff use that budget when retries are on:
+5400 + 2700 + 300 = 8400 s, `stale_min` 140. The log line is
+`timeout retry: agent budget <N>s (<pct>% of <base>s)`.
 The fix-round cap is read per REASON through `br_fix_cap`, so the review verdict gets its own
 (the settings row `review.fix_rounds_max[.<project>]`, seeded 2, BH-7123 wave B; `BR_REVIEW_FIX_ROUNDS`
 is the fallback when no row answers) while every other reason keeps `BR_MAX_FIXROUNDS`. **Every one of
@@ -2147,7 +2154,7 @@ exactly what it was.
 
 | shape | `conflict_lines` | mechanical | fix rounds | rebuilds |
 |---|---|---|---|---|
-| **large** | unknown, **0**, or > `RESOLVER_SMALL_CONFLICT_LINES` | 1 | 1 (`BR_MAX_FIXROUNDS`) | 3 (`BR_MAX_REBUILDS`) |
+| **large** | unknown, **0**, or > `RESOLVER_SMALL_CONFLICT_LINES` | 1 | 2 (`BR_MAX_FIXROUNDS`, BH-10057) | 3 (`BR_MAX_REBUILDS`) |
 | **small** | ≤ `RESOLVER_SMALL_CONFLICT_LINES` (300) | 1 | 2 (`BR_MAX_FIXROUNDS_SMALL`) | 1 (`BR_MAX_REBUILDS_SMALL`) |
 
 `conflict_lines` is written by two measurements and kept as a MAX: the conductor's sidecar for

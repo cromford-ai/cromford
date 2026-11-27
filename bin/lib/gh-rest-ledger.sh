@@ -73,6 +73,9 @@ GH_REST_QUOTA_SERVED=
 # definitions only; a box without the file keeps today's credential.
 # shellcheck source=bin/lib/gh-app-default.sh
 [ -r "$(dirname "${BASH_SOURCE[0]}")/gh-app-default.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/gh-app-default.sh" 2>/dev/null
+# The empty-budget rule (a timed lane sends no GET on a bucket that reads 0).
+# shellcheck source=bin/lib/gh-rest-empty.sh
+[ -r "$(dirname "${BASH_SOURCE[0]}")/gh-rest-empty.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/gh-rest-empty.sh" 2>/dev/null
 
 # The documented code fallback for the `gh.quota.reserve` settings row. 600 is
 # about six minutes of the measured burn: enough for the decision-critical reads
@@ -473,12 +476,15 @@ _gh_quota_gate() {
      && _gqg_tok=$(gh_default_token_for_path "$1"); then
     export GH_TOKEN="$_gqg_tok"
   fi
-  _gh_quota_gate_decide || return 1
+  _gh_quota_gate_decide "${2:-}" || return 1
   export GH_LEDGER_BY_CALLER=1
   return 0
 }
-_gh_quota_gate_decide() {
+_gh_quota_gate_decide() { # [method]
   local res
+  # The empty-budget rule (bin/lib/gh-rest-empty.sh): a timed lane's GET on a
+  # bucket that reads 0. No method (an old caller) is never refused by it.
+  if command -v _gh_empty_gate >/dev/null 2>&1 && ! _gh_empty_gate "${1:-}"; then return 1; fi
   [ "${GH_REST_OPTIONAL:-0}" = 1 ] || return 0
   _gh_quota_read
   [ -n "${_GHQ_REM:-}" ] || return 0

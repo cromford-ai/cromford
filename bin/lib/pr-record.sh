@@ -161,6 +161,11 @@
 #       PR_RECORD_FIELD_MAX_AGE_S (default 3900; 0 trusts no row). With
 #       the 4th argument `row-head`, `head` = the row's head_sha is not the
 #       asked <head> (the PR moved on: the lanes judge the head they hold).
+#       BH-10213: `empty` (rc 1, never a value) replaces `none` when the row's
+#       gh_empty.statuses marker is for <head> (any case) and its at is
+#       0..PR_RECORD_FIELD_MAX_AGE_S seconds old on this box's clock: GitHub
+#       was read for this head and had no status. A real entry for the head
+#       always wins over the marker. A knob of 0 trusts no marker.
 #
 #   pr_record_mergify <owner/repo> <number>
 #       The newest Mergify queue payload the record holds: {state, code,
@@ -171,7 +176,23 @@
 #       miss=<unreadable|unknown|stale|none>` line; the word is also in
 #       PRR_MISS_WHY (call it with `> file`, not in $( ), to keep it). rc 2 bad
 #       args. BH-9938 C1: `stale` as for pr_record_statuses
-#       (PR_RECORD_FIELD_MAX_AGE_S).
+#       (PR_RECORD_FIELD_MAX_AGE_S). BH-10213: `empty` replaces `none` when
+#       the row's gh_empty.mergify_queue marker is for the row's head_sha and
+#       is fresh (the pr_record_statuses rule): GitHub was read and the PR has
+#       no Mergify payload comment. A stored payload always wins.
+#
+#   pr_record_gh_note <owner/repo> <number> <statuses|mergify> <json-file> [head] [at]
+#       BH-10213: writes a lane's GitHub read after a record miss back into the
+#       record: ONE POST /api/pr-record-notes (worker/jobs/src/routes/
+#       pr-record-notes.js), the body built by jq from <json-file>. statuses:
+#       the file is a combined-status answer ({statuses: [...]}) for <head>;
+#       an empty list stores the "checked, empty" marker gh_empty.statuses.
+#       mergify: the file is the chosen comment ({id, created_at, updated_at,
+#       body, login}, sdq_payload_last's SDQ_PAYLOAD_COMMENT_OUT) or `null`
+#       (no payload comment: the marker gh_empty.mergify_queue). <at> is the
+#       ISO time the GitHub read started (default the worker's clock). The
+#       worker writes newer only. rc 0 on a 200; else rc 1, nothing written,
+#       and one logs/pr-record.log line `gh-note <repo>#<n> kind=<k> put=failed`.
 #
 #   pr_record_head_commit_time <owner/repo> <number> <head>
 #       The commit time (ISO, UTC) of <head> on stdout, rc 0. From the record
@@ -508,6 +529,27 @@ _prr_row_fresh() {
   [ "$max" -gt 0 ] && [ "$age" -le "$max" ]
 }
 
+# _prr_gh_empty_fresh <row-json> <statuses|mergify_queue> <head> — rc 0 when
+# the row's gh_empty.<kind> marker (BH-10213) is for <head> (any case) and its
+# at is 0..PR_RECORD_FIELD_MAX_AGE_S seconds old on this box's clock. A knob of
+# 0 trusts no marker. gh_empty is JSON text as the worker stores it, or an
+# object. The clock is PR_RECORD_NOW (epoch seconds, a test seam) when it is
+# a whole number, else `date -u +%s`.
+_prr_gh_empty_fresh() {
+  local m max now
+  _prr_sha_ok "${3:-}" || return 1
+  max=$(pr_record_field_max_age)
+  [ "$max" -gt 0 ] || return 1
+  m=$(jq -r --arg k "$2" --arg h "$(_prr_lower "$3")" '.gh_empty
+        | (if type == "string" then (fromjson? // null) else . end)
+        | objects | .[$k] | objects | select((.sha | strings | ascii_downcase) == $h)
+        | .at | strings | sub("\\.[0-9]+"; "") | fromdateiso8601? // empty' <<<"${1:-}" 2>/dev/null)
+  [[ "$m" =~ ^[0-9]+$ ]] || return 1
+  now="${PR_RECORD_NOW:-}"
+  [[ "$now" =~ ^[0-9]+$ ]] || now=$(date -u +%s)
+  [ "$now" -ge "$m" ] && [ $((now - m)) -le "$max" ]
+}
+
 pr_record_statuses() {
   local repo="${1:-}" n="${2:-}" head="${3:-}" strict="${4:-}" lr row out rc=0 why=""
   _prr_args_ok "$repo" "$n" || return 2
@@ -527,6 +569,8 @@ pr_record_statuses() {
     elif ! out=$(jq -ce --arg h "$(_prr_lower "$head")" '.statuses | objects
           | with_entries(select((.value | type) == "object" and .value.sha == $h)) | select(length > 0)' <<<"$row" 2>/dev/null); then
       why=none
+      # BH-10213: GitHub was read for this head and had no status.
+      _prr_gh_empty_fresh "$row" statuses "$head" && why=empty
     fi
   fi
   if [ -n "$why" ]; then _prr_log "statuses $lr#$n miss=$why"; PRR_MISS_WHY=$why; return 1; fi
@@ -540,10 +584,40 @@ pr_record_mergify() {
   row=$(_prr_row "$lr" "$n") || rc=$?
   if [ "$rc" != 0 ]; then why=$(_prr_why "$rc")
   elif ! _prr_row_fresh "$row"; then why=stale
-  elif ! out=$(jq -ce '.mergify_queue | objects' <<<"$row" 2>/dev/null); then why=none
+  elif ! out=$(jq -ce '.mergify_queue | objects' <<<"$row" 2>/dev/null); then
+    why=none
+    # BH-10213: GitHub was read on the row's head and had no payload comment.
+    _prr_gh_empty_fresh "$row" mergify_queue "$(jq -r '.head_sha | strings' <<<"$row" 2>/dev/null)" && why=empty
   fi
   if [ -n "$why" ]; then _prr_log "mergify $lr#$n miss=$why"; PRR_MISS_WHY=$why; return 1; fi
   printf '%s\n' "$out"
+}
+
+pr_record_gh_note() {
+  local repo="${1:-}" n="${2:-}" kind="${3:-}" file="${4:-}" head="${5:-}" at="${6:-}" lr body out
+  _prr_args_ok "$repo" "$n" && [ -r "$file" ] || return 1
+  lr=$(_prr_lower "$repo")
+  # The GitHub answer rides on stdin to jq, never argv.
+  case "$kind" in
+    statuses)
+      _prr_sha_ok "$head" || return 1
+      body=$(jq -c --arg r "$lr" --argjson n "$n" --arg h "$(_prr_lower "$head")" --arg at "$at" '
+        {repo: $r, number: $n, kind: "statuses", head: $h,
+         statuses: [.statuses[] | {context, state, description, updated_at}]}
+        + (if $at != "" then {at: $at} else {} end)' < "$file" 2>/dev/null) ;;
+    mergify)
+      body=$(jq -c --arg r "$lr" --argjson n "$n" --arg at "$at" '
+        {repo: $r, number: $n, kind: "mergify",
+         comment: (if . == null then null else {id, created_at, updated_at, body, login} end)}
+        + (if $at != "" then {at: $at} else {} end)' < "$file" 2>/dev/null) ;;
+    *) return 1 ;;
+  esac
+  if [ -n "$body" ] && _prr_client && out=$(_jobs_req POST /api/pr-record-notes "$body") \
+     && jq -e '.written | numbers' <<<"$out" >/dev/null 2>&1; then
+    return 0
+  fi
+  _prr_log "gh-note $lr#$n kind=$kind put=failed"
+  return 1
 }
 
 # _prr_gh_load — rc 0 when gh_rest is defined (sourced from bin/lib/gh-rest.sh when not).

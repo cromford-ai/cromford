@@ -1,0 +1,4 @@
+# UNBLOCK CHANGE MARKS (BH-10197): is a PR due for a GitHub read, and the
+# newer-only commit of the marks. Read by bin/lib/unblock/change-gate.sh. Bearer-gated.
+POST /api/unblock/change-marks/check
+POST /api/unblock/change-marks/commit

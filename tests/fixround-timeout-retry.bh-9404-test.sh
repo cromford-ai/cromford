@@ -7,14 +7,14 @@
 # br_fix_round recorded the round, saw the cap spent, deleted brfix/<ck> and
 # called br_fix_terminal: the PR was closed after one try that never finished.
 #
-#   U1-U9  brtr_take, the fragment over a real JSON record (the decision table)
+#   U1-U10 brtr_take, the fragment over a real JSON record (the decision table)
 #   R1-R6  the REAL bin/blocked-resolver.sh --fix-here (the owning box's half
 #          of a hopped round) with a stub agent-call whose rc the suite sets:
 #          R1 large park, 124 -> done, mark, refund, brfix kept, 1 event
 #          R2 review park, 124 -> done, head un-marked; R2b a second 124 -> terminal
 #          R3 rc 1 -> terminal at once; R4 a second 124 on the same head -> terminal
 #          R5 BR_FIX_TIMEOUT_RETRIES=0 -> terminal; R6 the REAL br_fix_adopt
-#   C1     the driver has one brtr_take call site, in the right place
+#   C1-C2  the driver has one brtr_take call site, in the right place
 #   K1-K2  the knob row
 # Run from anywhere: tests/fixround-timeout-retry.bh-9404-test.sh   (exit 0 = all pass)
 set -uo pipefail
@@ -121,6 +121,22 @@ URESET "$BASE"
 URESET "$BASE"
 [ "$(UT red-ci-twice "$(printf '%s' "$H1" | tr 1 A)" 124)" = rc=0 ] && [ "$(UJ '.timeout_retry[0]')" = "$(printf '%s' "$H1" | tr 1 a)" ] \
   && ok || bad "U9 an upper-case head is lower-cased: $(UJ .timeout_retry)"
+
+# U10 — BH-10057: brtr_take now runs before brlad_round_failed, so a taken
+# retry keeps the round's verify output (arg 9) as the previous-verify brief
+# file; a declined call (rc 1) writes nothing.
+UT10() { # UT10 <rc> <verify-out-path> — like UT, with the 9th argument
+  ( unset BR_FIX_TIMEOUT_RETRIES
+    bash -c '. "$1"; . "$2"; . "$3"; shift 3; brtr_take "$@"; echo "rc=$?"' _ "$U/stubs.sh" "$U/real.sh" "$FRAG" \
+      tproj "$UCK" TK-1 red-ci-twice "https://github.com/o/tproj/pull/9" "$H1" "$1" 0 "$2" 2>/dev/null )
+}
+mkdir -p "$U/st/tproj"; printf 'UNIT_EXIT: 1\nround-10 verify\n' > "$U/vout.txt"
+URESET "$BASE"; rm -f "$U/st/tproj/$UCK.fix-verify.prev.txt"
+[ "$(UT10 124 "$U/vout.txt")" = rc=0 ] && cmp -s "$U/vout.txt" "$U/st/tproj/$UCK.fix-verify.prev.txt" \
+  && ok || bad "U10 a taken retry copies the verify output to the previous-verify brief file"
+URESET "$BASE"; rm -f "$U/st/tproj/$UCK.fix-verify.prev.txt"
+[ "$(UT10 1 "$U/vout.txt")" = rc=1 ] && [ ! -e "$U/st/tproj/$UCK.fix-verify.prev.txt" ] \
+  && ok || bad "U10 a declined call (rc 1) leaves the brief file to brlad_round_failed"
 
 # ============================================================================
 # R — the REAL driver, --fix-here (the owning box's half of a hopped round)
@@ -269,8 +285,15 @@ SITE=$(lift br_fix_round "$DRIVER")
 LC=$(printf '%s\n' "$SITE" | grep -n 'brtr_take "' | cut -d: -f1)
 LT=$(printf '%s\n' "$SITE" | grep -n 'fix round did not produce a verified commit' | cut -d: -f1 | head -1)
 LR=$(printf '%s\n' "$SITE" | grep -n '"\$((n+1))" -lt "\$cap"' | cut -d: -f1 | awk -v t="${LT:-0}" '$1 < t' | tail -1)
-[ -n "$LC" ] && [ -n "$LR" ] && [ -n "$LT" ] && [ "$LR" -lt "$LC" ] && [ "$LC" -lt "$LT" ] \
-  && ok || bad "C1 the call is after the rounds-remaining exit ($LR) and before the terminal say ($LT): got ${LC:-none}"
+LB=$(printf '%s\n' "$SITE" | grep -n 'brlad_round_failed "' | cut -d: -f1 | head -1)
+# BH-10057: the call moved BEFORE the rounds-remaining exit, so a timed-out
+# round that is not the last one is retried too. It sits before the review
+# park's owed-round hook (brlad_round_failed declines rc 124, and BH-9437 V9
+# pins that hook on the line right before the exit), and it passes the
+# round's verify output so the previous-verify brief is kept (C2).
+[ -n "$LC" ] && [ -n "$LR" ] && [ -n "$LT" ] && [ -n "$LB" ] && [ "$LC" -lt "$LB" ] && [ "$LB" -lt "$LR" ] && [ "$LR" -lt "$LT" ] \
+  && ok || bad "C1 the call is before brlad_round_failed ($LB), the rounds-remaining exit ($LR) and the terminal say ($LT): got ${LC:-none}"
+printf '%s\n' "$SITE" | grep 'brtr_take "' | grep -q '"\$br_author_bad" "\$out" && return 0' && ok || bad "C2 the call site passes the round's verify output (\$out)"
 printf '%s\n' "$SITE" | grep 'brtr_take "' | grep -q '&& return 0' && ok || bad "C1 the call site returns 0 after a taken retry"
 jq -e '.env == "BR_FIX_TIMEOUT_RETRIES" and .type == "int" and .default == 1 and .min == 0' "$KNOB" >/dev/null 2>&1 \
   && ok || bad "K1 the knob row parses with default 1, min 0"

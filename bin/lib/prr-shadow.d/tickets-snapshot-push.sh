@@ -15,6 +15,20 @@
 #       The compare form: [{n, br, by, t}] sorted by n. `up` moves on events
 #       that change no record field, and `url` follows from the number, so
 #       neither is compared.
+#
+#   tsp_ref_states <file> <owner/repo> <ref>...
+#       BH-10217: the closed and merged PR record rows of those head refs. ONE
+#       jobs GET /api/pr-record-refs?repo=<lower>&refs=<JSON array>, never a
+#       GitHub call, never a write. rc 0: <file> holds the rows array
+#       [{number, state, head_ref, merged_at}] (an empty array is a real "no
+#       closed or merged row"). Else rc 1, <file> is empty, stdout is one miss
+#       word, and logs/pr-record.log gets `refs <repo> miss=<word>`:
+#         unreadable   no jobs client, or the GET failed (a 404 from a worker
+#                      without the route, a 400 too_many, a 503, no answer)
+#         malformed    the body has no rows array or no truncated boolean
+#         truncated    the worker cut the rows at pr_records.list_limit
+#       rc 2 on bad args. The lane bin/tickets-snapshot-push.sh treats any miss
+#       as unknown: it reads GitHub as before and writes no cache row.
 if ! command -v pr_record_list >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/../pr-record.sh" ]; then
   # shellcheck source=bin/lib/pr-record.sh
   . "${BASH_SOURCE[0]%/*}/../pr-record.sh"
@@ -40,4 +54,29 @@ tsp_open_record() {
 
 tsp_open_norm() {
   jq -c '[.[] | {n, br, by, t}] | sort_by(.n)' "${1:-}" 2>/dev/null
+}
+
+tsp_ref_states() {
+  local f="${1:-}" repo="${2:-}" lr enc out why=""
+  [ -n "$f" ] && [ "$#" -ge 3 ] || return 2
+  [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
+  shift 2
+  : > "$f" || return 2
+  lr=$(printf '%s' "$repo" | tr 'A-Z' 'a-z')
+  enc=$(jq -rn '$ARGS.positional | tojson | @uri' --args "$@" 2>/dev/null)
+  if [ -z "$enc" ] || ! command -v _prr_client >/dev/null 2>&1 || ! _prr_client \
+     || ! out=$(_jobs_req GET "/api/pr-record-refs?repo=$lr&refs=$enc"); then
+    why=unreadable
+  elif ! jq -e '(.rows | type) == "array" and (.truncated | type) == "boolean"' <<<"$out" >/dev/null 2>&1; then
+    why=malformed
+  elif jq -e '.truncated' <<<"$out" >/dev/null 2>&1; then
+    why=truncated
+  elif ! jq -c '.rows' <<<"$out" > "$f" 2>/dev/null || [ ! -s "$f" ]; then
+    why=malformed
+  fi
+  [ -z "$why" ] && return 0
+  : > "$f"
+  command -v _prr_log >/dev/null 2>&1 && _prr_log "refs $lr miss=$why"
+  printf '%s\n' "$why"
+  return 1
 }

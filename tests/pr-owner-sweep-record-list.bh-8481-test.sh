@@ -25,6 +25,8 @@
 #         line (it reads latestReviews from the record's reviews)
 #     P2  merged no-sync with open fresh -> GitHub, 1 PRR_MISS
 #     P3  the floor: age 3600 hits; 3601, knob 0 and no meta read GitHub
+#         (3601 and no meta with one open row of unknown mergeable_state:
+#         past the floor only such a row is a miss, BH-10196)
 #     P4  missing:reviews, missing:created_at -> GitHub
 #     P5  unknown:1, a `pr` wake since the stamp, WAKE_BACKSTOP=0 -> GitHub
 #     P6  PR_RECORD_MAX_AGE_S=0 -> 0 GET /api/pr-records
@@ -335,13 +337,13 @@ eq "P2 the PRR_MISS word" "$(grep -oE "PRR_MISS $S#list why=[a-z-]+" <<<"$LOGS")
 fresh p3a; board; meta $((NOW - 3600)); rec_lists "$NOW"; nogh
 run "$NOW"
 record "P3 age 3600 (knob unset, 3600 applies)"
-fresh p3b; board; meta $((NOW - 3601)); rec_lists "$NOW"
+fresh p3b; board; meta $((NOW - 3601)); rec_lists "$NOW" 306=
 run "$NOW"
 github "P3 age 3601" "miss=floor"
 fresh p3c; board; meta $((NOW - 1000)); rec_lists "$NOW"
 run "$NOW" PR_OWNER_LIST_GITHUB_FLOOR_S=0
 [ "$(listcalls)" = 2 ] && [ "$(listgets)" = 0 ] && ok || bad "P3 knob 0 wanted GitHub and no record list GET: $(prcalls) / $(cat "$H/reads.log")"
-fresh p3d; board; rec_lists "$NOW"
+fresh p3d; board; rec_lists "$NOW" 306=
 run "$NOW"
 github "P3 no meta (first tick)" "miss=floor"
 fresh p3e; board; meta $((NOW - 1000)); rec_lists "$NOW"; nogh

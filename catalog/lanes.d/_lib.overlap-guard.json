@@ -1,0 +1,21 @@
+{
+  "libs": [
+    {
+      "id": "overlap-guard",
+      "file": "bin/overlap-guard.sh",
+      "note": "BH-10218 (BH-9926 second round). bin/overlap-guard.sh is not a lane (fly-pool and the launch check run it), so its prr-shadow step is a lib knob. og_prr_arm resolves it once per run with lib_env_apply overlap-guard in a subshell and pins it with prr_pin overlap-guard. Seam: bin/lib/prr-shadow.d/overlap-guard.sh.",
+      "knobs": [
+        {
+          "env": "GH_SOURCE",
+          "type": "string",
+          "default": "shadow",
+          "unit": null,
+          "zero_means": null,
+          "required": false,
+          "read_in": "bin/lib/prr-shadow.sh",
+          "note": "Settings row lib.overlap-guard.gh_source. Where the --refresh open PR list (gh_rest_pr_list_all <repo> open) reads: off = GitHub only (today's read); shadow (default) = the PR record (pr_record_open_rest) and GitHub, the guard acts on GitHub and logs one PRR_SHADOW line in logs/prr-shadow.log when they differ; record = the PR record (a miss reads GitHub and logs PRR_MISS). The launch check list asks for per-PR files, which the record list does not hold: it reads GitHub in every step, and step record logs PRR_MISS why=field:files. Any other value is shadow plus one PRR_STEP line. Move to record only after a 48-hour shadow count of 0 (docs/notes/2026-11-26-BH-10218-small-lanes-reads.md)."
+        }
+      ]
+    }
+  ]
+}

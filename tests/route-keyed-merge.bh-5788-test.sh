@@ -6,7 +6,7 @@
 # worker/jobs/test/route-table.d/<ticket-key>-<family>.txt. The key is unique
 # per ticket, so two branches never pick the same "next free" number and never
 # touch a common file.
-#   M1  branch X adds zz-a under bh-1, branch Y adds zz-b under bh-2: both merge
+#   M1  branch X adds zz-a under zz-1, branch Y adds zz-b under zz-2: both merge
 #       into main with no conflict, neither diff touches a file the other does,
 #       src/index.js is untouched, and the real scripts/routes-build.mjs
 #       --print lists FAMILIES in fragment-name order, zz-a directly before zz-b
@@ -42,8 +42,10 @@ family() {
   printf 'GET /api/%s\n' "$3" > "$J/test/route-table.d/$2-$3.txt"
   git -C "$R" add -A; git -C "$R" commit -qm "$2"
 }
-family x bh-1 zz-a
-family y bh-2 zz-b
+# The fixture keys sort after every real ticket key (bh-<n>): with bh-1 and
+# bh-2, a real fragment such as bh-10213-<family>.txt sorts between them.
+family x zz-1 zz-a
+family y zz-2 zz-b
 git -C "$R" checkout -q main
 
 # ── M1 no shared file, no conflict ────────────────────────────────────────────
@@ -75,8 +77,8 @@ WANT=$(cd "$J/test/route-table.d" && LC_ALL=C ls -1 -- *.txt | LC_ALL=C sort \
   | sed -E 's/^([0-9]{3}-|[a-z]+-[0-9]+([.-][0-9]+)?-)//; s/\.txt$//' | grep -vxF -f <(printf '%s\n' "$OPEN") \
   | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')
 [ -n "$WANT" ] && [ "$FAM" = "$WANT" ] && ok || bad "M1 FAMILIES must follow fragment-name order: want [$WANT] got [$FAM]"
-grep -qx 'import { routes as f_bh_1_zz_a } from "./routes/zz-a.js";' "$T/gen.js" && ok \
-  || bad "M1 the render must import zz-a as f_bh_1_zz_a"
+grep -qx 'import { routes as f_zz_1_zz_a } from "./routes/zz-a.js";' "$T/gen.js" && ok \
+  || bad "M1 the render must import zz-a as f_zz_1_zz_a"
 
 echo "route-keyed-merge.bh-5788: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

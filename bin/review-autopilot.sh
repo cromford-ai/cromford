@@ -687,6 +687,14 @@ for _P in "$(dirname "$0")/lib/gh-pr-list.sh" "$H/bin/lib/gh-pr-list.sh"; do
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-10218 W4: the per-project open list through the prr-shadow seam (step row
+# lane.review-autopilot.gh_source, default shadow), pinned once. No seam:
+# today's harness_pr_list read.
+RA_PRR=0
+# shellcheck source=bin/lib/prr-shadow.sh
+if . "$(dirname "$0")/lib/prr-shadow.sh" 2>/dev/null && prr_seam_load review-autopilot 2>/dev/null; then
+  prr_pin review-autopilot && RA_PRR=1
+fi
 
 # shellcheck source=bin/lib/gh-budget.sh
 [ -r "$H/bin/lib/gh-budget.sh" ] && . "$H/bin/lib/gh-budget.sh"
@@ -805,7 +813,17 @@ for P in $PROJECTS; do
   if command -v gh_repo_use_token >/dev/null 2>&1; then
     gh_repo_use_token "$SLUG" || { gh_repo_invisible_alert review-autopilot "$SLUG" "$P: review autopilot skipped, no PR seen"; continue; }
   fi
-  RAW_PRS=$(harness_pr_list "$SLUG" open number,createdAt,headRefOid,title,isDraft,baseRefName 2>/dev/null) || RAW_PRS=""
+  if [ "$RA_PRR" = 1 ]; then
+    RA_TMP=$(mktemp "${TMPDIR:-/tmp}/ra-open.XXXXXX") || RA_TMP=""
+    RAW_PRS=""
+    if [ -n "$RA_TMP" ]; then
+      prr_read review-autopilot "$SLUG#open" "$RA_TMP" ra_open_record ra_open_github ra_open_norm \
+        "$SLUG" number,createdAt,headRefOid,title,isDraft,baseRefName 100 && RAW_PRS=$(cat "$RA_TMP")
+      rm -f "$RA_TMP"
+    fi
+  else
+    RAW_PRS=$(harness_pr_list "$SLUG" open number,createdAt,headRefOid,title,isDraft,baseRefName 2>/dev/null) || RAW_PRS=""
+  fi
   PRS=$(jq -r --argjson cutoff "$CUTOFF" \
           '.[] | select((.isDraft | not) and ((.createdAt | fromdateiso8601) < $cutoff))
            | [.number, .headRefOid, (.baseRefName // "main"), .title] | @tsv' <<<"$RAW_PRS" 2>/dev/null) || true

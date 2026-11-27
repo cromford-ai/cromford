@@ -201,7 +201,7 @@ eq "F1 tick rc (record)" "$RC" 0
 eq "F1 fresh row: 0 pulls/7 reads" "$(p7)" 0
 eq "F1 fresh row: 0 check-runs reads of the head of #7" "$(c7)" 0
 eq "F1 #7 stays QUEUED" "$(queued7)" QUEUED
-grep -q "PRR_MISS lane=merge-conductor key=$SLUG#7@" "$SHADOW" 2>/dev/null \
+grep -q "PRR_MISS lane=merge-conductor key=$SLUG#7@[0-9a-f]*:queue " "$SHADOW" 2>/dev/null \
   && bad "F1 a PRR_MISS line for #7: $(grep "key=$SLUG#7@" "$SHADOW")" || ok "F1 no PRR_MISS line for #7"
 REC_CALLS=$(calls); REC_P7=$(p7); REC_C7=$(c7)
 
@@ -228,7 +228,7 @@ eq "F2 the next tick: 0 check-runs reads" "$(c7)" 0
 world
 ltick record
 eq "F3 no row: pulls/7 is read 1 time" "$(p7)" 1
-eq "F3 one PRR_MISS line for #7" "$(cnt "$SHADOW" "PRR_MISS lane=merge-conductor key=$SLUG#7@")" 1
+eq "F3 one PRR_MISS line for #7" "$(cnt "$SHADOW" "PRR_MISS lane=merge-conductor key=$SLUG#7@[0-9a-f]*:queue ")" 1
 eq "F3 #7 stays QUEUED" "$(queued7)" QUEUED
 
 # ── F4: the row holds another head ──────────────────────────────────────────────

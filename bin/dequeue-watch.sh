@@ -164,7 +164,8 @@ export HARNESS="$H"
   declare -F prr_pin >/dev/null && prr_pin dequeue-watch
   [ -r "$SELF/lib/merge-conductor-lib.sh" ] && . "$SELF/lib/merge-conductor-lib.sh" 2>/dev/null
   for _l in verdicts mc-stale-dequeue fix-round-queue needs-human hub-box ph-pr-record \
-            dequeue-watch/attribute dequeue-watch/classify dequeue-watch/act dequeue-watch/llm dequeue-watch/gather; do
+            dequeue-watch/attribute dequeue-watch/classify dequeue-watch/act dequeue-watch/llm dequeue-watch/gather \
+            dequeue-watch/provider-memo; do
     [ -r "$SELF/lib/$_l.sh" ] && . "$SELF/lib/$_l.sh" 2>/dev/null
   done
   unset _l
@@ -266,7 +267,10 @@ while read -r P SLUG; do
   [ -n "$P" ] || continue
   NP=$((NP + 1))
   declare -F gh_auth_for >/dev/null && { gh_auth_for "$SLUG" || true; }   # rc 1 = the box's own identity, as every lane
-  prov=$(mc_queue_provider "$SLUG" 2>/dev/null)
+  # BH-10218: the stored provider word until a push to the default branch (or
+  # DQW_PROVIDER_BACKSTOP_S); no lib = today's read.
+  if declare -F dqw_provider >/dev/null; then prov=$(dqw_provider "$SLUG" 2>/dev/null)
+  else prov=$(mc_queue_provider "$SLUG" 2>/dev/null); fi
   case "$prov" in
     mergify) ;;
     unknown|'') err provider-unknown; continue ;;

@@ -10,8 +10,9 @@
 
 import { json } from "../lib/http.js";
 import {
-  WAKE_REPO_RE, hmacSha256Hex, hexEqual, wakeOf, ensureColumns,
+  WAKE_REPO_RE, hmacSha256Hex, hexEqual, ensureColumns,
 } from "../lib/core.js";
+import { githubWakeOf } from "../lib/wake-of-repository.js";
 import {
   deliveryIdOf, verifyJira, verifyLinear, linearFresh, jiraKeyOf, linearKeyOf,
   keyPrefix, jiraWakeOf, linearWakeOf, readWebhookConfig,
@@ -151,7 +152,7 @@ async function githubDelivery(env, t, event, raw, deliveryId) {
   // Keyed on the delivery id, so none means no row. Never throws, and the
   // response below is unchanged either way.
   await recordGithubGate(env, t, event, payload, deliveryId);
-  const w = wakeOf(event, payload);
+  const w = githubWakeOf(event, payload); // BH-10218: wakeOf + `repository`
   let wakes = Boolean(w && w.key);
   // BH-9934: an echo of the fleet's own App write (HARNESS_SELF_APPS, the
   // pairs in row webhook.github.self_echo_actions) writes the record and no

@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_GATE_BACKSTOP_S",
+  "read_in": "bin/lib/unblock/change-gate.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-10197: in step record (lane.unblock.gh_source), the longest time the queue and review collectors replay a PR's stored GitHub-only answers (reviews, comments, files, head commit time) from its unblock_change_marks row with no new wake and the same head. After it the worker says the PR is due (reason backstop, the worker's own clock) and the reads run again. A value that is not digits 0..86400 is the code fallback 3600. 0 = off: the gate never skips a PR.",
+  "settable": true
+}

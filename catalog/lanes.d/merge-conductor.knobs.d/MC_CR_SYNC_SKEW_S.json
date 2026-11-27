@@ -1,0 +1,10 @@
+{
+  "env": "MC_CR_SYNC_SKEW_S",
+  "read_in": "bin/lib/prr-shadow.d/merge-conductor.sh",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "note": "BH-10257 slice 2: how far before the start of its GitHub reviews read the conductor dates the review sync it writes into the PR record (reviews_sync.at, mc_cr_github). The record answers 'no CR stands' only when no review was delivered at or after that time (fields_at.reviews < reviews_sync.at, mc_cr_record), so a review submitted in the same second as the read, or inside the clock skew between this box and GitHub, sends the next read to GitHub instead of being missed. Larger = safer and more GitHub reads after a review; 0 = the read's own start. Not a whole number: 30."
+}

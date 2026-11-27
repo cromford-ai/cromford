@@ -1,0 +1,3 @@
+[
+    {"path": "dequeue-watch", "class": "cache", "authority": "the merge-queue provider word mc_queue_provider read per repo, with the repo's change mark (BH-10218)", "note": "state/dequeue-watch/provider/<owner_repo>: one line `<word>\\t<epoch>\\t<mark>`, written tmp+mv by bin/lib/dequeue-watch/provider-memo.sh dqw_provider only after a real read. Served until a push wake above <mark> or DQW_PROVIDER_BACKSTOP_S. One file per repo, no growth, no retention job. Losing it costs one .mergify.yml and one rulesets read per repo. Machine-local, never carried"}
+]

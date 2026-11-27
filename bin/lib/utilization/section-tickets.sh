@@ -71,6 +71,32 @@ _ut_pages() {
   return 1
 }
 
+# util_heads_github <out-file> <repo> — the open PRs' head refs, lowercase, as a
+# JSON array: _ut_pages of repos/<repo>/pulls?state=open (BH-10218 W4: the
+# GitHub side of the utilization-push seam, kept beside the read). rc 1 on a
+# failed or capped read, or a body jq cannot map.
+util_heads_github() {
+  local t rc=0
+  t=$(mktemp "${TMPDIR:-/tmp}/util-tickets.XXXXXX") || return 1
+  _ut_pages "repos/$2/pulls?state=open" "$t" || rc=1
+  [ "$rc" = 0 ] && { jq -c '[.[] | (.head.ref // "") | tostring | ascii_downcase]' "$t" > "$1" 2>/dev/null || rc=1; }
+  rm -f "$t" "$t.n"
+  return "$rc"
+}
+
+# _ut_prr_arm — rc 0 when prr_read and the utilization-push seam are loaded;
+# loads bin/lib/prr-shadow.sh and pins the step once per process.
+_ut_prr_arm() {
+  if ! command -v prr_read >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/prr-shadow.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/../prr-shadow.sh" 2>/dev/null || return 1
+  fi
+  if ! command -v util_heads_record >/dev/null 2>&1; then
+    prr_seam_load utilization-push 2>/dev/null || return 1
+  fi
+  command -v prr_read >/dev/null 2>&1 && command -v util_heads_record >/dev/null 2>&1
+}
+
 # _ut_thread <repo> <n> <out-file> — the issue's comments, up to 10 pages.
 _ut_thread() {
   local k t rc
@@ -124,9 +150,14 @@ util_section_tickets() {
 
   d=$(mktemp -d "${TMPDIR:-/tmp}/util-tickets.XXXXXX") || { _ut_print null null null null null; return 0; }
   local prs_ok=0
-  if [ -n "$repo" ] && _ut_pages "repos/$repo/pulls?state=open" "$d/prs.json"; then
-    prs_ok=1
-    jq -c '[.[] | (.head.ref // "") | tostring | ascii_downcase]' "$d/prs.json" > "$d/heads.json" 2>/dev/null || prs_ok=0
+  # BH-10218 W4: the open PR heads through the prr-shadow seam (step row
+  # lane.utilization-push.gh_source, default shadow). No seam: today's read.
+  if [ -n "$repo" ]; then
+    if _ut_prr_arm; then
+      prr_read utilization-push "$repo#open" "$d/heads.json" util_heads_record util_heads_github util_heads_norm "$repo" && prs_ok=1
+    else
+      util_heads_github "$d/heads.json" "$repo" && prs_ok=1
+    fi
   fi
   [ "$prs_ok" = 1 ] || printf '[]\n' > "$d/heads.json"
   printf '%s\n' "$run" > "$d/run.json"
