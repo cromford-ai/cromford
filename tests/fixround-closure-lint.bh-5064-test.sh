@@ -33,7 +33,13 @@ ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 command -v git >/dev/null || { echo "fixround-closure-lint: git is required"; exit 2; }
 command -v jq >/dev/null || { echo "fixround-closure-lint: jq is required"; exit 2; }
-unset RATCHET_BASE TI_BASE FIXROUND_CLOSURE_LINT
+unset RATCHET_BASE TI_BASE FIXROUND_CLOSURE_LINT RULES_PACK_BUDGET_S
+# The real-pack cases (L1-L5) run the scratch-closure component, which runs the
+# whole scratch-closure lint suite. The production budget (60 s, so a 120 s
+# component timeout) turned L2 into could-not-run on a loaded 2-vCPU host: the
+# component took 122 s (BH-10076). The suite sets its own budget. The suite
+# runner's own per-suite cap still bounds a real hang.
+FRCL_TEST_PACK_BUDGET_S=600
 # Fixture text naming the lib dir is built from pieces so this suite's own
 # lines never count against the lint it tests.
 L='bin/''lib'
@@ -63,11 +69,17 @@ branch() { # branch <name> <step> — a fresh branch off base, the step, one com
 }
 hand()   { printf '%s\n' '#!/bin/bash' "for f in a.sh b.sh; do cp \"\$DIR/$L/\$f\" \"\$T/$L/\"; done" > "$R/tests/new.bh-2-test.sh"; }
 helper() { printf '%s\n' '#!/bin/bash' "scratch_install_closure bin/env-diff.sh \"\$T\" >/dev/null || exit 1" > "$R/tests/new.bh-2-test.sh"; }
+# TEST-CHANGE (BH-10076): this helper used to inherit the production rules-pack
+# budget, on the premise that 60 s (a 120 s component timeout) is enough for
+# the real scratch-closure component on any host. It is not: a loaded host
+# took 122 s and L2 read could-not-run. frcl now passes the suite's own
+# RULES_PACK_BUDGET_S before "$@", so a case can still set its own. Every
+# asserted verdict is unchanged; L2 asserts the pack ran with this budget.
 # frcl <tree> <out-name> [env...] — frcl_scan from the clone's lib, a local
 # runner (no harness root beside it), printing "<word> <rc>".
 frcl() {
   local tree="$1" o="$2"; shift 2
-  env HARNESS="$T/lh" H="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" "$@" \
+  env HARNESS="$T/lh" H="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" RULES_PACK_BUDGET_S="$FRCL_TEST_PACK_BUDGET_S" "$@" \
     bash -c '. "$0/'"$LIB"'" || exit 9; w=$(frcl_scan "$1" origin/main "$2"); rc=$?; echo "$w $rc"' \
     "$R" "$tree" "$T/$o"
 }
@@ -87,6 +99,9 @@ got=$(frcl "$R" o2)
   || bad "L2: frcl_scan said '$got', want 'clean 0' ($(tail -3 "$T/o2/closure-lint.err" 2>/dev/null))"
 [ -f "$T/o2/closure-lint.findings" ] && [ ! -s "$T/o2/closure-lint.findings" ] && ok "L2: the findings file is empty" \
   || bad "L2: the findings file is missing or not empty"
+bs=$(jq -r .budget_s "$T/o2/closure-lint.rp/summary.json" 2>/dev/null)
+[ "$bs" = "$FRCL_TEST_PACK_BUDGET_S" ] && ok "L2: the pack ran with the suite's budget (${bs}s), not the production default" \
+  || bad "L2: the pack ran with budget_s '$bs', want the suite's $FRCL_TEST_PACK_BUDGET_S (a RULES_PACK_BUDGET_S rename?)"
 
 E="$T/empty"; git init -q "$E"; git -C "$E" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
 git -C "$E" update-ref refs/remotes/origin/main HEAD
@@ -112,7 +127,7 @@ on() { env HARNESS="$T/lh" H="$T/lh" "$@" bash -c '. "$0/'"$LIB"'" || exit 9; fr
 # so the suite hit its 900 s cap. ci-local is not this case's subject:
 # tests/ci-local-gates.bh-6897-test.sh covers it in prepr_scan. L5 turns it off
 # and asserts it is off, so a knob rename fails here instead of going slow.
-( cd "$R" && env HARNESS="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" CI_LOCAL_GATE=0 \
+( cd "$R" && env HARNESS="$T/lh" HARNESS_ROOT_OVERRIDE="$T/no-harness" CI_LOCAL_GATE=0 RULES_PACK_BUDGET_S="$FRCL_TEST_PACK_BUDGET_S" \
     bash -c '. bin/lib/prepr-gate.sh || exit 9; prepr_scan "$0" origin/main "$1"' "$R" "$T/pp" ) >/dev/null 2>&1; prc=$?
 [ "$prc" = 1 ] && ok "L5: prepr_scan returns 1 on the hand-copying branch" || bad "L5: prepr_scan rc $prc, want 1 ($(cat "$T/pp/prepr-scan.txt" 2>/dev/null | tr '\n' ' '))"
 grep -q '^RULES-PACK scratch-closure: .*tests/new.bh-2-test.sh:2:' "$T/pp/prepr-findings.txt" 2>/dev/null \

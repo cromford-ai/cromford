@@ -18,7 +18,8 @@
     "## Security audit (2026-10-21)",
     "## Build resources (BH-9288)",
     "## Performance at scale (2026-11-17)",
-    "## App signals: Sentry and PostHog per project (BH-9799)"
+    "## App signals: Sentry and PostHog per project (BH-9799)",
+    "## Navigation registry (BH-10233)"
   ],
   "watcher": [],
   "plan": [

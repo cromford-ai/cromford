@@ -96,3 +96,10 @@ gh_rest_issue_comments() { # gh_rest_issue_comments <slug> <num> [max]
   if ! _gh_rest_args_ok "${1:-}" "${2:-}"; then _gh_rest_bad_args; return 75; fi
   _gh_rest_list "$1" "issues/$2/comments" "${3:-200}" '.'
 }
+
+# The label, review-request and close events of an issue or a PR, oldest first
+# (BH-10201: who put a label on and who took it off).
+gh_rest_issue_events() { # gh_rest_issue_events <slug> <num> [max]
+  if ! _gh_rest_args_ok "${1:-}" "${2:-}"; then _gh_rest_bad_args; return 75; fi
+  _gh_rest_list "$1" "issues/$2/events" "${3:-200}" '.'
+}

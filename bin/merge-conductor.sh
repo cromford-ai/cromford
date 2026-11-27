@@ -3078,6 +3078,7 @@ tick_project() {
             else QLCW="queue ejection ($PROVIDER): checks: ${QEWHY:-not read}"; fi
             mclc_put ejected "$P" "$SLUG" "${QBR:-}" "${QKEY##*#}" "$QHEAD" "$QLCW"
           fi
+          [ "$MERGES" = 1 ] && command -v mc_qr_owe >/dev/null 2>&1 && mc_qr_owe "$SLUG" "$QKEY" "$QHEAD" "${QEC%%$'\t'*}"   # BH-10201: the leave is on record
           # >>> batch victim (BH-9253)
           # A head already requeued solo that is out again: the solo run
           # ejected it. `bvreejected` ends mc_bv_requeue_live, so the head reads
@@ -3165,6 +3166,7 @@ tick_project() {
     exec 9>&-
     # <<< parked merged settle
   fi
+  command -v mc_qr_pass >/dev/null 2>&1 && mc_qr_pass "$P" "$SLUG"   # BH-10201: a PR that left the queue and is not back; reads only, never a requeue
 
   # ---- a Mergify batch draft that sits green (BH-1790) ------------------------
   # Mergify sometimes misses a check's completion event and leaves a batch draft

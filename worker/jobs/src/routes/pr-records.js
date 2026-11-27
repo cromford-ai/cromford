@@ -42,6 +42,14 @@
 // BH-9935: the row also carries statuses, mergify_queue, head_commit and
 // files (JSON, parsed; format in src/lib/pr-record-fields.js). The PUT takes
 // them like any other field. The list read does not return them (LIST_KEYS).
+//
+// BH-10215: &with=head_commit on the list read adds head_commit (parsed, or
+// null) to each row: the branch tip of the last push webhook, which the
+// conductor's branch lookup reads. `with` takes only head_commit; any other
+// value is a 400 {field: "with"}. Without `with` the SQL and the answer are
+// the same as before. The PUT takes mergeable_base_seq (a non-negative
+// integer): the pr_base_seqs.seq at which mergeable_state was read from
+// GitHub (core.d/bh-10215-pr-base-seq.js, routes/pr-base-seqs.js).
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, ensureTable } from "../lib/core.js";
 import { settingsRows } from "../lib/settings-cache.js";
@@ -140,6 +148,8 @@ export const VALUE_FIELDS = {
   reviews_sync: reviewsSyncValue,
   // BH-9935: statuses, mergify_queue, head_commit, files (lib/pr-record-fields.js).
   ...fieldValues(CHECKS_MAX),
+  // BH-10215 (core.d/bh-10215-pr-base-seq.js): a sequence, never a limit.
+  mergeable_base_seq: (v) => (Number.isSafeInteger(v) && v >= 0 ? v : undefined),
 };
 const JSON_FIELDS = ["labels", "checks", "reviews", "fields_at", "statuses", "mergify_queue", "head_commit", "files", "reviews_sync"];
 // The columns where null is a value: "unknown, ask GitHub on the next read"
@@ -166,6 +176,12 @@ export const LIST_SQL = `SELECT ${LIST_COLS}
 export const LIST_CREATED_SQL = `SELECT ${LIST_COLS}
   FROM pr_records WHERE repo = ?1 AND state = ?2 AND (?3 IS NULL OR pr_updated_at >= ?3)
   ORDER BY pr_created_at DESC, number DESC LIMIT ?4`;
+// BH-10215: the same two reads with head_commit (&with=head_commit). Same
+// binds and indexes; only the column list differs.
+export const LIST_WITH = ["head_commit"];
+const withHeadCommit = (sql) => sql.replace(`${LIST_COLS}\n`, `${LIST_COLS}, head_commit\n`);
+export const LIST_HC_SQL = withHeadCommit(LIST_SQL);
+export const LIST_CREATED_HC_SQL = withHeadCommit(LIST_CREATED_SQL);
 // Index: ux_pr_record_lists_repo_state.
 export const SYNC_SQL = "SELECT synced_at, rows FROM pr_record_lists WHERE repo = ?1 AND state = ?2";
 // Binds: ?1 repo, ?2 state. The records the last sync of (repo, state) marked
@@ -194,7 +210,7 @@ export async function listLimit(env) {
 // A list row as it leaves the worker: labels and reviews parsed, nothing else changed.
 function listRow(r) {
   const o = { ...r };
-  for (const k of ["labels", "reviews"]) {
+  for (const k of ["labels", "reviews", "head_commit"]) {
     if (typeof o[k] === "string") { try { o[k] = JSON.parse(o[k]); } catch { /* left as stored */ } }
   }
   return o;
@@ -210,6 +226,8 @@ async function listRead(env, url, t, repo, state) {
   const order = url.searchParams.get("order");
   if (order !== null && order !== "created") return json(400, { error: "invalid_field", field: "order" });
   const limitRaw = url.searchParams.get("limit");
+  const withRaw = url.searchParams.get("with");
+  if (withRaw !== null && !LIST_WITH.includes(withRaw)) return json(400, { error: "invalid_field", field: "with" });
   await ensureTable(env, "pr_record_lists");
   const rowLimit = await listLimit(env);
   let limit = rowLimit;
@@ -218,7 +236,9 @@ async function listRead(env, url, t, repo, state) {
     if (!(limit <= rowLimit)) return json(400, { error: "invalid_field", field: "limit" });
   }
   const [list, sync, unk] = await env.DB.batch([
-    env.DB.prepare(order === "created" ? LIST_CREATED_SQL : LIST_SQL).bind(repo, state, since, limit + 1),
+    env.DB.prepare(withRaw === null
+      ? (order === "created" ? LIST_CREATED_SQL : LIST_SQL)
+      : (order === "created" ? LIST_CREATED_HC_SQL : LIST_HC_SQL)).bind(repo, state, since, limit + 1),
     env.DB.prepare(SYNC_SQL).bind(repo, state),
     env.DB.prepare(UNKNOWN_SQL).bind(repo, state),
   ]);

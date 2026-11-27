@@ -58,6 +58,26 @@
 # key "<slug>#open:100") uses mc_xe_record (the record window of 100, with
 # the cross-repo memo), mc_xe_github (today's gh_rest read, same rc) and
 # mc_open_norm.
+# The branch lookup (BH-10215). prs_branch_tip (bin/lib/pr-snapshot-refs.sh),
+# under PRS_OPEN_PRR=merge-conductor, reads one branch prefix through
+# prr_read merge-conductor "<slug>#refs:<prefix>" <file> mc_refs_record
+# mc_refs_github mc_refs_norm <slug> <prefix> <branch>:
+#   mc_refs_record <file> <slug> <prefix> <branch>
+#       pr_record_list <slug> open <tmp> "" "" head_commit: the open rows of
+#       the record, trusted by pr_record_list's own rule (a miss passes its
+#       word: stale, no-sync, truncated, unknown, unreadable, ...). <file>
+#       gets [{ref, sha}] for each row whose head_ref starts with <prefix>/
+#       and whose head_commit.sha (the tip of the last push webhook) is
+#       40-hex, unique by ref. field:absent when <branch> is not in it: GitHub
+#       then answers for that branch (a base branch with no open PR of its own).
+#   mc_refs_github <file> <slug> <prefix>
+#       Today's read: gh_rest GET repos/<slug>/git/matching-refs/heads/<prefix>/
+#       mapped to the same [{ref, sha}], a plain command (GH_REST_* reach the
+#       caller). The read's rc; rc 1 and an empty <file> when it is not an array.
+#   mc_refs_norm <file>
+#       [{n: ref, sha}] sorted by ref. In step shadow the GitHub side also
+#       holds branches with no open PR, so a PRR_SHADOW line of this key with
+#       only_github > 0 and changed=0 is a match.
 if ! command -v prr_ci_state >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/../prr-ci-state.sh" ]; then
   # shellcheck source=bin/lib/prr-ci-state.sh
   . "${BASH_SOURCE[0]%/*}/../prr-ci-state.sh"
@@ -255,6 +275,41 @@ mc_qs_norm() {
   local w
   w=$(head -1 "${1:-}" 2>/dev/null)
   [ -n "$w" ] && printf '[{"n":"queue","v":"%s"}]\n' "$w"
+}
+
+mc_refs_record() {
+  local f="${1:-}" slug="${2:-}" pre="${3:-}" br="${4:-}" tmp why rc=0
+  [ -n "$f" ] || return 2
+  command -v pr_record_list >/dev/null 2>&1 || { echo unreadable; return 1; }
+  tmp=$(mktemp "${TMPDIR:-/tmp}/mc-refs-record.XXXXXX") || { echo unreadable; return 1; }
+  why=$(pr_record_list "$slug" open "$tmp" "" "" head_commit) || rc=$?
+  if [ "$rc" != 0 ]; then rm -f "$tmp" "$tmp.sync"; echo "${why:-unreadable}"; return 1; fi
+  if ! jq -c --arg p "$pre/" '[.[]? | select((.head_ref // "") | startswith($p))
+        | select((.head_commit.sha // "") | test("^[0-9a-fA-F]{40}$"))
+        | {ref: .head_ref, sha: (.head_commit.sha | ascii_downcase)}] | unique_by(.ref)' "$tmp" > "$f" 2>/dev/null; then
+    rm -f "$tmp" "$tmp.sync"; : > "$f"; echo malformed; return 1
+  fi
+  rm -f "$tmp" "$tmp.sync"
+  jq -e --arg r "$br" 'any(.[]; .ref == $r)' "$f" >/dev/null 2>&1 || { : > "$f"; echo field:absent; return 1; }
+  return 0
+}
+
+mc_refs_github() {
+  local f="${1:-}" slug="${2:-}" pre="${3:-}" rc=0
+  [ -n "$f" ] || return 2
+  gh_rest GET "repos/$slug/git/matching-refs/heads/$pre/" > "$f.raw" || rc=$?
+  if [ "$rc" = 0 ] && jq -c 'if type != "array" then error("not an array") else . end
+       | [.[] | {ref: ((.ref // "") | sub("^refs/heads/"; "")),
+       sha: ((.object.sha // "") | ascii_downcase)}] | unique_by(.ref)' "$f.raw" > "$f" 2>/dev/null; then
+    rm -f "$f.raw"; return 0
+  fi
+  rm -f "$f.raw"; : > "$f"
+  [ "$rc" = 0 ] && rc=1
+  return "$rc"
+}
+
+mc_refs_norm() {
+  jq -c '[.[]? | {n: .ref, sha}] | sort_by(.n)' "${1:-}" 2>/dev/null
 }
 
 # ── BH-10257 slice 2: the QUEUED pass's PR view and its reviews read ──────────

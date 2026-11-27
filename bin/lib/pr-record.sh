@@ -62,7 +62,7 @@
 #       BH-8334: the resolved PR_RECORD_HEAD_FALLBACK_MAX_AGE_S (default 900,
 #       0 = never) as a non-negative integer on stdout.
 #
-#   pr_record_list <owner/repo> <open|merged|closed> <out-file> [need-csv] [window-n]
+#   pr_record_list <owner/repo> <open|merged|closed> <out-file> [need-csv] [window-n] [with]
 #       BH-8452: the record's list of the repo's PRs in that state. ONE jobs
 #       GET (/api/pr-records?repo=&state=[&need=]), never a GitHub call, never
 #       a write. rc 0: <out-file> holds the rows array (keys number title
@@ -91,6 +91,10 @@
 #       Then truncated is not a miss (more than n exist, and the reader asked
 #       for n). The worker answers 400 (unreadable) when n is above its
 #       pr_records.list_limit row. Pass need `-` for no need and a window.
+#       BH-10215: <with> `head_commit` (the only value; any other is rc 2)
+#       adds &with=head_commit, and each row then carries head_commit
+#       {sha, at}, the branch tip of the last push webhook. Pass window ""
+#       for no window and a with.
 #       rc 2: bad args, no request.
 #
 #   pr_record_list_sync <owner/repo> <state> <rest-pulls-json-file> [at]
@@ -315,13 +319,14 @@ pr_record_head_fallback_max_age() { _prr_knob PR_RECORD_HEAD_FALLBACK_MAX_AGE_S 
 pr_record_list_max_age() { _prr_knob PR_RECORD_LIST_MAX_AGE_S "$_PRR_DEFAULT_LIST_MAX_AGE_S"; }
 
 pr_record_list() {
-  local repo="${1:-}" st="${2:-}" outf="${3:-}" need="${4:-}" win="${5:-}" lr max q out why="" age
+  local repo="${1:-}" st="${2:-}" outf="${3:-}" need="${4:-}" win="${5:-}" with="${6:-}" lr max q out why="" age
   [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 2
   case "$st" in open|merged|closed) ;; *) return 2 ;; esac
   [ -n "$outf" ] || return 2
   [ "$need" != - ] || need=""
   [ -z "$need" ] || [[ "$need" =~ ^[a-z_]+(,[a-z_]+)*$ ]] || return 2
   [ -z "$win" ] || { [[ "$win" =~ ^[1-9][0-9]{0,3}$ ]] && [ "$win" -le 5000 ]; } || return 2
+  [ -z "$with" ] || [ "$with" = head_commit ] || return 2
   : > "$outf" || return 2
   : > "$outf.sync" || return 2
   lr=$(_prr_lower "$repo")
@@ -329,6 +334,7 @@ pr_record_list() {
   q="/api/pr-records?repo=$lr&state=$st"
   [ -z "$need" ] || q="$q&need=$need"
   [ -z "$win" ] || q="$q&order=created&limit=$win"
+  [ -z "$with" ] || q="$q&with=$with"
   if [ "$max" = 0 ]; then
     why=off
   elif ! _prr_client || ! out=$(_jobs_req GET "$q"); then

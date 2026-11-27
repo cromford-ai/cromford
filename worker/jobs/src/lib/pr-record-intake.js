@@ -8,6 +8,11 @@
 // NEVER throws: a lost write is one console.warn, the receiver answers as
 // before, and the max-age backstop (PR_RECORD_MAX_AGE_S) heals the record.
 //
+// BH-10215: a `push` also raises the base sequence of its branch
+// (lib/pr-base-seq.js baseSeqWritesOf). Its statement runs after the record
+// statements, in the same batch, and also when the push has no record write.
+// prRecordWritesOf does not include it.
+//
 // Case 2 of the read rule: a named change whose payload does not carry a field
 // stores that field as NULL ("unknown"), so the next pr_record_get that asks
 // for it reads GitHub. GitHub's own mergeable_state "unknown" is stored NULL.
@@ -20,6 +25,7 @@ import { ensureColumns, ensureTable } from "./core.js";
 import { CLAIM_GUARD_SQL } from "./webhook-receiver.js";
 import { upsertSql, VALUE_FIELDS, REPO_RE, CHECKS_MAX, REVIEWERS_MAX, REVIEWER_RE } from "../routes/pr-records.js";
 import { fieldWritesOf, fieldStmtOf } from "./pr-record-fields.js";
+import { baseSeqWritesOf, baseSeqStmt } from "./pr-base-seq.js";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v) => (Number.isSafeInteger(v) && v >= 1 && v <= 1e9 ? v : null);
@@ -278,6 +284,14 @@ function stmtOf(DB, w, claim = null) {
   return DB.prepare(BASE_PUSH_SQL + and(4)).bind(w.repo, w.base_ref, w.at, ...g());
 }
 
+// pr_records always (the base-seq upsert's EXISTS reads it too); pr_base_seqs
+// only when a push carries a base-seq write (BH-10215).
+async function ensureTables(env, seqs) {
+  await ensureTable(env, "pr_records");
+  await ensureColumns(env, "pr_records");
+  if (seqs) await ensureTable(env, "pr_base_seqs");
+}
+
 // prRecordStmts(env, t, event, payload, {deliveryId, claim}) — BH-9934: the
 // guarded record statements of one wake delivery, for the receiver's ONE wake
 // batch (routes/webhooks.js recordWake), so the record and its wake commit
@@ -286,10 +300,13 @@ function stmtOf(DB, w, claim = null) {
 export async function prRecordStmts(env, t, event, payload, { deliveryId, claim }) {
   try {
     const writes = prRecordWritesOf(event, payload, t);
-    if (!writes.length) return [];
-    await ensureTable(env, "pr_records");
-    await ensureColumns(env, "pr_records");
-    return writes.map((w) => stmtOf(env.DB, w, { deliveryId, claim }));
+    const seqs = baseSeqWritesOf(event, payload, t);
+    if (!writes.length && !seqs.length) return [];
+    await ensureTables(env, seqs.length > 0);
+    return [
+      ...writes.map((w) => stmtOf(env.DB, w, { deliveryId, claim })),
+      ...seqs.map((w) => baseSeqStmt(env.DB, w, { deliveryId, claim })),
+    ];
   } catch (e) {
     const error = String((e && e.message) || e).slice(0, 300);
     console.warn("[pr-record-intake] webhook record statements not built", event, error);
@@ -297,15 +314,20 @@ export async function prRecordStmts(env, t, event, payload, { deliveryId, claim 
   }
 }
 
-// recordPrRecord — {written} (rows changed) or {written: 0, error}. Never throws.
+// recordPrRecord — {written} (pr_records rows changed) or {written: 0, error}.
+// Never throws. The base-seq statement (BH-10215) runs last in the same batch
+// and is not counted in `written`: its row is in pr_base_seqs.
 export async function recordPrRecord(env, t, event, payload) {
   try {
     const writes = prRecordWritesOf(event, payload, t);
-    if (!writes.length) return { written: 0 };
-    await ensureTable(env, "pr_records");
-    await ensureColumns(env, "pr_records");
-    const res = await env.DB.batch(writes.map((w) => stmtOf(env.DB, w)));
-    return { written: res.reduce((n, r) => n + ((r && r.meta && r.meta.changes) || 0), 0) };
+    const seqs = baseSeqWritesOf(event, payload, t);
+    if (!writes.length && !seqs.length) return { written: 0 };
+    await ensureTables(env, seqs.length > 0);
+    const res = await env.DB.batch([
+      ...writes.map((w) => stmtOf(env.DB, w)),
+      ...seqs.map((w) => baseSeqStmt(env.DB, w)),
+    ]);
+    return { written: res.slice(0, writes.length).reduce((n, r) => n + ((r && r.meta && r.meta.changes) || 0), 0) };
   } catch (e) {
     const error = String((e && e.message) || e).slice(0, 300);
     console.warn("[pr-record-intake] webhook record write failed", event, error);

@@ -385,8 +385,10 @@ for P in $("$H/bin/fleet-conf.sh" --projects 2>/dev/null); do
       if [ -n "$SLUG" ] && [ "$SLUG" != - ] && [ -f "$PRS_COUNT_FILE" ]; then
         mc_log "$SLUG PR-SNAPSHOT hit=$(grep -c '^HIT ' "$PRS_COUNT_FILE") miss=$(grep -c '^MISS ' "$PRS_COUNT_FILE")"
         # BH-8457: the PR record's answers to the same reads (pr-record-serve.sh).
+        # BH-10215: seq_miss=<n> (the misses whose cause is the base sequence), only when not 0.
+        _sqm=$(grep -c '^RMISS-SEQ ' "$PRS_COUNT_FILE"); [ "${_sqm:-0}" -gt 0 ] 2>/dev/null && _sqm=" seq_miss=$_sqm" || _sqm=""
         grep -qE '^R(SERVED|MISS) ' "$PRS_COUNT_FILE" \
-          && mc_log "$SLUG PR-RECORD served=$(grep -c '^RSERVED ' "$PRS_COUNT_FILE") miss=$(grep -c '^RMISS ' "$PRS_COUNT_FILE")"
+          && mc_log "$SLUG PR-RECORD served=$(grep -c '^RSERVED ' "$PRS_COUNT_FILE") miss=$(grep -c '^RMISS ' "$PRS_COUNT_FILE")$_sqm"
       fi
       command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report "merge-conductor:$P" )
   ) & PIDS+=("$!")

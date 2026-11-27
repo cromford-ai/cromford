@@ -42,6 +42,21 @@
 # takes the path above. Only head_lag_tip passes the variable, and it trusts a
 # refs tip only when it equals the PR head from the same tick's open list.
 #
+# THE RECORD (BH-10215). Under PRS_OPEN_PRR=merge-conductor (the conductor,
+# bin/merge-conductor.d/bh-9938-prr-open-list.sh) and with prr_read and the
+# seam's mc_refs_record defined, the one GitHub read above goes through
+# prr_read merge-conductor "<slug>#refs:<prefix>" and the seam
+# (bin/lib/prr-shadow.d/merge-conductor.sh): in step record, a trusted record
+# list of open PRs whose rows hold the branch with a head_commit answers with
+# 0 GitHub calls; any miss reads GitHub. A record answer (PRR_SOURCE=record)
+# is never written into the shared cache, which other lanes read. Steps off
+# and shadow read GitHub as before and write the cache as before.
+# PRS_REFS_ANSWER_OUT=<file> (optional): the answer array, whatever its
+# source (the cache, GitHub or the record), is copied there. prs_refs_pin sets
+# it and writes the pin from it, so in step record the pin holds the record
+# answer and the tick's workers read the pin, not the record again. Without
+# an answer it copies the fresh cache, as before.
+#
 # No `set -e`, no `exit`; the root is pr-snapshot.sh's ${HARNESS:-${H:-}}.
 if [ -n "${PR_SNAPSHOT_REFS_LIB:-}" ]; then return 0 2>/dev/null; fi
 PR_SNAPSHOT_REFS_LIB=1
@@ -49,7 +64,7 @@ PR_SNAPSHOT_REFS_LIB=1
 command -v prs_open_list >/dev/null 2>&1 || . "$(dirname "${BASH_SOURCE[0]}")/pr-snapshot.sh" 2>/dev/null
 
 prs_branch_tip() {
-  local slug="${1:-}" br="${2:-}" d pre safe f src="" now m ttl tmp fd rc=0 sha
+  local slug="${1:-}" br="${2:-}" d pre safe f src="" now m ttl tmp fd rc=0 sha rec
   command -v _prs_on >/dev/null 2>&1 && _prs_on || return 2
   d=$(_prs_dir "$slug") || return 2
   case "$br" in ?*/?*) ;; *) return 2 ;; esac
@@ -70,14 +85,27 @@ prs_branch_tip() {
     src="$f"
   else
     tmp=$(mktemp "${TMPDIR:-/tmp}/pr-snapshot-refs.XXXXXX") || return 2
-    # A plain command with `> file`, never `$( )`: GH_REST_* reach the caller.
-    gh_rest GET "repos/$slug/git/matching-refs/heads/$pre/" > "$tmp" || rc=$?
-    if [ "$rc" = 0 ] && jq -c 'if type != "array" then error("not an array") else . end
-         | [.[] | {ref: ((.ref // "") | sub("^refs/heads/"; "")),
-         sha: ((.object.sha // "") | ascii_downcase)}] | unique_by(.ref)' "$tmp" > "$tmp.m" 2>/dev/null; then
+    rec=0
+    if [ "${PRS_OPEN_PRR:-}" = merge-conductor ] && declare -F prr_read >/dev/null 2>&1 \
+       && declare -F mc_refs_record >/dev/null 2>&1; then
+      # BH-10215: through the seam. A plain command: GH_REST_* and PRR_SOURCE reach the caller.
+      prr_read merge-conductor "$slug#refs:$pre" "$tmp.m" mc_refs_record mc_refs_github mc_refs_norm \
+        "$slug" "$pre" "$br" >/dev/null || rc=$?
+      [ "${PRR_SOURCE:-github}" = record ] && rec=1
+      if [ "$rc" = 0 ] && [ ! -s "$tmp.m" ]; then rc=1; fi
+    else
+      # A plain command with `> file`, never `$( )`: GH_REST_* reach the caller.
+      gh_rest GET "repos/$slug/git/matching-refs/heads/$pre/" > "$tmp" || rc=$?
+      if [ "$rc" = 0 ] && ! jq -c 'if type != "array" then error("not an array") else . end
+           | [.[] | {ref: ((.ref // "") | sub("^refs/heads/"; "")),
+           sha: ((.object.sha // "") | ascii_downcase)}] | unique_by(.ref)' "$tmp" > "$tmp.m" 2>/dev/null; then
+        rc=1
+      fi
+    fi
+    if [ "$rc" = 0 ]; then
       src="$tmp.m"
-      # The braces scope the 2>/dev/null to the open (BH-4658).
-      if { exec {fd}>"$d/refs-$safe.lock"; } 2>/dev/null; then
+      # The braces scope the 2>/dev/null to the open (BH-4658). A record answer is never cached.
+      if [ "$rec" = 0 ] && { exec {fd}>"$d/refs-$safe.lock"; } 2>/dev/null; then
         if flock -n "$fd"; then
           cp "$tmp.m" "$f.tmp.$$" 2>/dev/null && mv -f "$f.tmp.$$" "$f" 2>/dev/null
           rm -f "$f.tmp.$$"
@@ -87,6 +115,7 @@ prs_branch_tip() {
     fi
   fi
   sha=""
+  if [ -n "$src" ] && [ -n "${PRS_REFS_ANSWER_OUT:-}" ]; then cp "$src" "$PRS_REFS_ANSWER_OUT" 2>/dev/null; fi
   [ -n "$src" ] && sha=$(jq -r --arg r "$br" 'first(.[]? | select(.ref == $r) | .sha) // empty' "$src" 2>/dev/null)
   [ -n "${tmp:-}" ] && rm -f "$tmp" "$tmp.m"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 2
@@ -94,7 +123,7 @@ prs_branch_tip() {
 }
 
 prs_refs_pin() {
-  local slug="${1:-}" pin="${2:-}" br d pre safe f m now ttl seen=" "
+  local slug="${1:-}" pin="${2:-}" br d pre safe f m now ttl seen=" " ans
   [ -n "$pin" ] && [ $# -ge 3 ] || return 0
   command -v _prs_on >/dev/null 2>&1 && _prs_on || return 0
   d=$(_prs_dir "$slug") || return 0
@@ -107,15 +136,22 @@ prs_refs_pin() {
     [ "$safe" = "$pre" ] || continue
     case "$seen" in *" $safe "*) continue ;; esac
     seen="$seen$safe "
-    PRS_REFS_PIN_PREFIX="" prs_branch_tip "$slug" "$br" >/dev/null 2>&1
+    ans=$(mktemp "${TMPDIR:-/tmp}/pr-snapshot-pin.XXXXXX" 2>/dev/null) || ans=""
+    PRS_REFS_PIN_PREFIX="" PRS_REFS_ANSWER_OUT="$ans" prs_branch_tip "$slug" "$br" >/dev/null 2>&1
     f="$d/refs-$safe.json"
-    m=$(stat -c %Y "$f" 2>/dev/null) || continue
-    now=$(date +%s)
-    [ $((now - m)) -ge 0 ] && [ $((now - m)) -lt "$ttl" ] || continue
+    # BH-10215: the answer this call used, whatever its source; else the fresh cache.
+    if [ -n "$ans" ] && jq -e 'type == "array"' "$ans" >/dev/null 2>&1; then
+      f="$ans"
+    else
+      m=$(stat -c %Y "$f" 2>/dev/null) || { [ -z "$ans" ] || rm -f "$ans"; continue; }
+      now=$(date +%s)
+      [ $((now - m)) -ge 0 ] && [ $((now - m)) -lt "$ttl" ] || { [ -z "$ans" ] || rm -f "$ans"; continue; }
+    fi
     mkdir -p "$(dirname "${pin}x")" 2>/dev/null
     cp "$f" "${pin}${d##*/}-$safe.json.tmp.$$" 2>/dev/null \
       && mv -f "${pin}${d##*/}-$safe.json.tmp.$$" "${pin}${d##*/}-$safe.json" 2>/dev/null
     rm -f "${pin}${d##*/}-$safe.json.tmp.$$" 2>/dev/null
+    [ -z "$ans" ] || rm -f "$ans"
   done
   return 0
 }

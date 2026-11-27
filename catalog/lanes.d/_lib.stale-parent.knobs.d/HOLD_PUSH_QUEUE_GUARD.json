@@ -1,0 +1,12 @@
+{
+  "env": "HOLD_PUSH_QUEUE_GUARD",
+  "read_in": "bin/lib/hold-push.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "a push no longer reads the merge-queue labels of the branch's open PR (pre-BH-10201)",
+  "required": false,
+  "note": "BH-10201: 1 = bin/lib/hold-push.sh refuses a push (rc 6) to a branch whose open PR carries Mergify's queued or checking label, because a push takes the PR out of the merge queue (#10134, 2026-11-25). One read of pulls?head=<owner>:<branch> per push; a new branch reads nothing; a failed read does not refuse the push. Read by hold_push_queue_guard through sp_knob. Settings row: lib.stale-parent.hold_push_queue_guard."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "MC_QUEUE_RETURN",
+  "read_in": "bin/merge-conductor.d/bh-10201-queue-return.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-10201: 1 = when the conductor removes the merge-queue label from a PR that left the queue, it writes one jobs-ledger row (kind queue_return, key <slug>#<num>) with the head, the cause and who queued it. A pass at the end of each project tick closes the row when the PR is back in the queue, releases it for a hold, and sends ONE warn alert and ONE PR comment when the lead fence holds the new head or the PR is not back after MC_QUEUE_RETURN_ALERT_MIN minutes. It never puts a PR in the queue. 0 = off: no row and no pass. Settings row: lane.merge-conductor.mc_queue_return."
+}

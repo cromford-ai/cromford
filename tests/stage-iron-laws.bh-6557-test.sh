@@ -41,7 +41,8 @@ LAWS_DIR="$DIR/prompts/iron-laws.d"
 # TEST-CHANGE (BH-8739): the review-levels fragment says "At most one follow-up ticket per area, never per screen", so the block sha moved.
 # TEST-CHANGE (BH-9068): the review-levels fragment's `money` class gained "a lane whose cost rows come out unpriced on a live call" (plan C4 T4.2), so the block sha moved.
 # TEST-CHANGE (2026-11-17, performance at scale): the plan stage also carries prompts/iron-laws.d/20261117-performance-at-scale.md, and the review-levels class list gained perf-at-scale, so the block sha moved. Re-pinned after the review fixes (shorter law text, diff-scoped BLOCK).
-TICKET_SHA="347507d77ed13dfd""c45a8a650ac6ad20""18016853143526be""e035f0ffffb9c5bb"
+# TEST-CHANGE (BH-10233): the plan stage also carries prompts/iron-laws.d/20261126-navigation-registry.md, so the block sha moved.
+TICKET_SHA="72bce17897c023c4""5a2dad26448e82b3""a48cf36132149a7f""a5996479ea5adcb9"
 T1='PERFORMANCE BY DEFAULT'
 T2="BUILDING FROM A DESIGNER'S PROTOTYPE"
 T3='REVIEW LEVELS (iron law, BH-7123'

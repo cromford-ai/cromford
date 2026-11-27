@@ -47,6 +47,20 @@
 # pre-BH-5234 push. No stale-parent lib beside this file: the guard is skipped,
 # said once per process.
 #
+# NEVER RE-HEAD A QUEUED PR (BH-10201). #10134 was queued by a person at
+# 21:28Z on 2026-11-25; build 50666 rebased and pushed its branch at 23:10Z,
+# Mergify dequeued it (the head moved), and it stayed out for 9.5 hours. So a
+# push to a branch whose open PR carries Mergify's `queued` or `checking` label
+# is refused (rc 6, one line naming the PR): dequeue it first, then push, as
+# mc_rebase already does (BH-8021). ONE read of `pulls?head=<owner>:<branch>`
+# per push; a `new` lease reads nothing. A read that FAILS does not refuse the
+# push (one line per process says the guard did not run): a push to a queued PR
+# costs one dequeue, which the conductor puts on record and tells one person
+# about (bin/merge-conductor.d/bh-10201-queue-return.sh), and an unread label
+# must not throw away a lane's whole round.
+# HOLD_PUSH_QUEUE_GUARD=0 (catalog/lanes.d/_lib.stale-parent.knobs.d/) is the
+# pre-BH-10201 push.
+#
 #   hold_push [-n] [-u] <project> <ticket> <worktree> <remote> <src-ref> <branch> <lease>
 #     -n        run git with `-c credential.helper=` (the token is in <remote>)
 #     -u        set the upstream (`push -u`)
@@ -58,7 +72,8 @@
 #               error, never "no lease".
 #   rc 0 pushed · 1 git refused (the lease, or anything else git said no to)
 #      3 HELD · 4 the hold, or a rewritten branch's children, could not be read
-#      5 rewrite refused: the branch has open stacked children · 64 usage
+#      5 rewrite refused: the branch has open stacked children
+#      6 refused: the branch's open PR is in the merge queue · 64 usage
 #   Nothing on stdout (mc_rebase prints its new sha there). The one refusal
 #   line goes to stderr and, when set, is appended to $HOLD_PUSH_LOG.
 
@@ -207,6 +222,58 @@ hold_push_rewrite_guard() {
   return 5
 }
 
+# hold_push_queue_guard <project> <wt> <remote> <branch> <lease> — rc 0 the
+# push may go; 6 the branch's open PR carries `queued` or `checking` (BH-10201).
+# The lease is already validated ('' = a new branch, which has no PR). The knob
+# is the settings row lib.stale-parent.hold_push_queue_guard through sp_knob,
+# else the env var; the code fallback is 1 (on).
+hold_push_queue_guard() {
+  local p="$1" wt="$2" remote="$3" br="$4" lease="$5" d slug enc q t rc=0 hit knob
+  [ -n "$lease" ] || return 0
+  d=$(hold_push__dir)
+  if ! command -v sp_knob >/dev/null 2>&1; then
+    # shellcheck source=bin/lib/stale-parent.sh
+    [ -r "$d/stale-parent.sh" ] && . "$d/stale-parent.sh" 2>/dev/null
+  fi
+  if command -v sp_knob >/dev/null 2>&1; then knob=$(sp_knob HOLD_PUSH_QUEUE_GUARD "$p")
+  else knob="${HOLD_PUSH_QUEUE_GUARD:-}"; fi
+  [ "$knob" = 0 ] && return 0
+  slug=$(bash "$d/../fleet-conf.sh" "$p" repo 2>/dev/null)
+  case "$slug" in
+    */*) ;;
+    *) slug=$(git -C "$wt" remote get-url "$remote" 2>/dev/null || printf '%s' "$remote")
+       slug=$(sed -nE 's#^(https://([^@/]*@)?github\.com/|git@github\.com:)([^/]+/[^/]+)$#\3#p' <<<"$slug"); slug="${slug%.git}" ;;
+  esac
+  # No GitHub repo behind the remote (a local path): there is no PR to read.
+  case "$slug" in */*) ;; *) return 0 ;; esac
+  enc=$(jq -rn --arg r "$br" '$r|@uri' 2>/dev/null)
+  t=$(mktemp "${TMPDIR:-/tmp}/hold-push-queue.XXXXXX" 2>/dev/null) || t=""
+  [ -n "$enc" ] && [ -n "$t" ] || rc=64
+  if [ "$rc" = 0 ]; then
+    q="repos/$slug/pulls?head=${slug%%/*}:$enc&state=open&per_page=10"
+    if command -v gh_rest >/dev/null 2>&1; then
+      gh_rest GET "$q" > "$t" 2>/dev/null || rc=$?
+    elif [ -r "$d/gh-rest.sh" ]; then
+      # shellcheck source=bin/lib/gh-rest.sh
+      ( . "$d/gh-rest.sh" 2>/dev/null && gh_rest GET "$q" ) > "$t" 2>/dev/null || rc=$?
+    else
+      rc=127
+    fi
+  fi
+  if [ "$rc" = 0 ] && ! jq -e 'type == "array"' "$t" >/dev/null 2>&1; then rc=65; fi
+  if [ "$rc" != 0 ]; then
+    [ -n "$t" ] && rm -f "$t"
+    [ -n "${_HOLD_PUSH_NO_QUEUE_SAID:-}" ] || hold_push__say "the queue guard did not run for $br: its open PR could not be read (rc $rc) — pushed without the merge-queue check (BH-10201)"
+    _HOLD_PUSH_NO_QUEUE_SAID=1
+    return 0
+  fi
+  hit=$(jq -r '[.[] | select([.labels[]?.name] | any(. == "queued" or . == "checking")) | .number] | first // empty' "$t" 2>/dev/null)
+  rm -f "$t"
+  [ -n "$hit" ] || return 0
+  hold_push__say "QUEUED — NOT pushing $br: its open PR #$hit is in the merge queue (label queued/checking), and a push would take it out (BH-10201) — dequeue it first, then push; the local round is discarded"
+  return 6
+}
+
 hold_push() {
   local cfg=() up=() p n wt remote src br lease v rc
   while [ $# -gt 0 ]; do
@@ -229,6 +296,7 @@ hold_push() {
     2) hold_push__say "NOT pushing $br: the ticket's hold could not be read (${v#*	}); retried next tick"; return 4 ;;
   esac
   hold_push_rewrite_guard "$p" "$wt" "$remote" "$src" "$br" "$lease" || return $?
+  hold_push_queue_guard "$p" "$wt" "$remote" "$br" "$lease" || return $?
   # HARNESS_LANE is dropped for this one git (BH-2741): a codex lane's PATH
   # shim and pre-push hook judge every push in the session's process tree, and
   # bin/iron-law-guard.sh refuses any push from a guarded lane (rule

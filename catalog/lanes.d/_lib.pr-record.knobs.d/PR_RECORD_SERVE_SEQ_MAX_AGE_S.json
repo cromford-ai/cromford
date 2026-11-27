@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_SERVE_SEQ_MAX_AGE_S",
+  "read_in": "bin/lib/pr-record-serve.sh",
+  "type": "int",
+  "default": 3600,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-10215. In step record of lane merge-conductor (row lane.merge-conductor.gh_source), prr_serve_state serves a record row whose mergeable_base_seq equals the repo's current base sequence (GET /api/pr-base-seqs, raised by each push webhook to the base) and whose head equals the list head, while the row is at most this many seconds old. This is the backstop for a lost push webhook. A row with no usable sequence keeps the age rule PR_RECORD_SERVE_MAX_AGE_S; a row whose sequence is known and moved misses at any age. Steps off and shadow keep PR_RECORD_SERVE_MAX_AGE_S. Read through lane_knob (libs scope) when the caller has it, else from the environment; a value that is not a non-negative integer is 3600 and one logs/pr-record.log line names it. 0 = off: in step record no row serves by the sequence rule; a row serves only by the age rule PR_RECORD_SERVE_MAX_AGE_S."
+}

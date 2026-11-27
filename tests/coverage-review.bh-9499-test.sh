@@ -83,7 +83,8 @@ OUT=$(cr_plan_row_list "$T/nocov.md"); RC=$?
 
 # ── N1-N7: the note ─────────────────────────────────────────────────────────
 NOTE=$(cv_review_note "$T/b/plan.md" "$FX/diff-names.txt")
-grep -q '^Checklist-Version: 11$' <<<"$NOTE" && grep -q '^17\. ' <<<"$NOTE" && grep -q '^1\. Correctness against the ticket' <<<"$NOTE" && ok \
+# TEST-CHANGE (BH-10233): lead checklist item 18 (navigation registry) bumped Checklist-Version 11 -> 12; the pins below follow.
+grep -q '^Checklist-Version: 12$' <<<"$NOTE" && grep -q '^17\. ' <<<"$NOTE" && grep -q '^1\. Correctness against the ticket' <<<"$NOTE" && ok \
   || bad "N1 the checklist version line and items 1-17 are in the note"
 grep -qE '^## Changes|^## Client questions|^- v1 2026-09-29' <<<"$NOTE" && bad "N1 the change log and client-questions block must not be in the note" || ok
 [ "$(grep -E '^R[0-9]+: ' <<<"$NOTE" | cut -d: -f1 | paste -sd, -)" = R1,R2,R3 ] && ok || bad "N2 R1-R3 in plan order: $(grep -E '^R[0-9]+: ' <<<"$NOTE")"
@@ -177,9 +178,9 @@ GATES_NOTE="before"; : > "$T/b/pipeline.log"
 # shellcheck source=/dev/null
 . "$T/note.sh"
 case "$GATES_NOTE" in "before"$'\n'"COVERAGE REVIEW (lead checklist, BH-9499):"$'\n'*) ok ;; *) bad "E1 the region appends the block to GATES_NOTE: ${GATES_NOTE:0:200}" ;; esac
-grep -q 'Checklist-Version: 11' <<<"$GATES_NOTE" && grep -q '^NOT IN DIFF: R2 names src/rows.ts' <<<"$GATES_NOTE" && ok || bad "E1 GATES_NOTE holds the checklist and the R2 hint"
+grep -q 'Checklist-Version: 12' <<<"$GATES_NOTE" && grep -q '^NOT IN DIFF: R2 names src/rows.ts' <<<"$GATES_NOTE" && ok || bad "E1 GATES_NOTE holds the checklist and the R2 hint"
 [ "$(cat "$T/b/coverage-review-names.txt")" = "$(printf 'src/empty.ts\nsrc/list.ts')" ] && ok || bad "E1 the diff names: $(cat "$T/b/coverage-review-names.txt")"
-grep -q 'COVERAGE REVIEW: 3 rows, checklist v11, 1 not in diff' "$T/b/pipeline.log" && ok || bad "E1 one pipeline.log line: $(cat "$T/b/pipeline.log")"
+grep -q 'COVERAGE REVIEW: 3 rows, checklist v12, 1 not in diff' "$T/b/pipeline.log" && ok || bad "E1 one pipeline.log line: $(cat "$T/b/pipeline.log")"
 # E2: the acceptance case, no rows at all
 use review-approve-norows.md
 LENS_APPROVED review && bad "E2 a fixture diff that lacks the ticket's name field must not be approved" || ok

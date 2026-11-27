@@ -1,0 +1,11 @@
+{
+  "env": "MC_QUEUE_RETURN_ALERT_MIN",
+  "read_in": "bin/merge-conductor.d/bh-10201-queue-return.sh",
+  "type": "int",
+  "default": 30,
+  "min": 0,
+  "max": 1440,
+  "unit": "minutes",
+  "zero_means": "off",
+  "note": "BH-10201: how long a PR may stay out of the merge queue after the conductor removed its merge-queue label before the queue-return pass sends ONE warn alert and ONE PR comment with the conductor's row state and reason. The lead-held alert does not wait for it. 0 = no stale alert. Settings row: lane.merge-conductor.mc_queue_return_alert_min."
+}

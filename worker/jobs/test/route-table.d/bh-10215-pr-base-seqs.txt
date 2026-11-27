@@ -1,0 +1,4 @@
+# BH-10215: the base sequence of each (repo, base branch), raised by each push
+# webhook to that branch. Read by bin/lib/pr-record-serve.sh once per
+# conductor tick per repo. Bearer-gated.
+GET /api/pr-base-seqs
