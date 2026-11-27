@@ -1,0 +1,12 @@
+{
+  "env": "PH_LU_MEMO_BACKSTOP_S",
+  "read_in": "bin/lib/ph-lu-memo.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-10349: the longest time pipeline-health's lead-merge-unqueued block (section 13d) uses a stored commits/<sha>/status or pulls/<n>/reviews answer instead of a GitHub read. A stored answer is used only for the same head and only while the wake mirror shows no checks wake (status) or pr wake (reviews) since its read started; a feed that cannot tell means a read. 0 = off: every run reads GitHub. Values under 1800 read as 1800 (the wake-backstop floor). Read by bin/lib/ph-lu-memo.sh; the files are state/ph-lu-memo/."
+}

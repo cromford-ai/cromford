@@ -7,51 +7,165 @@
 // src/index.js holds the ordered table that decides which of these runs.
 
 import { json } from "../lib/http.js";
-import { parseRange, readPeriodKnobs } from "../lib/period.js";
+import { parseRange, readPeriodKnobs, bucketExpr, csvResponse } from "../lib/period.js";
+import {
+  given, firstGiven, searchParam, likeClause, sortParam, orderBy, keysetClause, cursorParam,
+  flagParam, formatParam, seriesParam, fillSeries, pageOut,
+} from "../lib/log-query.js";
 import {
   OPEN_STATUS, resolveLane, decorateJob, JOBS_SELECT, JOB_TRANSITIONS,
   checkTransition, checkPause, checkRules, putClaim, ensureColumns, jobId,
 } from "../lib/core.js";
+
+// ── GET /api/jobs with a range (BH-9308, BH-9120.4) ──────────────────────
+// The params below need a from/to range; without one they are a 400.
+const JOBS_RANGE_PARAMS = ["q", "lane", "sort", "dir", "cursor", "totals", "series", "format"];
+// q searches these columns; one bound LIKE value serves them all.
+const JOBS_SEARCH_COLS = ["j.ticket_id", "j.kind", "j.meta"];
+// The sort allowlist: key -> SQL column. Every column is NOT NULL text.
+const JOBS_SORT = {
+  created_at: { col: "j.created_at", type: "text" },
+  updated_at: { col: "j.updated_at", type: "text" },
+  project: { col: "j.project", type: "text" },
+  status: { col: "j.status", type: "text" },
+  kind: { col: "j.kind", type: "text" },
+  box: { col: "j.box", type: "text" },
+};
+const JOBS_CSV_COLUMNS = ["id", "project", "ticket_id", "kind", "box", "stage", "status", "lane",
+  "budget_usd", "spent_usd", "created_at", "updated_at"];
+// The lean CSV read: no heartbeat join, no per-row phase subquery.
+const JOBS_CSV_SELECT = `SELECT j.id, j.project, j.ticket_id, j.kind, j.box, j.stage, j.status, c.lane AS lane,
+          j.budget_usd, j.spent_usd, j.created_at, j.updated_at
+     FROM jobs j LEFT JOIN job_claims c ON c.job_id=j.id`;
+
+// ?stale_min=N — what the watchdog asks for: open rows whose last sign of
+// life is older than N minutes. The THRESHOLD is the caller's (the watchdog
+// owns the policy and its test drives it); the CLOCK is the server's, which
+// is the only clock every box agrees on.
+function staleFilter(sp, jobs) {
+  const staleMin = Number(sp.get("stale_min"));
+  if (Number.isFinite(staleMin) && staleMin > 0) {
+    return jobs.filter((j) => j.status === OPEN_STATUS
+      && j.activity_age_s !== null && j.activity_age_s >= staleMin * 60);
+  }
+  return jobs;
+}
+
+// The range path. Order of work: ONE knob read, then every param is
+// validated (a 400 reads no table after the knob read), then page, totals
+// and series run in one Promise.all (at most 4 statements). A CSV is the knob
+// read plus one statement.
+async function jobsRange({ env, sp, t, where, binds, limit }) {
+  const knobs = await readPeriodKnobs(env);
+  const range = parseRange(sp, knobs, Date.parse(t));
+  if (range.error) return json(400, { error: range.error });
+  const q = searchParam(sp);
+  if (q.err) return json(400, { error: q.err });
+  const sort = sortParam(sp, JOBS_SORT, "created_at");
+  if (sort.err) return json(400, { error: sort.err });
+  const cursor = cursorParam(sp, sort.type, "text");
+  if (cursor.err) return json(400, { error: cursor.err });
+  const totals = flagParam(sp, "totals");
+  if (totals.err) return json(400, { error: totals.err });
+  const series = seriesParam(sp, range, knobs.max_buckets);
+  if (series.err) return json(400, { error: series.err });
+  const format = formatParam(sp);
+  if (format.err) return json(400, { error: format.err });
+
+  binds.push(range.from); where.push(`j.created_at>=?${binds.length}`);
+  binds.push(range.to); where.push(`j.created_at<?${binds.length}`);
+  const lane = (sp.get("lane") || "").trim();
+  if (lane) { binds.push(lane); where.push(`c.lane=?${binds.length}`); }
+  if (q.v !== null) { binds.push(q.v); where.push(likeClause(JOBS_SEARCH_COLS, binds.length)); }
+  const whereSql = ` WHERE ${where.join(" AND ")}`;
+
+  if (format.v === "csv") {
+    const sql = `${JOBS_CSV_SELECT}${whereSql} ORDER BY ${orderBy(sort, "j.id")} LIMIT ?${binds.length + 1}`;
+    const rows = (await env.DB.prepare(sql).bind(...binds, knobs.csv_row_cap + 1).all()).results || [];
+    return csvResponse(JOBS_CSV_COLUMNS, rows, { cap: knobs.csv_row_cap, filename: `jobs-${range.from}.csv` });
+  }
+
+  // Keyset paging only when sort, dir or cursor is asked for. A range with neither
+  // keeps the BH-9304 statement text (ORDER BY j.created_at DESC LIMIT n).
+  const keyset = given(sp, "sort") || given(sp, "dir") || cursor.v !== null;
+  let pageSql, pageBinds = binds;
+  if (keyset) {
+    const pw = [...where];
+    if (cursor.v !== null) {
+      pageBinds = [...binds, cursor.v[0], cursor.v[1]];
+      pw.push(keysetClause(sort, "j.id", binds.length + 1));
+    }
+    pageSql = `${JOBS_SELECT} WHERE ${pw.join(" AND ")} ORDER BY ${orderBy(sort, "j.id")} LIMIT ${limit + 1}`;
+  } else {
+    pageSql = `${JOBS_SELECT}${whereSql} ORDER BY j.created_at DESC LIMIT ${limit}`;
+  }
+  // The aggregate reads join job_claims only for the lane filter.
+  const from = lane ? "FROM jobs j LEFT JOIN job_claims c ON c.job_id=j.id" : "FROM jobs j";
+  const reads = [env.DB.prepare(pageSql).bind(...pageBinds).all()];
+  if (totals.v) {
+    // sql-ident-ok: `from` is one of two literal FROM clauses; whereSql holds fixed fragments with ?N binds
+    reads.push(env.DB.prepare(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(j.status='running'),0) AS running,
+              COALESCE(SUM(j.status='done'),0) AS done, COALESCE(SUM(j.status='failed'),0) AS failed
+         ${from}${whereSql}`
+    ).bind(...binds).first());
+  }
+  if (series.v) {
+    // sql-ident-ok: bucketExpr is one of 3 fixed fragments over a literal column; from/whereSql as above
+    reads.push(env.DB.prepare(
+      `SELECT ${bucketExpr(series.v.series, "j.created_at")} AS bucket, COUNT(*) AS n ${from}${whereSql} GROUP BY bucket`
+    ).bind(...binds).all());
+  }
+  const res = await Promise.all(reads);
+  const raw = res[0].results || [];
+  const out = { as_of: t };
+  let rows = raw;
+  if (keyset) {
+    const p = pageOut(raw, limit, sort, "text");
+    rows = p.rows;
+    out.next_cursor = p.next_cursor;
+  }
+  out.jobs = staleFilter(sp, rows.map((r) => decorateJob(r, t)));
+  let i = 1;
+  if (totals.v) {
+    const r = res[i++] || {};
+    const total = Number(r.total) || 0, running = Number(r.running) || 0;
+    const done = Number(r.done) || 0, failed = Number(r.failed) || 0;
+    out.totals = { total, running, done, failed, other: total - running - done - failed };
+  }
+  if (series.v) out.series = fillSeries(series.v.buckets, res[i++].results);
+  return json(200, out);
+}
 
 export const routes = [
   // ── Jobs ───────────────────────────────────────────────────────────────
   [
     "GET", "/api/jobs",
     async ({ env, url, t }) => {
+      const sp = url.searchParams;
       const where = [], binds = [];
       // ticket_id + kind (BH-2406): bin/lib/jobs/jobs.sh job_ticket_abandoned
       // asks for one ticket's newest BUILD row (triage, lead-review, orc and
       // migration rows share the ticket key). Additive; an unknown param was
       // always ignored.
       for (const col of ["project", "status", "box", "ticket_id", "kind"]) {
-        const v = url.searchParams.get(col);
+        const v = sp.get(col);
         if (v) { binds.push(v); where.push(`j.${col}=?${binds.length}`); }
       }
-      // ?from=&to= (BH-9304): jobs CREATED in [from, to), through parseRange.
-      // A bad range is a 400 before the jobs read. No range param: no knob
-      // read, no bind, and the SQL text is the same as before.
-      if (url.searchParams.has("from") || url.searchParams.has("to")) {
-        const range = parseRange(url, await readPeriodKnobs(env), Date.parse(t));
-        if (range.error) return json(400, { error: range.error });
-        binds.push(range.from); where.push(`j.created_at>=?${binds.length}`);
-        binds.push(range.to); where.push(`j.created_at<?${binds.length}`);
-      }
       // A positive integer: `limit=-1` used to build `LIMIT -1`, which is no limit at all.
-      const limit = Math.min(Math.max(Math.floor(Number(url.searchParams.get("limit"))) || 100, 1), 500);
-      const sql = `${JOBS_SELECT}${where.length ? " WHERE " + where.join(" AND ") : ""}`
-        + ` ORDER BY j.created_at DESC LIMIT ${limit}`;
-      const rows = await env.DB.prepare(sql).bind(...binds).all();
-      let jobs = (rows.results || []).map((r) => decorateJob(r, t));
-      // ?stale_min=N — what the watchdog asks for: open rows whose last sign of
-      // life is older than N minutes. The THRESHOLD is the caller's (the
-      // watchdog owns the policy and its test drives it); the CLOCK is the
-      // server's, which is the only clock every box agrees on.
-      const staleMin = Number(url.searchParams.get("stale_min"));
-      if (Number.isFinite(staleMin) && staleMin > 0) {
-        jobs = jobs.filter((j) => j.status === OPEN_STATUS
-          && j.activity_age_s !== null && j.activity_age_s >= staleMin * 60);
+      const limit = Math.min(Math.max(Math.floor(Number(sp.get("limit"))) || 100, 1), 500);
+      // ?from=&to= (BH-9304): jobs CREATED in [from, to), through parseRange.
+      // No range param: no knob read, no bind, and the SQL text is the same as
+      // before. The BH-9308 params need a range (a bounded read).
+      if (!sp.has("from") && !sp.has("to")) {
+        const needs = firstGiven(sp, JOBS_RANGE_PARAMS);
+        if (needs) return json(400, { error: `${needs} needs a from/to range` });
+        const sql = `${JOBS_SELECT}${where.length ? " WHERE " + where.join(" AND ") : ""}`
+          + ` ORDER BY j.created_at DESC LIMIT ${limit}`;
+        const rows = await env.DB.prepare(sql).bind(...binds).all();
+        return json(200, { jobs: staleFilter(sp, (rows.results || []).map((r) => decorateJob(r, t))), as_of: t });
       }
-      return json(200, { jobs, as_of: t });
+      return jobsRange({ env, sp, t, where, binds, limit });
     },
   ],
 

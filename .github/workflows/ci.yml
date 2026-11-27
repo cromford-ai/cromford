@@ -8,6 +8,9 @@
 #   - shellcheck at error severity, over the same files upstream lints
 #   - the shipped leak guard, tests/no-client-identifiers-test.sh
 #   - gitleaks over the tree, against the .gitleaksignore the publisher wrote
+#   - the node suites: console-ui, worker/jobs and worker/otp-inbox, on the
+#     node major in .node-version (the worker suites compose the catalogs they
+#     import first, through their pretest: bin/compose-test-catalogs.sh)
 # CONTRIBUTING.md says how to run the full suite yourself.
 name: CI
 on:
@@ -36,6 +39,21 @@ jobs:
           # and otherwise downloads that release with its sha256 checked.
           bin/ci-shellcheck.sh bin/*.sh bin/gh-rest-shim bin/lib/*.sh bin/lib/gh-shim/*.sh bin/lib/rb/*.sh bin/lib/rt/*.sh bin/lib/mc/*.sh bin/remediations/*.sh \
             guardrails/*/check.sh guardrails/lib/*.sh checks/*/*.sh tests/lib/*.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Node suites (console-ui, worker/jobs, worker/otp-inbox)
+        run: |
+          set -euo pipefail
+          for d in console-ui worker/jobs worker/otp-inbox; do
+            echo "== $d"
+            if [ -f "$d/package-lock.json" ]; then
+              (cd "$d" && npm ci --no-audit --no-fund --ignore-scripts)
+            fi
+            (cd "$d" && npm test)
+          done
 
       - name: Leak guard (no client identifiers)
         run: bash tests/no-client-identifiers-test.sh

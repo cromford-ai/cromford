@@ -1,5 +1,5 @@
 import { useEffect } from 'preact/hooks';
-import { html, Link, useSearchParam, navigate } from '../router.js';
+import { html, Link, useSearchParam, navigate, currentSearch } from '../router.js';
 import { PageHeadline } from '../ui/line.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
@@ -9,15 +9,28 @@ import { Clock } from '../ui/icons.js';
 import { whenLabel, fmtNum } from '../lib/format.js';
 import { plainLabel } from '../lib/labels.js';
 import { commandRows, commandTarget, filterCommands, facetValues, FILTER_KEYS } from '../lib/commands.js';
+import { withPeriod } from '../lib/period.js';
+import { PeriodPicker } from '../ui/PeriodPicker.js';
+import { useLogPeriod, logHref, logCsvHref, logPollMs, LogToolbar, LogReportPanel } from '../lib/log-period.js';
+import { report as commandsReport } from './period-report.d/commands.js';
 
 // HISTORY → COMMANDS (BH-2514): every console and chat command the worker
 // still returns from GET /api/dash/commands, newest first, with who sent it,
 // what became of it and a link to what it acted on. It reads the latest LIMIT
 // rows and no more, so the sort headers and the filters work on those rows and
 // the footnote says so.
+//
+// BH-9308 (BH-9120.4): the screen reads one period (the URL's, else the knob
+// default) through GET /api/cockpit/commands: created_at in [from, to), a
+// search (?q= over the key, type, project, payload and result), type /
+// project / status filters on the server, the CSV of the whole filter and the
+// period report. It reads the newest LIMIT rows of that period; the header
+// sorts and the actor filter work on those rows. loadCommands (the dash list)
+// stays for its other callers.
 
 export const LIMIT = 200;
 export const loadCommands = () => api.commands(LIMIT);
+const POLL_MS = 30000;
 
 const DEAD = new Set(['dead_letter', 'failed', 'refused']);
 // The statuses whose key alone does not say what happened; the rest read fine
@@ -35,15 +48,20 @@ export function CommandHistoryScreen() {
     actor: useSearchParam('actor'),
     id: useSearchParam('id')
   };
-  const state = useApi(loadCommands, [], { intervalMs: 30000 });
+  const q = useSearchParam('q');
+  const reportOpen = useSearchParam('report') === '1';
+  const { period, knobs } = useLogPeriod();
+  const from = period ? period.from : null;
+  const to = period ? period.to : null;
+  const state = useApi(() => (from
+    ? api.periodGet('/api/cockpit/commands', {
+      from, to, keep: { type: filters.type, project: filters.project, status: filters.status, q, limit: LIMIT }
+    })
+    : new Promise(() => {})), [from, to, filters.type, filters.project, filters.status, q],
+  { intervalMs: logPollMs(period, Date.now(), POLL_MS) });
 
-  const setFilter = (key, value) => {
-    const next = { ...filters, [key]: value };
-    const q = new URLSearchParams();
-    for (const k of [...FILTER_KEYS, 'id']) if (next[k]) q.set(k, next[k]);
-    const qs = q.toString();
-    navigate(`/history/commands${qs ? `?${qs}` : ''}`);
-  };
+  // Every other param (the period, the search) stays; BH-9308.
+  const setFilter = (key, value) => navigate(logHref('/history/commands', currentSearch(), { [key]: value }));
 
   // A ?id= link (a retry_command's target) lands on its row once it is loaded.
   useEffect(() => {
@@ -66,23 +84,30 @@ export function CommandHistoryScreen() {
       </div>
 
       <div class="tabs">
-        <${Link} to="/history" class="tab">RUNS<//>
+        <${Link} to=${withPeriod('/history', currentSearch())} class="tab">RUNS<//>
         <${Link} to="/history?tab=builds" class="tab">BUILDS<//>
         <span class="tab tab--on" aria-current="page">COMMANDS</span>
       </div>
 
-      <${CommandHistoryView} state=${state} filters=${filters} setFilter=${setFilter}/>
+      <${PeriodPicker} period=${period} knobs=${knobs}/>
+      <${LogToolbar} path="/history/commands" search=${currentSearch()} placeholder="search key, type, project, payload or result"
+        csv=${period ? logCsvHref('/api/cockpit/commands', period, { type: filters.type, project: filters.project, status: filters.status, q }) : null}/>
+      ${reportOpen && period ? html`<${LogReportPanel} report=${commandsReport} period=${period} knobs=${knobs}/>` : null}
+
+      <${CommandHistoryView} state=${state} filters=${filters} setFilter=${setFilter} source="/api/cockpit/commands"/>
     </div>`;
 }
 
 // The body, split from the hooks so every load state renders under test.
-export function CommandHistoryView({ state, filters, setFilter }) {
+// `source` names the read in the malformed-body error (the screen's is the
+// cockpit period route).
+export function CommandHistoryView({ state, filters, setFilter, source = '/api/dash/commands' }) {
   if (state.error && !state.data) return html`<${ErrorBox} error=${state.error} onRetry=${state.reload}/>`;
   if (!state.data) return html`<${Skeleton} rows=${8} height=${20}/>`;
 
   const { rows, malformed } = commandRows(state.data);
   if (malformed) {
-    return html`<${ErrorBox} error=${'unexpected response from /api/dash/commands'} onRetry=${state.reload}/>`;
+    return html`<${ErrorBox} error=${`unexpected response from ${source}`} onRetry=${state.reload}/>`;
   }
 
   const shown = filterCommands(rows, filters);
@@ -116,7 +141,8 @@ export function CommandHistoryView({ state, filters, setFilter }) {
       ${idN !== null && !idLoaded ? html`
         <div class="banner"><span>command #${filters.id} is older than the loaded window</span></div>` : null}
 
-      <${Section} title="COMMANDS" note=${`${fmtNum(shown.length)} of ${fmtNum(rows.length)} loaded · newest first`}>
+      <${Section} title="COMMANDS" note=${`${fmtNum(shown.length)} of ${fmtNum(rows.length)} loaded${
+        state.data.totals ? ` · ${fmtNum(Number(state.data.totals.total) || 0)} in this period` : ''} · newest first`}>
         ${rows.length
           ? html`<${CommandsTable} rows=${shown} highlight=${idN} setFilter=${setFilter}
               empty=${html`<${Empty} title="NO COMMAND MATCHES THESE FILTERS"

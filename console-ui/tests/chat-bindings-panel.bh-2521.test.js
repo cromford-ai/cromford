@@ -14,7 +14,7 @@ const ROWS = [
   { project: 'project-3', thread_id: 7, actor: 'console:a@x', updated_at: '2026-09-26T09:00:00Z' },
   { project: 'cromford', thread_id: 6, actor: null, updated_at: '2026-09-26T08:00:00Z' },
 ];
-const PAYLOAD = { topics: { project-3: 7, 'cromford': 6 }, rows: ROWS, as_of: '2026-09-26T09:05:00Z' };
+const PAYLOAD = { topics: { 'project-3': 7, 'cromford': 6 }, rows: ROWS, as_of: '2026-09-26T09:05:00Z' };
 const URL = '/api/coord/telegram-topics';
 
 // One answer per call, in order; the last answer repeats.
@@ -152,7 +152,7 @@ const input = (root) => all(root).find((n) => n.localName === 'input');
 const reasonInput = (root) => all(dialog(root)).find((n) => n.localName === 'input');
 const isDisabled = (n) => n.disabled === true || ('disabled' in n.attrs && n.attrs.disabled !== 'false');
 // The EDIT button on project-3's row: rows sort cromford, project-3.
-const editproject-3 = (root) => buttons(root, 'EDIT')[1];
+const editproject_3 = (root) => buttons(root, 'EDIT')[1];
 
 // Every timer longer than a second is captured instead of armed, so a panel
 // that polls can be fast-forwarded past its interval on demand.
@@ -207,7 +207,7 @@ test('P4: loads once on mount, never polls, and REFRESH loads once more', async 
 test('P5: EDIT, a new id, SAVE, the in-app dialog, CONFIRM: one PUT and a reload', async () => {
   const { root, calls } = await mountPanel([[200, PAYLOAD], [200, { topic: { project: 'project-3', thread_id: 12 } }],
     [200, { ...PAYLOAD, rows: [ROWS[1], { ...ROWS[0], thread_id: 12 }] }]]);
-  click(editproject-3(root));
+  click(editproject_3(root));
   await flush();
   const box = input(root);
   assert.equal(box.attrs['aria-label'], 'new thread id for project-3');
@@ -244,7 +244,7 @@ test('P5: EDIT, a new id, SAVE, the in-app dialog, CONFIRM: one PUT and a reload
 
 test('P5: CANCEL on the dialog sends nothing and leaves the row open', async () => {
   const { root, calls } = await mountPanel([[200, PAYLOAD]]);
-  click(editproject-3(root));
+  click(editproject_3(root));
   await flush();
   type(input(root), '12');
   await flush();
@@ -259,7 +259,7 @@ test('P5: CANCEL on the dialog sends nothing and leaves the row open', async () 
 
 test('P6: an invalid id is refused inline with no dialog and no PUT', async () => {
   const { root, calls } = await mountPanel([[200, PAYLOAD]]);
-  click(editproject-3(root));
+  click(editproject_3(root));
   await flush();
   for (const bad of ['0', '6.9', '']) {
     type(input(root), bad);
@@ -281,7 +281,7 @@ test('P7: no add or delete surface; only GET and PUT are ever sent', async () =>
   const { root, calls } = await mountPanel([[200, PAYLOAD], [200, { topic: { project: 'project-3', thread_id: 12 } }], [200, PAYLOAD]]);
   const labels = () => all(root).filter((n) => n.localName === 'button').map((b) => b.textContent.trim());
   assert.ok(!labels().some((l) => /ADD|DELETE|REMOVE/i.test(l)), labels().join(','));
-  click(editproject-3(root));
+  click(editproject_3(root));
   await flush();
   type(input(root), '12');
   await flush();

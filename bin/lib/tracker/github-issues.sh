@@ -117,6 +117,17 @@ trk_gh_issue_page() {
   gh_rest GET "repos/$TRK_SLUG/issues" -f labels=ai-build -f state=open -F per_page=100 -F "page=$1"
 }
 
+# trk_gh_open_issue_page <page> — one raw page (per_page=100) of ALL open
+# issues, with NO label filter (pull requests are in it, as GitHub lists them),
+# exactly as gh_rest answers it. For a caller that finds its own issue by a body
+# marker whatever its labels: bin/nightly-ticket.sh's report tracking issue
+# (BH-10020), which a split leaves open with ai-build taken off. rc as gh_rest;
+# 1 on a bad slug or page number.
+trk_gh_open_issue_page() {
+  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  gh_rest GET "repos/$TRK_SLUG/issues" -f state=open -F per_page=100 -F "page=$1"
+}
+
 # trk_gh_comments_page <n> <page> — one raw page (per_page=100) of issue <n>'s
 # comments, exactly as gh_rest answers it (html_url included), for a caller
 # that pages the thread itself (bin/web-task.sh's dedup read, BH-7919). rc as

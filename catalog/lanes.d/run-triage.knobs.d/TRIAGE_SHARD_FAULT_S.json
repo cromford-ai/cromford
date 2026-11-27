@@ -1,0 +1,10 @@
+{
+  "env": "TRIAGE_SHARD_FAULT_S",
+  "read_in": "bin/lib/runner-fault.sh",
+  "type": "int",
+  "default": 120,
+  "min": 1,
+  "max": 3600,
+  "unit": "seconds",
+  "note": "BH-10274: a failed triage-shard call (rc 1/126/127) counts as a runner fault before the model answered only when it ended within this many seconds. A start fault takes seconds; a session that answered takes longer and writes DECISION text. Code fallback 120 in rf_start_fault; a value that is not a positive integer is 120."
+}

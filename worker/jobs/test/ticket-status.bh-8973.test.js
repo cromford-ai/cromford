@@ -423,15 +423,15 @@ test('S8 EXPLAIN QUERY PLAN at volume uses indexes; statements per warm call are
   // Statements per warm call, counted through the shim. T-1, T-6, ... are
   // project-3 keys with jobs, spawns and br rows, so every round runs.
   const c = counted(d1(db));
-  const project-3 = (n) => Array.from({ length: n }, (_, i) => `key=T-${1 + 5 * i}`).join('&');
-  await status(c.DB, `project=project-3&${project-3(2)}`);
+  const project_3 = (n) => Array.from({ length: n }, (_, i) => `key=T-${1 + 5 * i}`).join('&');
+  await status(c.DB, `project=project-3&${project_3(2)}`);
   c.reset();
-  const a = await status(c.DB, `project=project-3&${project-3(2)}&issue=99`);
+  const a = await status(c.DB, `project=project-3&${project_3(2)}&issue=99`);
   assert.equal(a.status, 200, JSON.stringify(a.body));
   assert.ok(a.body.tickets[0].attempts.length > 0, 'the fixture keys have jobs');
   assert.ok(c.count() <= 15, `ticket_status ran ${c.count()} statements`);
   c.reset();
-  const full = await status(c.DB, `project=project-3&${project-3(20)}`);
+  const full = await status(c.DB, `project=project-3&${project_3(20)}`);
   assert.equal(full.body.tickets.length, 20);
   assert.ok(c.count() <= 15, `the cost does not grow with N: 20 tickets ran ${c.count()} statements`);
   await call(c.DB, '/api/ticket-status/stuck?project=project-3');

@@ -77,6 +77,10 @@ command -v run_beat >/dev/null 2>&1 || run_beat() { "$HARNESS/bin/beat.sh" "$1" 
 # BH-9818: the first repeat refusal parks the key for the dispatcher (bin/lib/triage-repeat-park.sh).
 # shellcheck source=bin/lib/triage-repeat-park.sh
 . "$HARNESS/bin/lib/triage-repeat-park.sh" 2>/dev/null || :
+# BH-10274: a runner fault before the model answered (bin/lib/runner-fault.sh).
+# Fail-open: no lib = no retry and the tail -3 summary, today's behaviour.
+# shellcheck source=bin/lib/runner-fault.sh
+. "$HARNESS/bin/lib/runner-fault.sh" 2>/dev/null || :
 TSH_GH="${TSH_GH:-0}"
 
 # ── WHICH RUNNER, AND SAYING SO (2026-09-14, the shard storm) ─────────────────
@@ -281,13 +285,61 @@ if [ -z "${TSH_TS_NOTE:-}" ] && [ -n "${TSH_TS_HASH:-}" ] && [ -r "$HARNESS/bin/
     TSH_SNAP="$(_ts_dir)/snap/$KEY.$TSH_TS_HASH"
     [ -d "$TSH_SNAP" ] && ts_row_note_of "$KEY" "$TSH_SNAP" )
 fi
-GROK_EFFORT="${TSH_EFFORT:-${GROK_EFFORT:-}}" \
-AGENT_SYSTEM_APPEND="$TRIAGE_APPEND" \
-AGENT_CALL_GUARD_STAGE=triage-shard AGENT_CALL_TICKET="$KEY" \
-AGENT_CALL_FP="${CG_FP:+$KEY:$CG_FP}" \
-AGENT_CALL_ROW_NOTE="${TSH_TS_NOTE:-}" \
-  lock_run_unheld "$HARNESS/bin/agent-call.sh" triage "$PROJECT" "$SHARD_MODEL" "$TO" "$OUT" "@$TSH_PF"
+# tsh_call <runner> [<allowed runners>]: the one agent-call of this shard. A
+# subshell, so the runner pin of a retry does not leak into this file.
+tsh_call() (
+  export RUNNER_TRIAGE="$1"
+  [ -n "${2:-}" ] && export AGENT_CALL_RUNNERS="$2"
+  # agent-call-tools: the triage session reads its ticket thread and writes the board; this is the shard's existing call, moved into tsh_call
+  GROK_EFFORT="${TSH_EFFORT:-${GROK_EFFORT:-}}" \
+  AGENT_SYSTEM_APPEND="$TRIAGE_APPEND" \
+  AGENT_CALL_GUARD_STAGE=triage-shard AGENT_CALL_TICKET="$KEY" \
+  AGENT_CALL_FP="${CG_FP:+$KEY:$CG_FP}" \
+  AGENT_CALL_ROW_NOTE="${TSH_TS_NOTE:-}" \
+    lock_run_unheld "$HARNESS/bin/agent-call.sh" triage "$PROJECT" "$SHARD_MODEL" "$TO" "$OUT" "@$TSH_PF"
+)
+T_CALL0=$(date +%s)
+tsh_call "$SHARD_RUNNER"
 RC=$?
+# RUNNER FAULT (BH-10274): the runner died before the model answered (rc
+# 1/126/127, within TRIAGE_SHARD_FAULT_S, no DECISION or tickets= text). Retry
+# ONCE on the other runner, pinned to it by AGENT_CALL_RUNNERS (no survival
+# rungs), under the same call-guard fingerprint (K=2 for triage-shard). A retry
+# refused before the call keeps the first RC and never reaches the park path.
+FAULT_LINE=""; RETRY_REFUSED=""
+if command -v rf_start_fault >/dev/null 2>&1 && rf_start_fault "$RC" "$(( $(date +%s) - T_CALL0 ))" "$OUT"; then
+  RC1=$RC; F_SECS=$(( $(date +%s) - T_CALL0 ))
+  R1=$(head -1 "$OUT.runner" 2>/dev/null | tr -dc 'A-Za-z0-9._-'); [ -n "$R1" ] || R1="$SHARD_RUNNER"
+  E1=$(rf_first_error "$OUT.err" "$OUT")
+  R2=$(rf_other_runner "$R1")
+  # Knob row lane.run-triage.triage_shard_fault_retry; code fallback 1, not 0 reads as 1.
+  F_RETRY="${TRIAGE_SHARD_FAULT_RETRY:-1}"; [ "$F_RETRY" = 0 ] || F_RETRY=1
+  if [ "$F_RETRY" = 0 ]; then
+    F_OUT="no retry: TRIAGE_SHARD_FAULT_RETRY=0"
+  elif [ "$R2" = "$SHARD_RUNNER" ] || [ "$R2" = "$R1" ]; then
+    F_OUT="no retry: $R2 already tried in this call"
+  else
+    # The retry overwrites $OUT*: keep the first call's evidence beside it.
+    for F_SFX in "" .err .runner; do
+      if [ -f "$OUT$F_SFX" ]; then cp -f "$OUT$F_SFX" "$OUT.first$F_SFX" 2>/dev/null || :; else rm -f "$OUT.first$F_SFX"; fi
+    done
+    T_CALL1=$(date +%s)
+    tsh_call "$R2" "$R2"
+    RC=$?
+    F_MARK=$(head -1 "$OUT" 2>/dev/null)
+    if [ "$RC" -ne 0 ] && case "$F_MARK" in AGENT_CALL_REFUSED*) true ;; *) false ;; esac; then
+      RETRY_REFUSED=1
+      F_OUT="retry on $R2 refused before the call ($(rf_cut "$F_MARK"))"
+      RC=$RC1
+    else
+      F_OUT="retried on $R2: rc=$RC"
+      if [ "$RC" -ne 0 ] && rf_start_fault "$RC" "$(( $(date +%s) - T_CALL1 ))" "$OUT"; then
+        F_OUT="$F_OUT: $(rf_first_error "$OUT.err" "$OUT")"
+      fi
+    fi
+  fi
+  FAULT_LINE=$(rf_fault_line "$PROJECT" "$KEY" "$R1" "$RC1" "$F_SECS" "$E1" "$F_OUT")
+fi
 [ "$TSH_PF" = "$PROMPT_FILE" ] || rm -f "$TSH_PF"
 # A CALL-GUARD REFUSAL IS "NOTHING WAS CALLED", not a dead shard, so there is
 # no ALERTS line per shard per tick (agent-call.sh writes ONE warn line a day).
@@ -300,7 +352,8 @@ RC=$?
 #                       the world, so the stamp comes off with the re-arm.
 CG_REFUSED=""; CG_PARK=""
 CG_MARK=$(head -1 "$OUT" 2>/dev/null)
-if [ "$RC" -eq 74 ]; then
+# A refused RETRY is not this block's case: the first call ran and failed.
+if [ "$RC" -eq 74 ] && [ -z "$RETRY_REFUSED" ]; then
   case "$CG_MARK" in
     "AGENT_CALL_REFUSED call-guard repeat "*)
       CG_REFUSED=1; REARM || true
@@ -367,12 +420,26 @@ command -v qc_refusal_note >/dev/null 2>&1 \
 # next tick's diff report it again — one ticket re-offered, not the whole board
 # re-read. Said out loud too: a shard that died is the one thing about this split
 # that nothing else in the fleet would notice.
+# A runner fault (BH-10274) writes ONE line of its own family instead of the
+# generic one: the fault and its retry, then what happened to the ticket. It
+# goes through bin/alert-line.sh, which stamps it and notes the alert row now.
+tsh_alert() { HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" --project "$PROJECT" "$1" >/dev/null 2>&1 || true; }
 if [ "$RC" -ne 0 ] && [ -z "$CG_REFUSED" ]; then
   if REARM_UNOWNED; then
-    echo "$(STAMP) [$PROJECT/$KEY] triage shard exited rc=$RC (see $OUT) — ticket put back in scope for the next tick" >> "$ALERTS"
+    if [ -n "$FAULT_LINE" ]; then
+      tsh_alert "$FAULT_LINE — ticket put back in scope"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] triage shard exited rc=$RC (see $OUT) — ticket put back in scope for the next tick" >> "$ALERTS"
+    fi
   else
-    echo "$(STAMP) [$PROJECT/$KEY] triage shard exited rc=$RC (see $OUT) and the board fingerprint could NOT be re-armed — this ticket will not be re-offered until the daily full sweep; check state/$PROJECT.gate.json" >> "$ALERTS"
+    if [ -n "$FAULT_LINE" ]; then
+      tsh_alert "$FAULT_LINE — board fingerprint could NOT be re-armed; check state/$PROJECT.gate.json"
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] triage shard exited rc=$RC (see $OUT) and the board fingerprint could NOT be re-armed — this ticket will not be re-offered until the daily full sweep; check state/$PROJECT.gate.json" >> "$ALERTS"
+    fi
   fi
+elif [ -n "$FAULT_LINE" ]; then
+  tsh_alert "$FAULT_LINE"
 fi
 
 # cost + seconds, from the rows this call appended (there may be two: a failover
@@ -416,6 +483,14 @@ DEC="$(grep -E "^DECISION: $KEY ::" "$OUT" 2>/dev/null | tail -1 | tr -d '\r\n')
 [ -n "$DEC" ] || DEC="$(grep -E '^DECISION:' "$OUT" 2>/dev/null | tail -1 | tr -d '\r\n')"
 if [ -n "$DEC" ]; then
   if [ -n "$SUMMARY" ]; then SUMMARY="$SUMMARY :: $DEC"; else SUMMARY="$DEC"; fi
+fi
+# BH-10274: a failed call's summary is its FIRST error line; `tail -3` of a
+# Node crash is three `at ...` frames. rc 0 keeps tail -3.
+if [ -z "$SUMMARY" ] && [ "$RC" -ne 0 ] && command -v rf_first_error >/dev/null 2>&1; then
+  F_ERR=$(rf_first_error "$OUT.err" "$OUT")
+  # A refused retry overwrote $OUT with its marker: the first call's error stands.
+  [ -n "$RETRY_REFUSED" ] && [ -n "${E1:-}" ] && F_ERR="$E1"
+  [ -n "$F_ERR" ] && SUMMARY="error: $F_ERR"
 fi
 [ -n "$SUMMARY" ] || SUMMARY="$(tail -3 "$OUT" 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
 SECS=$(( $(date +%s) - START ))

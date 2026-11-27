@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import worker from '../src/index.js';
 
 // BH-3985: GET /api/metrics/cost-anchored said "No account is metered" while
-// operator@example.com's meter was moving. The meter span kept failed polls
+// operator@second.example's meter was moving. The meter span kept failed polls
 // (status error / no-login, extra_used_usd NULL), so a span whose first or last
 // poll failed lost its delta and its fully_overage verdict. A failed poll is
 // not a reading: it is counted, not measured.
 
 const SECRET = 'test-secret';
 const DAY = '2026-09-14';
-const MK = 'claude:operator@example.com';
+const MK = 'claude:operator@second.example';
 
 function fakeDB(state) {
   const result = (rawSql, binds) => {

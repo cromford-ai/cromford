@@ -219,7 +219,7 @@ seed_flat() {
 }
 fx12() { # fx12 <label> <usd-json>
   jq -nc --arg l "$1" --argjson u "$2" '{window:"12h", from:"x", to:"y",
-    accounts:[{account:"claude:operator@example.com", calls:40, usd:$u, unpriced_calls:0,
+    accounts:[{account:"claude:operator@second.example", calls:40, usd:$u, unpriced_calls:0,
       meter:{label:$l, session_pct:10, weekly_pct:100, weekly_resets_at:null, extra_used_usd:13.93, polls:48},
       cross_check:{state:"unmeasured", reason:"fixture"}}],
     totals:{calls:40, usd:$u}, truncated:{groups:false, projects:false, snapshots:false}}' > "$T/fx/12h.json"

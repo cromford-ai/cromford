@@ -166,12 +166,23 @@ const SEAM_OWNER = {
   jobs: 'BH-9120.4', lanes: 'BH-9120.4', history: 'BH-9120.4', commands: 'BH-9120.4'
 };
 
-test('SE1 REPORTS has exactly the 9 seams, each null, each file naming its owner', () => {
+// BH-9308 (BH-9120.4) filled its four seams (jobs, lanes, history, commands):
+// each is now a {title, load} object whose file names its owner. The other
+// five stay null until their own tickets fill them.
+const FILLED = new Set(['jobs', 'lanes', 'history', 'commands']);
+
+test('SE1 REPORTS has exactly the 9 seams; the unfilled ones are null; each file names its owner', () => {
   assert.deepEqual(Object.keys(REPORTS).sort(), Object.keys(SEAM_OWNER).sort());
-  for (const k of Object.keys(SEAM_OWNER)) assert.equal(REPORTS[k], null, k);
   const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/screens/period-report.d');
   for (const [k, owner] of Object.entries(SEAM_OWNER)) {
     const text = fs.readFileSync(path.join(dir, `${k}.js`), 'utf8').trim();
-    assert.equal(text, `export const report = null; // ${owner} owns this file`, k);
+    if (FILLED.has(k)) {
+      assert.equal(typeof REPORTS[k].title, 'string', k);
+      assert.equal(typeof REPORTS[k].load, 'function', k);
+      assert.ok(text.includes(`${owner} owns this file`), k);
+    } else {
+      assert.equal(REPORTS[k], null, k);
+      assert.equal(text, `export const report = null; // ${owner} owns this file`, k);
+    }
   }
 });

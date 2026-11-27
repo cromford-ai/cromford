@@ -1,0 +1,3 @@
+[
+    {"path": "box-watch", "class": "box-local", "authority": "the hub box-watch lane's fail counters and restart stamps (BH-10231)", "note": "state/box-watch/<box>.fails (failed ssh probes in a row, one number; a rc 0 probe writes 0) and <box>.restart (epoch of the last restart this hub started), plus .mass-dark (a marker while the mass-dark alert is open). Written by bin/box-watch.sh tick and act. The restart window's record is the D1 table box_watch_actions; the stamp only backs it when the worker does not answer. One file pair per fleet box, no growth. Losing them costs at most fail_probes-1 probes before a restart. Machine-local, never carried"}
+]

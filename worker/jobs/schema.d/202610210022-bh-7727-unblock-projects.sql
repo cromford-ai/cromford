@@ -19,6 +19,6 @@ INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES
   ('unblock.project.project-9.mode','off','BH-7727: unblock lane mode for project-9: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
   ('unblock.project.project-7.mode','off','BH-7727: unblock lane mode for project-7: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
   ('unblock.project.harness-console.mode','off','BH-7727: unblock lane mode for harness-console: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
-  ('unblock.project.cromford.mode','off','BH-7727: unblock lane mode for cromford: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
+  ('unblock.project.cromford-web.mode','off','BH-7727: unblock lane mode for cromford-web: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
   ('unblock.project.project-6-os.mode','off','BH-7727: unblock lane mode for project-6-os: off, shadow or act; missing = off','seed','2026-10-21T00:00:00Z'),
   ('unblock.standing_approval.project-6-os','1','BH-7727: standing approval for U4 on project-6-os (the operator 2026-10-20, comment 6294290733 item 4); 1 = approved','seed','2026-10-21T00:00:00Z');

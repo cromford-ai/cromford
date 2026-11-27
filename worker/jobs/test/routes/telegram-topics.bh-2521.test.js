@@ -50,7 +50,7 @@ test('W2: topics is still the project -> thread map, and a move changes both sha
   await call(env.DB, 'PUT', { project: 'project-5', thread_id: 42, actor: 'console:a@x' });
   await call(env.DB, 'PUT', { project: 'cromford', thread_id: 6, actor: 'console:b@x' });
   const r = await call(env.DB, 'GET');
-  assert.deepEqual(r.body.topics, { 'cromford': 6, project-5: 42 });
+  assert.deepEqual(r.body.topics, { 'cromford': 6, 'project-5': 42 });
   assert.equal(typeof r.body.as_of, 'string');
   assert.deepEqual(Object.keys(r.body).sort(), ['as_of', 'rows', 'topics']);
 
@@ -58,7 +58,7 @@ test('W2: topics is still the project -> thread map, and a move changes both sha
   const m = await call(env.DB, 'PUT', { project: 'project-5', thread_id: 43, actor: 'console:c@x' });
   assert.deepEqual(m.body, { topic: { project: 'project-5', thread_id: 43 } });
   const after = await call(env.DB, 'GET');
-  assert.deepEqual(after.body.topics, { 'cromford': 6, project-5: 43 });
+  assert.deepEqual(after.body.topics, { 'cromford': 6, 'project-5': 43 });
   assert.deepEqual(after.body.rows[1], {
     project: 'project-5', thread_id: 43, actor: 'console:c@x', updated_at: '2026-09-26T09:02:00Z',
   });

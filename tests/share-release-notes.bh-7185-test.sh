@@ -277,6 +277,8 @@ UP="$T/up"
 mkdir -p "$UP/bin/share" "$UP/catalog" "$UP/tests"
 cp "$DIR/bin/publish-share.sh" "$UP/bin/"
 cp "$DIR/bin/share/mapping.py" "$DIR/bin/share/release_message.py" "$UP/bin/share/"
+# BH-9268: the publisher runs the JS syntax gate after sanitize; the real one.
+[ -f "$DIR/bin/share/js_syntax_check.py" ] && cp "$DIR/bin/share/js_syntax_check.py" "$UP/bin/share/"
 cp "$DIR/catalog/share-publish-targets.conf" "$UP/catalog/"
 cat > "$UP/bin/share/sanitize.py" <<PY
 import importlib.util, os, shutil, sys

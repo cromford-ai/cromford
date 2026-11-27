@@ -110,7 +110,7 @@ $MISSING_FROM_CRON"
 grep -q 'BOX="\${1:-' "$TRACK" \
   && ok || bad "extra-usage-track.sh does not take a box id argument"
 # ATTRIBUTED TO THE ACCOUNT LABEL, not the box (2026-09-14). A box may hold more
-# than one login — the hub polls operator@example.com AND operator@example.com — so
+# than one login — the hub polls operator_home@example.com AND operator@second.example — so
 # "[hub] EXTRA-USAGE" would name the machine and hide which of the two accounts
 # is the one burning cash. The label IS the account.
 grep -q 'EXTRA-USAGE \[\$LABEL\]' "$TRACK" \

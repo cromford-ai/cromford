@@ -6354,7 +6354,7 @@ spawn_one() { # spawn_one <job-file> <key> <ticket-id> <attempt> <deferrals> <de
   # substituted jobs.spent_usd. 00:50Z 1h: meter $19.35, labelled rows $11.45,
   # jobs $73.71, gap -340%. 24h: $2538 of pool claude on fp 52bec8da8a5d sat
   # unlabelled against a $4211 meter. The hub overlay already maps that fp to
-  # claude:operator@example.com; copy it when the lease did not write one. A
+  # claude:operator@second.example; copy it when the lease did not write one. A
   # missing hub overlay is the unarmed box and stays a no-op.
   if [ ! -s "$TMP/auth-accounts.local.json" ] && [ -s "$HARNESS/state/auth-accounts.local.json" ]; then
     cp "$HARNESS/state/auth-accounts.local.json" "$TMP/auth-accounts.local.json" 2>/dev/null || true

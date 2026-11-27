@@ -59,8 +59,8 @@ SNAP="${EXTRA_USAGE_SNAPSHOT:-$H/state/extra-usage-last.json}"
 # WHOSE METER IS `default`? (BH-1456). The snapshot above is the BOX LOGIN's —
 # bin/extra-usage-track.sh writes it for CLAUDE_CONFIG_DIR's account. But the
 # `default` CREDENTIAL is env/global.env's CLAUDE_CODE_OAUTH_TOKEN, and on the
-# hub those are two different accounts: the login is operator@example.com (weekly
-# 4%) while the token bills operator@example.com (weekly 100%). So the `default`
+# hub those are two different accounts: the login is operator_home@example.com (weekly
+# 4%) while the token bills operator@second.example (weekly 100%). So the `default`
 # row described an account nothing was spending. The tracker already writes a
 # per-login snapshot with a `-<label>` suffix (extra-usage-track.sh poll_login),
 # so naming the label here points the derivation at the account that actually

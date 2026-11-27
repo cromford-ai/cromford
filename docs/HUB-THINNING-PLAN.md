@@ -304,7 +304,7 @@ symptom is absence.
   — blocked. Moving spend onto accounts that have just had extra-usage enabled
   and cannot poll their own meters (the 403) removes the last thing standing
   between a runaway lane and an invoice. Caps, then flip, then migrate.
-- **Spend shifts from `operator@example.com` to the dedicated project accounts.**
+- **Spend shifts from `operator@second.example` to the dedicated project accounts.**
   Truer attribution and a lower hub bill — but it *raises* those accounts' burn,
   and extra-usage is about to be enabled on project-2/project-3/project-4. **BLOCKED on the
   account-side caps existing** — not sequenced after them, blocked by them.

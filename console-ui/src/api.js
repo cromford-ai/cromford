@@ -490,6 +490,10 @@ export const api = {
     return get(coordPath(`/api/staff/agent/${encodeURIComponent(agent)}/activity${q ? `?${q}` : ''}`));
   },
   staffTick: (id) => get(coordPath(`/api/staff/tick?id=${encodeURIComponent(id)}`)),
+  // BH-10231: the BOX WATCH section of /staff/quartermaster. The newest
+  // box-watch restart rows (one per restart attempt), bounded by `limit`.
+  boxWatchActions: ({ limit = 50 } = {}) =>
+    get(coordPath(`/api/box-watch/actions?limit=${encodeURIComponent(limit)}`)),
   // Hub recovery (BH-1909). The worker routes are BH-1942 contract stubs that
   // answer 501 until #1943/#1944 land. The coord proxy forwards the GETs; its
   // write allowlist does not include the two POSTs yet, so they answer 405 there

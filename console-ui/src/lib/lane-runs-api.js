@@ -42,7 +42,9 @@ function query(params) {
 
 export const laneRunMetrics = (hours) => get(`/api/coord/lane-runs/metrics${query({ hours })}`);
 
-export const laneRunList = ({ lane, machine, status } = {}) =>
-  get(`/api/coord/lane-runs${query({ lane, machine, status })}`);
+// BH-9308: the range params ride after the old three, and only when set, so
+// a call with none of them sends the same URL as before.
+export const laneRunList = ({ lane, machine, status, from, to, q, project, sort, dir, cursor, totals } = {}) =>
+  get(`/api/coord/lane-runs${query({ lane, machine, status, from, to, q, project, sort, dir, cursor, totals })}`);
 
 export const laneRun = (id) => get(`/api/coord/lane-runs/${encodeURIComponent(id)}`);

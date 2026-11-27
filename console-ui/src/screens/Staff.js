@@ -28,6 +28,7 @@ import { AgentAutonomy } from './staff/agent-autonomy.js';
 import { activityRows, mergePages, heartbeatText, tickHref } from '../lib/staff-activity.js';
 import { AgentChat } from './staff/agent-chat.js';
 import { AgentLearning } from './staff/agent-learning.js';
+import { AgentBoxWatch, BOX_WATCH_AGENT } from './staff/agent-box-watch.js';
 import { StaffMetrics, AgentMetric } from './staff/staff-metrics.js';
 import { metricAgentOf } from '../lib/staff-scores.js';
 import { spendCell, spendFacts } from '../lib/staff-spend.js';
@@ -406,6 +407,7 @@ export function AgentDetailView({ agent, roster, findings, activity, older = nul
         <${ActivityBody} activity=${activity} older=${older} onOlder=${onOlder} olderBusy=${olderBusy} olderError=${olderError}/>
       <//>
       <${Section} title="OPEN FINDINGS">${body}<//>
+      ${name === BOX_WATCH_AGENT ? html`<${AgentBoxWatch}/>` : null}
       <${Learning} agent=${name} row=${row || null} onChanged=${onAgentChanged}/>
     </div>`;
 }

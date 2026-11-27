@@ -18,6 +18,8 @@ export const PERIOD_FALLBACKS = Object.freeze({
   csv_row_cap: 100000,          // settings row mc.period.csv_row_cap
   default_preset: "last_7_days", // settings row mc.period.default_preset
   max_buckets: 2000,            // settings row mc.period.max_buckets
+  report_top_rows: 20,          // settings row mc.period.report_top_rows (BH-9308)
+  filter_chip_cap: 30,          // settings row mc.period.filter_chip_cap (BH-9308)
 });
 
 const DAY_MS = 86400000;

@@ -7,8 +7,8 @@
 # PER-ACCOUNT, NOT PER-BOX (2026-09-14). This used to poll exactly one login —
 # the box's own /root/.claude — on the doctrine that "the account each box
 # reports IS the account it bills". That held until the hub: its lanes run on
-# the CLAUDE_CODE_OAUTH_TOKEN setup-token, which bills operator@example.com, while
-# its stored login is operator@example.com. So the hub polled the wrong account's
+# the CLAUDE_CODE_OAUTH_TOKEN setup-token, which bills operator@second.example, while
+# its stored login is operator_home@example.com. So the hub polled the wrong account's
 # meter for two weeks while the one that mattered read $23.8K of $35K monthly
 # extra usage and nothing anywhere said so. A box may hold more than one login;
 # the unit of a meter is an ACCOUNT, so the unit of a poll is a login.

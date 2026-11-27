@@ -3,7 +3,7 @@
 #
 # the operator, 2026-09-15 01:0xZ: "move your turns to the max picker too". Until then
 # every orchestrator turn ran on the env/orchestrator.env setup-token (a
-# operator@example.com identity, weekly meter 100% = cash extra usage) while the
+# operator@second.example identity, weekly meter 100% = cash extra usage) while the
 # max1..7 accounts sat on full credits. This asks bin/account-pick.sh the same
 # question a hub stage asks — stage "orchestrator", vendor claude, the turn's
 # model — and runs the turn on the picked account.

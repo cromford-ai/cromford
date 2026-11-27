@@ -26,6 +26,18 @@
 #   skipped, never read as "no PRs" (#768).
 #
 # It never merges and never labels. Its only write is _ae_send's comment.
+#
+# xe_status_check <num> <pr-url> <head> (BH-9994) — for a row that passed
+#   every gate: does the head carry the verdict status the repo's
+#   .mergify.yml waits on? The review lane publishes it (bin/review-prs.sh,
+#   rvs_publish); when it is missing, ONE alert per head
+#   (mc_status_unpublished_alert with <head>), in this tick, not once a day.
+#   - .mergify.yml names neither harness-verdict nor lead-verdict
+#     (vs_mergify_names rc 1 on both): no read, no alert.
+#   - the head was alerted already (`status-unpublished <slug> <head>`): no read.
+#   - the combined-status read fails: one conductor log line, no alert, no mark.
+#   - vs_clear_row says success: nothing. Else the alert.
+#   No write of its own except that alert's ledger mark.
 # gh-rest: no-graphql
 
 xe_project() {
@@ -70,9 +82,44 @@ xe_project() {
     command -v mc_only_has >/dev/null 2>&1 && ! mc_only_has "$AE_SLUG#$num" && continue
     # The repo's required checks, read once and only when a row is offered.
     [ "$checked" = 1 ] || { AE_CHECKS=$(_ae_required_checks "$AE_SLUG") || AE_CHECKS=""; checked=1; }
+    # BH-9994: _ae_gates sets AE_NUM only when every gate passed. Such a head
+    # is approved, green and clean, so a missing verdict status is the one
+    # thing a Mergify queue still waits on: alert in this tick.
+    AE_NUM=""
     AE_EXTERNAL=1 _ae_offer "$line"
+    [ "$AE_NUM" = "$num" ] && xe_status_check "$num" "$(cut -f2 <<<"$line")" "$(cut -f3 <<<"$line")"
   done
   [ "$AE_DEFERRED" -gt "$d0" ] \
     && _ae_log "$AE_SLUG DEFERRED $((AE_DEFERRED - d0)) external PR(s) over MC_AUTOENQUEUE_CAP=$AE_CAP — re-offered next tick"
+  return 0
+}
+
+xe_status_check() {
+  local num="${1:-}" url="${2:-}" head="${3:-}" ctx t rc=0 row st
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] && [ -n "${AE_SLUG:-}" ] || return 0
+  command -v vs_mergify_names >/dev/null 2>&1 && command -v vs_clear_row >/dev/null 2>&1 \
+    && command -v mc_status_unpublished_alert >/dev/null 2>&1 || return 0
+  ctx=$(vs_builder_context)
+  if ! vs_mergify_names "$AE_SLUG" "$ctx"; then
+    ctx=lead-verdict
+    vs_mergify_names "$AE_SLUG" "$ctx" || return 0
+  fi
+  command -v mc_attempt_has >/dev/null 2>&1 && mc_attempt_has "status-unpublished $AE_SLUG $head" 2>/dev/null && return 0
+  t=$(mktemp "${TMPDIR:-/tmp}/xe-status.XXXXXX") || return 0
+  gh_rest GET "repos/$AE_SLUG/commits/$head/status" > "$t" || rc=$?
+  if [ "$rc" != 0 ]; then
+    rm -f "$t"
+    _ae_log "$AE_SLUG#$num @${head:0:8} verdict status unread (rc $rc, HTTP ${GH_REST_STATUS:-000}) — no alert this tick"
+    return 0
+  fi
+  row=$(vs_clear_row "$t") || row=""
+  rm -f "$t"
+  [ -n "$row" ] || { _ae_log "$AE_SLUG#$num @${head:0:8} verdict status unparseable — no alert this tick"; return 0; }
+  st="${row%%$'\t'*}"
+  [ "$st" = success ] && return 0
+  [ "$st" = - ] && st=none
+  mc_status_unpublished_alert "$AE_SLUG" "$url" \
+    "approved head ${head:0:12} carries no lead-verdict or harness-verdict status ($st); the review lane publishes it (bin/review-prs.sh, BH-9994)" \
+    "$ctx" "$head"
   return 0
 }

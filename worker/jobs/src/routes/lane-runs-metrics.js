@@ -25,6 +25,11 @@
 
 import { d1Guarded, json } from "../lib/http.js";
 import { ensureColumns, laneName, leaseWon, percentile } from "../lib/core.js";
+import { parseRange, readPeriodKnobs, bucketExpr, csvResponse } from "../lib/period.js";
+import {
+  firstGiven, searchParam, likeClause, sortParam, orderBy, keysetClause, cursorParam,
+  flagParam, formatParam, seriesParam, fillSeries, pageOut,
+} from "../lib/log-query.js";
 
 const NAME_ERR = "must match [A-Za-z0-9._-]{1,64}";
 const STATUSES = ["queued", "claimed", "done", "died"];
@@ -144,10 +149,135 @@ function argsOf(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+// ── GET /api/lane-runs with a range (BH-9308, BH-9120.4) ─────────────────
+// The params below need a from/to range; without one they are a 400.
+const RANGE_PARAMS = ["q", "project", "sort", "dir", "cursor", "totals", "series", "format"];
+// q searches these columns; one bound LIKE value serves them all.
+const SEARCH_COLS = ["lane", "project", "claimed_by", "args_json", "prof_line"];
+// The sort allowlist: key -> SQL column. Every column is NOT NULL.
+const RUN_SORT = {
+  enqueued_at: { col: "enqueued_at", type: "text" },
+  id: { col: "id", type: "num" },
+  lane: { col: "lane", type: "text" },
+  project: { col: "project", type: "text" },
+  status: { col: "status", type: "text" },
+  attempts: { col: "attempts", type: "num" },
+};
+// status on the range path, with the BH-6817 meaning: a done row with rc<>0
+// is `failed`, and `done` is a done row with rc 0 or no rc. Fixed fragments;
+// a raw status is a bind.
+const RANGE_STATUS = {
+  queued: null, claimed: null, died: null,
+  done: "status='done' AND (rc IS NULL OR rc=0)",
+  failed: "status='done' AND rc IS NOT NULL AND rc<>0",
+};
+const CSV_COLUMNS = ["id", "lane", "project", "status", "rc", "enqueued_at", "claimed_at", "claimed_by", "finished_at", "attempts"];
+const RUN_COLS = "id, lane, project, status, enqueued_at, claimed_at, claimed_by, finished_at, rc, attempts, harness_commit";
+
+// The range path. ONE knob read, then every param is validated (a 400 reads
+// no table after the knob read), then page, totals and series in one
+// Promise.all. Always keyset-paged: enqueued_at DESC, id DESC by default.
+async function laneRunsRange({ env, url, t }) {
+  const sp = url.searchParams;
+  const knobs = await readPeriodKnobs(env);
+  const range = parseRange(sp, knobs, Date.parse(t));
+  if (range.error) return json(400, { error: range.error });
+  const lane = nameParam(url, "lane");
+  const machine = nameParam(url, "machine");
+  const project = nameParam(url, "project");
+  const nameErr = lane.err || machine.err || project.err;
+  if (nameErr) return json(400, { error: nameErr });
+  const status = sp.get("status") || null;
+  if (status !== null && !Object.prototype.hasOwnProperty.call(RANGE_STATUS, status)) {
+    return json(400, { error: `status must be one of ${Object.keys(RANGE_STATUS).join("|")}` });
+  }
+  const limit = intParam(url, "limit", LIST_LIMIT_DEFAULT, 1, LIST_LIMIT_MAX);
+  if (limit.err) return json(400, { error: limit.err });
+  const q = searchParam(sp);
+  if (q.err) return json(400, { error: q.err });
+  const sort = sortParam(sp, RUN_SORT, "enqueued_at");
+  if (sort.err) return json(400, { error: sort.err });
+  const cursor = cursorParam(sp, sort.type, "num");
+  if (cursor.err) return json(400, { error: cursor.err });
+  const totals = flagParam(sp, "totals");
+  if (totals.err) return json(400, { error: totals.err });
+  const series = seriesParam(sp, range, knobs.max_buckets);
+  if (series.err) return json(400, { error: series.err });
+  const format = formatParam(sp);
+  if (format.err) return json(400, { error: format.err });
+
+  const where = [], binds = [];
+  const add = (frag, v) => { binds.push(v); where.push(frag.replace("?", `?${binds.length}`)); };
+  add("enqueued_at>=?", range.from);
+  add("enqueued_at<?", range.to);
+  if (project.v) add("project=?", project.v);
+  if (lane.v) add("lane=?", lane.v);
+  if (machine.v) add("claimed_by=?", machine.v);
+  if (status !== null) {
+    if (RANGE_STATUS[status] === null) add("status=?", status);
+    else where.push(RANGE_STATUS[status]);
+  }
+  if (q.v !== null) { binds.push(q.v); where.push(likeClause(SEARCH_COLS, binds.length)); }
+  const whereSql = ` WHERE ${where.join(" AND ")}`;
+  const order = orderBy(sort, "id");
+
+  if (format.v === "csv") {
+    const sql = `SELECT ${CSV_COLUMNS.join(", ")} FROM lane_runs${whereSql} ORDER BY ${order} LIMIT ?${binds.length + 1}`;
+    const rows = (await env.DB.prepare(sql).bind(...binds, knobs.csv_row_cap + 1).all()).results || [];
+    return csvResponse(CSV_COLUMNS, rows, { cap: knobs.csv_row_cap, filename: `lane-runs-${range.from}.csv` });
+  }
+
+  await ensureColumns(env, "lane_runs");
+  const pw = [...where];
+  let pageBinds = binds;
+  if (cursor.v !== null) {
+    pageBinds = [...binds, cursor.v[0], cursor.v[1]];
+    pw.push(keysetClause(sort, "id", binds.length + 1));
+  }
+  const pageSql = `SELECT ${RUN_COLS} FROM lane_runs WHERE ${pw.join(" AND ")} ORDER BY ${order} LIMIT ?${pageBinds.length + 1}`;
+  const reads = [env.DB.prepare(pageSql).bind(...pageBinds, limit.v + 1).all()];
+  if (totals.v) {
+    // sql-ident-ok: whereSql holds fixed fragments (RANGE_STATUS, likeClause over SEARCH_COLS) with ?N binds
+    reads.push(env.DB.prepare(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(status='queued'),0) AS queued,
+              COALESCE(SUM(status='claimed'),0) AS claimed,
+              COALESCE(SUM(status='done' AND (rc IS NULL OR rc=0)),0) AS done,
+              COALESCE(SUM(status='done' AND rc IS NOT NULL AND rc<>0),0) AS failed,
+              COALESCE(SUM(status='died'),0) AS died
+         FROM lane_runs${whereSql}`
+    ).bind(...binds).first());
+  }
+  if (series.v) {
+    // sql-ident-ok: bucketExpr is one of 3 fixed fragments over the literal column enqueued_at; whereSql as above
+    reads.push(env.DB.prepare(
+      `SELECT ${bucketExpr(series.v.series, "enqueued_at")} AS bucket, COUNT(*) AS n FROM lane_runs${whereSql} GROUP BY bucket`
+    ).bind(...binds).all());
+  }
+  const res = await Promise.all(reads);
+  const p = pageOut(res[0].results || [], limit.v, sort, "num");
+  const out = {
+    runs: p.rows.map((r) => runOut(r, t)), truncated: p.next_cursor !== null, limit: limit.v,
+    next_cursor: p.next_cursor, as_of: t,
+  };
+  let i = 1;
+  if (totals.v) {
+    const r = res[i++] || {};
+    out.totals = {};
+    for (const k of ["total", "queued", "claimed", "done", "failed", "died"]) out.totals[k] = Number(r[k]) || 0;
+  }
+  if (series.v) out.series = fillSeries(series.v.buckets, res[i++].results);
+  return json(200, out);
+}
+
 export const routes = [
   [
     "GET", "/api/lane-runs",
     ({ env, url, t }) => d1Guarded("lane_runs", async () => {
+      // ?from=&to= (BH-9308, BH-9120.4): the range path. No range param: the
+      // statement and the answer below are the ones before BH-9308.
+      if (url.searchParams.has("from") || url.searchParams.has("to")) return laneRunsRange({ env, url, t });
+      const needs = firstGiven(url.searchParams, RANGE_PARAMS);
+      if (needs) return json(400, { error: `${needs} needs a from/to range` });
       const lane = nameParam(url, "lane");
       const machine = nameParam(url, "machine");
       if (lane.err || machine.err) return json(400, { error: lane.err || machine.err });

@@ -5,8 +5,8 @@
 
 // The meter is per ACCOUNT and extra_usage_snapshots keys it by the BOX that
 // polled (see bin/extra-usage-track.sh): "project-6-account" is the box label
-// for the account cost_rows calls "claude:operator@example.com". The mapping is a
+// for the account cost_rows calls "claude:operator@second.example". The mapping is a
 // business parameter, so it is configurable (COST_ANCHOR_ACCOUNT_MAP on the
 // worker) and this constant is the documented fallback, not the source.
 export const ANCHOR_DEFAULT_ACCOUNT_MAP =
-  "project-6-account=claude:operator@example.com,hub=claude:operator@example.com";
+  "project-6-account=claude:operator@second.example,hub=claude:operator_home@example.com";

@@ -56,12 +56,13 @@ test('BH-5559 staff charter and autonomy', async (t) => {
       assert.equal(r.soul_path, `prompts/staff/${r.name}-soul.md`, r.name);
       assert.ok(r.role.length > 0, r.name);
     }
-    // BH-5564: quartermaster owns the 7 cost lanes; BH-5566: dispatcher owns the
+    // BH-5564: quartermaster owns the 7 cost lanes (BH-10231 adds box-watch, 8); BH-5566: dispatcher owns the
     // 11 health lanes; BH-5565: watchman owns the 4 security lanes; no other
     // agent has a lane yet.
     assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher', 'watchman', 'tackler')").get().n, 0);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'quartermaster' ORDER BY lane").all().map((r) => r.lane),
-      ['cap-loss-detector', 'ci-minutes-watch', 'cost-local-brake', 'cost-reconcile', 'extra-usage-track', 'orchestrator-burn', 'vendor-spend-pull']);
+      ['box-watch', 'cap-loss-detector', 'ci-minutes-watch', 'cost-local-brake', 'cost-reconcile', 'extra-usage-track', 'orchestrator-burn',
+        'vendor-spend-pull']);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'dispatcher' ORDER BY lane").all().map((r) => r.lane),
       ['fleet-slo', 'healthcheck', 'heartbeat-reaper', 'hub-probe', 'jobs-watchdog', 'lane-run-wait-alert', 'pipeline-health',
         'served-sha-watch', 'watchdog-ping', 'watchdog-poll', 'watchdog-responder']);

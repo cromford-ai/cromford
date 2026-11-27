@@ -135,7 +135,7 @@ test('V1: the roster renders 8 rows with mill names, each AGENT cell linking to 
     assert.match(out, new RegExp(`<a[^>]*href="/staff/${a.name}"[^>]*>[\\s\\S]*?${displayName(a.name)}`), a.name);
   }
   assert.ok(out.indexOf('Archie') < out.indexOf('Archivist'), 'archie is the first row');
-  assert.match(out, /operator@cto\.com/);
+  assert.match(out, /operator@example\.com/);
   assert.match(out, /overlooker/);
 });
 

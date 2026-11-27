@@ -15,11 +15,12 @@
 #   O6  mc_xe_record asks the record for the window of 100
 #   F1  mc_flake_record: every check of the head completed, none cancelled:
 #       a hit with an empty file ("no flake evidence")
-#   F2  the misses: a cancelled or timed_out check (flake), an entry not
-#       completed (pending), a row at another head (head), no entry for the
+#   F2  the misses: a cancelled or timed_out check (flake), a row at
+#       another head (head), no entry for the
 #       head (none), a row older than PR_RECORD_FIELD_MAX_AGE_S (default
 #       3900: stale), as many
-#       names as PRR_CI_CHECKS_MAX (checks-max)
+#       names as PRR_CI_CHECKS_MAX (checks-max). BH-10351: an entry not
+#       completed is a hit, not the old miss `pending`
 #   F3  mc_flake_norm: the run ids, sorted
 #
 # Run from anywhere: HARNESS_TEST_SANDBOX=1 bash tests/mc-record-seam.bh-9938-test.sh
@@ -124,7 +125,9 @@ seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 cancelled" "$(rc):$(out)" "
 row 10 "$H7" "{\"workflow:CI\":$(ck completed timed_out)}"
 seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 timed_out" "$(rc):$(out)" "1:flake"
 row 10 "$H7" "{\"workflow:CI\":$(ck in_progress '')}"
-seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 not completed" "$(rc):$(out)" "1:pending"
+seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 not completed is no flake evidence (BH-10351)" "$(rc):$(out)" "0:"
+row 10 "$H7" "{\"workflow:CI\":$(ck in_progress ''),\"lint\":$(ck completed cancelled)}"
+seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 a pending entry beside a cancelled one" "$(rc):$(out)" "1:flake"
 row 10 "$(hd 8)" "{\"workflow:CI\":$(ck completed success)}"
 seam mc_flake_record "$T/f2" "$SLUG" "$H7" 7; eq "F2 a row at another head" "$(rc):$(out)" "1:head"
 row 10 "$H7" "{\"workflow:CI\":$(ck completed success "$(hd 8)")}"

@@ -26,13 +26,18 @@ import { fmtNum } from '../lib/format.js';
 // row directly under that row, wherever the sort moves it: a drill-down that
 // opens in place (BH-5430, the merge queue's break-risk reasons). `id` is the
 // expanded row's element id, so a #fragment can point at it.
+//
+// `onSort(key, dir)` (optional, BH-9308) is told each header click, after the
+// new key and direction are set. A screen whose rows come from a server sort
+// (JOBS, LANES) writes them to the URL so the server orders ALL rows in the
+// period, not only the loaded page. Without it, nothing changes.
 
 const cellText = (col, row) => {
   const v = col.cell(row);
   return typeof v === 'number' && !col.plain ? fmtNum(v) : v;
 };
 
-export function SortableTable({ columns, rows, rowKey, rowClass, defaultSort, defaultDir = 'asc', empty, wide, expand }) {
+export function SortableTable({ columns, rows, rowKey, rowClass, defaultSort, defaultDir = 'asc', empty, wide, expand, onSort }) {
   const [sortKey, setSortKey] = useState(defaultSort || columns[0].key);
   const [dir, setDir] = useState(defaultDir);
 
@@ -45,8 +50,10 @@ export function SortableTable({ columns, rows, rowKey, rowClass, defaultSort, de
 
   const onHeader = (col) => {
     if (col.sort === null) return;
-    setDir(nextDirection(col.key, sortKey, dir));
+    const next = nextDirection(col.key, sortKey, dir);
+    setDir(next);
     setSortKey(col.key);
+    if (onSort) onSort(col.key, next);
   };
 
   if (!rows.length && empty) return empty;

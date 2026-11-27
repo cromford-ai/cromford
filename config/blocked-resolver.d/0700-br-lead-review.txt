@@ -59,7 +59,8 @@ br_open_prs() {
     age=$(( now - mtime ))
     if [ "$age" -ge 0 ] && [ "$age" -le "${BR_PRS_CACHE_SECS:-300}" ]; then cat "$f"; return 0; fi
   fi
-  out=$(harness_pr_list "$slug" open number,url,headRefOid,headRefName,baseRefName,isDraft,updatedAt 2>/dev/null) || return 1
+  if command -v brd_open_read >/dev/null 2>&1; then out=$(brd_open_read "$slug") || return 1  # BH-10157: the PR record, by the gh_source step
+  else out=$(harness_pr_list "$slug" open number,url,headRefOid,headRefName,baseRefName,isDraft,updatedAt 2>/dev/null) || return 1; fi
   printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
   mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$out" > "$f" 2>/dev/null
   printf '%s\n' "$out"

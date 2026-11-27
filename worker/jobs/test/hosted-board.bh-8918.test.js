@@ -592,7 +592,7 @@ test('I3 the same key with another body -> 409, no write', async (t) => {
 test('I4 the same key on two projects -> two writes', async (t) => {
   const E = await fresh(t); if (!E) return;
   const a = await issue(E, 'pi4a', 'PA');
-  const b = await issue(E, 'pi4b', 'PB');
+  const b = await issue(E, 'pi4b', 'TK');
   const h = { 'idempotency-key': 'shared-key' };
   assert.equal((await create(E, 'pi4a', a.token, { title: 't' }, h)).status, 201);
   const rb = await create(E, 'pi4b', b.token, { title: 't' }, h);

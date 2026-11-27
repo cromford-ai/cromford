@@ -171,7 +171,7 @@ login and commit email, the bot's commit identity, the billing accounts, the
 workers.dev subdomain, tailnet addresses and MagicDNS names, the Orgo API host.
 The families are data, `catalog/deployment-literals.tsv` (one regex per family,
 most specific first; a match is blanked before the next family runs, so
-`operator@example.com` is one billing-account hit, not also an operator-login hit).
+`operator_home@example.com` is one billing-account hit, not also an operator-login hit).
 
 **Where the values live now.** One home per surface, each the only place the
 literal is written:

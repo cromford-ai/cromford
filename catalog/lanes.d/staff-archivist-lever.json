@@ -1,0 +1,64 @@
+{
+  "id": "staff-archivist-lever",
+  "name": "Staff archivist lever (samples causes_fixed_by_hand_twice from Archie's hand-fix log; at level file or act, files one ai-build issue per repeated cause after an issue dedupe)",
+  "scope": "hub",
+  "script": "bin/staff/archivist-lever.sh",
+  "cadence": "57 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-archivist-lever",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ARCHIVIST_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/archivist-lever.sh",
+      "note": "BH-10125 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The level, repeat count, window and day cap are settings rows (staff.archivist.level, staff.archivist.recur_n, staff.archivist.window_days, staff.archivist.file_max_day), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "ARCHIVIST_FIXTURE",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/archivist-lever.sh",
+      "note": "BH-10125 test seam: a file sourced after the libs, only with HARNESS_TEST_SANDBOX=1 (the suite's request models). NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ARCHIVIST_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/archivist-lever.sh",
+      "note": "BH-10125 test seam: 1 = load arch_action_verdict and arch_repeated and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/archivist-lever.sh",
+      "note": "Test seam gate: bin/staff/archivist-lever.sh honors ARCHIVIST_NOW and ARCHIVIST_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-archivist-lever.log"
+  }
+}

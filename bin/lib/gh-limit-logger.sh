@@ -59,9 +59,17 @@
 #
 # THE LIMIT, SAID OUT LOUD: `timeout 60 gh ...` and `env -u GH_TOKEN gh ...`
 # exec the BINARY, so those call sites bypass this wrapper — for the refusal
-# line and for the count alike, which is why the alert says "wrapped calls".
-# That is a shell fact, not a bug to fix here — the lanes' ordinary calls are the
-# ones that spend the bucket.
+# line and for the count alike. A lane that never sources this file (BH-10349:
+# bin/pipeline-health.sh, about 1,200 calls an hour on the hub, had no line
+# here at all) bypasses it for every call.
+#
+# BH-10349: THE PATH SHIM COUNTS WHAT THIS WRAPPER DID NOT SEE. bin/gh-ledger/gh
+# is the first `gh` on PATH on the hub, the boxes and the Fly builders, so every
+# call that reaches the binary by name passes through it. It writes the same
+# line through _ghll_count, with the caller from GH_CALL_CALLER or the parent's
+# program name. To count each call ONCE, this wrapper runs the binary with
+# GH_CALLS_COUNTED=1 in its environment (only that command's environment), and
+# the shim writes no line for a call that carries it.
 [ -n "${_GHLL_LOADED:-}" ] && return 0
 # A tree with no gh BINARY defines nothing. Several libs ask `command -v gh` to
 # decide whether a feature is available at all (bin/lib/hotfix-lib.sh,
@@ -157,8 +165,8 @@ _ghll_count() {
 gh() {
   local ef rc=0 msg
   _ghll_count "$@"
-  ef=$(mktemp 2>/dev/null) || { command gh "$@"; return $?; }
-  command gh "$@" 2>"$ef" || rc=$?
+  ef=$(mktemp 2>/dev/null) || { GH_CALLS_COUNTED=1 command gh "$@"; return $?; }
+  GH_CALLS_COUNTED=1 command gh "$@" 2>"$ef" || rc=$?
   cat "$ef" >&2
   # `|| msg=""` IS LOAD-BEARING, not tidiness. grep exits 1 when stderr is clean,
   # which is every SUCCESSFUL call — and an assignment from a failed command

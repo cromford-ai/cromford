@@ -313,6 +313,13 @@ fi
 # it). A tree without either keeps the literal rule this script shipped with.
 type rp_prov_is_claude >/dev/null 2>&1 || { rp_prov_is_claude() { [ "${1:-}" = claude ]; }
   rp_out_prov() { head -1 "${1:-}.runner" 2>/dev/null || printf 'claude'; }; }
+# The verdict status on the reviewed head (BH-9994, bin/lib/review-verdict-status.sh):
+# rvs_publish writes lead-verdict/harness-verdict on a PR the harness did not
+# build, the status a Mergify queue waits on. Missing, no status is published,
+# as before.
+# shellcheck source=bin/lib/review-verdict-status.sh
+. "${HARNESS}/bin/lib/review-verdict-status.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/review-verdict-status.sh" 2>/dev/null || true
 # The CI read's second credential (bin/lib/gh-ci-read.sh). The default token
 # answers first and nothing about that read changed; a 403 on actions/runs — the
 # project-2 box's PAT, which is why #294/#488/#489 deferred for days — retries
@@ -701,6 +708,10 @@ merge_retry() { # merge_retry <num> <sha> [author]
   local NUM="$1" SHA="$2" RP_WHO="${3:-}" V SERVED N ALERTED ST
   [ "${REVIEW_MERGE_RETRY:-1}" = 0 ] && return 0
   V=$(jq -r --arg n "$NUM" '.[$n].verdict // ""' "$STATE")
+  # BH-9994: a lane BLOCK whose harness-verdict failure a lead MERGE on the
+  # same head now outranks: rvs_supersede clears the veto (it merges nothing).
+  [ "$V" = REQUEST_CHANGES ] && command -v rvs_supersede >/dev/null 2>&1 \
+    && { rvs_supersede "$NUM" "$SHA" "$RP_WHO" || true; }
   [ "$V" = "APPROVE" ] || return 0
   # BH-2545: an APPROVE from the trivial route's cheap model is advisory and is
   # never merged, on this tick or a later one; the main loop re-reviews that head
@@ -715,6 +726,11 @@ merge_retry() { # merge_retry <num> <sha> [author]
   # `reused-unknown`, which is held.
   SERVED=$(jq -r --arg n "$NUM" '.[$n] | if (.reused_from // "") != "" and .served == null then "reused-unknown" else (.served // "claude") end' "$STATE")
   rp_prov_is_claude "$SERVED" || return 0
+  # BH-9994: the verdict status, before the merge holds: a status is a review
+  # fact, not a merge. This is the backfill of an APPROVE recorded before the
+  # lane published one, and the retry of a failed publish. rvs_publish returns
+  # at once when the row's vs_sha is this head.
+  command -v rvs_publish >/dev/null 2>&1 && { rvs_publish "$NUM" "$SHA" APPROVE "$RP_WHO" "$SERVED" || true; }
   # The holds return SILENTLY: each is a deliberate switch, and a line per PR
   # per tick while a fleet-wide pause is on is noise, not news.
   # BH-3687: a factory-stopped tick is not an attempt either, for the reason
@@ -1985,6 +2001,10 @@ _Posted as a comment review: the harness fix round consumes this verdict; it doe
              + ((.[$n] // {}) | {ledger_sha, deferred_sha, deferred_at, ci_alerted_sha, rereq_sha}
                 | with_entries(select(.value != null)))
              + (if $tv == "1" then {trivial:"1"} else {} end)'
+  # BH-9994: the verdict status on this head, BEFORE the D1 verdict row below:
+  # the conductor's G3 reads that row, so the status is on GitHub before the
+  # conductor can see the APPROVE.
+  command -v rvs_publish >/dev/null 2>&1 && { rvs_publish "$NUM" "$SHA" "$VERDICT" "$AUTHOR" "$SERVED" || true; }
 
 # >>> review-prs d1 artifacts (BH-1064; tests/review-prs-d1-row.bh-1064-test.sh drives this block)
   # THE LANE'S OWN VERDICT, ON ITS OWN ROW. `/api/verdict?pr=` resolves a PR

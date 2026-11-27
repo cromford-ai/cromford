@@ -80,3 +80,77 @@ wl_pr_norm() {
   jq -c '[{n: "pr", state: (.state // ""), draft: (.draft // false),
            head: ((.head.sha // "") | ascii_downcase)}]' "${1:-}" 2>/dev/null
 }
+
+# BH-10351, the checks-wake sha lookup. wck_sha_prs <lrepo> <sha>
+# (bin/lib/wake-conductor-keys.sh; bin/wake-loop.sh and
+# bin/merge-conductor-wake.sh call it) reads through prr_read wake-loop
+# "<lrepo>@<sha12>:sha" <file> wl_sha_record wl_sha_github wl_sha_norm
+# <lrepo> <sha>. Both lanes use the step row lane.wake-loop.gh_source: the
+# lookup is the wake class's read, in whichever loop drains it.
+#   wl_sha_record <file> <lrepo> <sha>
+#       pr_record_list <lrepo> open <tmp> head_sha (ONE jobs GET, the list's
+#       own trust rule; a list miss passes its word). Each open row whose
+#       head_sha starts with <sha> (or <sha> with it, 7-char floor) is a line
+#       `<lrepo>#<n>` in <file>, rc 0. None: when <sha> is the tip of a base
+#       branch in the PR snapshot (state/pr-snapshot/<repo>/base-<branch>,
+#       `<epoch> TAB <sha>`, prs_base_tip's memo), the record answers
+#       `hit-rc:1` (GitHub's "no open PR has that head": a main commit),
+#       because an open row at that head would have matched first. Else the
+#       miss field:head (the record names no PR at that head; a head the push
+#       webhook has not brought yet reads GitHub).
+#   wl_sha_github <file> <lrepo> <sha>
+#       Today's read, wck_sha_prs_github: its lines in <file>, its rc (0, 1
+#       none, 2 unreadable).
+#   wl_sha_norm <file>
+#       [{"n":"sha","v":"<numbers, sorted, comma-joined>"}].
+if ! declare -F wck_sha_prs_github >/dev/null 2>&1 && [ -r "${BASH_SOURCE[0]%/*}/../wake-conductor-keys.sh" ]; then
+  # shellcheck source=bin/lib/wake-conductor-keys.sh
+  . "${BASH_SOURCE[0]%/*}/../wake-conductor-keys.sh"
+fi
+
+wl_sha_record() {
+  local f="${1:-}" lrepo="${2:-}" sha="${3:-}" tmp why rc=0 root d b tip
+  [ -n "$f" ] || return 2
+  : > "$f" 2>/dev/null || { echo unreadable; return 1; }
+  [[ "$sha" =~ ^[0-9a-f]{7,64}$ ]] || { echo unreadable; return 1; }
+  command -v pr_record_list >/dev/null 2>&1 || { echo unreadable; return 1; }
+  tmp=$(mktemp "${TMPDIR:-/tmp}/wl-sha.XXXXXX") || { echo unreadable; return 1; }
+  why=$(pr_record_list "$lrepo" open "$tmp" head_sha) || rc=$?
+  if [ "$rc" != 0 ]; then rm -f "$tmp" "$tmp.sync"; echo "${why:-unreadable}"; return 1; fi
+  if ! jq -r --arg s "$sha" --arg r "$lrepo" '[.[] | ((.head_sha // "") | ascii_downcase) as $h
+        | select(($h | length) >= 7 and (($h | startswith($s)) or ($s | startswith($h)))) | .number]
+        | unique | .[] | "\($r)#\(.)"' "$tmp" > "$f" 2>/dev/null; then
+    rm -f "$tmp" "$tmp.sync"; : > "$f"; echo malformed; return 1
+  fi
+  rm -f "$tmp" "$tmp.sync"
+  [ -s "$f" ] && return 0
+  root="${HARNESS:-${H:-}}"
+  if [ -n "$root" ] && [ -d "$root/state/pr-snapshot" ]; then
+    for d in "$root"/state/pr-snapshot/*/; do
+      d="${d%/}"
+      [ "$(printf '%s' "${d##*/}" | tr 'A-Z' 'a-z')" = "${lrepo//\//_}" ] || continue
+      for b in "$d"/base-*; do
+        [ -r "$b" ] || continue
+        IFS=$'\t' read -r _ tip _ < "$b" 2>/dev/null || true
+        tip=$(printf '%s' "${tip:-}" | tr 'A-F' 'a-f')
+        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || continue
+        case "$tip" in "$sha"*) echo hit-rc:1; return 0 ;; esac
+      done
+    done
+  fi
+  echo field:head; return 1
+}
+
+wl_sha_github() {
+  local f="${1:-}" rc=0
+  [ -n "$f" ] || return 2
+  if ! declare -F wck_sha_prs_github >/dev/null 2>&1; then : > "$f"; return 2; fi
+  wck_sha_prs_github "${2:-}" "${3:-}" > "$f" || rc=$?
+  return "$rc"
+}
+
+wl_sha_norm() {
+  local v
+  v=$(grep -oE '#[0-9]+$' "${1:-/dev/null}" 2>/dev/null | tr -d '#' | sort -n | paste -sd, -)
+  printf '[{"n":"sha","v":"%s"}]\n' "$v"
+}

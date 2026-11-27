@@ -281,6 +281,7 @@ for _br_of in "${_br_frags[@]}"; do
   # shellcheck source=/dev/null
   . "$_br_of" || say "fragment bin/blocked-resolver.d/$_br_o.sh failed on source (rc $?) — skipped, this tick runs without it"
 done; unset _br_frags _br_of _br_o
+command -v brge_tick_stop >/dev/null 2>&1 && brge_tick_stop && { hb_done blocked-resolver; exit 0; }  # BH-10196: empty GitHub bucket, no read this tick
 
 # THE DISPATCHER STOPS HERE (BH-5913): it needed only the libraries above (the
 # project hold gate among them). Nothing below this line runs in --dispatch.

@@ -383,12 +383,12 @@ test('F2 the seeded board end to end (acceptance 1)', async (t) => {
     assert.equal(res.headers.get('cache-control'), 'no-store');
     const body = await res.json();
     assert.equal(body.ok, true, JSON.stringify(body));
-    const project-3 = body.rows.filter((x) => x.project === P);
-    const by = Object.fromEntries(project-3.map((x) => [x.key, x.reason]));
+    const project_3 = body.rows.filter((x) => x.project === P);
+    const by = Object.fromEntries(project_3.map((x) => [x.key, x.reason]));
     assert.deepEqual(by, EXPECTED_REASON_BY_KEY);
-    assert.equal(project-3.length, 9, 'each ticket once');
+    assert.equal(project_3.length, 9, 'each ticket once');
     for (const reason of WAITING_REASONS) assert.ok(body.counts[reason] >= 1, `${reason} counted`);
-    assert.equal(project-3.find((x) => x.key === 'QU-5').position, 1);
+    assert.equal(project_3.find((x) => x.key === 'QU-5').position, 1);
     assert.deepEqual(body.stale_claims, [{ project: P, key: 'SC-7', id: null }]);
     assert.deepEqual(s.calls.map((c) => c.url), [SNAPSHOT_URL, STATE_URL], 'only the two reads');
     const sent = JSON.parse(s.calls[1].init.body);
@@ -460,7 +460,7 @@ test('F4 ?project= filters; a bad name is 400; non-GET is 405', async (t) => {
 test('openTickets: open only, valid keys only, one order', () => {
   const s = snap({ [P]: [tk('A'), tk('B', { status: 'done' }), tk('bad key'), tk('C', { id: 'x/y' })], 'project-4': [tk('D', { id: '42' })] });
   assert.deepEqual(openTickets(s).map((x) => [x.project, x.key, x.id]),
-    [['project-4', 'D', '42'], [P, 'A', null], [P, 'C', null]]);
+    [[P, 'A', null], [P, 'C', null], ['project-4', 'D', '42']]);
   assert.deepEqual(openTickets(s, P).map((x) => x.key), ['A', 'C']);
 });
 

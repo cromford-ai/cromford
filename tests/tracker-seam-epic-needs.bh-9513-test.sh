@@ -20,6 +20,9 @@
 #       body file and prints the answer; rc 44 and 75 reach the caller
 #   E2  a bad slug, a bad id or an unreadable file is rc 1 with no call; a
 #       dry run logs the PATCH, prints DRYRUN and sends nothing
+#   O1  trk_gh_open_issue_page (BH-10020) sends the open-issue page GET with
+#       no labels= filter; rc 44 and 75 reach the caller; a bad slug or page
+#       is rc 1 with no call
 # No network: gh_rest is a shell function that logs its argv.
 set -uo pipefail
 . "$(dirname "$0")/lib/scratch.sh" || exit 1
@@ -135,6 +138,21 @@ out=$(run 0 '. "$SRC/bin/lib/tracker.sh"; . "$SRC/bin/lib/tracker/github-issues.
 [ "$rc" = 0 ] && [ ! -s "$LOG" ] && [ "$out" = "DRYRUN gh api -X PATCH repos/o/r/issues/comments/9001 -F body=@$T/body.md" ] \
   && grep -qxF "gh api -X PATCH repos/o/r/issues/comments/9001 -F body=@$T/body.md" "$T/trk.log" && ok \
   || bad "E2 dry run: rc $rc out '$out' calls '$(cat "$LOG")'"
+
+# ---- O1 -------------------------------------------------------------------------------
+# trk_gh_open_issue_page (BH-10020): every open issue, NO labels= filter.
+out=$(run 0 '. "$SRC/bin/lib/tracker/github-issues.sh"; TRK_SLUG=o/r trk_gh_open_issue_page 2'); rc=$?
+[ "$rc" = 0 ] && [ "$out" = '{"fake":1}' ] && ok || bad "O1 rc $rc body '$out'"
+[ "$(cat "$LOG")" = 'GET repos/o/r/issues -f state=open -F per_page=100 -F page=2' ] && ok \
+  || bad "O1 the open-issue page GET, no labels=: '$(cat "$LOG")'"
+for want in 44 75; do
+  run "$want" '. "$SRC/bin/lib/tracker/github-issues.sh"; TRK_SLUG=o/r trk_gh_open_issue_page 1' >/dev/null; rc=$?
+  [ "$rc" = "$want" ] && ok || bad "O1 gh_rest rc $want reached the caller as $rc"
+done
+for args in "TRK_SLUG=bad trk_gh_open_issue_page 1" "TRK_SLUG=o/r trk_gh_open_issue_page 0" "TRK_SLUG=o/r trk_gh_open_issue_page x"; do
+  run 0 '. "$SRC/bin/lib/tracker/github-issues.sh"; '"$args" >/dev/null; rc=$?
+  [ "$rc" = 1 ] && [ ! -s "$LOG" ] && ok || bad "O1 '$args': rc $rc, calls '$(cat "$LOG")'"
+done
 
 echo "tracker-seam-epic-needs.bh-9513: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

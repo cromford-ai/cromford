@@ -16,7 +16,7 @@
 #   note     one line for the report
 #
 # ORDER MATTERS. Rows are tried top to bottom and a match is masked before the
-# next row runs, so `operator@example.com` is one billing-account hit, not also an
+# next row runs, so `operator_home@example.com` is one billing-account hit, not also an
 # operator-login hit, and `example-org/cromford` is harness-repo, not gh-org.
 # Keep the most specific rows first.
 billing-account	operator@project-6\.ai|operator@gmail\.com	worker/jobs/src/lib/deployment-defaults.js (ANCHOR_DEFAULT_ACCOUNT_MAP; override env.COST_ANCHOR_ACCOUNT_MAP)	Claude billing accounts the cost anchor maps usage onto.

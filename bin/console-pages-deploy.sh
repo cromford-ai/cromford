@@ -335,6 +335,8 @@ else
   alert --severity warn --id console-pages-probe fleet-propagate "[$(hostname)] Pages probes at $C7: /api/coord/jobs=$c1 /api/ideas/list=$c2 (want 403/403; 404 = Functions bundle missing, 503 = CONSOLE_DB/HARNESS_SECRET binding missing — skills/console-deploy step 1)"
   log "probes $c1/$c2"
 fi
+# CONSOLE_DB indexes (BH-9308): after the stamp and the probes; it never fails or stops the deploy.
+[ -x "$H/bin/console-db-schema.sh" ] && HARNESS="$H" "$H/bin/console-db-schema.sh" --root "$D" </dev/null || true
 
 # >>> post-merge QA (BH-5909)
 # Keep a copy of the dist/ just shipped and launch bin/console-postmerge-qa.sh

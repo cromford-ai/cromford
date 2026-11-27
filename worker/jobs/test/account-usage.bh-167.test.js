@@ -27,8 +27,8 @@ const H = 3600e3;
 const isoZ = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const ago = (ms) => isoZ(ANCHOR - ms);
 
-const MK = 'claude:operator@example.com';
-const GM = 'claude:operator@example.com';
+const MK = 'claude:operator@second.example';
+const GM = 'claude:operator_home@example.com';
 const MAP = parseAccountMap(ANCHOR_DEFAULT_ACCOUNT_MAP);
 
 // ── pure fixtures, shaped like the route's reads ──────────────────────────────

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS unblock_decisions (
   repo TEXT,                             -- owner/name
   subject_kind TEXT NOT NULL CHECK (subject_kind IN
     ('pr','batch','build','box','lane','setting')),
-  subject TEXT NOT NULL,                 -- example-org/cromford#7617, box:project-6-os
+  subject TEXT NOT NULL,                 -- example-org/cromford#7617, box:example-box
   head TEXT,                             -- sha the decision binds to
   stall_class TEXT NOT NULL,             -- the collector's kind
   rule_id TEXT,                          -- NULL only for U12

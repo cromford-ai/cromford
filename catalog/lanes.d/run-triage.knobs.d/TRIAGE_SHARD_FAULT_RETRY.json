@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_SHARD_FAULT_RETRY",
+  "read_in": "bin/triage-shard.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-10274: 1 = a triage shard whose runner failed before the model answered (rc 1/126/127 within TRIAGE_SHARD_FAULT_S, no DECISION or tickets= text) is retried ONCE on the other runner (rf_other_runner), pinned by AGENT_CALL_RUNNERS, under the same call-guard fingerprint. 0 = no retry; the fault is still one TRIAGE RUNNER FAULT ALERTS line. Code fallback 1 in bin/triage-shard.sh; not 0 reads as 1."
+}

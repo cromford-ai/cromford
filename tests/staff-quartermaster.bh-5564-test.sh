@@ -332,7 +332,9 @@ if node -e 'require("node:sqlite")' >/dev/null 2>&1; then
     const r = db.prepare("SELECT agent, lane FROM staff_lanes WHERE agent = ? ORDER BY agent, lane").all("quartermaster");
     console.log(r.map((x) => x.agent + ":" + x.lane).join(" "));
   ' "$T/schema.sql" "${SEED:-/dev/null}" 2>&1)
-  eq "Q9 staff_lanes after the seed applies twice" "$GOT" "$(for L in $LANES7; do printf 'quartermaster:%s ' "$L"; done | sed 's/ $//')"
+  # BH-10231: the composed schema also gives quartermaster the box-watch lane
+  # (worker/jobs/schema.d/202611261440-bh-10231-box-watch.sql).
+  eq "Q9 staff_lanes after the seed applies twice" "$GOT" "$(for L in box-watch $LANES7; do printf 'quartermaster:%s ' "$L"; done | sed 's/ $//')"
 else
   echo "Q9 skipped: node:sqlite is not available in this node"
 fi

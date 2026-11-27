@@ -203,7 +203,7 @@ async function forward(rest, { method = 'POST', body } = {}) {
         method,
         headers: {
           cookie: `dash=signals${++seq}`, 'content-type': 'application/json',
-          'cf-access-authenticated-user-email': 'the operator@example.com', 'cf-access-jwt-assertion': await jwt()
+          'cf-access-authenticated-user-email': 'Operator@example.com', 'cf-access-jwt-assertion': await jwt()
         },
         body: body == null ? null : JSON.stringify(body)
       }),

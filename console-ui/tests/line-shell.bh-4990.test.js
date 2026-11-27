@@ -118,7 +118,7 @@ test('S2 a click on Paper persists the pick, paints Paper, and presses its butto
 test('S3 the bar keeps the identity pill, the snapshot age and the menu button; the NAV links are not in it', () => {
   installDom('mill');
   const out = render(h(TopBar, BASE));
-  assert.match(out, /<span class="pill"[^>]*>operator@cto\.com<\/span>/);
+  assert.match(out, /<span class="pill"[^>]*>operator@example\.com<\/span>/);
   assert.match(out, /WATCHDOG OK/);
   // BH-9118: the section links live in the side menu (tests/sidemenu.bh-9118.test.js C1, C2).
   assert.doesNotMatch(out, /topbar__nav/);

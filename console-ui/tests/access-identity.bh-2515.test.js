@@ -406,6 +406,6 @@ test('U6 the real TopBar renders the identity pill', () => {
   assert.match(off, /ACCESS OFF · writes as console/);
   assert.match(off, /<span class="pill pill--warn"[^>]*title="Cloudflare Access is not configured[^"]*"[^>]*>ACCESS OFF · writes as console<\/span>/);
   const on = render(h(TopBar, { ...base, identity: { data: { actor: 'operator@example.com', access: 'on', email: 'operator@example.com' }, error: null } }));
-  assert.match(on, /<span class="pill"[^>]*>operator@cto\.com<\/span>/);
+  assert.match(on, /<span class="pill"[^>]*>operator@example\.com<\/span>/);
   assert.doesNotMatch(on, /ACCESS OFF/);
 });

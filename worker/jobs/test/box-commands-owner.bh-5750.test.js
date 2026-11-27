@@ -30,14 +30,14 @@ async function call(env, body, owners = OWNER) {
 }
 const cmds = (db) => db.prepare('SELECT * FROM box_commands_v2 ORDER BY id').all();
 const refused = (db) => db.prepare("SELECT * FROM hub_lease_changes WHERE action='box_command_refused' ORDER BY id").all();
-const restart = (over = {}) => ({ box: 'hub', type: 'orgo_restart', target: 'project-3', reason: 'hung', confirm: true, actor: OWNER, ...over });
+const restart = (over = {}) => ({ box: 'hub', type: 'orgo_restart', target: 'project3', reason: 'hung', confirm: true, actor: OWNER, ...over });
 
 test('O1: the owner is 201 and the row records the owner as requested_by', async (t) => {
   const env = await open(t); if (!env) return;
   const r = await call(env, restart());
   assert.equal(r.status, 201, JSON.stringify(r.body));
   assert.equal(r.body.command.type, 'orgo_restart');
-  assert.equal(r.body.command.target, 'project-3');
+  assert.equal(r.body.command.target, 'project3');
   assert.equal(r.body.command.requested_by, OWNER);
   assert.equal(cmds(env.db).length, 1);
 });
@@ -69,7 +69,7 @@ test('O5: owner matching trims and lower-cases both sides, in a comma list', asy
   const env = await open(t); if (!env) return;
   const r1 = await call(env, restart(), ' other@example.net , OWNER@EXAMPLE.COM ');
   assert.equal(r1.status, 201);
-  const r2 = await call(env, restart({ target: 'project-4', actor: ' Owner@Example.com ' }), OWNER);
+  const r2 = await call(env, restart({ target: 'project4', actor: ' Owner@Example.com ' }), OWNER);
   assert.equal(r2.status, 201, 'an actor with another case or spaces is the same owner');
 });
 

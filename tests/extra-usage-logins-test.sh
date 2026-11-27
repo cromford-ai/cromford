@@ -6,7 +6,7 @@
 # the box's own /root/.claude, on the doctrine that the account a box reports is
 # the account it bills. That held everywhere except the box that spends the
 # most. The hub's lanes authenticate with CLAUDE_CODE_OAUTH_TOKEN, which bills
-# operator@example.com; its stored login is operator@example.com. So for fifteen days
+# operator@second.example; its stored login is operator_home@example.com. So for fifteen days
 # the hub faithfully polled a meter belonging to an account that was barely
 # spending, while the account paying for every lane on the box ran to $23.8K of
 # a $35K monthly cap with nobody reading its meter at all.

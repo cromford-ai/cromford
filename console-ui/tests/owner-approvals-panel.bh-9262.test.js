@@ -106,7 +106,7 @@ test('O1: the panel is on /machines at #owner-approvals; rows show the action, w
   assert.match(launch, /LAUNCH PRICE/, 'the action label');
   assert.match(launch, /proj-fixture/);
   assert.match(launch, /4 vCPU/);
-  assert.match(launch, /operator@cto\.com/);
+  assert.match(launch, /operator@example\.com/);
   assert.match(launch, /telegram:operator/, 'the verified sender the hub recorded');
   assert.match(launch, /PENDING/);
   assert.ok(buttonIn(rowOf('gamma'), 'REVIEW'), 'REVIEW on a box command');

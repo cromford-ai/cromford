@@ -1,0 +1,177 @@
+{
+  "id": "box-watch",
+  "name": "Box watch (restart a dark box; hourly Orgo lever check)",
+  "scope": "hub",
+  "script": "bin/box-watch.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-box-watch",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "BOX_WATCH_FAIL_PROBES",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 100,
+      "zero_means": null,
+      "note": "BH-10231: failed ssh probes in a row (one per 5-min tick) before bin/box-watch.sh restarts a box. the settings row box_watch.fail_probes wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_RESTART_WINDOW_MIN",
+      "type": "int",
+      "default": 120,
+      "min": 5,
+      "max": 10080,
+      "unit": "minutes",
+      "zero_means": null,
+      "note": "BH-10231: at most one restart per box in this many minutes (local stamp, then the D1 claim, which reads the same settings row). the settings row box_watch.restart_window_min wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_PROBE_TIMEOUT_S",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 110,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: seconds each `ssh root@<ip> true` probe may take. the settings row box_watch.probe_timeout_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_MASS_DARK",
+      "type": "int",
+      "default": 3,
+      "min": 1,
+      "max": 1000,
+      "zero_means": null,
+      "note": "BH-10231: this many dark boxes in one tick = the hub's own network; restart none, one warn alert. the settings row box_watch.mass_dark_boxes wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_BOOT_WAIT_S",
+      "type": "int",
+      "default": 600,
+      "min": 10,
+      "max": 3600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: seconds the act waits for ssh after the restart. the settings row box_watch.boot_wait_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_BOOT_POLL_S",
+      "type": "int",
+      "default": 15,
+      "min": 1,
+      "max": 600,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: seconds between probes in the boot wait. the settings row box_watch.boot_poll_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_RECOVERY_TIMEOUT_S",
+      "type": "int",
+      "default": 180,
+      "min": 5,
+      "max": 1800,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: seconds the one recovery ssh may take. the settings row box_watch.recovery_timeout_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_ACT_TIMEOUT_S",
+      "type": "int",
+      "default": 2400,
+      "min": 60,
+      "max": 7200,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: seconds one act (claim, restart, boot wait, recovery, re-probe) may take; a timeout pages. the settings row box_watch.act_timeout_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_ORGO_TIMEOUT_S",
+      "type": "int",
+      "default": 30,
+      "min": 1,
+      "max": 300,
+      "unit": "seconds",
+      "zero_means": null,
+      "note": "BH-10231: curl -m seconds of the hourly GET /workspaces lever check. the settings row box_watch.orgo_timeout_s wins over this env; out of range = the fallback plus one WARN log line.",
+      "settable": true
+    },
+    {
+      "env": "BOX_WATCH_SSH",
+      "type": "string",
+      "default": "ssh -n -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new",
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: the ssh command each probe and the recovery run before root@<ip>. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_BOX_OPS",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: the restart command, default $HARNESS/bin/box-ops.sh. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_SELF",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: this box's name, default bin/box-name.sh; never probed. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_ACT_SYNC",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: 1 runs act inline in the tick, not detached. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_NOW",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: the clock (epoch seconds) of the restart window. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_BOOT_WAIT_SEAM_S",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: the boot wait in seconds. Test seam; NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "BOX_WATCH_ACT_TIMEOUT_SEAM_S",
+      "type": "int",
+      "default": 0,
+      "zero_means": null,
+      "note": "Read by bin/box-watch.sh: the act timeout in seconds. Test seam; NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/box-watch.log"
+  }
+}

@@ -38,5 +38,5 @@ test('telegram-topics PUT validates project and thread_id, GET returns map', asy
   });
   // project -> thread id: a caller doing .topics[project] wants the integer it
   // posts to, not the row it came from.
-  assert.deepEqual(full.body.topics, { 'cromford': 6, project-5: 42 });
+  assert.deepEqual(full.body.topics, { 'cromford': 6, 'project-5': 42 });
 });

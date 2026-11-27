@@ -64,7 +64,7 @@ test('F5 the banner follows the state and never guesses one', () => {
   assert.match(on, /data-testid="factory-stop-banner"/);
   assert.match(on, /FACTORY STOPPED/);
   assert.ok(on.includes(`since ${iso(90)} (1h)`), on);
-  assert.match(on, /by operator@cto\.com/);
+  assert.match(on, /by operator@example\.com/);
   assert.match(on, /&quot;hold for the migration&quot;|"hold for the migration"/);
   assert.match(on, /data-testid="factory-stop-toggle"[^>]*>RESUME FACTORY…</);
   assert.match(on, /overflow-wrap:anywhere/);

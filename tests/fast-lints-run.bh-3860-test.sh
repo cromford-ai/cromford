@@ -35,7 +35,8 @@ fx() { # fx -> sets F to a fresh fixture repo
   mkdir -p "$F/bin/lib" "$F/bin/share" "$F/catalog" "$F/tests/lib"
   git -C "$F" init -q
   cp "$REAL/bin/fast-lints.sh" "$REAL/bin/test-impact.sh" "$F/bin/"
-  cp "$REAL/bin/share/mapping.py" "$REAL/bin/share/sanitize.py" "$REAL/bin/share/leakcheck.py" "$REAL/bin/share/diffcheck.py" "$F/bin/share/"
+  cp "$REAL/bin/share/mapping.py" "$REAL/bin/share/sanitize.py" "$REAL/bin/share/leakcheck.py" "$REAL/bin/share/diffcheck.py" \
+     "$REAL/bin/share/js_rewrite.py" "$REAL/bin/share/public_test_fixes.py" "$F/bin/share/"
   cp "$REAL/tests/lib/scratch.sh" "$F/tests/lib/"
 }
 run() { # run [args...] -> RC, $F.out, $F.err

@@ -2,7 +2,7 @@
 # tests/auth-probe-classify-test.sh — "the probe said nothing" must never be
 # read as "the account is dead" (2026-08-27, the false hub AUTH DOWN).
 #
-# The 17:51Z page told the operator to re-login operator@example.com on the strength of a
+# The 17:51Z page told the operator to re-login operator@second.example on the strength of a
 # BLANK probe result with rc=137. rc=137 is SIGKILL: the process was killed
 # before Claude answered. The account was fine the whole time. The cost of that
 # class of mistake is not the page — it is that a believed-dead Claude lane is

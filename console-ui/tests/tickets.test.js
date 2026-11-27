@@ -97,7 +97,7 @@ test('a project the snapshot does not carry is honestly absent', () => {
 
 test('the snapshot project list is whatever it carries', () => {
   const snap = { projects: { 'project-1': {}, 'project-4': {} } };
-  assert.deepEqual(ticketProjects(snap).sort(), ['project-4', 'project-1']);
+  assert.deepEqual(ticketProjects(snap).sort(), ['project-1', 'project-4']);
   assert.deepEqual(ticketProjects(null), []);
   assert.deepEqual(ticketProjects({}), []);
 });

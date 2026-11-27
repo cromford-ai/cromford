@@ -44,6 +44,15 @@
 # refused create or comment writes no row. stderr ends with
 # `nightly-ticket: filed <k> new, <c> comments, <o> over cap`.
 #
+# THE REPORT TRACKING ISSUE (BH-10020). <verdict-dir>/payload-pin.md holds the
+# findings of the nightly payload-pin report (rc 1, never red). When it is not
+# empty, ONE open issue with the marker `<!-- harness-nightly-report:payload-pin -->`
+# gets a comment with tonight's findings, or a new issue `Nightly: payload-pin
+# findings on main` is opened (labelled ai-build, as the App, like the others).
+# tsv row: `payload-pin-report<TAB>range<TAB>new|comment|skipped-unreadable<TAB>url`.
+# NT_RED=0 (the verdict job's green night with a report) files ONLY this: no
+# per-suite issue and no run-level ticket. Unset or 1 is a red night, as before.
+#
 # Environment: NT_REPO (owner/name), NT_RUN_URL, NT_SHA, NT_LAST_GREEN (sha of
 # the last green nightly; empty = none recorded), NT_MAX_NEW, NT_PLAN_RESULT,
 # NT_STRICT_RESULT, NT_PLAN_N (the shard count the plan published),
@@ -90,6 +99,7 @@ mkdir -p "$VDIR" 2>/dev/null; : > "$REQ" 2>/dev/null || { echo "nightly-ticket: 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/nightly-ticket.XXXXXX") || { echo "nightly-ticket: no temp dir" >&2; exit 2; }
 trap 'rm -rf "$WORK"' EXIT
 RC=0
+RED_RUN="${NT_RED:-1}"
 row() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:--}" >> "$REQ"; }
 
 # ── read the shard logs ─────────────────────────────────────────────────────
@@ -260,6 +270,9 @@ NEED=0
 { [ "$PLAN_OK" = 0 ] || [ -n "$MISSING$HITS" ] || [ "$STRICT_RED" = 1 ] || [ -s "$VDIR/lints.md" ] \
   || [ -s "$WORK/overcap" ] || [ -s "$WORK/unreadable" ] || [ ! -s "$WORK/failed" ]; } && NEED=1
 
+# A green night (NT_RED=0) reached here only for the report: no run-level ticket.
+[ "$RED_RUN" = 0 ] && NEED=0
+
 if [ "$NEED" = 1 ]; then
   BODY_FILE="$WORK/run.md"
   {
@@ -334,6 +347,104 @@ if [ "$NEED" = 1 ]; then
   # Over-cap rows point at the run-level ticket that lists them, written after
   # GitHub answered for it (`-` when it refused).
   while read -r s _; do [ -n "$s" ] && row "$s" "$RANGE" over-cap "${RURL:--}"; done < "$WORK/overcap"
+fi
+
+# ── the report tracking issue (BH-10020) ────────────────────────────────────
+# Its read, comment and create go through the tracker seam (BH-7919):
+# bin/lib/tracker/github-issues.sh, gh_rest underneath. NT_GH (the test seam) is
+# the gh that gh_rest calls too. The seam's ETag cache and quota ledger live
+# under $HARNESS/state; a runner has no harness, so they go to this run's temp.
+RPMARK="<!-- harness-nightly-report:payload-pin -->"
+RPTITLE="Nightly: payload-pin findings on main"
+
+# pp_find <out> — the open issue carrying RPMARK into <out> (empty: none),
+# every page of ALL open issues, any labels: a split keeps the parent open and
+# takes ai-build off it (bin/lib/fc-issues.sh), so a labelled-only read would
+# open a new issue every night. THE RULE: the oldest (lowest number) marked
+# issue that is not a split child; a child (a `Part of #N` line,
+# bin/lib/file-children.sh) may have copied the marker. Only children carry
+# it: the oldest child. rc 1 on a page that did not read cleanly.
+pp_find() {
+  local page=1 raw="$WORK/pp-page.json" all="$WORK/pp-marked" n
+  : > "$1"; : > "$all"
+  while :; do
+    TRK_SLUG="$REPO" trk_gh_open_issue_page "$page" > "$raw" || return 1
+    n=$(jq -e 'if type == "array" then length else error("not a list") end' "$raw" 2>/dev/null) || return 1
+    # <child 0|1> <number>, so a plain sort puts non-children first, oldest first.
+    jq -r --arg m "$RPMARK" '.[] | select(.pull_request == null) | select((.body // "") | contains($m))
+      | "\(if ((.body // "") | test("(^|\n)Part of #[0-9]+")) then 1 else 0 end) \(.number)"' \
+      "$raw" >> "$all" 2>/dev/null || return 1
+    [ "$n" -lt 100 ] && break
+    page=$((page + 1))
+  done
+  sort -k1,1n -k2,2n "$all" | awk 'NR == 1 { print $2 }' > "$1"
+}
+
+# pp_create <body-file> <out> — open the report issue labelled ai-build AS THE
+# APP (the trigger-actor gate, BH-8272), number into <out>. GitHub drops labels
+# on create for a caller without push access, so the answer is read and a
+# dropped label is added once. rc 1 no issue; rc 3 opened but not labelled.
+pp_create() {
+  local req="$WORK/pp-req.json" resp="$WORK/pp-resp.json" num
+  : > "$2"
+  [ -n "${NT_APP_TOKEN:-}" ] || { wgh; return 1; }
+  jq -n --arg t "$RPTITLE" --rawfile b "$1" '{title: $t, body: $b, labels: ["ai-build"]}' > "$req" 2>/dev/null || return 1
+  GH_TOKEN="$NT_APP_TOKEN" TRK_SLUG="$REPO" trk_gh_create "$req" "$resp" || return 1
+  num=$(jq -r '.number // empty' "$resp" 2>/dev/null)
+  case "$num" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$num" > "$2"
+  jq -e '[.labels[]?.name] | index("ai-build") != null' "$resp" >/dev/null 2>&1 && return 0
+  GH_TOKEN="$NT_APP_TOKEN" TRK_SLUG="$REPO" trk_gh_label_add "$num" ai-build || return 3
+  return 0
+}
+
+if [ -s "$VDIR/payload-pin.md" ]; then
+  NT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+  # shellcheck source=bin/lib/tracker.sh
+  . "$NT_LIB/tracker.sh"
+  # shellcheck source=bin/lib/tracker/github-issues.sh
+  . "$NT_LIB/tracker/github-issues.sh"
+  export HARNESS="${HARNESS:-$WORK/harness}"
+  if [ "$GH" != gh ]; then gh() { "$GH" "$@"; }; fi
+  head -n 50 "$VDIR/payload-pin.md" | cut -c1-300 | sed 's/```/'"'''"'/g' > "$WORK/pp-findings"
+  PPN=$(grep -c . "$VDIR/payload-pin.md")
+  if ! pp_find "$WORK/pp-num"; then
+    echo "nightly-ticket: the open-issue read for the payload-pin report did not read cleanly; nothing filed for it" >&2
+    row payload-pin-report "$RANGE" skipped-unreadable -; RC=1
+  elif [ -s "$WORK/pp-num" ]; then
+    PPNUM=$(cat "$WORK/pp-num")
+    {
+      printf 'New payload-pin findings on `%s` (%s lines; the first 50 below).\n\n' "$SHA" "$PPN"
+      printf 'Run: %s\n' "${NT_RUN_URL:-(no run url)}"
+      range_text
+      printf '\n```\n'; cat "$WORK/pp-findings"; printf '```\n'
+    } > "$WORK/pp-comment.md"
+    if TRK_SLUG="$REPO" trk_gh_comment "$PPNUM" "$WORK/pp-comment.md"; then
+      row payload-pin-report "$RANGE" comment "$SERVER/$REPO/issues/$PPNUM"; COMN=$((COMN + 1))
+      echo "nightly-ticket: updated #$PPNUM (payload-pin report)"
+    else
+      echo "nightly-ticket: could not comment on #$PPNUM for the payload-pin report" >&2; RC=1
+    fi
+  else
+    {
+      printf '%s\n' "$RPMARK"
+      printf 'The nightly payload-pin lint (`bin/test-payload-pin-lint.sh --strict`, a report since BH-10007) found whole-payload pins on `%s` (%s lines; the first 50 below).\n\n' "$SHA" "$PPN"
+      printf 'Run: %s\n' "${NT_RUN_URL:-(no run url)}"
+      range_text
+      printf '\n```\n'; cat "$WORK/pp-findings"; printf '```\n\n'
+      printf 'Assert the fields the ticket owns, or name the file a contract test (docs in the lint header). Each later night with new findings comments here. A report never makes the night red; this issue is where the findings stay.\n'
+    } > "$WORK/pp-issue.md"
+    CRC=0; pp_create "$WORK/pp-issue.md" "$WORK/pp-new" || CRC=$?
+    PPNUM=$(cat "$WORK/pp-new" 2>/dev/null)
+    if [ -z "$PPNUM" ]; then
+      echo "nightly-ticket: could not open the payload-pin report issue on $REPO" >&2; RC=1
+    else
+      row payload-pin-report "$RANGE" new "$SERVER/$REPO/issues/$PPNUM"; NEWN=$((NEWN + 1))
+      if [ "$CRC" = 3 ]; then echo "nightly-ticket: opened #$PPNUM but could not label it ai-build" >&2; RC=1
+      else echo "nightly-ticket: opened #$PPNUM (payload-pin report)"
+      fi
+    fi
+  fi
 fi
 
 echo "nightly-ticket: filed $NEWN new, $COMN comments, $OVER over cap" >&2

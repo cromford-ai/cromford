@@ -124,7 +124,7 @@ test('C3 the view: level and cap, the class table with sortable headers and stat
   assert.match(weekly, />delegated</);
   assert.match(weekly, /ASK FIRST…/);
   assert.match(out, /twelve agreements/);
-  assert.match(out, /operator@cto\.com/);
+  assert.match(out, /operator@example\.com/);
   assert.doesNotMatch(out, /capped at 20/);
   assert.match(view({ state: ok({ ...serverState(), changes_truncated: true }) }), /capped at 20/);
   // CHANGE LEVEL… is there and enabled; at the cap with nothing lower it is disabled.

@@ -133,6 +133,11 @@ for _P in "$(dirname "$0")/lib/pr-terminal.sh" "$H/bin/lib/pr-terminal.sh"; do
   # shellcheck source=bin/lib/pr-terminal.sh
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-10349: the wake-gated cache of section 13d's status and reviews reads.
+for _P in "$(dirname "$0")/lib/ph-lu-memo.sh" "$H/bin/lib/ph-lu-memo.sh"; do
+  # shellcheck source=bin/lib/ph-lu-memo.sh
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-8268: per-PR reads from the fleet's own PR record first, GitHub on a miss.
 for _P in "$(dirname "$0")/lib/ph-pr-record.sh" "$H/bin/lib/ph-pr-record.sh"; do
   # shellcheck source=bin/lib/ph-pr-record.sh
@@ -179,6 +184,16 @@ if [ -z "$PH_SECTIONS" ] && command -v prs_open_list >/dev/null 2>&1 && command 
   export HPL_SNAPSHOT=1; PH_OPEN_CAP=1000
 else
   unset HPL_SNAPSHOT
+fi
+# BH-10349: the ladder's visibility probe (`gh api repos/<slug> -q .id`, about
+# 130 an hour from this lane: one per project run) answers from the repo-meta
+# memo until a push or repository wake for the repo (or REPO_META_BACKSTOP_S),
+# as in the five lanes of BH-10218. The App token is still minted for each
+# run; only the visibility GET is memoed. Only with the snapshot on: the memo's
+# change mark reads the wake mirror under state/pr-snapshot, and PR_SNAPSHOT=0
+# means this lane writes nothing there. Fail-open.
+if [ "${HPL_SNAPSHOT:-}" = 1 ]; then
+  { [ -r "$H/bin/lib/repo-meta.sh" ] && . "$H/bin/lib/repo-meta.sh" && repo_meta_arm; } 2>/dev/null || :
 fi
 # BH-9938: with the prr-shadow seam loaded, both helpers read through
 # prr_read pipeline-health (keys <slug>#open and <slug>#open:<max>); the record
@@ -1615,6 +1630,33 @@ if ph_on leadunqueued; then
 # >>> lead merge unqueued (BH-3778)
 command -v ph_open_list >/dev/null 2>&1 || ph_open_list() { gh api "repos/$1/pulls?state=open&per_page=100"; }
 lu_carry() { printf '+^%s\n' "$1" >> "$FIRED"; }
+# BH-10349: the wake-gated answer cache (bin/lib/ph-lu-memo.sh) for the status
+# and reviews reads. A stored answer is used only for the same head, with no
+# `checks` (status) or `pr` (reviews) wake since its read started, inside
+# PH_LU_MEMO_BACKSTOP_S. A --sections run re-judges a PR a webhook just
+# changed, so it reads live. With the snapshot off (HPL_SNAPSHOT unset,
+# PR_SNAPSHOT=0) it reads live too: the wake gate reads the mirror under
+# state/pr-snapshot. No lib (an extracted block, a box without it) = no
+# cache, every read as before.
+LUMEMO_ON=0; LUMF=""
+if [ "${PH_MODE:-}" != sections ] && [ "${HPL_SNAPSHOT:-}" = 1 ] && command -v phlu_on >/dev/null 2>&1 && phlu_on \
+   && LUMF=$(mktemp "${TMPDIR:-/tmp}/ph-lumemo.XXXXXX"); then
+  LUMEMO_ON=1
+  phlu_gc
+fi
+# ph_lu_reviews <slug> <n> <head> <out> — the PR's reviews into <out>; rc 1 = not read.
+ph_lu_reviews() {
+  local t0=""
+  if [ "$LUMEMO_ON" = 1 ]; then
+    phlu_get "$1" reviews "$2" "$3" "$4" && return 0
+    t0=$(phlu_t0)
+  fi
+  gh api "repos/$1/pulls/$2/reviews?per_page=100" > "$4" 2>/dev/null || return 1
+  if [ "$LUMEMO_ON" = 1 ] && jq -e 'type == "array"' "$4" >/dev/null 2>&1; then
+    phlu_put "$1" reviews "$2" "$3" "$t0" < "$4"
+  fi
+  return 0
+}
 if gh_budget_low pipeline-health; then
   lu_carry "leadunqueued:"
 else
@@ -1647,12 +1689,20 @@ else
         lu_carry "leadunqueued:$SLUG#$NUM:"
         continue
       fi
+      # BH-10349: the cached answer first (see LUMEMO_ON above).
+      LUHIT=0; LUT0=""
+      if [ "$LUMEMO_ON" = 1 ] && phlu_get "$SLUG" status "$NUM" "$LUHEAD" "$LUMF"; then
+        LUST=$(cat "$LUMF"); LUHIT=1
+      fi
+      if [ "$LUHIT" = 0 ]; then
+      [ "$LUMEMO_ON" = 1 ] && LUT0=$(phlu_t0)
       # BH-9938: through prr_read pipeline-health (key <slug>#<n>@<sha12>:status)
       # when the seam is loaded, else the inline GitHub read.
       if command -v prr_read >/dev/null 2>&1 && command -v ph_prr >/dev/null 2>&1; then
         LUST=$(ph_prr "$SLUG#$NUM@${LUHEAD:0:12}:status" status "$SLUG" "$NUM" "$LUHEAD") || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
       else
         LUST=$(gh api "repos/$SLUG/commits/$LUHEAD/status" 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
+      fi
       fi
       LUAT=$(printf '%s' "$LUST" | jq -r 'if type == "object" then . else error("not a status") end
         | ([.statuses[]? | select(.context == "lead-verdict")] | first) as $l
@@ -1662,6 +1712,10 @@ else
           elif $b != null and $b.state == "success" then ($b.updated_at // $b.created_at // "")
           else "" end' 2>/dev/null) \
         || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
+      # A read that parsed is stored (BH-10349); a cached one is not stored again.
+      if [ "$LUMEMO_ON" = 1 ] && [ "$LUHIT" = 0 ]; then
+        printf '%s' "$LUST" | phlu_put "$SLUG" status "$NUM" "$LUHEAD" "$LUT0"
+      fi
       [ -n "$LUAT" ] || continue
       LUTS=$(date -u -d "$LUAT" +%s 2>/dev/null) || { lu_carry "leadunqueued:$SLUG#$NUM:"; continue; }
       LUAGE=$(( NOW - LUTS ))
@@ -1671,7 +1725,7 @@ else
       # absent read falls back to the generic page below, never to silence.
       LUSR=""; LURV=""
       if command -v lsr_stale >/dev/null 2>&1 && LURV=$(mktemp "${TMPDIR:-/tmp}/ph-lurv.XXXXXX") \
-         && gh api "repos/$SLUG/pulls/$NUM/reviews?per_page=100" > "$LURV" 2>/dev/null; then
+         && ph_lu_reviews "$SLUG" "$NUM" "$LUHEAD" "$LURV"; then
         LUSR=$(lsr_stale "$LURV" "$LUHEAD" | awk -F'\t' '{printf "%s%s@%s", (NR>1?",":""), $1, substr($2,1,12)}')
       fi
       [ -z "$LURV" ] || rm -f "$LURV"
@@ -1686,6 +1740,7 @@ else
   done
   command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
 fi
+[ -z "$LUMF" ] || rm -f "$LUMF"
 # <<< lead merge unqueued
 fi # ph_on leadunqueued
 

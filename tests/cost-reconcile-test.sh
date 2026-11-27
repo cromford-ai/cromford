@@ -158,7 +158,7 @@ cat > "$T/catalog/cost-accounts.json" <<'EOF'
   "accounts": {
     "acct": {
       "login": {"box": "hub", "config_dir": "/dev/null"},
-      "auth_accounts": ["claude:operator@example.com"],
+      "auth_accounts": ["claude:operator@second.example"],
       "boxes": {"cost_rows": ["hub"], "jobs": ["box-hub", "pool-*"]}
     }
   }
@@ -184,8 +184,8 @@ fresh_day() { rm -f "$T/flags"/alerted-cost-reconcile-* 2>/dev/null; : ; }
 # job exists for: $60 of spend ran through something that writes no cost row.
 meters "$(printf '%s\n%s\n' "$(snap acct "$T0" 100 1000)" "$(snap acct "$T2" 100 1100)")"
 rows "$(printf '%s\n%s\n' \
-  "$(crow "$T1" hub claude 'claude:operator@example.com' 30 h1)" \
-  "$(crow "$T1" hub claude 'claude:operator@example.com' 10 h2)")"
+  "$(crow "$T1" hub claude 'claude:operator@second.example' 30 h1)" \
+  "$(crow "$T1" hub claude 'claude:operator@second.example' 10 h2)")"
 jobs ""
 fresh_day; run --window 24h
 [ "$(field state)" = metered ] && ok || bad "a past-the-credits account did not reconcile as metered: $(row_json)"
@@ -228,7 +228,7 @@ grep -q 'COST RECONCILE' "$T/alerts" \
 # does not move at all, so a naive comparison reports a 100% gap every quiet
 # week until nobody reads the alert any more.
 meters "$(printf '%s\n%s\n' "$(snap acct "$T0" 71 0)" "$(snap acct "$T2" 88 0)")"
-rows "$(crow "$T1" hub claude 'claude:operator@example.com' 600 h9)"
+rows "$(crow "$T1" hub claude 'claude:operator@second.example' 600 h9)"
 fresh_day; run --window 24h
 [ "$(field state)" = credits-covered ] && ok || bad "an account inside its weekly credits was not reported as credits-covered: $(row_json)"
 [ "$(field gap_pct)" = null ] && ok || bad "a credits-covered account was given a dollar gap: $(row_json)"
@@ -269,7 +269,7 @@ meters "$(printf '%s\n%s\n' "$(snap acct "$T0" 100 1000)" "$(snap acct "$T2" 100
 # its rows carry no account label at all. Summing them against a Claude meter
 # invents a gap out of a vendor this meter never measured.
 rows "$(printf '%s\n%s\n%s\n' \
-  "$(crow "$T1" hub claude 'claude:operator@example.com' 40 h1)" \
+  "$(crow "$T1" hub claude 'claude:operator@second.example' 40 h1)" \
   "$(crow "$T1" hub grok  unknown 500 h2)" \
   "$(crow "$T1" hub claude unknown 25 h3)")"
 fresh_day; run --window 24h
@@ -300,7 +300,7 @@ t = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")
 for i in range(25):
     ts = (t + datetime.timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
     print(json.dumps({"ts": ts, "box": "hub", "runner": "claude",
-                      "auth_account": "claude:operator@example.com", "cost_usd": 4,
+                      "auth_account": "claude:operator@second.example", "cost_usd": 4,
                       "row_hash": "p%d" % i}))
 PY
 )
@@ -318,7 +318,7 @@ fresh_day; RUN_ENV="RECONCILE_PAGE_LIMIT=10" run --window 24h
 # ===========================================================================
 # $0.40 of meter against $0.35 of rows is a 12% gap and means nothing.
 meters "$(printf '%s\n%s\n' "$(snap acct "$T0" 100 1000)" "$(snap acct "$T2" 100 1000.40)")"
-rows "$(crow "$T1" hub claude 'claude:operator@example.com' 0.35 h1)"
+rows "$(crow "$T1" hub claude 'claude:operator@second.example' 0.35 h1)"
 fresh_day; run --window 24h
 [ "$(field state)" = metered ] && ok || bad "the small-money case must still be measured: $(row_json)"
 [ ! -s "$T/alerts" ] && ok || bad "a \$0.40 meter movement alerted: $(cat "$T/alerts")"
@@ -327,7 +327,7 @@ fresh_day; run --window 24h
 # money: rows land every 10 minutes and the meter samples every 15.
 S1=$(ago 4); S2=$(ago 1)
 meters "$(printf '%s\n%s\n' "$(snap acct "$S1" 100 1000)" "$(snap acct "$S2" 100 1100)")"
-rows "$(crow "$S1" hub claude 'claude:operator@example.com' 10 h1)"
+rows "$(crow "$S1" hub claude 'claude:operator@second.example' 10 h1)"
 fresh_day; run --window 1h
 [ ! -s "$T/alerts" ] && ok || bad "a 3-minute meter span alerted on a 90% gap: $(cat "$T/alerts")"
 field span_start | grep -q "$S1" && ok || bad "the row does not carry the span the comparison used: $(row_json)"
@@ -336,7 +336,7 @@ field span_start | grep -q "$S1" && ok || bad "the row does not carry the span t
 # 6. WINDOWS, THE PUSH, --dry-run AND THE KILL SWITCHES
 # ===========================================================================
 meters "$(printf '%s\n%s\n' "$(snap acct "$T0" 100 1000)" "$(snap acct "$T2" 100 1100)")"
-rows "$(crow "$T1" hub claude 'claude:operator@example.com' 100 h1)"
+rows "$(crow "$T1" hub claude 'claude:operator@second.example' 100 h1)"
 fresh_day; run --window 1h
 [ "$(field window_key)" = 1h ] && ok || bad "--window 1h did not key the row as 1h: $(row_json)"
 run --window day 2026-09-01

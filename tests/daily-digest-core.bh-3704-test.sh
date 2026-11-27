@@ -35,7 +35,7 @@ elif [ ! -f "$DIR/catalog/lanes.json" ]; then
 else
   GOT=$(cd "$T" && node --input-type=module -e '
     const { isHumanActor } = await import(process.argv[1]);
-    console.log([isHumanActor("the operator@example.com", []), isHumanActor("jobs-watchdog", ["jobs-watchdog"]),
+    console.log([isHumanActor("Operator@example.com", []), isHumanActor("jobs-watchdog", ["jobs-watchdog"]),
                  isHumanActor("operator", []), isHumanActor(" operator ", ["OPERATOR"])].join(","));
   ' "file://$PURE" 2>&1)
   [ "$GOT" = "true,false,false,true" ] && ok || bad "isHumanActor answered [$GOT], want [true,false,false,true]"

@@ -1671,8 +1671,15 @@ mc_queue_inactive_alert() {
 #     shape as mc_queue_inactive_alert. The text names the App that failed
 #     (vs_app_name, GET /app), asked only inside the lock after the ledger
 #     says no alert went out today.
+#   BH-9994: an optional 5th argument <head> (40 hex) is the per-head form,
+#   for xe_status_check (bin/lib/mc/external-enqueue.sh): an approved head
+#   that carries no verdict status. The mark is `status-unpublished <slug>
+#   <head>`, so each head alerts once, in the tick that sees it, and the text
+#   names the head and the review lane. The lock stays per repo. Without
+#   <head> nothing changes: mc_enqueue_mergify keeps one page per repo per day.
 mc_status_unpublished_alert() {
-  local slug="$1" url="$2" why="${3:-}" ctx="${4:-}" mark lock nrc=0
+  local slug="$1" url="$2" why="${3:-}" ctx="${4:-}" head="${5:-}" mark lock nrc=0
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || head=""
   [ -n "$ctx" ] || ctx=$(vs_context 2>/dev/null || echo lead-verdict)
   command -v mc_alert >/dev/null 2>&1 && command -v mc_attempt_has >/dev/null 2>&1 || return 0
   if command -v vs_mergify_names >/dev/null 2>&1; then vs_mergify_names "$slug" "$ctx" || nrc=$?
@@ -1682,7 +1689,8 @@ mc_status_unpublished_alert() {
       && mc_log "VS_UNPUBLISHED_INFO $slug: the $ctx status was not published (${why:-no reason given}); .mergify.yml names no $ctx condition, so no queue waits on it. No alert: $url"
     return 0
   fi
-  mark="status-unpublished $slug $(date -u +%Y%m%d)"
+  if [ -n "$head" ]; then mark="status-unpublished $slug $head"
+  else mark="status-unpublished $slug $(date -u +%Y%m%d)"; fi
   lock="${MC_LOCK_DIR:-$MC_H/locks}/merge-conductor-status-unpublished-${slug//\//_}.lock"
   mkdir -p "${lock%/*}" 2>/dev/null
   (
@@ -1690,6 +1698,12 @@ mc_status_unpublished_alert() {
     mc_attempt_has "$mark" 2>/dev/null && exit 1
     mc_attempt_put "$mark"
     local app lead
+    if [ -n "$head" ]; then
+      if [ "$nrc" = 0 ]; then lead=".mergify.yml on $slug names $ctx, so "
+      else lead=".mergify.yml on $slug could not be read; if it names $ctx, "; fi
+      mc_alert "$slug" READY "${why:-approved head ${head:0:12} carries no $ctx status}. ${lead}Mergify holds this PR until a verdict status is on that head. The review lane publishes it on its next tick (bin/review-prs.sh, rvs_publish, BH-9994); if it does not, read logs/pr-reviews.log for 'verdict status NOT published' on this PR: $url"
+      exit 0
+    fi
     app=$(vs_app_name 2>/dev/null) || app=""
     [ -n "$app" ] || app="unnamed (GET /app did not answer)"
     if [ "$nrc" = 0 ]; then lead=".mergify.yml on $slug names $ctx, so "

@@ -50,10 +50,10 @@ test('W1: the latest row per project wins, sorted by project', async () => {
   assert.equal(s.pr_health.ok, true);
   assert.equal(s.pr_health.skipped, 0);
   assert.deepEqual(s.pr_health.rows, [
-    { project: 'project-4', day: DAY, open: 55, age: { lt1d: 1, '1to3d': 0, '3to7d': 0, gt7d: 54 },
-      ownerless: 1, approved_not_merged: 0, blocked_ci_only: 0, as_of: '2026-10-02T22:00:00Z' },
     { project: 'project-1', day: DAY, open: 3, age: { lt1d: 1, '1to3d': 0, '3to7d': 0, gt7d: 2 },
       ownerless: 1, approved_not_merged: 0, blocked_ci_only: 0, as_of: '2026-10-02T23:00:00Z' },
+    { project: 'project-4', day: DAY, open: 55, age: { lt1d: 1, '1to3d': 0, '3to7d': 0, gt7d: 54 },
+      ownerless: 1, approved_not_merged: 0, blocked_ci_only: 0, as_of: '2026-10-02T22:00:00Z' },
   ]);
 });
 

@@ -87,7 +87,7 @@ HELPERS = (
     "gh_rest", "gh_rest_pr_state", "gh_rest_pr_state_var",
     "gh_rest_pr_list", "gh_rest_pr_list_var", "gh_rest_pr_list_all",
     "gh_rest_issue_state", "gh_rest_issue_state_var",
-    "gh_rest_issue_list", "gh_rest_issue_comments",
+    "gh_rest_issue_list", "gh_rest_issue_comments", "gh_rest_issue_events",
     "gh_rest_comment", "gh_rest_close", "gh_rest_alert", "gh_rest_var",
 )
 # `$(gh_rest`, `$( gh_rest` and the backtick form. A BACKSLASH in front is not

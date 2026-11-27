@@ -95,20 +95,25 @@ test('BE3 a bad column is null', () => {
 const knobRows = (db) => db.prepare("SELECT key, value, actor FROM settings WHERE key LIKE 'mc.period.%' ORDER BY key").all()
   .map((r) => ({ ...r }));
 
-test('K1 the composed schema seeds the 4 mc.period.* rows with the ticket values', async (t) => {
+test('K1 the composed schema seeds the 6 mc.period.* rows with the ticket values (BH-9308 added 2)', async (t) => {
   const o = await openDb();
   if (!o) return t.skip('node:sqlite is absent');
   assert.deepEqual(knobRows(o.db).map((r) => [r.key, r.value, r.actor]), [
     ['mc.period.csv_row_cap', '100000', 'seed'],
     ['mc.period.default_preset', 'last_7_days', 'seed'],
+    ['mc.period.filter_chip_cap', '30', 'seed'],
     ['mc.period.max_buckets', '2000', 'seed'],
     ['mc.period.max_range_days', '366', 'seed'],
+    ['mc.period.report_top_rows', '20', 'seed'],
   ]);
   const k = await W.readPeriodKnobs({ DB: o.DB });
   assert.deepEqual({ ...k, source: undefined }, {
-    max_range_days: 366, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000, source: undefined,
+    max_range_days: 366, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000,
+    report_top_rows: 20, filter_chip_cap: 30, source: undefined,
   });
-  assert.deepEqual(k.source, { max_range_days: 'row', csv_row_cap: 'row', default_preset: 'row', max_buckets: 'row' });
+  assert.deepEqual(k.source, {
+    max_range_days: 'row', csv_row_cap: 'row', default_preset: 'row', max_buckets: 'row', report_top_rows: 'row', filter_chip_cap: 'row',
+  });
 });
 
 test('K2 each row overrides its fallback', async (t) => {
@@ -132,17 +137,23 @@ test('K3 absent rows and junk values give the fallbacks, and source says so', as
   if (!o) return t.skip('node:sqlite is absent');
   o.db.exec("DELETE FROM settings WHERE key LIKE 'mc.period.%'");
   let k = await W.readPeriodKnobs({ DB: o.DB });
-  assert.deepEqual([k.max_range_days, k.csv_row_cap, k.default_preset, k.max_buckets], [366, 100000, 'last_7_days', 2000]);
-  assert.deepEqual(Object.values(k.source), ['fallback', 'fallback', 'fallback', 'fallback']);
+  assert.deepEqual([k.max_range_days, k.csv_row_cap, k.default_preset, k.max_buckets, k.report_top_rows, k.filter_chip_cap],
+    [366, 100000, 'last_7_days', 2000, 20, 30]);
+  assert.deepEqual(Object.values(k.source), ['fallback', 'fallback', 'fallback', 'fallback', 'fallback', 'fallback']);
   const ins = o.db.prepare("INSERT INTO settings (key,value,actor,updated_at) VALUES (?,?,'t','2026-11-14T00:00:00Z')");
   ins.run('mc.period.max_range_days', 'abc');
   ins.run('mc.period.csv_row_cap', '-1');
   ins.run('mc.period.default_preset', 'custom');
   ins.run('mc.period.max_buckets', '1.5');
+  ins.run('mc.period.report_top_rows', '0');
+  ins.run('mc.period.filter_chip_cap', 'x');
   k = await W.readPeriodKnobs({ DB: o.DB });
-  assert.deepEqual([k.max_range_days, k.csv_row_cap, k.default_preset, k.max_buckets], [366, 100000, 'last_7_days', 2000]);
-  assert.deepEqual(Object.values(k.source), ['fallback', 'fallback', 'fallback', 'fallback']);
-  assert.deepEqual(W.PERIOD_FALLBACKS, { max_range_days: 366, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000 });
+  assert.deepEqual([k.max_range_days, k.csv_row_cap, k.default_preset, k.max_buckets, k.report_top_rows, k.filter_chip_cap],
+    [366, 100000, 'last_7_days', 2000, 20, 30]);
+  assert.deepEqual(Object.values(k.source), ['fallback', 'fallback', 'fallback', 'fallback', 'fallback', 'fallback']);
+  assert.deepEqual(W.PERIOD_FALLBACKS, {
+    max_range_days: 366, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000, report_top_rows: 20, filter_chip_cap: 30,
+  });
 });
 
 test('K3b a D1 throw is not mapped to the fallbacks', async () => {
@@ -162,7 +173,7 @@ test('E3 the knob read is ONE statement and a primary-key search, no SCAN settin
   assert.ok(lines.some((l) => /SEARCH settings USING (INDEX sqlite_autoindex_settings_1|PRIMARY KEY)/.test(l)), lines.join(' | '));
 });
 
-test('K4 GET /api/period/knobs answers the 4 values with the bearer, 401 without', async (t) => {
+test('K4 GET /api/period/knobs answers the 6 values with the bearer, 401 without', async (t) => {
   const o = await openDb();
   if (!o) return t.skip('node:sqlite is absent');
   o.db.prepare('UPDATE settings SET value=? WHERE key=?').run('90', 'mc.period.max_range_days');
@@ -172,7 +183,9 @@ test('K4 GET /api/period/knobs answers the 4 values with the bearer, 401 without
   }), env);
   assert.equal(ok.status, 200);
   const body = await ok.json();
-  assert.deepEqual(body.knobs, { max_range_days: 90, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000 });
+  assert.deepEqual(body.knobs, {
+    max_range_days: 90, csv_row_cap: 100000, default_preset: 'last_7_days', max_buckets: 2000, report_top_rows: 20, filter_chip_cap: 30,
+  });
   assert.equal(body.source.max_range_days, 'row');
   assert.match(body.as_of, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   const no = await worker.fetch(new Request('https://jobs.test/api/period/knobs'), env);

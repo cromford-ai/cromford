@@ -12,8 +12,8 @@
 #
 #   2  the implicit `default` account's json is DERIVED from
 #      state/extra-usage-last.json, which is the BOX LOGIN's meter. On the hub
-#      that login is operator@example.com, but the `default` credential
-#      (CLAUDE_CODE_OAUTH_TOKEN in env/global.env) bills operator@example.com,
+#      that login is operator_home@example.com, but the `default` credential
+#      (CLAUDE_CODE_OAUTH_TOKEN in env/global.env) bills operator@second.example,
 #      whose snapshot is state/extra-usage-last-project-6-account.json. So the
 #      `default` row showed a 4% week while the token it describes was at 100%.
 #

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { html, Link, useSearchParam, navigate } from '../router.js';
+import { html, Link, useSearchParam, navigate, currentSearch } from '../router.js';
 import { PageHeadline } from '../ui/line.js';
 import { api, AuthError } from '../api.js';
 import { useApi } from '../lib/hooks.js';
@@ -12,12 +12,22 @@ import { plainLabel, tierLabel } from '../lib/labels.js';
 import {
   runOutcome, outcomeRank, OUTCOME_LABEL, OUTCOME_TONE, runDurationSeconds, tickWork, facet
 } from '../lib/cockpit.js';
+import { withPeriod } from '../lib/period.js';
+import { PeriodPicker } from '../ui/PeriodPicker.js';
+import { useLogPeriod, logHref, logCsvHref, LogToolbar, LogReportPanel } from '../lib/log-period.js';
+import { report as historyReport } from './period-report.d/history.js';
 
 // HISTORY is the port of the old console's /history: every run the fleet has
 // ever beaten, not the twenty the project page shows. 8,700 rows and growing by
 // ~250 a day, so it pages on a CURSOR (the run id), never an offset — and the
 // sort headers sort the rows that are loaded, which the footnote says out loud
 // rather than implying the whole ledger reordered.
+//
+// BH-9308 (BH-9120.4): the RUNS tab reads one period (the URL's, else the
+// knob default): ?from=&to= on started_at, a search (?q= over the run key,
+// kind and summary), the CSV of the whole filter and the period report. Its
+// cursor is the route's keyset cursor (started_at, id), never an offset.
+// BUILDS is unchanged.
 
 const PAGE = 100;
 const TONE_CLASS = { green: 'tag tag--green', dead: 'tag tag--dead', warn: 'tag tag--warn', muted: 'tag tag--idle' };
@@ -28,14 +38,12 @@ export function HistoryScreen() {
   const kind = useSearchParam('kind');
   const outcome = useSearchParam('outcome');
   const tab = useSearchParam('tab') === 'builds' ? 'builds' : 'runs';
+  const q = useSearchParam('q');
+  const reportOpen = useSearchParam('report') === '1';
+  const { period, knobs } = useLogPeriod();
 
-  const setParam = (key, value) => {
-    const next = { project, kind, outcome, tab: tab === 'builds' ? 'builds' : null, [key]: value };
-    const q = new URLSearchParams();
-    for (const k of ['tab', 'project', 'kind', 'outcome']) if (next[k]) q.set(k, next[k]);
-    const qs = q.toString();
-    navigate(`/history${qs ? `?${qs}` : ''}`);
-  };
+  // Every other param (the period, the search) stays; BH-9308.
+  const setParam = (key, value) => navigate(logHref('/history', currentSearch(), { [key]: value }));
 
   const chip = (label, active, onClick) => html`
     <button type="button" class=${active ? 'tab tab--on' : 'tab'} onClick=${onClick}>${label}</button>`;
@@ -55,11 +63,17 @@ export function HistoryScreen() {
       <div class="tabs">
         ${chip('RUNS', tab === 'runs', () => setParam('tab', null))}
         ${chip('BUILDS', tab === 'builds', () => setParam('tab', 'builds'))}
-        ${chip('COMMANDS', false, () => navigate('/history/commands'))}
+        ${chip('COMMANDS', false, () => navigate(withPeriod('/history/commands', currentSearch())))}
       </div>
 
       ${tab === 'runs'
-        ? html`<${RunHistory} project=${project} kind=${kind} outcome=${outcome} setParam=${setParam} chip=${chip}/>`
+        ? html`
+          <${PeriodPicker} period=${period} knobs=${knobs}/>
+          <${LogToolbar} path="/history" search=${currentSearch()} placeholder="search run key, kind or summary"
+            csv=${period ? logCsvHref('/api/cockpit/history', period, { project, kind, outcome, q }) : null}/>
+          ${reportOpen && period ? html`<${LogReportPanel} report=${historyReport} period=${period} knobs=${knobs}/>` : null}
+          <${RunHistory} project=${project} kind=${kind} outcome=${outcome} q=${q} period=${period}
+            setParam=${setParam} chip=${chip}/>`
         : html`<${BuildHistory} project=${project} setParam=${setParam} chip=${chip}/>`}
     </div>`;
 }
@@ -145,10 +159,16 @@ export function runColumns(nowMs = Date.now()) {
   ];
 }
 
-function RunHistory({ project, kind, outcome, setParam, chip }) {
-  const key = `runs|${project || ''}|${kind || ''}|${outcome || ''}`;
-  const pager = usePager(async (before) => {
-    const res = await api.cockpitHistory({ project, kind, outcome, before, limit: PAGE });
+function RunHistory({ project, kind, outcome, q, period, setParam, chip }) {
+  const from = period ? period.from : null;
+  const to = period ? period.to : null;
+  const key = `runs|${project || ''}|${kind || ''}|${outcome || ''}|${q || ''}|${from || ''}|${to || ''}`;
+  const pager = usePager(async (cursor) => {
+    // No period yet (the knob read is in flight): wait, never read the whole ledger.
+    if (!from) return new Promise(() => {});
+    const res = await api.periodGet('/api/cockpit/history', {
+      from, to, keep: { project, kind, outcome, q, cursor, limit: PAGE }
+    });
     return { rows: res.runs || [], next_cursor: res.next_cursor, total: res.total, extra: { failed: res.failed } };
   }, key);
 

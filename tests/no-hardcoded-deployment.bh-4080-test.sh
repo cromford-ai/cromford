@@ -71,7 +71,7 @@ b=example-org
 c=operator
 d=https://harness-jobs.operator.workers.dev
 e=ops@example.com
-f=operator@example.com
+f=operator@second.example
 g=box-project-4-1
 h=@TIP@
 i=box.tail1234.ts.net
@@ -283,7 +283,7 @@ if command -v node >/dev/null 2>&1; then
   got=$(node --input-type=module -e "import { FLEET_LOGIN, PRODUCT_COCKPIT_URL } from '$CONSOLE_HOME'; console.log(FLEET_LOGIN + ' ' + PRODUCT_COCKPIT_URL)" 2>&1)
   [ "$got" = "operator https://harness-console.operator.workers.dev/product" ] && ok || bad "J1 console defaults module: '$got'"
   got=$(node --input-type=module -e "import { ANCHOR_DEFAULT_ACCOUNT_MAP as a } from '$WORKER_HOME'; console.log(a.split(',').map(p => p.split(':').pop()).sort().join(' '))" 2>&1)
-  [ "$got" = "operator@example.com operator@example.com" ] && ok || bad "J2 worker defaults module accounts: '$got'"
+  [ "$got" = "operator@second.example operator_home@example.com" ] && ok || bad "J2 worker defaults module accounts: '$got'"
   # core.js imports the RENDERED catalog/lanes.json by a static path; it is
   # git-ignored, so a fresh checkout has none (the worker/jobs CI job renders it).
   if [ -f "$DIR/catalog/lanes.json" ]; then

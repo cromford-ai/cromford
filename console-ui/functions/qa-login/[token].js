@@ -22,7 +22,7 @@
 //     host's alias.
 
 const WORKER = 'https://harness-console.operator.workers.dev';
-const PREVIEW_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.mission-control-9bu\.pages\.dev$/;
+const PREVIEW_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.console\.example\.pages\.dev$/;
 const DEPLOYMENT_HASH = /^[0-9a-f]{8}$/;
 
 function isPreviewAlias(host, env) {

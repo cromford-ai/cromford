@@ -145,7 +145,7 @@ Every knob has a default; nothing here requires a deploy to turn off.
 | `cost-anchor-off` | `pause_flags` row (console flags PUT; reconciled onto boxes as `flags/cost-anchor-off`) | unset | **Kill switch.** The endpoint answers `200 {disabled:true}` with **empty** lists. |
 | `COST_ANCHOR_OFF` | worker var (`wrangler.toml` / Pages env) | unset | Same kill switch, without needing D1. Set to `1`. |
 | `COST_ANCHOR_MAX_FACTOR` | worker var | `20` | The clamp on the multiplier, both directions (`1/20 … 20`). Clamped to `1..1000`. |
-| `COST_ANCHOR_ACCOUNT_MAP` | worker var | `project-6-account=claude:operator@example.com,hub=claude:operator@example.com` | Maps the **box that polled** the meter to the **account label** `cost_rows` bills. A business parameter, so it is configurable; the constant in code is the documented fallback, not the source. |
+| `COST_ANCHOR_ACCOUNT_MAP` | worker var | `project-6-account=claude:operator@second.example,hub=claude:operator_home@example.com` | Maps the **box that polled** the meter to the **account label** `cost_rows` bills. A business parameter, so it is configurable; the constant in code is the documented fallback, not the source. |
 
 **Off answers empty, not raw.** A client that ignores the `disabled` flag
 renders nothing rather than quietly relabelling raw dollars "anchored" — the

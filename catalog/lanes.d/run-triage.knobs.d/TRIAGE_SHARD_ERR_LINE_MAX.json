@@ -1,0 +1,10 @@
+{
+  "env": "TRIAGE_SHARD_ERR_LINE_MAX",
+  "read_in": "bin/lib/runner-fault.sh",
+  "type": "int",
+  "default": 300,
+  "min": 40,
+  "max": 2000,
+  "unit": "chars",
+  "note": "BH-10274: the first error line of a failed triage shard (rf_first_error) and the refusal marker of a refused retry (rf_cut) are cut to this many chars in the TRIAGE RUNNER FAULT ALERTS line and the shard summary (log line and console beat). Code fallback 300; 0 or a non-integer is 300."
+}

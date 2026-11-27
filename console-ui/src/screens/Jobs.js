@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'preact/hooks';
-import { html, Link, useSearchParam, currentSearch } from '../router.js';
+import { html, Link, useSearchParam, currentSearch, navigate } from '../router.js';
 import { api } from '../api.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
@@ -19,6 +19,8 @@ import {
 import { lineTickets, jobsHeadline, ticketPath } from '../lib/line.js';
 import { parsePeriodQuery, defaultPeriod, withPeriod } from '../lib/period.js';
 import { PeriodPicker } from '../ui/PeriodPicker.js';
+import { LOG_KEYS, readLogParams, LogToolbar, LogReportPanel, logCsvHref, logHref, chipValues } from '../lib/log-period.js';
+import { report as jobsReport } from './period-report.d/jobs.js';
 
 // JOBS - the coordination DB's own view of the fleet: who claimed what, whether
 // it is still breathing, what it has spent against the cap it was handed.
@@ -43,6 +45,16 @@ const JOBS_LIMIT = 200;
 export const jobsPollMs = (period, nowMs) =>
   (period && period.to && Date.parse(period.to) <= nowMs ? 0 : REFRESH_MS);
 
+// BH-9308: the job statuses the STATUS chips offer (the worker's own set).
+const JOB_STATUSES = ['running', 'done', 'failed', 'parked', 'queued_for_retry', 'orphaned', 'abandoned'];
+// The table columns the server can order ALL rows of the period by, and the
+// worker's sort key for each. STARTED (age) is created_at turned around: the
+// youngest job has the newest created_at.
+const SERVER_SORT = { project: ['project', false], box: ['box', false], state: ['status', false], age_s: ['created_at', true] };
+const flip = (d) => (d === 'asc' ? 'desc' : 'asc');
+// The table column a URL sort shows as active.
+const columnOf = (sort) => Object.keys(SERVER_SORT).find((k) => SERVER_SORT[k][0] === sort) || null;
+
 // A lanes row is one (project, box) triage liveness row (bin/run-triage.sh ->
 // lane_tick), so its own page is the run-triage lane scoped to that project.
 const TRIAGE_LANE = 'run-triage';
@@ -66,15 +78,31 @@ export function JobsScreen() {
   // Heard here so a search-only navigate (a picker click) re-renders.
   useSearchParam('from');
   useSearchParam('to');
+  // BH-9308: search, lane/status filters, the server sort and the report
+  // toggle, all from the URL. Heard here so a toolbar navigate re-renders.
+  for (const k of LOG_KEYS.jobs) useSearchParam(k);
+  const reportOpen = useSearchParam('report') === '1';
+  const lp = readLogParams(currentSearch(), LOG_KEYS.jobs);
   const urlPeriod = parsePeriodQuery(currentSearch());
   const knobs = useApi(() => api.periodKnobs(), []);
   const knobValues = knobs.data && knobs.data.knobs;
   const period = urlPeriod || (knobs.loading ? null : defaultPeriod(knobValues, Date.now()));
   const pFrom = period ? period.from : null;
   const pTo = period ? period.to : null;
-  const jobs = useApi(() => (pFrom
-    ? api.jobs({ limit: JOBS_LIMIT, project: project || undefined, from: pFrom, to: pTo || undefined })
-    : new Promise(() => {})), [project, pFrom, pTo], { intervalMs: jobsPollMs(period, Date.now()) });
+  // With no search, lane or sort this is the BH-9304 read, URL unchanged.
+  // With one, the read goes through api.periodGet with totals=1, so the note
+  // can say how many rows match against how many are shown.
+  const filtered = Boolean(lp.q || lp.lane || lp.sort);
+  const jobs = useApi(() => {
+    if (!pFrom) return new Promise(() => {});
+    if (!filtered) {
+      return api.jobs({ limit: JOBS_LIMIT, project: project || undefined, status: lp.status || undefined, from: pFrom, to: pTo || undefined });
+    }
+    return api.periodGet('/api/coord/jobs', {
+      from: pFrom, to: pTo,
+      keep: { project, lane: lp.lane, status: lp.status, q: lp.q, sort: lp.sort, dir: lp.sort ? lp.dir : null, totals: 1, limit: JOBS_LIMIT }
+    });
+  }, [project, pFrom, pTo, lp.q, lp.lane, lp.status, lp.sort, lp.dir], { intervalMs: jobsPollMs(period, Date.now()) });
   // Live claims are not a period fact: a claim created before the period is
   // still claimed now. This read sends no from/to (the no-range SQL, index
   // idx_jobs_status_created) and always polls. It runs beside the others and
@@ -100,12 +128,29 @@ export function JobsScreen() {
   }
 
   const rows = jobRows(jobs.data);
+  const matched = jobs.data && jobs.data.totals ? Number(jobs.data.totals.total) : null;
+  const filters = { project, lane: lp.lane, status: lp.status, q: lp.q, sort: lp.sort, dir: lp.sort ? lp.dir : null };
+  const toolbar = html`<${LogToolbar} path="/jobs" search=${currentSearch()} placeholder="search ticket, kind or meta"
+    csv=${period ? logCsvHref('/api/coord/jobs', period, filters) : null}
+    filters=${[
+      { key: 'status', any: 'ANY STATUS', values: JOB_STATUSES },
+      { key: 'lane', any: 'ANY LANE', values: chipValues(rows, 'lane', knobValues) }
+    ]}/>`;
+  const onSort = (key, dir) => {
+    const s = SERVER_SORT[key];
+    if (!s) return;
+    navigate(logHref('/jobs', currentSearch(), { sort: s[0], dir: s[1] ? flip(dir) : dir }));
+  };
+  const sortCol = lp.sort ? columnOf(lp.sort) : null;
+  const sortDir = sortCol && SERVER_SORT[sortCol][1] ? flip(lp.dir || 'desc') : (lp.dir || 'desc');
   const openData = openClaims.data && !openClaims.error ? openClaims.data : null;
   const open = openData ? jobRows(openData).filter((r) => r.status === 'running')
     : rows.filter((r) => r.status === 'running');
   // The note says the read is capped only when it hit the cap (D12).
-  const inPeriod = `${plural(rows.length, 'job', 'jobs')} created in this period${
-    rows.length >= JOBS_LIMIT ? ` (newest ${fmtNum(JOBS_LIMIT)} shown)` : ''}`;
+  const inPeriod = matched !== null
+    ? `${plural(matched, 'job', 'jobs')} match in this period${rows.length < matched ? ` (${fmtNum(rows.length)} shown; the CSV has all)` : ''}`
+    : `${plural(rows.length, 'job', 'jobs')} created in this period${
+      rows.length >= JOBS_LIMIT ? ` (newest ${fmtNum(JOBS_LIMIT)} shown)` : ''}`;
 
   return html`
     <div class="page">
@@ -122,8 +167,11 @@ export function JobsScreen() {
         right=${project
           ? html`<${Link} to=${withPeriod('/jobs', currentSearch())} class="crumb">SHOW ALL PROJECTS<//>`
           : null}>
+        ${toolbar}
+        ${reportOpen && period ? html`<${LogReportPanel} report=${jobsReport} period=${period} knobs=${knobValues}/>` : null}
         ${rows.length === 0 ? html`<div class="footnote"><span>No jobs created in this period.</span></div>` : null}
-        <${JobsTable} rows=${rows}/>
+        <${JobsTable} rows=${rows} onSort=${onSort} sortKey=${sortCol} sortDir=${sortDir}
+          key=${`${sortCol || 'created_at'}|${sortDir}`}/>
       <//>
 
       <${SectionHead} num=${4} title="Burn" note="What the job rows spent, by day and by project."/>
@@ -231,13 +279,16 @@ function phaseCell(r) {
     title=${`${p.name} - ${p.status}${p.rc === null ? '' : ` (rc=${p.rc})`}`}>${p.name.toUpperCase()}</span>`;
 }
 
-export function JobsTable({ rows }) {
+// `onSort` (BH-9308): JOBS hands it in, so a header the server can sort by
+// asks for that order over the whole period; `sortKey`/`sortDir` show it.
+export function JobsTable({ rows, onSort, sortKey, sortDir }) {
   return html`
     <${SortableTable}
       rows=${rows}
       rowKey=${(r) => r.id}
-      defaultSort="created_at"
-      defaultDir="desc"
+      onSort=${onSort}
+      defaultSort=${sortKey || 'created_at'}
+      defaultDir=${sortKey ? sortDir : 'desc'}
       empty=${html`<${Empty} title="NO JOBS ON FILE"
         note="Nothing has claimed a coordination row yet. That is normal on a quiet fleet and expected right after the worker's first deploy."/>`}
       columns=${[

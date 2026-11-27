@@ -70,7 +70,7 @@ test('P1 decision table (a)-(n): exactly two proofs are accepted', async () => {
   // accepted
   assert.deepEqual(await ok({ 'x-human-verdict-token': HUMAN }), { ok: true, via: 'human-token' }, '(a)');
   assert.deepEqual(await ok({ 'x-box-ops-token': BOX, 'x-box-ops-identity': OWNER }), { ok: true, via: 'box-ops', identity: OWNER }, '(b)');
-  assert.deepEqual(await ok({ 'x-box-ops-token': BOX, 'x-box-ops-identity': '  the operator@example.com ' }), { ok: true, via: 'box-ops', identity: OWNER }, '(c)');
+  assert.deepEqual(await ok({ 'x-box-ops-token': BOX, 'x-box-ops-identity': '  Operator@example.com ' }), { ok: true, via: 'box-ops', identity: OWNER }, '(c)');
   // refused
   assert.deepEqual(await ok({}), { ok: false, why: 'none' }, '(d) bearer only');
   assert.deepEqual(await ok({ 'x-box-ops-token': BOX }), { ok: false, why: 'identity_missing' }, '(e)');
@@ -102,7 +102,7 @@ const ROUTES = [
     name: 'box-commands orgo_restart',
     path: '/api/box-commands', created: 201, refusal: 'owner_only',
     seed() {},
-    body: () => ({ box: 'hub', type: 'orgo_restart', target: 'project-3', reason: 'hung', confirm: true, actor: OWNER }),
+    body: () => ({ box: 'hub', type: 'orgo_restart', target: 'project3', reason: 'hung', confirm: true, actor: OWNER }),
     state: (db) => db.prepare('SELECT count(*) AS n FROM box_commands_v2').get().n,
   },
   {
@@ -263,7 +263,7 @@ test('P7 shadow (no row): bearer + owner on box-commands is 201 with exactly one
   const lines = warn.mock.calls.map((c) => String(c.arguments[0])).filter((s) => s.startsWith('[owner-proof]'));
   assert.deepEqual(lines, ['[owner-proof] would-refuse route=/api/box-commands actor=operator@example.com why=none']);
   // shadow still refuses a non-owner actor, as today
-  const not = await send(env.DB, '/api/box-commands', { ...ROUTES[0].body(), target: 'project-4', actor: 'someone@example.net' });
+  const not = await send(env.DB, '/api/box-commands', { ...ROUTES[0].body(), target: 'project4', actor: 'someone@example.net' });
   assert.equal(not.status, 403);
   assert.deepEqual(not.body, { error: 'owner_only' });
 });

@@ -2,8 +2,10 @@
 # tests/mergify-project-3-queue.bh-10042-test.sh — example-org/project-3's Mergify
 # queue tests 4 PRs per batch and runs 3 batches in parallel (BH-10042,
 # 2026-11-25: 11 PRs waited, 8 PRs needed 75 min at 2 and 2 on 2026-11-24).
-# The conf keeps retries 1, timeout 30 min and wait 3 min explicit, because
-# the template defaults for those differ.
+# The conf keeps retries 1, timeout and wait 3 min explicit, because the
+# template defaults for those differ. BH-10079 (2026-11-25): the three E2E
+# shards are merge conditions (the batch draft) and not admission conditions,
+# and the timeout is 45 min (real drafts took 17.7 and 17.8 min of E2E).
 #
 # Every render goes through a scratch copy of the real CLI and config/mergify
 # tree. Values are read from the PARSED YAML (python3 + PyYAML -> json -> jq),
@@ -50,7 +52,22 @@ q '.merge_queue.max_parallel_checks == 3' && ok \
 dq default '.batch_size == 4' && ok || bad "A2 default batch_size != 4 ($(jq -c '.queue_rules' "$J" | head -c 400))"
 dq default '.batch_max_wait_time == "3 min"' && ok || bad "A2 default batch_max_wait_time != 3 min"
 dq default '.max_checks_retries == 1' && ok || bad "A2 default max_checks_retries != 1"
-dq default '.checks_timeout == "30 min"' && ok || bad "A2 default checks_timeout != 30 min"
+dq default '.checks_timeout == "45 min"' && ok || bad "A2 default checks_timeout != 45 min"
+
+# A6 (BH-10079): in both queues the three E2E shards are merge conditions,
+# never admission conditions (an ordinary PR head may skip E2E by path), and
+# the four CI checks stay in both lists.
+for qn in default hotfix; do
+  for n in 1 2 3; do
+    e="check-success=E2E Tests (Shard $n/3)"
+    dq "$qn" "(.merge_conditions | index(\"$e\")) != null" && ok || bad "A6 $qn merge_conditions lack $e"
+    dq "$qn" "(.queue_conditions | index(\"$e\")) == null" && ok || bad "A6 $qn queue_conditions hold $e"
+  done
+  for c in "Unit Tests" "Type Check" "Test Coverage Gate" "Schema Drift Check"; do
+    dq "$qn" "(.queue_conditions | index(\"check-success=$c\")) != null and (.merge_conditions | index(\"check-success=$c\")) != null" \
+      && ok || bad "A6 $qn lost $c in queue or merge conditions"
+  done
+done
 
 # A3: hotfix still batches 1.
 dq hotfix '.batch_size == 1' && ok || bad "A3 hotfix batch_size != 1"

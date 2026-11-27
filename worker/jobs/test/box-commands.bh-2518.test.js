@@ -204,7 +204,7 @@ test('W5: GET lists the last 50 newest first, says when it cut, and filters by b
 
 test('W6: a claim only ever hands out a row for a box the claimer listed', async (t) => {
   const env = await open(t); if (!env) return;
-  const project-4 = seed(env.db, { box: 'project-4-1' });
+  const project_4 = seed(env.db, { box: 'project-4-1' });
   const hub = seed(env.db, { box: 'hub', type: 'fly_machine_stop', target: MACHINE, args: '{"project":"project-3","app":"x"}' });
 
   let r = await call(env.DB, 'POST', '/api/box-commands/claim', { claimer: 'project-3-1', boxes: ['project-3-1'] });
@@ -212,11 +212,11 @@ test('W6: a claim only ever hands out a row for a box the claimer listed', async
   assert.deepEqual(r.body, { command: null });
   r = await call(env.DB, 'POST', '/api/box-commands/claim', { claimer: 'project-3-1', boxes: [' project-3-1 ', 'project-3-1', 'Hub'] });
   assert.deepEqual(r.body, { command: null }, 'box matching is exact and case-sensitive');
-  assert.equal(row(env.db, project-4).status, 'requested');
+  assert.equal(row(env.db, project_4).status, 'requested');
   assert.equal(row(env.db, hub).status, 'requested');
 
   r = await call(env.DB, 'POST', '/api/box-commands/claim', { claimer: 'project-4-1', boxes: ['project-4-1'] });
-  assert.equal(r.body.command.id, project-4);
+  assert.equal(r.body.command.id, project_4);
   assert.equal(r.body.command.status, 'claimed');
   assert.equal(r.body.command.claimed_by, 'project-4-1');
   assert.equal(r.body.command.claimed_at, iso(0));

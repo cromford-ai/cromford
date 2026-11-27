@@ -1,10 +1,16 @@
-import { html, Link, useSearchParam } from '../router.js';
+import { html, Link, useSearchParam, currentSearch, navigate } from '../router.js';
 import { PageHeadline } from '../ui/line.js';
 import { useApi } from '../lib/hooks.js';
 import { SortableTable } from '../ui/SortableTable.js';
-import { Section, Skeleton, Empty, ErrorBox } from '../ui/primitives.js';
+import { Section, Skeleton, Empty, ErrorBox, Stat } from '../ui/primitives.js';
 import { whenLabel, fmtDuration, fmtNum } from '../lib/format.js';
 import { laneRunMetrics, laneRunList, laneRun } from '../lib/lane-runs-api.js';
+import { parsePeriodQuery } from '../lib/period.js';
+import { PeriodPicker } from '../ui/PeriodPicker.js';
+import {
+  LOG_KEYS, readLogParams, logHref, logCsvHref, logPollMs, useLogPeriod, useCursorPages, LogToolbar, LogReportPanel, chipValues
+} from '../lib/log-period.js';
+import { report as lanesReport } from './period-report.d/lanes.js';
 
 // LANES (BH-6127): where each lane's runs ran once a lane can run on Fly. The
 // jobs worker owns the queue (BH-6124); this page only reads it. /lane-runs is
@@ -97,7 +103,75 @@ function loadGate(state) {
 
 export function LaneRunsScreen() {
   const state = useApi(() => laneRunMetrics(HOURS), [], POLL);
-  return html`<${LaneRunsView} state=${state}/>`;
+  return html`<${LaneRunsView} state=${state}/><${LaneRunsPeriod}/>`;
+}
+
+// ------------------------------------------- /lane-runs: RUNS IN PERIOD
+// BH-9308 (BH-9120.4): every run enqueued in the URL period, with search
+// (lane, project, machine, args, PROF line), lane/project/status filters, a
+// server sort over ALL rows of the period, a cursor "Load more", the CSV of
+// the whole filter and the period report. The 24 h metrics above stay as they
+// were; this is a second, period-bound read beside them.
+
+const LANE_STATUSES = ['queued', 'claimed', 'done', 'failed', 'died'];
+// RUN_COLUMNS key -> the worker's sort key. WAIT, MACHINE and RC sort the
+// loaded rows only.
+const RUN_SORT = { id: 'id', lane: 'lane', project: 'project', status: 'status', enqueued: 'enqueued_at' };
+const runColumnOf = (sort) => Object.keys(RUN_SORT).find((k) => RUN_SORT[k] === sort) || null;
+
+export function LaneRunsPeriod() {
+  for (const k of LOG_KEYS.lanes) useSearchParam(k);
+  const reportOpen = useSearchParam('report') === '1';
+  const { period, knobs } = useLogPeriod();
+  const lp = readLogParams(currentSearch(), LOG_KEYS.lanes);
+  const filters = { lane: lp.lane, machine: lp.machine, status: lp.status, q: lp.q, project: lp.project, sort: lp.sort, dir: lp.sort ? lp.dir : null };
+  const pages = useCursorPages((cursor) => (period
+    ? laneRunList({ ...filters, from: period.from, to: period.to || undefined, cursor: cursor || undefined, totals: cursor ? undefined : 1 })
+    : new Promise(() => {})),
+  [period && period.from, period && period.to, ...Object.values(filters)], 'runs',
+  logPollMs(period, Date.now(), POLL.intervalMs));
+  const d = pages.first.data;
+  const totals = d && d.totals ? d.totals : null;
+  const search = currentSearch();
+  const sortCol = lp.sort ? runColumnOf(lp.sort) : null;
+  const onSort = (key, dir) => {
+    if (RUN_SORT[key]) navigate(logHref('/lane-runs', currentSearch(), { sort: RUN_SORT[key], dir }));
+  };
+  let body;
+  if (pages.first.error && !d) body = html`<${ErrorBox} error=${pages.first.error} onRetry=${pages.first.reload}/>`;
+  else if (!d) body = html`<${Skeleton} rows=${6} height=${20}/>`;
+  else {
+    body = html`
+      ${pages.first.error ? note(`refresh failed: ${errText(pages.first.error)}`) : null}
+      ${totals ? html`<div class="stats">
+        ${['total', 'queued', 'claimed', 'done', 'failed', 'died'].map((k) => html`
+          <${Stat} key=${k} label=${k.toUpperCase()} value=${Number(totals[k]) || 0} tone=${k === 'failed' && totals[k] ? 'warn' : null}/>`)}
+      </div>` : null}
+      <${SortableTable} columns=${RUN_COLUMNS} rows=${pages.rows} rowKey=${(r) => r.id} wide=${true}
+        onSort=${onSort} defaultSort=${sortCol || 'id'} defaultDir=${sortCol ? (lp.dir || 'desc') : 'desc'}
+        key=${`${sortCol || 'id'}|${lp.dir || 'desc'}`}
+        empty=${html`<${Empty} title="no lane runs in this period" note=${LIST_EMPTY}/>`}/>
+      <div class="footnote">
+        <span>${fmtNum(pages.rows.length)}${totals ? ` of ${fmtNum(Number(totals.total) || 0)}` : ''} loaded · RUN #, LANE, PROJECT, STATUS and ENQUEUED sort every run in the period; the other headers sort the loaded rows</span>
+        <span class="footnote__spacer"></span>
+        ${pages.moreError ? html`<span style="color:var(--amber)">last page failed — ${errText(pages.moreError)}</span>` : null}
+        ${pages.cursor ? html`<button type="button" class="btn btn--sm" disabled=${pages.moreLoading}
+          onClick=${pages.loadMore}>${pages.moreLoading ? 'LOADING…' : 'LOAD MORE'}</button>` : null}
+      </div>`;
+  }
+  return html`
+    <${Section} title=${`RUNS IN PERIOD${totals ? ` · ${fmtNum(Number(totals.total) || 0)}` : ''}`}
+      note="every run enqueued in the period; filters and search live in the URL">
+      <${PeriodPicker} period=${period} knobs=${knobs}/>
+      <${LogToolbar} path="/lane-runs" search=${search} placeholder="search lane, project, machine, args or PROF line"
+        csv=${period ? logCsvHref('/api/coord/lane-runs', period, filters) : null}
+        filters=${[
+          { key: 'status', any: 'ANY STATUS', values: LANE_STATUSES },
+          { key: 'project', any: 'ANY PROJECT', values: chipValues(pages.rows, 'project', knobs) }
+        ]}/>
+      ${reportOpen && period ? html`<${LogReportPanel} report=${lanesReport} period=${period} knobs=${knobs}/>` : null}
+      ${body}
+    <//>`;
 }
 
 // `laneSort` ([key, dir]) is the lanes table's first sort; the tests use it to
@@ -140,7 +214,13 @@ export function LaneRunsView({ state, laneSort }) {
 
 export function LaneRunListScreen({ lane, machine }) {
   const status = useSearchParam('status');
-  const state = useApi(() => laneRunList({ lane, machine, status }), [lane, machine, status], POLL);
+  // BH-9308: a URL period (the side menu and the LANES links carry it) bounds
+  // the list to runs enqueued in it. No period: the same read as before.
+  const from = useSearchParam('from');
+  const to = useSearchParam('to');
+  const p = parsePeriodQuery(currentSearch());
+  const state = useApi(() => laneRunList({ lane, machine, status, from: p ? p.from : undefined, to: p && p.to ? p.to : undefined }),
+    [lane, machine, status, from, to], p ? { intervalMs: logPollMs(p, Date.now(), POLL.intervalMs) } : POLL);
   return html`<${LaneRunListView} state=${state} lane=${lane} machine=${machine} status=${status}/>`;
 }
 

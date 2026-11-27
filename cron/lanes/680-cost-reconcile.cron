@@ -16,7 +16,7 @@
 #
 # The project-6 usage meter's operator line (7,22,37,52 ->
 # /root/orchestrator/bin/project-6-usage-poll.sh) was REMOVED here: it was the
-# 2026-09-14 stopgap that read operator@example.com's meter because the tracker
+# 2026-09-14 stopgap that read operator@second.example's meter because the tracker
 # above could only poll one login. It polls two now
 # (EXTRA_USAGE_LOGINS / catalog/cost-accounts.json), posts the same
 # extra_usage_snapshots rows under box=project-6-account, and carries the same

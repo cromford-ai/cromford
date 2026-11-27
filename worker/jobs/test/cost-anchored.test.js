@@ -372,13 +372,13 @@ const ROUTE_STATE = {
   ],
   rows: [
     // Inside the meter span: the denominator.
-    { box: 'project-6', ts: '2026-09-14T11:00:00Z', auth_account: 'claude:operator@example.com', cost_usd: 100 },
+    { box: 'project-6', ts: '2026-09-14T11:00:00Z', auth_account: 'claude:operator@second.example', cost_usd: 100 },
     // Inside the window, outside the span: counted as raw, not as denominator.
-    { box: 'project-6', ts: '2026-09-14T18:00:00Z', auth_account: 'claude:operator@example.com', cost_usd: 150 },
+    { box: 'project-6', ts: '2026-09-14T18:00:00Z', auth_account: 'claude:operator@second.example', cost_usd: 150 },
     { box: 'hub', ts: '2026-09-14T18:00:00Z', auth_account: 'xai-key:operator', cost_usd: 30 },
   ],
   prCosts: [{
-    pr_url: PR('example-org/project-3', 12), cost_usd: 50, auth_account: 'claude:operator@example.com',
+    pr_url: PR('example-org/project-3', 12), cost_usd: 50, auth_account: 'claude:operator@second.example',
     stage_breakdown: 'execute:40;review:10', build_dirs: 'project-3-TK-109-202609141200', updated_at: NOW,
   }],
   merges: [],
@@ -391,7 +391,7 @@ test('the route answers the four sections, anchored off the default account map'
   const r = await call('/api/metrics/cost-anchored?day=2026-09-14', { state: ROUTE_STATE });
   assert.equal(r.status, 200);
   assert.equal(r.body.disabled, false);
-  const mk = r.body.accounts.find((a) => a.label === 'claude:operator@example.com');
+  const mk = r.body.accounts.find((a) => a.label === 'claude:operator@second.example');
   assert.equal(mk.state, 'metered');
   assert.equal(mk.factor, 4, '400 of meter over the 100 of rows inside the span');
   assert.equal(mk.rows_usd, 250);
@@ -411,7 +411,7 @@ test('the account map is configurable and a wrong map simply stops anchoring', a
   const r = await call('/api/metrics/cost-anchored?day=2026-09-14', {
     state: ROUTE_STATE, env: { COST_ANCHOR_ACCOUNT_MAP: 'project-6-account=claude:someone-else' },
   });
-  const mk = r.body.accounts.find((a) => a.label === 'claude:operator@example.com');
+  const mk = r.body.accounts.find((a) => a.label === 'claude:operator@second.example');
   assert.equal(mk.state, 'no-login', 'no meter maps to this label any more');
   assert.equal(mk.factor, 1);
   assert.equal(r.body.per_pr[0].anchored_usd, r.body.per_pr[0].raw_usd);

@@ -176,7 +176,7 @@ test('B6 resumeCommandFor trims the reason and refuses a blank one', () => {
 test('B7 pauseDetail names the reason, the actor, the age and the time', () => {
   const d = pauseDetail(byId(21));
   assert.match(d, /release freeze/);
-  assert.match(d, /by operator@cto\.com/);
+  assert.match(d, /by operator@example\.com/);
   assert.match(d, /2h ago/);
   assert.ok(d.includes(iso(-120)), `created_at in ${d}`);
   assert.match(d, /FLEET \(all projects\)/);
@@ -187,10 +187,10 @@ test('B7 pauseDetail names the reason, the actor, the age and the time', () => {
 });
 
 test('B8 boardPauseLines lists every row covering the board, and names a flag-only pause', () => {
-  const project-3 = boardPauseLines(rows, 'project-3', true);
-  assert.deepEqual(project-3.map((l) => l.what), ['merges', 'triage']);
-  assert.match(project-3[0].text, /release freeze/);
-  assert.match(project-3[1].text, /client asked to hold/);
+  const project_3 = boardPauseLines(rows, 'project-3', true);
+  assert.deepEqual(project_3.map((l) => l.what), ['merges', 'triage']);
+  assert.match(project_3[0].text, /release freeze/);
+  assert.match(project_3[1].text, /client asked to hold/);
   // The flag is set but no triage row is on record for this board.
   const flagOnly = boardPauseLines([], 'project-3', true);
   assert.equal(flagOnly.length, 1);
@@ -255,7 +255,7 @@ test('F1 the red PAUSED tag title carries the actor as well as the reason and ag
   const tag = rowHtml(out, 'project-3').match(/<span class="tag tag--bad" title="([^"]*)"[^>]*>PAUSED\(merges\)/);
   assert.ok(tag, 'the merges tag has a title');
   assert.match(tag[1], /release freeze/);
-  assert.match(tag[1], /by operator@cto\.com/);
+  assert.match(tag[1], /by operator@example\.com/);
   assert.match(tag[1], /2h ago/);
 });
 
@@ -276,7 +276,7 @@ test('F3 the PAUSES banner AGE cell carries created_at, and a console actor is l
   const out = render(h(PauseBanner, { rows, truncated: false, onEnd: noop }));
   assert.ok(out.includes(`title="${iso(-120)}"`), 'AGE title is created_at');
   assert.match(out, /console \(no verified identity\)/);
-  assert.match(out, /operator@cto\.com/);
+  assert.match(out, /operator@example\.com/);
 });
 
 test('F4 the Fleet page renders PAUSE FLEET with zero pauses', () => {
@@ -294,7 +294,7 @@ test('P1 the Project pause detail shows reason, actor and time for a triage row'
   const out = render(h(PauseDetail, { rows, project: 'project-3', paused: true }));
   assert.match(out, /PAUSED\(triage\)/);
   assert.match(out, /client asked to hold/);
-  assert.match(out, /by operator@cto\.com/);
+  assert.match(out, /by operator@example\.com/);
   assert.ok(out.includes(iso(-90)), 'created_at shown');
   // The fleet row covers this board too.
   assert.match(out, /PAUSED\(merges\)/);

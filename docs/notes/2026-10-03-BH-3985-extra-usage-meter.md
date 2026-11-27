@@ -48,7 +48,7 @@ Doc: COST
   (`extra_used_usd` NULL) into the meter span. They are counted as
   `failed_polls`, and `snapshots` counts readings. A span whose first or last
   poll failed used to lose its delta, so cost-anchored reported
-  `operator@example.com` as `unmeasured` ("a poll in this span carried no meter
+  `operator@second.example` as `unmeasured` ("a poll in this span carried no meter
   value") while its meter moved. An account whose every poll failed now reads
   `unmeasured` with "every meter poll in this window failed (N)", not
   `no-login`. The `fully_overage` rule is unchanged and now applies to readings.

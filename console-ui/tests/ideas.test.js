@@ -61,7 +61,7 @@ test('the strip counts the rows it was handed, not the ledger behind them', () =
   assert.equal(s.withMockup, 2);
   assert.equal(s.posted, 2); // posted + shipped, not the vetoed one
   assert.equal(s.shipped, 1);
-  assert.deepEqual(s.projects, ['project-4', 'project-3']);
+  assert.deepEqual(s.projects, ['project-3', 'project-4']);
   assert.equal(s.byStatus.gate_pending, 1);
   assert.equal(s.byStatus.vetoed, 1);
 });
@@ -82,7 +82,7 @@ test('facets are stable: lifecycle order for status, alphabetical for the rest',
     { status: 'shipped', project: 'project-4', dus: '' }
   ];
   assert.deepEqual(facet(rows, 'status'), ['gate_pending', 'shipped']);
-  assert.deepEqual(facet(rows, 'project'), ['project-4', 'project-3']);
+  assert.deepEqual(facet(rows, 'project'), ['project-3', 'project-4']);
   assert.deepEqual(facet(rows, 'dus'), ['derisk', 'scale']);
 });
 

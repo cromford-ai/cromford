@@ -15,7 +15,8 @@
 #      and the test hosts bake; read only where this machine can reach the jobs
 #      worker, which a Mac usually cannot)
 #   3. the newest nodejs.org release of CI's major  (the major is read out of
-#      .github/workflows/harness-ci.yml, never written here)
+#      .node-version, or .github/workflows/harness-ci.yml when there is no
+#      .node-version; never written here)
 # Whichever answers, its major must equal CI's, or the build is refused: the
 # local image and CI cannot drift apart again without somebody editing the
 # workflow on purpose.
@@ -52,11 +53,28 @@ _test_image_node_row() {
   ) || true
 }
 
+# repo_node_major <repo> -> the node major the repo runs, on stdout (BH-9268).
+# <repo>/.node-version first: one line, a bare major. It is the file the public
+# copy ships (it has no harness-ci.yml) and that its CI's setup-node reads. With
+# no .node-version, the major comes from .github/workflows/harness-ci.yml.
+# tests/node-version-file.bh-9268-test.sh pins the two equal upstream.
+repo_node_major() {
+  local repo="$1" v
+  if [ -r "$repo/.node-version" ]; then
+    v=$(tr -d '[:space:]' < "$repo/.node-version")
+    v="${v#v}"
+    [[ "$v" =~ ^[0-9]+$ ]] || { echo "test-image-node: $repo/.node-version holds '$v', not a bare node major" >&2; return 1; }
+    printf '%s' "$v"
+    return 0
+  fi
+  ci_node_major "$repo/.github/workflows/harness-ci.yml"
+}
+
 # test_image_node_version <repo> -> the exact x.y.z to install, on stdout; rc 1
 # with the reason on stderr when nothing usable resolves.
 test_image_node_version() {
   local repo="$1" major v src
-  major=$(ci_node_major "$repo/.github/workflows/harness-ci.yml") || return 1
+  major=$(repo_node_major "$repo") || return 1
   v="${NODE_VERSION:-}"; src="NODE_VERSION"
   if [ -z "$v" ]; then
     v=$(_test_image_node_row "$repo"); src="the bake.node.version row"
@@ -69,7 +87,7 @@ test_image_node_version() {
   fi
   v="${v#v}"
   [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "test-image-node: $src gave '$v', not an exact x.y.z" >&2; return 1; }
-  [ "${v%%.*}" = "$major" ] || { echo "test-image-node: $src gave node $v, but CI (.github/workflows/harness-ci.yml) runs node $major" >&2; return 1; }
+  [ "${v%%.*}" = "$major" ] || { echo "test-image-node: $src gave node $v, but the repo (.node-version or .github/workflows/harness-ci.yml) runs node $major" >&2; return 1; }
   echo "run-in-docker: node $v from $src (CI runs node $major)" >&2
   printf '%s' "$v"
 }

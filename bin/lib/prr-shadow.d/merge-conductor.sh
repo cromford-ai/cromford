@@ -45,11 +45,17 @@
 #       "No flake evidence" (an empty <file>, rc 0) only when the record row
 #       (pr_record_peek) is fresh (PR_RECORD_FIELD_MAX_AGE_S), its head_sha is <sha>,
 #       it holds at least 1 check entry for <sha> and fewer than
-#       PRR_CI_CHECKS_MAX names, and every entry for <sha> completed with a
-#       conclusion that is not cancelled or timed_out. The rerun list needs run
+#       PRR_CI_CHECKS_MAX names, and no entry for <sha> completed with the
+#       conclusion cancelled or timed_out. The rerun list needs run
 #       ids that only GitHub has, so any other case is a miss (stale, head,
-#       none, pending, flake, checks-max, unreadable): the record never invents
+#       none, flake, checks-max, unreadable): the record never invents
 #       a rerun and never hides a cancelled run it holds.
+#       BH-10351: an entry not yet completed is no flake evidence, as on
+#       GitHub's side (only a completed cancelled or timed_out latest run is
+#       one). Before, it was the miss `pending`: hub 2026-11-27 06:00Z-09:00Z,
+#       368 of them (a queued PR's queue check runs for the whole queue
+#       wait), each one runs read. Its completion is a check webhook that
+#       changes the entry; a lost one is the prr-sweep backstop's to fix.
 #   mc_flake_github <file> <slug> <sha> <n>
 #       Today's read: MC_FLAKE_GH=1 mc_ci_flake_runs <slug> <sha> > <file>, rc 0.
 #   mc_flake_norm <file>
@@ -125,6 +131,41 @@ mc_open_github() {
   return "$rc"
 }
 
+# BH-10351, the open list write-back. prr_read calls these in step record
+# after a miss, as `<prefix>_note <file> <github-rc> <why> <slug>`. When the
+# miss is the list stamp (stale, no-sync, unknown) and GitHub answered the
+# WHOLE open list, the list is written back (pr_record_list_sync <slug> open,
+# the call bin/prr-sweep.sh makes), so the next ticks of every list reader of
+# the repo read the record until a change. Before it, only the hourly sweep
+# wrote the stamp: hub 2026-11-27 09:11Z, project-3#open missed `stale` several
+# times a minute. `at` is the read's start (PRR_READ_AT), or the snapshot's
+# own time (state/pr-snapshot/<repo>/open.meta) when that is older: a
+# snapshot copy is never stamped newer than its read. Any other miss, rc,
+# shape or count (1000 rows or more: _gh_rest_list's cap) writes nothing.
+_mc_list_note() { # <file> <github-rc> <why> <slug> <cap> [snap]
+  local f="${1:-}" slug="${4:-}" cap="${5:-}" n at="${PRR_READ_AT:-}" d meta ae
+  [ "${2:-}" = 0 ] || return 0
+  case "${3:-}" in stale|no-sync|unknown) ;; *) return 0 ;; esac
+  command -v pr_record_list_sync >/dev/null 2>&1 || return 0
+  n=$(jq -r 'if type == "array" then length else empty end' "$f" 2>/dev/null)
+  [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -lt "$cap" ] || return 0
+  [[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 0
+  if [ "${6:-}" = snap ] && command -v _prs_on >/dev/null 2>&1 && _prs_on && d=$(_prs_dir "$slug" 2>/dev/null) && [ -n "$d" ]; then
+    meta=$(tr -dc '0-9' < "$d/open.meta" 2>/dev/null)
+    [ -n "$at" ] || return 0
+    ae=$(date -u -d "$at" +%s 2>/dev/null)
+    if [[ "$meta" =~ ^[0-9]{1,12}$ ]] && [[ "$ae" =~ ^[0-9]+$ ]] && [ "$meta" -lt "$ae" ]; then
+      at=$(date -u -d "@$meta" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 0
+    fi
+  fi
+  [[ "$at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 0
+  pr_record_list_sync "$slug" open "$f" "$at" >/dev/null 2>&1 || true
+  return 0
+}
+mc_open_note() { _mc_list_note "${1:-}" "${2:-}" "${3:-}" "${4:-}" 1000 snap; }
+# The external page is one page of 100: whole only when it holds fewer.
+mc_xe_note() { _mc_list_note "${1:-}" "${2:-}" "${3:-}" "${4:-}" 100; }
+
 mc_open_norm() {
   jq -c '[.[]? | {n: .number, head: .head.sha, draft: (.draft == true),
           labels: ([.labels[]?.name] | sort)}] | sort_by(.n)' "${1:-}" 2>/dev/null
@@ -161,8 +202,7 @@ mc_flake_record() {
     elif (.checks | length) >= $max then "checks-max"
     else ([.checks[] | objects | select((.sha // "" | ascii_downcase) == $h)]) as $e
       | if ($e | length) == 0 then "none"
-        elif any($e[]; .status != "completed") then "pending"
-        elif any($e[]; .conclusion == "cancelled" or .conclusion == "timed_out") then "flake"
+        elif any($e[]; .status == "completed" and (.conclusion == "cancelled" or .conclusion == "timed_out")) then "flake"
         else "hit" end
     end' <<<"$row" 2>/dev/null) || w=malformed
   [ "$w" = hit ] || { echo "${w:-malformed}"; return 1; }

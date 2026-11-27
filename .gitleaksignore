@@ -48,6 +48,10 @@ tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:104
 tests/box-ops-orgo-host.bh-8325-test.sh:generic-api-key:210
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:79
 tests/box-ssh-probe.bh-7710-test.sh:generic-api-key:94
+tests/box-watch-lever.bh-10231-test.sh:generic-api-key:49
+tests/box-watch-lever.bh-10231-test.sh:generic-api-key:50
+tests/box-watch-lever.bh-10231-test.sh:generic-api-key:63
+tests/box-watch.bh-10231-test.sh:generic-api-key:146
 tests/br-pool-fixround-fetch.bh-8458-test.sh:github-pat:137
 tests/builds-retention-settled.bh-7931-test.sh:generic-api-key:286
 tests/ci-durations-missing-row.bh-5653-test.sh:curl-auth-header:68

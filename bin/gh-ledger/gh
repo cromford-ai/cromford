@@ -276,9 +276,43 @@ _ghl_run_capture() {
 
 # ── the calls that go straight through, before anything else is spent ───────
 [ "$_ghl_depth" = 0 ] || _ghl_through "$@"
-[ "${GH_LEDGER_OFF:-}" != 1 ] || _ghl_through "$@"
 _ghl_h="${HARNESS:-}"
 [ -n "$_ghl_h" ] || _ghl_h="${_ghl_dir%/bin/gh-ledger}"
+
+# ── BH-10349: THE CALL COUNTER (logs/gh-calls/<hour>.log) ────────────────────
+# bin/lib/gh-limit-logger.sh counts a call only when the LANE sourced it and
+# called its gh() function. bin/pipeline-health.sh never sourced it, so about
+# 1,200 calls an hour on the hub had no line there, and `timeout N gh` (gh_rest
+# with GH_REST_TIMEOUT_S, merge-sweep, ...) skipped the function in every lane.
+# This shim sees each of them, so it writes the line with the same function
+# (_ghll_count). A call the function already counted carries GH_CALLS_COUNTED=1
+# and gets no second line. Local commands are not GitHub calls. Before the
+# kill switches on purpose: they turn off the ledger, not this count. Every
+# failure is discarded; the count never changes the call.
+_ghl_count() {
+  local lib hr
+  [ -z "${GH_CALLS_COUNTED:-}" ] || return 0
+  case "${1:-}" in
+    auth|config|completion|help|version|alias|extension|--version|-h|--help|'') return 0 ;;
+  esac
+  # printf '%(…)T' in _ghll_count is bash 4.2.
+  [ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || return 0
+  for lib in "$_ghl_dir/../lib/gh-limit-logger.sh" "$_ghl_h/bin/lib/gh-limit-logger.sh"; do
+    # shellcheck source=bin/lib/gh-limit-logger.sh
+    [ -r "$lib" ] && { . "$lib"; break; }
+  done
+  command -v _ghll_count >/dev/null 2>&1 || return 0
+  _GHLL_H="$_ghl_h"
+  # The logger prunes on the first write of a process into a new hour. Every
+  # shim call is a new process, so the prune runs only when this hour's file
+  # does not exist yet (the first writer of the hour), not on every call.
+  printf -v hr '%(%Y%m%d%H)T' -1
+  [ -e "$_ghl_h/logs/gh-calls/$hr.log" ] && _GHLL_HOUR="$hr"
+  GH_CALL_CALLER="${GH_CALL_CALLER:-$(_ghl_caller)}" _ghll_count "$@"
+}
+{ _ghl_count "$@"; } >/dev/null 2>&1 || true
+
+[ "${GH_LEDGER_OFF:-}" != 1 ] || _ghl_through "$@"
 # shellcheck source=bin/lib/lane-switch.sh
 command -v lane_switch >/dev/null 2>&1 || . "${_ghl_dir%/gh-ledger}/lib/lane-switch.sh" 2>/dev/null || lane_switch() { [ -e "${HARNESS:-${H:-/root/harness}}/flags/$1" ]; }
 ! HARNESS="$_ghl_h" LANE_GATE_CACHE_S=2147483647 lane_switch gh-ledger-off file 2>/dev/null || _ghl_through "$@"

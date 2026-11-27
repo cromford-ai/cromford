@@ -160,7 +160,7 @@ cat > "$T/catalog/cost-accounts.json" <<'EOF'
   "accounts": {
     "acct": {
       "login": {"box": "hub", "config_dir": "/dev/null"},
-      "auth_accounts": ["claude:operator@example.com"],
+      "auth_accounts": ["claude:operator@second.example"],
       "boxes": {"cost_rows": ["hub"], "jobs": ["box-hub"]}
     }
   }
@@ -185,8 +185,8 @@ fresh_day() { rm -f "$T/flags"/alerted-cost-blank-* "$T/flags"/alerted-cost-reco
 # rows. It is here so the blank flood never sits alone in the table — the pass
 # must pick its rows out of a ledger that also carries healthy ones.
 BASE_ROWS="$(printf '%s\n%s\n' \
-  "$(crow "$M30" hub claude 'claude:operator@example.com' 40 c1)" \
-  "$(crow "$M30" hub claude 'claude:operator@example.com' 10 c2)")"
+  "$(crow "$M30" hub claude 'claude:operator@second.example' 40 c1)" \
+  "$(crow "$M30" hub claude 'claude:operator@second.example' 10 c2)")"
 meters "$(printf '%s\n%s\n' "$(snap acct "$M50" 100 1000)" "$(snap acct "$M5" 100 1050)")"
 
 # ===========================================================================

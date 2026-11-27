@@ -16,6 +16,6 @@ test('core.js re-exports the deployment default unchanged', () => {
 test('the default still maps the two metered boxes onto their accounts', () => {
   const m = parseAccountMap(FROM_CORE);
   const pairs = m instanceof Map ? Object.fromEntries(m) : m;
-  assert.equal(pairs['project-6-account'], 'claude:operator@example.com');
-  assert.equal(pairs.hub, 'claude:operator@example.com');
+  assert.equal(pairs['project-6-account'], 'claude:operator@second.example');
+  assert.equal(pairs.hub, 'claude:operator_home@example.com');
 });

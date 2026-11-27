@@ -1,0 +1,14 @@
+# @hub-lanes
+
+# ── STAFF ARCHIVIST LEVER (BH-10125, C4 of #9423) ───────────────────────────
+# Hourly at :57. Reads Archie's hand-fix log (archie_actions, the BH-4587
+# reader and fingerprint) and samples causes_fixed_by_hand_twice as the
+# archivist staff agent's metric; the sample settles its due lever actions. At
+# staff.archivist.level = file or act (seed: observe), files ONE ai-build issue
+# per repeated cause after an issue dedupe, at most staff.archivist.file_max_day
+# a UTC day, each one recorded as a lever action first. One line per run in
+# logs/staff-archivist-lever.log.
+# Off: flags/lane-off-staff-archivist-lever (bin/harness-ctl.sh off
+# staff-archivist-lever), or the staff kill flags (staff-off-all, staff-kill-all,
+# staff-off-archivist, staff-kill-archivist).
+57 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/archivist-lever.sh >> /root/harness/logs/staff-archivist-lever-cron.log 2>&1

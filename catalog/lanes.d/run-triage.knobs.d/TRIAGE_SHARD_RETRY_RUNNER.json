@@ -1,0 +1,9 @@
+{
+  "env": "TRIAGE_SHARD_RETRY_RUNNER",
+  "read_in": "bin/lib/runner-fault.sh",
+  "type": "string",
+  "default": "",
+  "required": false,
+  "settable": false,
+  "note": "BH-10274: the runner a triage shard retries on after a runner fault. Empty (default) = claude, or codex when claude was the runner that failed. A value that is not ^[a-z0-9_-]+$ or that names the failed runner reads as empty. Code fallback in rf_other_runner. NOT settable from the control plane: it names a runner a root lane executes (tests/lanes-registry-test.sh 17a); set it in the box env only."
+}

@@ -45,7 +45,7 @@ async function jwt(payload = claims()) {
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', KEY.privateKey, new TextEncoder().encode(input));
   return `${input}.${b64u(new Uint8Array(sig))}`;
 }
-const accessHeaders = async (token) => ({ 'cf-access-authenticated-user-email': 'the operator@example.com', 'cf-access-jwt-assertion': token ?? await jwt() });
+const accessHeaders = async (token) => ({ 'cf-access-authenticated-user-email': 'Operator@example.com', 'cf-access-jwt-assertion': token ?? await jwt() });
 
 function stub() {
   const jobs = [];
@@ -89,7 +89,7 @@ test('B1 a verified Access identity on a boxOps row: the upstream carries the to
     ['staff/agents/autonomy', AUTONOMY],
     ['staff/classes/delegation', { agent: 'watchman', class: 'lint-fixes', decision: 'delegate', reason: 'r' }],
     ['staff/promotions/decide', { id: 7, decision: 'approve', reason: 'r' }],
-    ['box-commands', { box: 'hub', type: 'orgo_restart', target: 'project-3', reason: 'hung', confirm: true }],
+    ['box-commands', { box: 'hub', type: 'orgo_restart', target: 'project3', reason: 'hung', confirm: true }],
   ]) {
     const r = await forward(rest, { body, headers: await accessHeaders() });
     assert.equal(r.status, 200, rest);

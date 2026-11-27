@@ -133,7 +133,7 @@ read, and it is settled against the Console once, not guessed at twice.
 
 ## The hub's billing identity — ACCEPTED, not a finding (the operator, 2026-08-24)
 
-**Hub sessions bill `operator@example.com`, BY DESIGN.** That covers everything the
+**Hub sessions bill `operator@second.example`, BY DESIGN.** That covers everything the
 hub runs on its ambient login: orchestrator turns, box-chat, `claude-auth-check`,
 `update-runners`. This is a decision, not drift — do not "fix" it, and do not
 re-flag it in an audit.
@@ -661,7 +661,7 @@ Two independent measurements of the same money, made to agree:
   machine whose rows are not in the window. This is the ledger every dashboard,
   PR cost and budget here is built on.
 
-Nothing compared them until now. That is how `operator@example.com` reached $23.8K
+Nothing compared them until now. That is how `operator@second.example` reached $23.8K
 of a $35K monthly cap with its meter unread for fifteen days: a ledger cannot
 see an invoice, and an invoice cannot see a lane.
 
@@ -669,14 +669,14 @@ see an invoice, and an invoice cannot see a lane.
 
 The unit of a meter is an **ACCOUNT**, not a box. A box is where a call runs; an
 account is who gets the invoice, and the two stopped being the same thing when
-the hub's lanes started billing `operator@example.com` while the hub's stored login
-belongs to `operator@example.com`. The map is data, in git, because it is a business
+the hub's lanes started billing `operator@second.example` while the hub's stored login
+belongs to `operator_home@example.com`. The map is data, in git, because it is a business
 fact and not a code constant:
 
 | account | who | login | reads its meter? |
 |---|---|---|---|
-| `project-6-account` | operator@example.com | hub, `/root/.claude-project-6` | yes |
-| `hub-gmail` | operator@example.com | hub, `/root/.claude` | yes |
+| `project-6-account` | operator@second.example | hub, `/root/.claude-project-6` | yes |
+| `hub-gmail` | operator_home@example.com | hub, `/root/.claude` | yes |
 | `project-1` | project-1 box account | project-1, `/root/.claude` | yes |
 | `project-2` | project-2 dedicated | project-2, `/root/.claude` | **no** — 1-year setup-token |
 | `project-3` | project-3 dedicated | project-3, `/root/.claude` | **no** — 1-year setup-token |
@@ -708,7 +708,7 @@ whose UNLABELLED Anthropic rows belong to it, the `boxes.jobs` patterns whose
 
 ### Dedicated metered account for the harness (decision for the operator)
 
-The `operator@example.com` meter also bills the operator's Mac Claude Code sessions, so a
+The `operator@second.example` meter also bills the operator's Mac Claude Code sessions, so a
 move on it cannot confirm what the harness spent. Recommendation: put the
 harness boxes on a separate metered account that only harness boxes use, and
 keep the Mac on its own. Then that account's meter delta is harness cash and

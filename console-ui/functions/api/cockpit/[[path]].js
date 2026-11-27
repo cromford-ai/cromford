@@ -31,8 +31,12 @@
 // the operator were signed out.
 
 import { NEEDS_STAGES, NEWEST_PER_TICKET, needCounts } from '../../_lib/needs-count.js';
+import { PERIOD_FALLBACKS, parseRange, bucketExpr, csvResponse } from '../../_lib/period.js';
 
 const CONSOLE = 'https://harness-console.operator.workers.dev';
+// The jobs worker serves the shared period knobs (mc.period.* rows), the same
+// host functions/api/coord/ forwards to.
+const JOBS = 'https://harness-jobs.operator.workers.dev';
 const AUTH_PROBE = '/api/dash/fleet';
 
 const seen = new Map();
@@ -232,9 +236,228 @@ async function needs(db, url) {
   });
 }
 
+// ── The range path of the log reads (BH-9308, BH-9120.4) ─────────────────
+// With ?from= (or ?to=) HISTORY and COMMANDS answer one bounded [from, to)
+// window: search, filters, a keyset cursor, totals, a series and a CSV. With
+// neither, HISTORY answers exactly as before. The new params need a range, so
+// no request reads an unbounded slice of a growing table.
+const RANGE_ONLY = ['q', 'cursor', 'series', 'format', 'totals'];
+const SERIES = ['hour', 'day', 'week'];
+const KNOB_INT = { max_range_days: [1, 3660], csv_row_cap: [1, 1000000], max_buckets: [1, 100000] };
+
+// The mc.period.* knobs, one fetch per request and only on the range path. A
+// failed fetch uses PERIOD_FALLBACKS and the answer says knobs_source:
+// "fallback", so a degraded cap is never silent.
+async function periodKnobs(env) {
+  try {
+    if (!env.HARNESS_SECRET) throw new Error('no secret');
+    const res = await fetch(`${JOBS}/api/period/knobs`, { headers: { authorization: `Bearer ${env.HARNESS_SECRET}` } });
+    if (res.status !== 200) throw new Error(`http ${res.status}`);
+    const body = await res.json();
+    const k = (body && body.knobs) || {};
+    const out = { ...PERIOD_FALLBACKS };
+    for (const [name, [lo, hi]] of Object.entries(KNOB_INT)) {
+      if (Number.isInteger(k[name]) && k[name] >= lo && k[name] <= hi) out[name] = k[name];
+    }
+    return { knobs: out, source: 'row' };
+  } catch {
+    return { knobs: { ...PERIOD_FALLBACKS }, source: 'fallback' };
+  }
+}
+
+const rangeNeeded = (url) => RANGE_ONLY.find((k) => url.searchParams.has(k));
+
+// `%` `_` `\` are literal in a search: escaped, wrapped in %...%, one bind.
+const likeValue = (q) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+const likeAny = (cols) => `(${cols.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+
+// A keyset cursor: base64url of JSON [timeValue, id]. Anything else is a 400.
+const encodeCursor = (ts, id) => btoa(JSON.stringify([ts, id])).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function decodeCursor(raw) {
+  try {
+    const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+    const v = JSON.parse(atob(b64 + '==='.slice((b64.length + 3) % 4)));
+    if (Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && Number.isInteger(v[1])) return v;
+  } catch { /* a bad cursor */ }
+  return null;
+}
+
+const isoOf = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+// The bucket key of one instant, in the exact text bucketExpr() yields.
+function bucketKey(ms, bucket) {
+  const d = new Date(ms);
+  if (bucket === 'hour') return `${isoOf(ms).slice(0, 13)}:00:00Z`;
+  if (bucket === 'day') return isoOf(ms).slice(0, 10);
+  const back = (d.getUTCDay() + 6) % 7; // days since Monday
+  return isoOf(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)).slice(0, 10);
+}
+// Every bucket key from the bucket of `from` up to `to` (exclusive), or null
+// when there are more than `max`.
+function bucketKeys(from, to, bucket, max) {
+  const step = bucket === 'hour' ? 3600e3 : bucket === 'day' ? 86400e3 : 7 * 86400e3;
+  const start = Date.parse(`${bucketKey(Date.parse(from), bucket)}${bucket === 'hour' ? '' : 'T00:00:00Z'}`);
+  const end = Date.parse(to);
+  const keys = [];
+  for (let t = start; t < end; t += step) {
+    if (keys.length >= max) return null;
+    keys.push(bucketKey(t, bucket));
+  }
+  return keys;
+}
+
+// The parts every range read shares: knobs, range, q, cursor, limit, series,
+// format. Returns {error} (a 400) or the parsed request. Reads no table.
+async function rangeRequest(env, url, { defLimit = 100, maxLimit = 500 } = {}) {
+  const kn = await periodKnobs(env);
+  const range = parseRange(url, kn.knobs, Date.now());
+  if (range.error) return { error: range.error };
+  const q = (url.searchParams.get('q') || '').trim();
+  let cursor = null;
+  if (url.searchParams.has('cursor')) {
+    cursor = decodeCursor(url.searchParams.get('cursor') || '');
+    if (!cursor) return { error: 'cursor is not valid' };
+  }
+  const series = url.searchParams.get('series');
+  let keys = null;
+  if (series !== null) {
+    if (!SERIES.includes(series)) return { error: `series must be one of ${SERIES.join('|')}` };
+    keys = bucketKeys(range.from, range.to, series, kn.knobs.max_buckets);
+    if (!keys) return { error: `range has over ${kn.knobs.max_buckets} ${series} buckets (mc.period.max_buckets)` };
+  }
+  const format = url.searchParams.get('format');
+  if (format !== null && format !== 'csv') return { error: 'format must be csv' };
+  return {
+    knobs: kn.knobs, knobsSource: kn.source, range, q, cursor, series, keys, csv: format === 'csv',
+    limit: clampLimit(url.searchParams.get('limit'), defLimit, maxLimit)
+  };
+}
+
+// One range read over `table`: page (keyset on (timeCol, id) desc), totals and
+// series in one Promise.all, or the CSV. `where`/`binds` are the filters, all
+// with ? binds; `cols` the page columns; `totalsSql` the SELECT list of the
+// totals statement.
+async function rangeRead(db, r, { table, timeCol, where, binds, cols, searchCols, totalsSql, csvCols, csvName }) {
+  const w = [`${timeCol} >= ?`, `${timeCol} < ?`, ...where];
+  const b = [r.range.from, r.range.to, ...binds];
+  if (r.q) { w.push(likeAny(searchCols)); for (let i = 0; i < searchCols.length; i++) b.push(likeValue(r.q)); }
+  const order = `ORDER BY ${timeCol} DESC, id DESC`;
+  if (r.csv) {
+    // sql-ident-ok: table/columns are the caller's literals; every value is a bind
+    const rows = await db.prepare(`SELECT ${csvCols.join(', ')} FROM ${table} WHERE ${w.join(' AND ')} ${order} LIMIT ?`)
+      .bind(...b, r.knobs.csv_row_cap + 1).all();
+    return { csv: csvResponse(csvCols, rows.results || [], { cap: r.knobs.csv_row_cap, filename: `${csvName}-${r.range.from}.csv` }) };
+  }
+  const pw = w.slice();
+  const pb = b.slice();
+  if (r.cursor) { pw.push(`(${timeCol} < ? OR (${timeCol} = ? AND id < ?))`); pb.push(r.cursor[0], r.cursor[0], r.cursor[1]); }
+  const reads = [
+    db.prepare(`SELECT ${cols.join(', ')} FROM ${table} WHERE ${pw.join(' AND ')} ${order} LIMIT ?`).bind(...pb, r.limit + 1).all(),
+    db.prepare(`SELECT ${totalsSql} FROM ${table} WHERE ${w.join(' AND ')}`).bind(...b).first(),
+    r.series
+      ? db.prepare(`SELECT ${bucketExpr(r.series, timeCol)} AS bucket, COUNT(*) AS n FROM ${table} WHERE ${w.join(' AND ')} GROUP BY bucket`).bind(...b).all()
+      : null
+  ];
+  const [page, tot, ser] = await Promise.all(reads);
+  const all = page.results || [];
+  const rows = all.slice(0, r.limit);
+  const last = rows[rows.length - 1];
+  const out = {
+    rows,
+    totals: tot || {},
+    next_cursor: all.length > r.limit && last ? encodeCursor(last[timeCol], Number(last.id)) : null,
+    range: r.range,
+    knobs_source: r.knobsSource
+  };
+  if (ser) {
+    const by = new Map((ser.results || []).map((x) => [String(x.bucket), Number(x.n)]));
+    out.series = r.keys.map((k) => ({ bucket: k, value: by.has(k) ? by.get(k) : null }));
+  }
+  return out;
+}
+
+const num = (v) => Number(v || 0);
+
+async function historyRange(db, env, url) {
+  const r = await rangeRequest(env, url);
+  if (r.error) return json({ error: r.error }, 400);
+  const where = [];
+  const binds = [];
+  const project = url.searchParams.get('project');
+  const kind = url.searchParams.get('kind');
+  const outcome = url.searchParams.get('outcome');
+  if (project) {
+    if (!SAFE.test(project)) return json({ error: 'bad project' }, 400);
+    where.push('project = ?'); binds.push(project);
+  }
+  if (kind) {
+    if (!SAFE.test(kind)) return json({ error: 'bad kind' }, 400);
+    where.push('kind = ?'); binds.push(kind);
+  }
+  if (outcome === 'ok') where.push('rc = 0');
+  else if (outcome === 'failed') where.push('(rc IS NULL OR rc <> 0)');
+  else if (outcome) return json({ error: 'outcome must be ok or failed' }, 400);
+  const out = await rangeRead(db, r, {
+    table: 'runs', timeCol: 'started_at', where, binds,
+    cols: ['id', 'rkey', 'project', 'kind', 'rc', 'summary', 'started_at', 'finished_at'],
+    searchCols: ['rkey', 'kind', 'summary'],
+    totalsSql: 'COUNT(*) AS n, SUM(CASE WHEN rc = 0 THEN 0 ELSE 1 END) AS failed',
+    csvCols: ['id', 'rkey', 'project', 'kind', 'rc', 'summary', 'started_at', 'finished_at'],
+    csvName: 'history'
+  });
+  if (out.csv) return out.csv;
+  const total = num(out.totals.n);
+  const failed = num(out.totals.failed);
+  return json({
+    runs: out.rows, total, failed, totals: { total, ok: total - failed, failed },
+    next_cursor: out.next_cursor, ...(out.series ? { series: out.series } : {}),
+    range: out.range, knobs_source: out.knobs_source, generated_at: new Date().toISOString()
+  });
+}
+
+// The command log over a period (BH-9308). `from` is required: the commands
+// table only grows, and the dash list (api.commands) stays the unbounded
+// newest-N read for its other callers. There is no box column on the table, so
+// a box filter is not offered; `type`, `project` and `status` are.
+const CMD_STATUSES = ['pending', 'claimed', 'done', 'failed', 'dead_letter'];
+const STATUS_SAFE = /^[a-z_]{1,32}$/;
+
+async function commandsRange(db, env, url) {
+  if (!url.searchParams.has('from')) return json({ error: 'from is required: the command log reads one period' }, 400);
+  const r = await rangeRequest(env, url);
+  if (r.error) return json({ error: r.error }, 400);
+  const where = [];
+  const binds = [];
+  for (const [key, re] of [['type', SAFE], ['project', SAFE], ['status', STATUS_SAFE]]) {
+    const v = url.searchParams.get(key);
+    if (!v) continue;
+    if (!re.test(v)) return json({ error: `bad ${key}` }, 400);
+    where.push(`${key} = ?`); binds.push(v);
+  }
+  const out = await rangeRead(db, r, {
+    table: 'commands', timeCol: 'created_at', where, binds,
+    cols: ['id', 'ckey', 'type', 'project', 'payload', 'status', 'attempts', 'result', 'created_at', 'updated_at'],
+    searchCols: ['ckey', 'type', 'project', 'payload', 'result'],
+    totalsSql: `COUNT(*) AS total, ${CMD_STATUSES.map((st) => `SUM(CASE WHEN status = '${st}' THEN 1 ELSE 0 END) AS ${st}`).join(', ')}`,
+    csvCols: ['id', 'ckey', 'type', 'project', 'status', 'attempts', 'result', 'created_at', 'updated_at'],
+    csvName: 'commands'
+  });
+  if (out.csv) return out.csv;
+  const totals = { total: num(out.totals.total) };
+  let known = 0;
+  for (const st of CMD_STATUSES) { totals[st] = num(out.totals[st]); known += totals[st]; }
+  totals.other = totals.total - known;
+  return json({
+    commands: out.rows, totals, next_cursor: out.next_cursor, ...(out.series ? { series: out.series } : {}),
+    range: out.range, knobs_source: out.knobs_source, generated_at: new Date().toISOString()
+  });
+}
+
 // Cursor pagination on the id, never OFFSET: `runs` grows by ~250 rows a day and
 // an OFFSET page re-reads everything above it.
-async function history(db, url) {
+async function history(db, url, env) {
+  if (url.searchParams.has('from') || url.searchParams.has('to')) return historyRange(db, env, url);
+  const needs = rangeNeeded(url);
+  if (needs) return json({ error: `${needs} needs a from/to range` }, 400);
   const where = ['1=1'];
   const binds = [];
   const project = url.searchParams.get('project');
@@ -408,7 +631,8 @@ export async function onRequest(context) {
   try {
     if (parts.length === 1 && parts[0] === 'now') return await now(env.CONSOLE_DB, url);
     if (parts.length === 1 && parts[0] === 'needs') return await needs(env.CONSOLE_DB, url);
-    if (parts.length === 1 && parts[0] === 'history') return await history(env.CONSOLE_DB, url);
+    if (parts.length === 1 && parts[0] === 'history') return await history(env.CONSOLE_DB, url, env);
+    if (parts.length === 1 && parts[0] === 'commands') return await commandsRange(env.CONSOLE_DB, env, url);
     if (parts.length === 2 && parts[0] === 'history' && parts[1] === 'builds') {
       return await buildHistory(env.CONSOLE_DB, url);
     }

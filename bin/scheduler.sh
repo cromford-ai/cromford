@@ -267,10 +267,11 @@ tick() {
 
   # ── parents ──────────────────────────────────────────────────────────────
   local reads=0 pr br out
-  : > "$D/parents"
+  : > "$D/parents"; : > "$D/parent-brs"
   for k in $(jq -r '.edges[]? | select(.kind == "hard") | "\(.child) \(.parent)"' "$D/edges.json" \
       | awk 'NR == FNR {c[$1]; next} ($1 in c) {print $2}' <(grep -vxFf "$D/in_flight" "$D/candidates") - | sort -n -u); do
     st=""; pr=""
+    printf 'ticket/%s-%s\n' "${PFX,,}" "$k" >> "$D/parent-brs"
     IFS=$'\t' read -r _ _ pr < <(awk -F'\t' -v n="$k" '$1 == n' "$D/newest_job")
     if [ -z "$pr" ]; then
       if [ "$reads" -ge "$READS_MAX" ]; then printf '%s\tunknown\n' "$k" >> "$D/parents"; continue; fi
@@ -326,6 +327,11 @@ tick() {
     fi
     printf '%s\t%s\n' "$k" "$st" >> "$D/parents"
   done
+  # BH-10351: the parent memo keeps only this tick's parent branches, and only
+  # after an edge list that parsed (an unread list is not "no parents").
+  [ "$SCHED_PRR" = 1 ] && command -v sched_parent_memo_gc >/dev/null 2>&1 \
+    && jq -e '.edges | arrays' "$D/edges.json" >/dev/null 2>&1 \
+    && sched_parent_memo_gc "$SLUG" "$D/parent-brs"
 
   # ── enforce: sibling-serial's data (it no longer decides in the pool) ───
   # A failed or timed-out `parts` or `check` is `?` (unknown / sibling check

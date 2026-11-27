@@ -21,9 +21,9 @@ account, so the hub picked `default`-or-nothing and the Fly pool logged
 is derived, not polled (the endpoint is rate-limited per account, so
 `bin/extra-usage-track.sh` polls once and `quota-poll.sh` reads its snapshot).
 The snapshot it read was `state/extra-usage-last.json` — the BOX LOGIN's meter.
-On the hub the stored login is operator@example.com (weekly 4%), but the `default`
+On the hub the stored login is operator_home@example.com (weekly 4%), but the `default`
 credential is `env/global.env`'s `CLAUDE_CODE_OAUTH_TOKEN`, which bills
-operator@example.com (weekly 100%). So the row described an account nothing was
+operator@second.example (weekly 100%). So the row described an account nothing was
 spending, and the account everything was spending had no row at all.
 
 ## What changed

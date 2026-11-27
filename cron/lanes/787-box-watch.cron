@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── BOX WATCH LANE (BH-10231, C1 of BH-9889) ────────────────────────────────
+# Every 5 minutes the hub ssh's each fleet.conf box once. A box that fails
+# box_watch.fail_probes (3) probes in a row is restarted through
+# bin/box-ops.sh restart --apply, at most once per box_watch.restart_window_min
+# (120), then recovered and re-probed. One box_watch_actions row per restart;
+# a page only when the restart is refused or the box stays dark.
+# Hourly at :23 it checks the Orgo key(s) and GET /workspaces (lever-check).
+# Owner: quartermaster. Off: flags/lane-off-box-watch, or
+# bin/harness-ctl.sh off box-watch. Note: docs/notes/2026-11-26-BH-10231-box-watch.md.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/box-watch.sh tick >/dev/null 2>&1
+23 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/box-watch.sh lever-check >/dev/null 2>&1

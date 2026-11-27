@@ -235,10 +235,10 @@ RF2=$(lastrow claude)
 [ "$(fld "$RF2" 16)" = "acct:../x" ] && ok || bad "AC1(f) an unsafe name must fall back to acct:../x: $RF2"
 grep -q SENTINEL "$T/logs/cost.csv" && bad "AC1(f) a name outside accounts.d read $T/env/x.env: $RF2" || ok
 reset
-printf '{"%s":"claude:operator@example.com"}\n' "$FP1" > "$T/state/auth-accounts.local.json"
+printf '{"%s":"claude:operator@second.example"}\n' "$FP1" > "$T/state/auth-accounts.local.json"
 rc=$(call "$T/o-f3" triage "a1" ACCOUNT_ROUTING=1 PICK_OUT="$PICK1")
 RF3=$(lastrow claude)
-[ "$(fld "$RF3" 16)" = claude:operator@example.com ] && ok || bad "AC1(f) a live fp label must beat the picker's label: $RF3"
+[ "$(fld "$RF3" 16)" = claude:operator@second.example ] && ok || bad "AC1(f) a live fp label must beat the picker's label: $RF3"
 case ";$(fld "$RF3" 24);" in *";acct="*) bad "AC1(f) an fp-labelled row carries an acct= note: '$(fld "$RF3" 24)'" ;; *) ok ;; esac
 # The pinned own account (BH-1657) and the lib contract both writers call.
 LIBOUT=$( unset HARNESS_ENV_DIR ACCOUNTS_DIR; HARNESS="$T"; . "$DIR/bin/lib/cost-row.sh" 2>/dev/null

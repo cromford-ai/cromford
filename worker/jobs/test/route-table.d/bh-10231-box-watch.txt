@@ -1,0 +1,6 @@
+# BOX WATCH (BH-10231, C1 of BH-9889): the hub lane bin/box-watch.sh claims a
+# restart of a dark box inside the window, then records its end state; the
+# BOX WATCH section of /staff/quartermaster lists the rows. Bearer-gated.
+POST /api/box-watch/claim
+POST re:/^\/api\/box-watch\/actions\/(\d{1,15})$/
+GET /api/box-watch/actions

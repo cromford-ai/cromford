@@ -167,7 +167,7 @@ response to `state/extra-usage-last.json` and `quota-poll.sh` reads that.
 `state/extra-usage-last.json` is the BOX LOGIN's meter, and on a box where the
 stored login and `env/global.env`'s `CLAUDE_CODE_OAUTH_TOKEN` are the same
 account that is the right file. On the hub they are not: the login is
-operator@example.com and the `default` token bills operator@example.com. So
+operator_home@example.com and the `default` token bills operator@second.example. So
 `ACCOUNT_DEFAULT_LABEL` names the tracker login label whose snapshot describes
 the account the token actually bills, and `quota-poll.sh` derives `default` from
 `state/extra-usage-last-<label>.json` instead, recording

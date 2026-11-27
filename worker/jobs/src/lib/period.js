@@ -17,6 +17,8 @@ export const PERIOD_FALLBACKS = Object.freeze({
   csv_row_cap: 100000,          // settings row mc.period.csv_row_cap
   default_preset: "last_7_days", // settings row mc.period.default_preset
   max_buckets: 2000,            // settings row mc.period.max_buckets
+  report_top_rows: 20,          // settings row mc.period.report_top_rows (BH-9308)
+  filter_chip_cap: 30,          // settings row mc.period.filter_chip_cap (BH-9308)
 });
 
 const PRESETS = ["today", "yesterday", "last_7_days", "last_30_days", "this_month", "last_month"];
@@ -92,10 +94,16 @@ const KNOB_PARSE = {
   csv_row_cap: intIn(1, 1000000),
   default_preset: (v) => (PRESETS.includes(v) ? v : undefined),
   max_buckets: intIn(1, 100000),
+  // The top rows of a log screen's period report, sent as `limit`: at most
+  // 200, under the limit cap of each of the four log routes.
+  report_top_rows: intIn(1, 200),
+  // The most LANE / PROJECT filter chips a log screen draws.
+  filter_chip_cap: intIn(1, 500),
 };
 
 // readPeriodKnobs(env) -> {max_range_days, csv_row_cap, default_preset,
-// max_buckets, source: {<key>: 'row' | 'fallback'}}. ONE primary-key range
+// max_buckets, report_top_rows, filter_chip_cap,
+// source: {<key>: 'row' | 'fallback'}}. ONE primary-key range
 // statement. A junk value uses the fallback. A D1 error is thrown to the
 // caller (the router answers it), never turned into the fallbacks.
 export async function readPeriodKnobs(env) {
