@@ -1,7 +1,8 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/unblock/collectors/queue.sh — the queue family's stall collector for
-# the unblock agent (BH-7723, UNB-1). Sourced, never run; nothing runs on source.
+# the unblock agent (BH-7723, UNB-1). Sourced, never run. On source it only
+# loads bin/lib/unblock/prr.sh (functions only) and defines functions.
 #
 # It READS and prints JSONL stall records. It makes 0 writes and 0 model calls.
 # Every GitHub call is `gh_rest GET` (the caller sources bin/lib/gh-rest.sh and
@@ -112,7 +113,40 @@
 #   UNBLOCK_BRIEF_MAX_CHARS (1800)  the longest fix_brief
 #   UNBLOCK_PATCH_MAX_CHARS (20000) the patch text kept per file for ownership
 # Clock seam: UNBLOCK_NOW (epoch seconds).
+#
+# THE STEP (BH-10158): lane.unblock.gh_source (bin/lib/unblock/prr.sh).
+#   ubp_read (the PR record in step record, a miss reads GitHub): the open
+#   list (<repo>#open@queue), each pulls/<n> (<repo>#<n>@pull:ejected,
+#   :owners, :approved, :empty-block) and the CI word of a head (<repo>#<n>@ci,
+#   _ubq_checks's word from prr_ci_state).
+#   ubp_cached (step record: served while the head is the same and no `pr`
+#   wake came): the closed list (repo-wide key) and pulls/<n>/reviews.
+#   Step record only: pulls/<n>/files is pr_record_files and the head commit
+#   time is pr_record_head_commit_time (each reads GitHub once per head).
+#   Stay on GitHub in every step: _ubq_owners's files WITH patches and
+#   ubq_batch_failure (the record holds neither).
 # gh-rest: no-graphql
+
+# The record reads (BH-10158). No lib: today's GitHub reads.
+# shellcheck source=bin/lib/unblock/prr.sh
+. "${BASH_SOURCE[0]%/*}/../prr.sh" 2>/dev/null || true
+declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
+declare -F ubp_cached >/dev/null || ubp_cached() { shift 5; "$@"; }
+_ubq_step() { if declare -F ubp_step >/dev/null; then ubp_step; else echo off; fi; }
+
+# The GitHub side of each read (prr_read's github-fn, or ubp_cached's cmd).
+_ubq_pull_gh() { gh_rest GET "repos/$2/pulls/$3" > "$1" 2>/dev/null; }
+_ubq_open_gh() { gh_rest GET "repos/$2/pulls?state=open&per_page=100" > "$1"; }
+_ubq_get() { gh_rest GET "$2" > "$1"; }
+# _ubq_ci_gh <file> <slug> <n> <head> — {"word": _ubq_checks of the check-runs}.
+_ubq_ci_gh() {
+  local w rc=0
+  gh_rest GET "repos/$2/commits/$4/check-runs?per_page=100" > "$1.raw" || rc=$?
+  if [ "$rc" = 0 ] && w=$(_ubq_checks "$1.raw"); then printf '{"word":%s}\n' "$w" > "$1"
+  elif [ "$rc" = 0 ]; then rc=1; fi
+  rm -f "$1.raw"
+  return "$rc"
+}
 
 _ubq_root() { printf '%s' "${HARNESS:-${H:-}}"; }
 _ubq_now() { printf '%s' "${UNBLOCK_NOW:-$(date -u +%s)}"; }
@@ -123,7 +157,7 @@ _ubq_int() { # _ubq_int <value> <default>
 ubq_batch_drafts() {
   local slug="$1" d="$2" f win
   f="$d/closed.json"
-  gh_rest GET "repos/$slug/pulls?state=closed&sort=updated&direction=desc&per_page=100" > "$f" || return 1
+  ubp_cached "$slug" - - closed-list "$f" _ubq_get "$f" "repos/$slug/pulls?state=closed&sort=updated&direction=desc&per_page=100" || return 1
   jq -e 'type == "array"' "$f" >/dev/null 2>&1 || return 1
   win=$(_ubq_int "${UNBLOCK_BATCH_WINDOW_H:-}" 6)
   jq -c --argjson now "$(_ubq_now)" --argjson win "$win" '
@@ -303,7 +337,8 @@ _ubq_ejected() { # _ubq_ejected <project> <slug> <tmpdir> <draft json>
     unread=()
     pf="$d/pull-$n.json"
     head=null mstate=null labels=null
-    if { [ -s "$pf" ] || gh_rest GET "repos/$slug/pulls/$n" > "$pf"; } && jq -e 'type == "object"' "$pf" >/dev/null 2>&1; then
+    if { [ -s "$pf" ] || ubp_read "$slug#$n@pull:ejected" "$pf" ub_pull_record _ubq_pull_gh ub_pull_norm "$slug" "$n" labels,mergeable_state; } \
+       && jq -e 'type == "object"' "$pf" >/dev/null 2>&1; then
       open=$(jq -r '.state == "open" and (.merged // false) == false' "$pf")
       [ "$open" = true ] || continue
       head=$(jq -c '.head.sha // null' "$pf"); mstate=$(jq -c '.mergeable_state // null' "$pf")
@@ -394,7 +429,7 @@ _ubq_owners() {
   local slug="$1" d="$2" bf="$3" sigf="$4" draft="$5" n pf ff mf ticket files complete
   for n in $(jq -r '.prs[]?.pr | numbers' "$bf"); do
     pf="$d/pull-$n.json"; ff="$d/files-$n.json"; mf="$d/member-$draft-$n.json"
-    gh_rest GET "repos/$slug/pulls/$n" > "$pf" 2>/dev/null || : > "$pf"
+    ubp_read "$slug#$n@pull:owners" "$pf" ub_pull_record _ubq_pull_gh ub_pull_norm "$slug" "$n" labels,mergeable_state || : > "$pf"
     ticket=$(jq -r '(.head.ref // "") | capture("^ticket/bh-(?<n>[0-9]+([.][0-9]+)?)(-r[0-9]+)?$") | "BH-\(.n)"' "$pf" 2>/dev/null)
     files=false complete=false
     if gh_rest GET "repos/$slug/pulls/$n/files?per_page=100" > "$ff" 2>/dev/null && jq -e 'type == "array"' "$ff" >/dev/null 2>&1; then
@@ -425,11 +460,29 @@ _ubq_checks() { # _ubq_checks <check-runs file>: green|running|red|none, or null
       elif ($c | length) == 0 then "none" else "green" end' "$1"
 }
 
+# _ubq_touches_tests <slug> <num> <head> <tmpdir>: true when a changed path is
+# a test path; null when none is and the list may be cut (a full page of 100
+# on GitHub, 3,000 paths from pr_record_files); else false. rc 1 unread. In
+# step record the paths come from pr_record_files (BH-10158; it reads GitHub
+# once per head and stores the list), else from GitHub's first page.
+_ubq_touches_tests() {
+  local slug="$1" n="$2" head="$3" d="$4"
+  if [ "$(_ubq_step)" = record ] && declare -F pr_record_files >/dev/null; then
+    pr_record_files "$slug" "$n" "$head" "$d/paths-$n.txt" >/dev/null 2>&1 || return 1
+    jq -R -s -c 'split("\n") | map(select(. != "")) | any(.[]; test("(^|/)tests?/|\\.test\\.|\\.spec\\.|_test\\.")) as $hit
+      | if $hit then true elif length >= 3000 then null else false end' "$d/paths-$n.txt"
+    return
+  fi
+  gh_rest GET "repos/$slug/pulls/$n/files?per_page=100" > "$d/files-$n.json" || return 1
+  jq -c 'any(.[].filename; test("(^|/)tests?/|\\.test\\.|\\.spec\\.|_test\\.")) as $hit
+    | if $hit then true elif length >= 100 then null else false end' "$d/files-$n.json"
+}
+
 _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
   local proj="$1" slug="$2" d="$3" f t n head labels v word at idle knob sa rc mstate checks cr tt unread
   local -a vunread=()
   f="$d/open.json"
-  if ! gh_rest GET "repos/$slug/pulls?state=open&per_page=100" > "$f" || ! jq -e 'type == "array"' "$f" >/dev/null 2>&1; then
+  if ! ubp_read "$slug#open@queue" "$f" ub_open_record _ubq_open_gh ub_open_norm "$slug" || ! jq -e 'type == "array"' "$f" >/dev/null 2>&1; then
     _ubq_unreadable "$proj" "$slug" open-pulls; return 0
   fi
   t=$(jq 'length >= 100' "$f")
@@ -450,19 +503,20 @@ _ubq_approved() { # _ubq_approved <project> <slug> <tmpdir>
     idle=$(jq -n --arg at "$at" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
     [ "$idle" = null ] && unread+=(verdict_at)
     mstate=null checks=null cr=null tt=null
-    if gh_rest GET "repos/$slug/pulls/$n" > "$d/pull-$n.json"; then mstate=$(jq -c '.mergeable_state // null' "$d/pull-$n.json"); else unread+=(pull); fi
-    if gh_rest GET "repos/$slug/commits/$head/check-runs?per_page=100" > "$d/checks-$n.json" && checks=$(_ubq_checks "$d/checks-$n.json"); then
+    if ubp_read "$slug#$n@pull:approved" "$d/pull-$n.json" ub_pull_record _ubq_pull_gh ub_pull_norm "$slug" "$n" mergeable_state; then
+      mstate=$(jq -c '.mergeable_state // null' "$d/pull-$n.json")
+    else unread+=(pull); fi
+    if ubp_read "$slug#$n@ci" "$d/checks-$n.json" ub_ci_record _ubq_ci_gh ub_ci_norm "$slug" "$n" "$head" \
+       && checks=$(jq -c '.word' "$d/checks-$n.json" 2>/dev/null) && [ -n "$checks" ]; then
       [ "$checks" = null ] && unread+=(checks)
     else checks=null; unread+=(checks); fi
-    if gh_rest GET "repos/$slug/pulls/$n/reviews?per_page=100" > "$d/reviews-$n.json" \
+    if ubp_cached "$slug" "$n" "$head" reviews "$d/reviews-$n.json" _ubq_get "$d/reviews-$n.json" "repos/$slug/pulls/$n/reviews?per_page=100" \
        && cr=$(jq -c 'if length >= 100 then null else
                  [.[] | select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))]
                  | group_by(.user.login) | map(sort_by(.submitted_at) | last) | any(.state == "CHANGES_REQUESTED") end' "$d/reviews-$n.json"); then
       [ "$cr" = null ] && unread+=(reviews)
     else cr=null; unread+=(reviews); fi
-    if gh_rest GET "repos/$slug/pulls/$n/files?per_page=100" > "$d/files-$n.json" \
-       && tt=$(jq -c 'any(.[].filename; test("(^|/)tests?/|\\.test\\.|\\.spec\\.|_test\\.")) as $hit
-                 | if $hit then true elif length >= 100 then null else false end' "$d/files-$n.json"); then
+    if tt=$(_ubq_touches_tests "$slug" "$n" "$head" "$d"); then
       [ "$tt" = null ] && unread+=(files)
     else tt=null; unread+=(files); fi
     jq -nc --arg proj "$proj" --arg slug "$slug" --argjson n "$n" --arg head "$head" --arg word "$word" --arg at "$at" \
@@ -526,7 +580,13 @@ _ubq_old_head() {
           | if type == "string" and . != "" and . != "none" then . else null end
         else null end' "$d/lead-open.json" 2>/dev/null) || lid=null
   [ -n "$lid" ] || lid=null
-  if gh_rest GET "repos/$slug/commits/$head" > "$d/commit-$n.json" 2>/dev/null; then
+  if [ "$(_ubq_step)" = record ] && declare -F pr_record_head_commit_time >/dev/null; then
+    # BH-10158: step record reads the head commit time from the PR record
+    # (one GitHub read per head, stored).
+    cdate=""
+    pr_record_head_commit_time "$slug" "$n" "$head" > "$d/commit-$n.txt" 2>/dev/null && cdate=$(head -1 "$d/commit-$n.txt")
+    idle=$(jq -n --arg at "$cdate" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
+  elif gh_rest GET "repos/$slug/commits/$head" > "$d/commit-$n.json" 2>/dev/null; then
     cdate=$(jq -r '.commit.committer.date // ""' "$d/commit-$n.json" 2>/dev/null)
     idle=$(jq -n --arg at "$cdate" --argjson now "$(_ubq_now)" '(try ($at | fromdateiso8601) catch null) as $e | if $e == null then null else (($now - $e) / 60 | floor) end')
   fi
@@ -562,7 +622,8 @@ _ubq_empty_block() {
     [ -n "$pr" ] || continue
     unread=()
     pf="$d/eb-pull-$pr.json"
-    gh_rest GET "repos/$slug/pulls/$pr" > "$pf" 2>/dev/null && jq -e 'type == "object"' "$pf" >/dev/null 2>&1 \
+    ubp_read "$slug#$pr@pull:empty-block" "$pf" ub_pull_record _ubq_pull_gh ub_pull_norm "$slug" "$pr" labels \
+      && jq -e 'type == "object"' "$pf" >/dev/null 2>&1 \
       || { _ubq_unreadable "$proj" "$slug" "pull:$pr"; continue; }
     open=$(jq -r '.state == "open" and (.merged // false) == false' "$pf")
     [ "$open" = true ] || continue
@@ -595,6 +656,7 @@ ub_collect_queue() {
   declare -F ub_signals_classify >/dev/null || . "$root/bin/lib/unblock/signals.sh" 2>/dev/null || true
   [ -n "$proj" ] && [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
   d=$(mktemp -d "${TMPDIR:-/tmp}/ubq.XXXXXX") || return 1
+  declare -F ubp_prepare >/dev/null && ubp_prepare
   {
     _UBQ_SEAM_DEAD="" _UBQ_SEAM_FIRST=""; _UBQ_SEAM_DRAFTS=()
     if ubq_batch_drafts "$slug" "$d" > "$d/drafts.jsonl"; then

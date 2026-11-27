@@ -1,0 +1,11 @@
+{
+  "env": "MC_RECORD_MAX_AGE_S",
+  "read_in": "bin/lib/prr-shadow.d/merge-conductor.sh",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-10257: the max age (age_s = the worker's now minus refreshed_at) of a PR record row the conductor's QUEUED pass trusts for the queue word of a QUEUED PR (mc_qs_record). An older row reads GitHub (pulls/<n>, and the queue check runs on Mergify), and in step record that read is written back, so the row is young again. The row moves on each pull_request webhook (labels, push, close), each list sync and each write-back. 900 s (15 minutes) is PR_RECORD_MAX_AGE_S, the bound pr_record_get already uses for state and head. It bounds only a lost webhook: the record answers nothing but `queued` (no change), so a lost close or dequeue delays a settle or an ejection by at most this long, and never merges a PR. The cost: one GitHub read per QUEUED PR per 15 minutes in place of one per tick. 0 = off: every QUEUED row reads GitHub, as before BH-10257. Not a whole number: 900."
+}

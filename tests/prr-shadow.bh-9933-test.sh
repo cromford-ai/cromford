@@ -168,18 +168,14 @@ fi
 # seams now define the record and norm functions, pinned below and in
 # tests/pr-state-reconcile-record.bh-9937-test.sh and
 # tests/main-red-pr-pair-record.bh-9937-test.sh.
+# unblock left it in BH-10158 (wave 5, slice C2): its seam now defines the
+# record and norm functions, pinned below and in
+# tests/unblock-prr-seam.bh-10158-test.sh.
 # pipeline-health, dequeue-watch and wake-loop left it in BH-9938 (wave 6):
 # their seams define the functions pinned in the BH-9938 loop below.
-for l in unblock blocked-resolver; do
-  f="$DIR/bin/lib/prr-shadow.d/$l.sh"
-  [ -r "$f" ] || { bad "seams: $f missing"; continue; }
-  bash -n "$f" && ok || bad "seams: $f does not parse"
-  grep -qE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)' "$f" && bad "seams: $f must define no function yet" || ok
-  grep -q "^# .*$l" "$f" && ok || bad "seams: $f header must name the lane $l"
-  NF=$(declare -F | wc -l)
-  prr_seam_load "$l" && ok || bad "seams: prr_seam_load $l must return 0"
-  [ "$(declare -F | wc -l)" = "$NF" ] && ok || bad "seams: loading $l defined a function"
-done
+# blocked-resolver left it in BH-10157 (BH-9937 C1): its seam defines the brs_*
+# functions, pinned below and in tests/br-record-discovery.bh-10157-test.sh.
+# No lane is left with an empty seam, so the empty-seam loop is gone.
 f="$DIR/bin/lib/prr-shadow.d/merge-conductor.sh"
 bash -n "$f" && ok || bad "seams: $f does not parse"
 grep -q "^# .*merge-conductor" "$f" && ok || bad "seams: $f header must name the lane merge-conductor"
@@ -189,13 +185,16 @@ for fn in mc_ci_record mc_ci_github mc_ci_norm mc_open_record mc_open_github mc_
           mc_xe_record mc_xe_github mc_flake_record mc_flake_github mc_flake_norm; do
   command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: loading merge-conductor must define $fn"
 done
-for l in pr-state-reconcile main-red-pr-pair; do
+for l in pr-state-reconcile main-red-pr-pair unblock blocked-resolver; do
   f="$DIR/bin/lib/prr-shadow.d/$l.sh"
   bash -n "$f" && ok || bad "seams: $f does not parse"
   grep -q "^# .*$l" "$f" && ok || bad "seams: $f header must name the lane $l"
   prr_seam_load "$l" && ok || bad "seams: prr_seam_load $l must return 0"
 done
-for fn in psr_list_record psr_list_norm psr_state_record psr_state_norm mrp_list_record mrp_list_norm; do
+for fn in psr_list_record psr_list_norm psr_state_record psr_state_norm mrp_list_record mrp_list_norm \
+          ub_open_record ub_open_norm ub_pull_record ub_pull_norm ub_branch_record ub_branch_norm \
+          ub_cr_record ub_cr_norm ub_ci_record ub_ci_norm \
+          brs_open_record brs_open_norm brs_state_record brs_state_norm; do
   command -v "$fn" >/dev/null 2>&1 && ok || bad "seams: the wave 5 seams must define $fn"
 done
 # BH-9938 (wave 6): three more seams load and define their record, github and

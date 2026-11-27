@@ -1,0 +1,11 @@
+{
+  "env": "BR_FIX_NOTHING_NEW_MAX",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 20,
+  "unit": "rounds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-10248-nothing-new-park.sh",
+  "note": "A fix round that answers done and records nothing new (the record did not grow) is counted per PR head on the hub record (.nothing_new). At this many in a row on one head the park is PARKED: one alert and one event, and br_fix_remote queues no round again on that head until the PR's live head moves. 0 = off: every nothing-new round is re-offered next tick, as before."
+}

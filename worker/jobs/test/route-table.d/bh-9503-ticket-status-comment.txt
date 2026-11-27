@@ -1,5 +1,7 @@
 # BH-9503 (C1 of #8973): the ONE in-place status comment per ticket. The hub
 # lane bin/ticket-status-comment.sh GETs the tickets whose status body changed
-# and POSTs each write it made. Bearer-gated.
+# and POSTs each write it made. BH-10216: DELETE forgets a row whose comment
+# answered 404 (compare-and-delete on the comment id). Bearer-gated.
 GET /api/ticket-status-comments/due
 POST /api/ticket-status-comments
+DELETE /api/ticket-status-comments

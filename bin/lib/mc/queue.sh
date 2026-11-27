@@ -565,13 +565,21 @@ mc_queued_list_view() {
   awk -F'\t' -v n="$2" -v h="$h" '$1 == n && $2 == h && $3 != "-" { print "OPEN " $3 " " $2; f = 1; exit } END { exit !f }' <<<"$1"
 }
 
-mc_queue_state() {
-  local url="$1" head="${2:-}" slug prov j st head2 labels chk chkrc=0
+mc_queue_state() { mc_queue_state_judge "${1:-}" "${2:-}" read; }
+
+# mc_queue_state_judge <pr-url> <head-sha> read | given "<STATE> <head> <LABELS>"
+#   mc_queue_state's rule (BH-10257). `read` reads the PR (mc_pr_view); `given`
+#   takes the line of a PR read the caller already made (an empty line is a
+#   read that failed: unknown).
+mc_queue_state_judge() {
+  local url="$1" head="${2:-}" mode="${3:-read}" slug prov j st head2 labels chk chkrc=0
   slug=$(mc_slug_of_url "$url"); prov=$(mc_queue_provider "$slug")
   # ONE read for every provider now. head FIRST and labels LAST: `read` collapses
   # runs of whitespace, so a PR with no labels in the middle field would shift
   # the sha into $labels.
-  j=$(mc_pr_view "$url" '"\(.STATE) \(.head.sha) \(.LABELS)"' 2>/dev/null) || j=""
+  if [ "$mode" = given ]; then j="${4:-}"
+  else j=$(mc_pr_view "$url" '"\(.STATE) \(.head.sha) \(.LABELS)"' 2>/dev/null) || j=""
+  fi
   [ -n "$j" ] || { printf 'unknown'; return 0; }
   read -r st head2 labels <<<"$j"
   [ -n "$head" ] || head="$head2"
@@ -606,6 +614,26 @@ mc_queue_state() {
   # over REST at all, so say so.
   [ "$chkrc" = 0 ] || { printf 'unknown'; return 0; }
   case "$prov" in mergify) printf 'ejected' ;; *) printf 'unknown' ;; esac
+}
+
+# mc_queue_state_rec <pr-url> <head-sha> — the QUEUED pass's mc_queue_state
+#   through the PR record (BH-10257): prr_read merge-conductor
+#   "<slug>#<n>@<head12>:queue" with mc_qs_record / mc_qs_github / mc_qs_norm
+#   (bin/lib/prr-shadow.d/merge-conductor.sh). The record answers only
+#   `queued` (the word that changes nothing); every other case reads GitHub.
+#   No 40-hex head, or no seam: mc_queue_state, as before.
+mc_queue_state_rec() {
+  local url="$1" head="${2:-}" slug num qsf w
+  slug=$(mc_slug_of_url "$url"); num=$(mc_num_of_url "$url")
+  if [[ "$head" =~ ^[0-9a-fA-F]{40}$ ]] && [[ "$num" =~ ^[0-9]+$ ]] && [[ "$slug" == */* ]] \
+     && command -v _mc_ci_prr_load >/dev/null 2>&1 && _mc_ci_prr_load && command -v mc_qs_record >/dev/null 2>&1 \
+     && qsf=$(mktemp "${TMPDIR:-/tmp}/mc-qs.XXXXXX"); then
+    prr_read merge-conductor "$slug#$num@${head:0:12}:queue" "$qsf" mc_qs_record mc_qs_github mc_qs_norm "$url" "$head" "$slug" "$num"
+    w=$(head -1 "$qsf" 2>/dev/null); rm -f "$qsf"
+    case "$w" in queued|merged|ejected|unknown) printf '%s' "$w" ;; *) printf 'unknown' ;; esac
+    return 0
+  fi
+  mc_queue_state "$url" "$head"
 }
 
 # mc_queue_left_why <owner/repo> <pr-url> <head-sha>

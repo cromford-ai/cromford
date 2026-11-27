@@ -2,8 +2,9 @@
 // ticket, edited in place at each state change (claimed, spawned, hold
 // released, reaped with its outcome code, resumed, PR opened, merged).
 //
-//   GET  /api/ticket-status-comments/due?project=<p>
-//   POST /api/ticket-status-comments
+//   GET    /api/ticket-status-comments/due?project=<p>
+//   POST   /api/ticket-status-comments
+//   DELETE /api/ticket-status-comments?project=<p>&key=<k>&comment_id=<id>
 //
 // THE STATE is never stored here. It is C0's live read (routes/ticket-status.js
 // loadTickets / ticketState). This family renders each ticket's status body,
@@ -11,6 +12,17 @@
 // (table ticket_status_comments, schema.d/202611110722-bh-9503-*). A ticket is
 // due when the hash differs. The lane (bin/ticket-status-comment.sh) writes the
 // comment on GitHub and then POSTs the record.
+//
+// THE ROW (BH-10216) holds the comment id and the hash of the last body the
+// lane wrote, so the lane makes no GitHub read before an edit. Two writes keep
+// it true:
+//   - POST with fingerprint null: the lane found our comment by a list read and
+//     stores its id BEFORE its PATCH. The hash is stored as '' (unknown) and
+//     final as 0, so the ticket stays due WITH its id: the next tick PATCHes it
+//     and lists nothing.
+//   - DELETE: the comment answered 404 (a person deleted it). Compare-and-delete
+//     on the comment id: a row that a later write moved to a new comment is
+//     never removed.
 //
 // DUE ANSWER (format `ticket-status-comment v1`): {format, project, repo,
 // fresh_at, due: [{key, issue, comment_id|null, fingerprint, state, final,
@@ -107,6 +119,9 @@ export const SQL = {
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
     ON CONFLICT(project, ticket_key) DO UPDATE SET issue = excluded.issue, comment_id = excluded.comment_id,
       fingerprint = excluded.fingerprint, state = excluded.state, final = excluded.final, updated_at = excluded.updated_at`,
+  // BH-10216: the primary key (project, ticket_key), plus the id compare.
+  // ?1 project ?2 ticket_key ?3 comment_id
+  forget: `DELETE FROM ticket_status_comments WHERE project = ?1 AND ticket_key = ?2 AND comment_id = ?3`,
 };
 
 const bad = (error) => json(400, { error });
@@ -254,14 +269,38 @@ export const routes = [
       if (typeof b.ticket_key !== "string" || !KEY_RE.test(b.ticket_key)) return bad("ticket_key");
       if (!Number.isSafeInteger(b.issue) || b.issue < 1) return bad("issue");
       if (!Number.isSafeInteger(b.comment_id) || b.comment_id < 1) return bad("comment_id");
-      if (typeof b.fingerprint !== "string" || !FP_RE.test(b.fingerprint)) return bad("fingerprint");
+      // null: the id is known and the hash is not (BH-10216). Stored as '', which
+      // never equals a rendered fingerprint, so the ticket stays due.
+      const known = b.fingerprint !== null;
+      if (known && (typeof b.fingerprint !== "string" || !FP_RE.test(b.fingerprint))) return bad("fingerprint");
       if (typeof b.state !== "string" || !STATES.has(b.state)) return bad("state");
       if (![true, false, 0, 1].includes(b.final)) return bad("final");
       return d1Guarded(TABLE, async () => {
         await ensureTable(env, TABLE);
-        await env.DB.prepare(SQL.upsert).bind(b.project, b.ticket_key, b.issue, b.comment_id, b.fingerprint, b.state,
-          b.final === true || b.final === 1 ? 1 : 0, t).run();
+        await env.DB.prepare(SQL.upsert).bind(b.project, b.ticket_key, b.issue, b.comment_id, known ? b.fingerprint : "", b.state,
+          known && (b.final === true || b.final === 1) ? 1 : 0, t).run();
         return json(200, { ok: true });
+      });
+    },
+  ],
+
+  // ── DELETE /api/ticket-status-comments — forget a row whose comment is gone ─
+  // BH-10216. Deletes the row only while it still names that comment id. 0
+  // rows is 200 (idempotent).
+  [
+    "DELETE", "/api/ticket-status-comments",
+    async ({ env, url }) => {
+      const project = url.searchParams.get("project");
+      const key = url.searchParams.get("key");
+      const cid = url.searchParams.get("comment_id");
+      if (project === null || !PROJECT_RE.test(project)) return bad("project");
+      if (key === null || !KEY_RE.test(key)) return bad("key");
+      const id = cid !== null && /^[0-9]{1,16}$/.test(cid) ? Number(cid) : NaN;
+      if (!Number.isSafeInteger(id) || id < 1) return bad("comment_id");
+      return d1Guarded(TABLE, async () => {
+        await ensureTable(env, TABLE);
+        const res = await env.DB.prepare(SQL.forget).bind(project, key, id).run();
+        return json(200, { ok: true, deleted: Number((res && res.meta && res.meta.changes) || 0) });
       });
     },
   ],

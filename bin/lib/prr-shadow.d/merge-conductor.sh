@@ -161,3 +161,98 @@ mc_flake_norm() {
   ids=$(cut -d'|' -f1 "${1:-}" 2>/dev/null | grep -E '^[0-9]+$' | sort -n | paste -sd, -)
   printf '[{"n":"flake","v":"%s"}]\n' "$ids"
 }
+
+# The QUEUED pass's queue word (BH-10257). mc_queue_state_rec <url> <head>
+# (bin/lib/mc/queue.sh) calls prr_read merge-conductor
+# "<slug>#<n>@<head12>:queue" <file> mc_qs_record mc_qs_github mc_qs_norm
+# <url> <head> <slug> <n>. It replaces the PR read (pulls/<n>) and, on
+# Mergify, the queue check-runs read of mc_queue_state for a QUEUED row.
+#   mc_qs_record <file> <url> <head> <slug> <n>
+#       `queued` in <file>, rc 0, only when ALL hold on the record row
+#       (pr_record_peek, one jobs GET): age_s is 0..MC_RECORD_MAX_AGE_S; state
+#       is open; head_sha is <head>; labels hold our trigger label
+#       (MC_MERGIFY_LABEL), queued or checking, and not dequeued; on Mergify,
+#       checks is an object with fewer than PRR_CI_CHECKS_MAX names and no
+#       queue check (^Mergify, ^Queue:, (queue)) of <head> ended failure,
+#       cancelled, timed_out, action_required, startup_failure or stale.
+#       `queued` changes nothing: the row stays QUEUED. The record never
+#       answers merged, ejected or unknown, so it never settles, ejects or
+#       strikes a PR. Misses: unknown (no row or no read), stale, state, head,
+#       field:labels, labels, field:checks, checks-max, check-red, malformed.
+#   mc_qs_github <file> <url> <head> <slug> <n>
+#       Today's read: ONE pulls/<n> GET (mc_rest_pr_json) and the rule of
+#       mc_queue_state (mc_queue_state_judge, which reads the check runs on
+#       Mergify). In step record a read that answered is written back into
+#       the record (pr_record_put, source github, at = the read's start), so
+#       the next ticks of an idle QUEUED PR read the record again.
+#   mc_qs_norm <file>
+#       [{"n":"queue","v":"<word>"}].
+# The knob MC_RECORD_MAX_AGE_S (catalog/lanes.d/merge-conductor.knobs.d/) is
+# read by mc_record_max_age_s: lane_knob merge-conductor, else the
+# environment, else 900. 0 trusts no row.
+_MC_DEFAULT_RECORD_MAX_AGE_S=900   # fallback only: the knob is MC_RECORD_MAX_AGE_S in catalog/lanes.d/merge-conductor.knobs.d/
+
+mc_record_max_age_s() {
+  local v=""
+  if command -v lane_knob >/dev/null 2>&1; then v=$(lane_knob merge-conductor MC_RECORD_MAX_AGE_S 2>/dev/null | tr -d '[:space:]'); fi
+  [ -n "$v" ] || v="${MC_RECORD_MAX_AGE_S:-}"
+  [[ "$v" =~ ^[0-9]+$ ]] || v="$_MC_DEFAULT_RECORD_MAX_AGE_S"
+  printf '%s\n' "$((10#$v))"
+}
+
+mc_qs_record() {
+  local f="${1:-}" head="${3:-}" slug="${4:-}" n="${5:-}" row age max prov cmax w
+  [ -n "$f" ] || return 2
+  command -v pr_record_peek >/dev/null 2>&1 || { echo unknown; return 1; }
+  row=$(pr_record_peek "$slug" "$n") || { echo unknown; return 1; }
+  age=$(jq -r '.age_s // empty' <<<"$row" 2>/dev/null)
+  max=$(mc_record_max_age_s)
+  { [[ "$age" =~ ^[0-9]+$ ]] && [ "$max" -gt 0 ] && [ "$age" -le "$max" ]; } || { echo stale; return 1; }
+  head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+  prov=$(mc_queue_provider "$slug" 2>/dev/null)
+  cmax=$(command -v _prr_ci_int >/dev/null 2>&1 && _prr_ci_int PRR_CI_CHECKS_MAX "${_PRR_CI_DEFAULT_CHECKS_MAX:-100}" 1 1000 2>/dev/null)
+  [[ "$cmax" =~ ^[0-9]+$ ]] || cmax="${_PRR_CI_DEFAULT_CHECKS_MAX:-100}"
+  w=$(jq -r --arg h "$head" --arg lab "${MC_MERGIFY_LABEL:-merge-queue}" --arg prov "$prov" --argjson max "$cmax" '
+    if (.state // "") != "open" then "state"
+    elif ((.head_sha // "") | ascii_downcase) != $h then "head"
+    elif (.labels | type) != "array" then "field:labels"
+    elif any(.labels[]; . == "dequeued") then "labels"
+    elif (any(.labels[]; . == $lab or . == "queued" or . == "checking") | not) then "labels"
+    elif $prov != "mergify" then "hit"
+    elif (.checks | type) != "object" then "field:checks"
+    elif (.checks | length) >= $max then "checks-max"
+    elif any(.checks | to_entries[];
+           (.key | test("^Mergify|^Queue:|\\(queue\\)"))
+           and (((.value.sha // "") | ascii_downcase) == $h)
+           and ((.value.conclusion // "") | IN("failure","cancelled","timed_out","action_required","startup_failure","stale")))
+      then "check-red"
+    else "hit" end' <<<"$row" 2>/dev/null) || w=malformed
+  [ "$w" = hit ] || { echo "${w:-malformed}"; return 1; }
+  printf 'queued\n' > "$f"
+}
+
+mc_qs_github() {
+  local f="${1:-}" url="${2:-}" head="${3:-}" slug="${4:-}" n="${5:-}" t rc=0 j="" at mapped
+  [ -n "$f" ] || return 2
+  t=$(mktemp "${TMPDIR:-/tmp}/mc-qs-gh.XXXXXX") || { mc_queue_state "$url" "$head" > "$f"; return 0; }
+  at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  mc_rest_pr_json "$slug" "$n" > "$t" 2>/dev/null || rc=$?
+  if [ "$rc" = 0 ]; then
+    j=$(jq -r '"\(.STATE) \(.head.sha) \(.LABELS)"' "$t" 2>/dev/null) || j=""
+    if [ -n "$j" ] && command -v prr_step >/dev/null 2>&1 && [ "$(prr_step merge-conductor)" = record ] \
+       && command -v _prr_map >/dev/null 2>&1 && command -v pr_record_put >/dev/null 2>&1; then
+      mapped=$(_prr_map < "$t")
+      [ -n "$mapped" ] && [ "$mapped" != "{}" ] \
+        && pr_record_put "$(printf '%s' "$slug" | tr 'A-Z' 'a-z')" "$n" github "$mapped" "$at" >/dev/null 2>&1
+    fi
+  fi
+  rm -f "$t"
+  mc_queue_state_judge "$url" "$head" given "$j" > "$f"
+  return 0
+}
+
+mc_qs_norm() {
+  local w
+  w=$(head -1 "${1:-}" 2>/dev/null)
+  [ -n "$w" ] && printf '[{"n":"queue","v":"%s"}]\n' "$w"
+}

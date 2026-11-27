@@ -1,0 +1,12 @@
+{
+  "env": "UNBLOCK_PRR_BACKSTOP_S",
+  "read_in": "bin/lib/unblock/prr.sh",
+  "type": "int",
+  "default": 1800,
+  "min": 0,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-10158: in step record (lane.unblock.gh_source), the longest time a cached reviews, comments or closed-list answer of state/unblock-prr/ is served with no pr wake for that PR. After it the read runs again. wb_due (bin/lib/wake-backstop.sh) reads 1..1799 as 1800. A value that is not digits is the code fallback 1800. 0 = off: always read: the answer cache state/unblock-prr/ is never served.",
+  "settable": true
+}

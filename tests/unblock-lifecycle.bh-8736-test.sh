@@ -165,8 +165,10 @@ check "C1 BH-9107 carries the stored question" "$(field "$F" BH-9107 '[.question
 check "C1 BH-9106 abandons 2, BH-9105 abandons 1" "$(field "$F" BH-9106 .abandons) $(field "$F" BH-9105 .abandons)" "2 1"
 check "C1 meta rows_seen 9, truncated 0" "$(tail -n1 "$F/out.jsonl" | jq -c '[.rows_seen, .truncated, .unreadable]')" '[9,0,[]]'
 # C6: its reads
-check "C6 worker requests: 1 stuck + 6 history, nothing else" \
-  "$(grep -c '^GET /api/lifecycle/stuck?project=cromford ' "$F/jobs.log") $(grep -c '^GET /api/lifecycle/history?project=cromford&ticket_key=BH-91' "$F/jobs.log") $(wc -l < "$F/jobs.log" | tr -d ' ')" "1 6 7"
+# BH-10158: in step shadow (the default of lane.unblock.gh_source) each pull
+# read also asks the PR record once (GET /api/pr-records?...&number=<pr>).
+check "C6 worker requests: 1 stuck + 6 history + 3 PR-record rows, nothing else" \
+  "$(grep -c '^GET /api/lifecycle/stuck?project=cromford ' "$F/jobs.log") $(grep -c '^GET /api/lifecycle/history?project=cromford&ticket_key=BH-91' "$F/jobs.log") $(grep -c '^GET /api/pr-records?repo=example-org/cromford&number=910[123] ' "$F/jobs.log") $(wc -l < "$F/jobs.log" | tr -d ' ')" "1 6 3 10"
 check "C6 GitHub reads: pulls/9101 9102 9103 only" "$(sort "$F/ghrest.log" | tr '\n' ' ')" \
   "GET repos/example-org/cromford/pulls/9101 GET repos/example-org/cromford/pulls/9102 GET repos/example-org/cromford/pulls/9103 "
 # the contract entry drops the meta line

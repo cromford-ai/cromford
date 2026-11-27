@@ -1,7 +1,8 @@
 #!/bin/bash
 # shellcheck shell=bash
 # bin/lib/unblock/ticket-pr.sh — the unblock tick's ticket PR resolve
-# (BH-9446). Sourced by bin/unblock.sh, never run; nothing here runs on source.
+# (BH-9446). Sourced by bin/unblock.sh, never run. On source it only loads
+# bin/lib/unblock/prr.sh (functions only) and defines functions.
 #
 # WHY. A ticket-subject record (the infra reach and starve records, the
 # lifecycle records) did not know the ticket's open PR. Its has_pr was null
@@ -37,6 +38,11 @@
 #          The newest by updated_at = found; [] = none; an error or a
 #          non-array = unread.
 #     Each ticket costs at most 2 GitHub reads per tick, and the feed 1 jobs read.
+#     BH-10158: both reads go through ubp_read (bin/lib/unblock/prr.sh) under
+#     the lane's step (lane.unblock.gh_source): step 1 is T-PULL (key
+#     <repo>#<n>@pull:ticket-pr), step 2 is T-BRANCH (key
+#     <repo>#branch:ticket/<key>@ticket-pr). In step record the PR record
+#     answers and a miss reads GitHub; pr_source keeps the words ledger and rest.
 #
 # Knob (catalog/lanes.d/unblock.knobs.d/):
 #   UNBLOCK_PR_URL_FEED_LIMIT (200, 1..500)  the pr_url rows read per tick
@@ -44,6 +50,15 @@
 # NO ROOT DEFAULT (D43): gh-rest.sh is loaded from $HARNESS, then $H; with
 # neither and no gh_rest loaded, every GitHub read is unread.
 # gh-rest: no-graphql
+
+# The record reads (BH-10158). No lib: today's GitHub reads, nothing else.
+# shellcheck source=bin/lib/unblock/prr.sh
+. "${BASH_SOURCE[0]%/*}/prr.sh" 2>/dev/null || true
+declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
+
+# The GitHub side of the two reads (prr_read's github-fn), in the caller's shell.
+_ubt_pull_gh() { gh_rest GET "repos/$2/pulls/$3" > "$1" 2>/dev/null; }
+_ubt_branch_gh() { gh_rest GET "repos/$2/pulls?state=open&head=${2%%/*}:$3&per_page=10" > "$1" 2>/dev/null; }
 
 declare -gA _UBT_MEMO=()
 _UBT_FEED_READ="" _UBT_FEED_OK=0 _UBT_TMP="" _UBT_R=""
@@ -88,7 +103,7 @@ _ubt_pr_resolve() {
       }
       END { if (num != "") print num }' "$_UBT_TMP/feed.tsv" 2>/dev/null)
     if [[ $n =~ ^[1-9][0-9]*$ ]] && declare -F gh_rest >/dev/null; then
-      rc=0; gh_rest GET "repos/$repo/pulls/$n" > "$_UBT_TMP/pull.json" 2>/dev/null || rc=$?
+      rc=0; ubp_read "$repo#$n@pull:ticket-pr" "$_UBT_TMP/pull.json" ub_pull_record _ubt_pull_gh ub_pull_norm "$repo" "$n" || rc=$?
       [ "$rc" = 0 ] && ans=$(_ubt_pull_found "$_UBT_TMP/pull.json")
       [ -n "$ans" ] && ans="$ans ledger"
     fi
@@ -96,7 +111,7 @@ _ubt_pr_resolve() {
   # 2. one read by branch
   if [ -z "$ans" ] && declare -F gh_rest >/dev/null; then
     rc=0
-    gh_rest GET "repos/$repo/pulls?state=open&head=${repo%%/*}:ticket/$kl&per_page=10" > "$_UBT_TMP/branch.json" 2>/dev/null || rc=$?
+    ubp_read "$repo#branch:ticket/$kl@ticket-pr" "$_UBT_TMP/branch.json" ub_branch_record _ubt_branch_gh ub_branch_norm "$repo" "ticket/$kl" || rc=$?
     if [ "$rc" = 0 ]; then
       ans=$(jq -r 'if type != "array" then "unread"
           elif length == 0 then "none"

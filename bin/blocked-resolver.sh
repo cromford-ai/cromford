@@ -2042,7 +2042,8 @@ br_open_prs() {
     age=$(( now - mtime ))
     if [ "$age" -ge 0 ] && [ "$age" -le "${BR_PRS_CACHE_SECS:-300}" ]; then cat "$f"; return 0; fi
   fi
-  out=$(harness_pr_list "$slug" open number,url,headRefOid,headRefName,baseRefName,isDraft,updatedAt 2>/dev/null) || return 1
+  if command -v brd_open_read >/dev/null 2>&1; then out=$(brd_open_read "$slug") || return 1  # BH-10157: the PR record, by the gh_source step
+  else out=$(harness_pr_list "$slug" open number,url,headRefOid,headRefName,baseRefName,isDraft,updatedAt 2>/dev/null) || return 1; fi
   printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
   mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$out" > "$f" 2>/dev/null
   printf '%s\n' "$out"
@@ -5023,6 +5024,7 @@ br_xpr_wait_line() {
 br_fix_remote() {
   local p="$1" rkey="$2" reason="$3" url="$4" rec="$5" tkey="$6" ck="$7" hot="${8:-0}"
   local box out rc=0 id st what rung; br_hop_labels
+  command -v brnn_gate >/dev/null 2>&1 && brnn_gate "$p" "$ck" "$rkey" "$reason" "$url" && return 0   # parked after nothing-new rounds on this head (bh-10248-nothing-new-park)
   box=$("$H/bin/box-for.sh" "$p" 2>/dev/null)
   if [ -z "$box" ] || is_hub_box "$box"; then
     br_setup_blocked "$p" "$ck" "$rkey" "$reason" "$url" "no non-hub box owns $p in fleet.conf (box-for.sh answered '${box:--}') — the hub runs no agent build work" fix-round "$p owned by a non-hub box in fleet.conf that runs bin/fix-round-claim.sh and a bin/ with blocked-resolver.sh --fix-here"
@@ -5109,6 +5111,7 @@ br_fix_adopt() {
         say "$p/$rkey [$reason]: fix round ran on $box: $(br_load "$p" "$ck" | jq -r '.attempts[-1].detail // "-"' 2>/dev/null)"
       else
         say "$p/$rkey [$reason]: fix round on $box recorded nothing new (its logs/blocked-resolver.log says why) — re-offered next tick"
+        command -v brnn_note >/dev/null 2>&1 && brnn_note "$p" "$ck" "$rkey" "$reason" "$url" "$box" "$rjson"   # a nothing-new streak on one head parks the park (bh-10248-nothing-new-park)
       fi
       command -v brnc_settle_pending >/dev/null 2>&1 && brnc_settle_pending "$p" "$ck" "$rkey" "$reason" "$url" "$rec" "$tkey" >/dev/null ;;   # BH-8592: a no-change round's head goes back in the queue here, on the hub
     "setup-blocked "*)
@@ -6066,8 +6069,8 @@ $live$brief"
       cl_verify_lines "$wt" "origin/${mref:-main}" "$ST/$p/$ck.ci-local"
     else echo "== ci-local =="; echo "CI_LOCAL_EXIT: skipped (bin/lib/ci-local-verify.sh not on this box)"; fi
     # <<< br ci-local verify
-    command -v br_sg_verify >/dev/null 2>&1 && br_sg_verify "$wt" "origin/${mref:-main}" "$ST/$p/$ck.selection-gate" "$p"   # BH-8062
-    command -v brfr_verify >/dev/null 2>&1 && ! brfr_verify "$wt" "$ST/$p/$ck" && vrc=1   # BH-9472: the reproduced CI test, re-run on the round's tree; still-red or could-not-run refuses the push
+    command -v br_sg_verify >/dev/null 2>&1 && br_sg_verify "$wt" "origin/${mref:-main}" "$ST/$p/$ck.selection-gate" "$p" "$out"   # BH-8062; "$out": under the verify budget, not after a red step
+    command -v brfr_verify >/dev/null 2>&1 && ! brfr_verify "$wt" "$ST/$p/$ck" "$out" && vrc=1   # BH-9472: the reproduced CI test, re-run on the round's tree; still-red or could-not-run refuses the push
     fi   # BH-9906: the steps above run only while the verify budget lasts
   } > "$out" 2>&1
   # BH-9906: a step that timed out (agent rc 0) is not a red round: no baseline, no rung, the agent's commit kept.

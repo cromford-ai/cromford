@@ -1,0 +1,9 @@
+{
+  "env": "GH_SOURCE",
+  "read_in": "bin/lib/prr-shadow.sh",
+  "type": "string",
+  "default": "shadow",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10157 (BH-9937 C1, BH-9926 wave 5): settings row lane.blocked-resolver.gh_source. Where the resolver's discovery reads each repo's open PR list (br_open_prs) and a candidate row's PR state (the bh-9369 closed-PR retire): off = GitHub only (today's reads); shadow (default) = the PR record and GitHub, the lane acts on GitHub and logs one PRR_SHADOW line in logs/prr-shadow.log when they differ; record = the PR record (a miss reads GitHub and logs PRR_MISS) and 0 closed-list pages. The per-PR reviews read is not on the record. Any other value is shadow plus one PRR_STEP line. Pinned once per run by prr_pin in bin/blocked-resolver.d/bh-10157-record-discovery.sh. Move to record only after a 48-hour shadow count of 0 (docs/notes/2026-11-26-BH-10157-resolver-record-read.md)."
+}

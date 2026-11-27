@@ -46,8 +46,17 @@
 #       BH-9404 rule, so the head is offered again), brfix/<ck> and
 #       .agent_done kept, the worktree dropped, then br_fix_verify_timeout
 #       (FIX_RESULT verify-timeout <b64> on a box, one line on the hub).
+#   brvb_tail_skip <selection-gate|repro> <verify-out>
+#       BH-10245: before a verify step that has its own clock (the
+#       selection gate, the repro re-run). rc 0 and one line when the step
+#       must not run: `<STEP>_EXIT: skipped (an earlier verify step is red: <line>)`
+#       when <verify-out> already holds `CI_LOCAL_EXIT: 1` or
+#       `CLOSURE_LINT_EXIT: [1-9]` (both refuse the push and no rescore lifts
+#       them), else `VERIFY_TIMEOUT: <step>` when the budget is spent. rc 1:
+#       the step runs. On 2026-11-26 cromford rounds ran the gate after a
+#       red ci-local, under its own 7200 s knob, until the 6600 s round bound.
 # Knob: BR_FIX_VERIFY_TIMEOUT (catalog/lanes.d/blocked-resolver.knobs.d/BR_FIX_VERIFY_TIMEOUT.json).
-# Tests: tests/fixround-verify-budget.bh-9906-test.sh.
+# Tests: tests/fixround-verify-budget.bh-9906-test.sh, tests/fixround-verify-tail.bh-10245-test.sh.
 
 brvb_budget() {
   # BR_FIX_VERIFY_TIMEOUT: lane.blocked-resolver.BR_FIX_VERIFY_TIMEOUT (fallback 2700)
@@ -67,6 +76,18 @@ brvb_left() {
 brvb_spent() {
   [ -n "${BRVB_T0:-}" ] || return 1
   [ $(( $(date +%s) - BRVB_T0 )) -ge "$BRVB_BUDGET" ]
+}
+
+brvb_tail_skip() {
+  local step="$1" out="$2" red word
+  red=$(grep -m1 -E '^CI_LOCAL_EXIT: 1|^CLOSURE_LINT_EXIT: [1-9]' "$out" 2>/dev/null)
+  if [ -n "$red" ]; then
+    case "$step" in selection-gate) word=SELECTION_GATE ;; repro) word=REPRO ;; *) word=$(printf '%s' "$step" | tr 'a-z-' 'A-Z_') ;; esac
+    echo "${word}_EXIT: skipped (an earlier verify step is red: $red)"
+    return 0
+  fi
+  if brvb_spent; then echo "VERIFY_TIMEOUT: $step"; return 0; fi
+  return 1
 }
 
 brvb_is_timeout() {

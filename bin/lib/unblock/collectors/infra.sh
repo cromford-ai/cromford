@@ -68,6 +68,11 @@
 #                 `stranded:` line in logs/<p>.log ends REVIEW_BLOCKED
 #                 suite-reach (see _unblock_infra_reach). --project only;
 #                 has_pr needs --repo and gh_rest.
+#   BH-10158: the two branch reads (the parent's ticket/<parent> PR and the
+#   reach ticket's ticket/<key> PR) go through ubp_read (bin/lib/unblock/prr.sh)
+#   under the step lane.unblock.gh_source, T-BRANCH, keys
+#   <repo>#branch:<ref>@parent and <repo>#branch:<ref>@reach. The parent issue
+#   read stays on GitHub through the tracker seam (an issue is not in the PR record).
 #   source-unreadable  one per source that answered rc 1: unknown [<source>].
 # A log source (pipeline-health, logs/<p>.log) that exists and cannot be read,
 # or whose lines the parser cannot read, is one source-unreadable record.
@@ -87,6 +92,14 @@
 # The root is ${HARNESS:-${H:-}} (fleet.conf); no source reads a file under it.
 
 _unblock_infra_root() { printf '%s' "${HARNESS:-${H:-}}"; }
+
+# The record reads (BH-10158). No lib: today's GitHub reads.
+# shellcheck source=bin/lib/unblock/prr.sh
+. "${BASH_SOURCE[0]%/*}/../prr.sh" 2>/dev/null || true
+declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
+# _unblock_infra_branch_gh <file> <repo> <branch> — the open PRs from <branch>
+# (prr_read's github-fn), in the caller's shell.
+_unblock_infra_branch_gh() { gh_rest GET "repos/$2/pulls?state=open&head=${2%%/*}:$3&per_page=10" > "$1" 2>/dev/null; }
 
 # The clock. UNBLOCK_NOW is the suites' seam, read only in the sandbox.
 _unblock_infra_now() {
@@ -598,7 +611,7 @@ _unblock_infra_parent_max() {
 # PR's updated_at, else the issue's. Cached in _UBI_PS for the call. Runs in
 # the caller's shell: never call it in $(...).
 _unblock_infra_parent_state() {
-  local repo="$1" par="$2" kind="${3:-}" root n body st up pr=- url=- head=- pu prs pt
+  local repo="$1" par="$2" kind="${3:-}" root n body st up pr=- url=- head=- pu prs pt pb
   [ -n "${_UBI_PS[$par]+x}" ] && return 0
   _UBI_PS[$par]="unread - - - - -"
   [ "$kind" = github-issues ] || return 0
@@ -617,7 +630,8 @@ _unblock_infra_parent_state() {
   case "$st" in open|closed) ;; *) return 0 ;; esac
   if [ "$st" = closed ]; then _UBI_PS[$par]="closed - - - - -"; return 0; fi
   [[ $up =~ ^[0-9]+$ ]] || return 0
-  gh_rest GET "repos/$repo/pulls?state=open&head=${repo%%/*}:ticket/$(printf '%s' "$par" | tr '[:upper:]' '[:lower:]')&per_page=10" > "$_UBI_TMP/parent-pr.json" 2>/dev/null || return 0
+  pb="ticket/$(printf '%s' "$par" | tr '[:upper:]' '[:lower:]')"
+  ubp_read "$repo#branch:$pb@parent" "$_UBI_TMP/parent-pr.json" ub_branch_record _unblock_infra_branch_gh ub_branch_norm "$repo" "$pb" || return 0
   prs=$(cat "$_UBI_TMP/parent-pr.json")
   read -r pr url head pu < <(jq -r 'if type != "array" then "x" elif length == 0 then "- - - -"
       else (sort_by(.updated_at) | last) as $q
@@ -636,7 +650,7 @@ _unblock_infra_parent_state() {
 # age_min, reach_stuck_min (UNBLOCK_REACH_STUCK_MIN, 45), has_pr (an open PR
 # from ticket/<key lowercased>; null unread), day.
 _unblock_infra_reach() {
-  local p="$1" repo="${2:-}" root txt rec key br hp owner
+  local p="$1" repo="${2:-}" root txt rec key br hp
   root=$(_unblock_infra_root); [ -n "$root" ] || { _unblock_infra_unreadable project_log "$p"; return 0; }
   txt=$(_unblock_infra_tail "$root/logs/$p.log") || { _unblock_infra_unreadable project_log "$p"; return 0; }
   [ -n "$txt" ] || return 0
@@ -656,9 +670,9 @@ _unblock_infra_reach() {
   while IFS= read -r rec; do
     [ -n "$rec" ] || continue
     key=$(jq -r .ticket <<<"$rec"); hp=null
-    br="ticket/$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"; owner="${repo%%/*}"
+    br="ticket/$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
     if [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && declare -F gh_rest >/dev/null \
-       && gh_rest GET "repos/$repo/pulls?state=open&head=$owner:$br&per_page=10" > "$_UBI_TMP/reach-pr.json" 2>/dev/null; then
+       && ubp_read "$repo#branch:$br@reach" "$_UBI_TMP/reach-pr.json" ub_branch_record _unblock_infra_branch_gh ub_branch_norm "$repo" "$br"; then
       hp=$(jq -c 'if type == "array" then length > 0 else null end' "$_UBI_TMP/reach-pr.json" 2>/dev/null) || hp=null
     fi
     jq -c --argjson hp "$hp" '. + {has_pr: $hp, unknown: (if $hp == null then ["has_pr"] else [] end)}' <<<"$rec"

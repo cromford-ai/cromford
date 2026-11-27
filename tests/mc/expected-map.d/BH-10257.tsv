@@ -1,0 +1,5 @@
+# tests/mc/expected-map.d/BH-10257.tsv — BH-10257: the queue word of a QUEUED row
+# through the PR record (queue, beside mc_queue_state); origin=lib because they
+# are new module functions.
+queue	mc_queue_state_judge	lib
+queue	mc_queue_state_rec	lib

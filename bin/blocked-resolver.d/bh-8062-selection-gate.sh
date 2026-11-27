@@ -17,7 +17,13 @@
 #
 # Functions only, no variable at source time, no exit. The root is ${H:-} only.
 
-# br_sg_verify <wt> <main-ref> <outdir> [<project>] — stdout: the verify block.
+# br_sg_verify <wt> <main-ref> <outdir> [<project>] [<verify-out>] — stdout:
+#   the verify block. With <verify-out> (the round's fix-verify.txt so far) the
+#   gate runs under the verify budget (BH-10245, brvb_tail_skip in
+#   bh-9906-verify-budget.sh): an earlier red step or a spent budget answers
+#   without running it, its --timeout is at most the seconds left, and a capped
+#   gate that ends could-not-run with the budget spent adds
+#   `VERIFY_TIMEOUT: selection-gate`.
 #   `== selection-gate ==`, then one `SELECTION_GATE_EXIT: <word>` line:
 #     0                   green
 #     1                   red; a `SELECTION_GATE_RED: <suites>` line follows
@@ -28,8 +34,9 @@
 #                         is written), or no lib on this box
 #   The gate's own output goes to <outdir>/run.out, never to stdout.
 br_sg_verify() {
-  local wt="${1:-}" mref="${2:-origin/main}" od="${3:-}" proj="${4:-}" to par rc=0 red why
+  local wt="${1:-}" mref="${2:-origin/main}" od="${3:-}" proj="${4:-}" vout="${5:-}" to par rc=0 red why left capped=0
   echo "== selection-gate =="
+  if [ -n "$vout" ] && command -v brvb_tail_skip >/dev/null 2>&1 && brvb_tail_skip selection-gate "$vout"; then return 0; fi
   if [ ! -x "$wt/bin/selection-gate.sh" ]; then echo "SELECTION_GATE_EXIT: skipped (no bin/selection-gate.sh)"; return 0; fi
   command -v _sg_knob >/dev/null 2>&1 || . "${H:-}/bin/lib/selection-gate.sh" 2>/dev/null
   command -v _sg_knob >/dev/null 2>&1 || { echo "SELECTION_GATE_EXIT: skipped (no bin/lib/selection-gate.sh on this box)"; return 0; }
@@ -42,6 +49,10 @@ br_sg_verify() {
   [ -n "$od" ] || { echo "SELECTION_GATE_EXIT: could-not-run no-outdir"; return 0; }
   to=$(PROJECT="$proj" _sg_knob SELECTION_GATE_TIMEOUT_S 2400)   # lane.fly-pool.selection_gate_timeout_s
   par=$(PROJECT="$proj" _sg_knob SELECTION_GATE_P 12)            # lane.fly-pool.selection_gate_p
+  if [ -n "$vout" ] && [ -n "${BRVB_T0:-}" ] && command -v brvb_left >/dev/null 2>&1; then
+    left=$(brvb_left)
+    [[ "$to" =~ ^[0-9]+$ ]] && [ "$left" -lt "$to" ] && { to="$left"; capped=1; }
+  fi
   rm -rf "$od"; mkdir -p "$od" 2>/dev/null
   # lane.fly-pool.selection_gate_baseline_run, lane.fly-pool.selection_gate_baseline_timeout_s,
   # lane.fly-pool.selection_gate_baseline_keep_days (BH-8901: a baseline red does not refuse the push)
@@ -56,7 +67,8 @@ br_sg_verify() {
        echo "SELECTION_GATE_EXIT: 1"; echo "SELECTION_GATE_RED: ${red:--}"
        declare -F say >/dev/null 2>&1 && say "selection gate red on the fix round's head in ${wt##*/}: ${red:--} (see $od/gate.txt) — not pushed" ;;
     4) echo "SELECTION_GATE_EXIT: no-selection" ;;
-    *) echo "SELECTION_GATE_EXIT: could-not-run ${why:-rc-$rc}" ;;
+    *) echo "SELECTION_GATE_EXIT: could-not-run ${why:-rc-$rc}"
+       [ "$capped" = 1 ] && brvb_spent && echo "VERIFY_TIMEOUT: selection-gate" ;;
   esac
   return 0
 }

@@ -2965,7 +2965,7 @@ tick_project() {
             mc_transition "$QKEY" READY "dequeued: a standing CHANGES_REQUESTED (lead/human BLOCK) — the block gate holds it" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
             continue
           fi
-          QS=$(mc_queue_state "$QURL" "$QHEAD")
+          QS=$(mc_queue_state_rec "$QURL" "$QHEAD")   # BH-10257: the PR record first
           [ "$QS" = queued ] && continue
           # An API outage is not an ejection. Leave the row where it is and say
           # so: inventing an ejection out of a 500 would cost the PR its place

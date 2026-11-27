@@ -23,6 +23,10 @@
 #   3. ejected with a pr: one gh_rest GET repos/<repo>/pulls/<pr> -> head,
 #      pr_state, merged, labels, merge_sha (.merge_commit_sha, 40 hex, else
 #      null) and base_ref (.base.ref, else null). U14-MERGED reads the last two.
+#      BH-10158: through ubp_read (bin/lib/unblock/prr.sh) under the step
+#      lane.unblock.gh_source, key <repo>#<pr>@pull:lifecycle, need
+#      labels,merge_commit_sha: the record holds no merge commit, so a merged
+#      PR is a record miss and GitHub is read (U14-MERGED keeps its merge_sha).
 # UNKNOWN IS NOT FALSE: a failed read 2 or 3 sets its fields to null and names
 # it in `unknown` (history, pull). A null never matches a U14 predicate.
 #
@@ -48,6 +52,13 @@
 #   UNBLOCK_LIFECYCLE_REBUILD_MAX (1, 0..5)   copied to rebuild_max; U14-REBUILD
 #                                             takes abandons <= rebuild_max
 # gh-rest: no-graphql
+
+# The record reads (BH-10158). No lib: today's GitHub read.
+# shellcheck source=bin/lib/unblock/prr.sh
+. "${BASH_SOURCE[0]%/*}/../prr.sh" 2>/dev/null || true
+declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
+# _ucl_pull_gh <file> <repo> <n> — read 3's GitHub side (prr_read's github-fn).
+_ucl_pull_gh() { gh_rest GET "repos/$2/pulls/$3" > "$1" 2>/dev/null; }
 
 _ucl_log() {
   local h="${HARNESS:-${H:-}}"
@@ -124,7 +135,7 @@ unblock_collect_lifecycle() {
     fi
     if [ "$phase" = ejected ] && [[ $pr =~ ^[1-9][0-9]*$ ]]; then
       npull=$((npull + 1)); rc=0
-      gh_rest GET "repos/$slug/pulls/$pr" > "$tmp/pull.json" 2>/dev/null || rc=$?
+      ubp_read "$slug#$pr@pull:lifecycle" "$tmp/pull.json" ub_pull_record _ucl_pull_gh ub_pull_norm "$slug" "$pr" labels,merge_commit_sha || rc=$?
       pull=$(cat "$tmp/pull.json" 2>/dev/null)
       if [ "$rc" != 0 ] || ! jq -e 'type == "object" and (.head.sha | type) == "string"' >/dev/null 2>&1 <<<"$pull"; then
         echo "lifecycle.sh: $project $key pull #$pr unread (rc $rc, status ${GH_REST_STATUS:-000}, reason ${GH_REST_REASON:-none})" >&2

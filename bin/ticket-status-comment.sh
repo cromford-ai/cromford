@@ -15,14 +15,21 @@
 #   ticket-status-comment.sh <project>    one project's run.
 #
 # One run, per due ticket (the body rides in a FILE, never on argv):
-#   1. comment_id known: PATCH repos/<slug>/issues/comments/<id>. rc 44 (the
-#      comment was deleted) goes to step 2. Any other failed PATCH counts
-#      failed and moves to the next ticket: no adopt, no POST.
-#   2. adopt: read the issue's comments (TICKET_STATUS_COMMENT_ADOPT_PAGES
-#      pages of 100 at most, default 3,
+#   1. comment_id known (the worker's row): PATCH
+#      repos/<slug>/issues/comments/<id>. No read first (BH-10216). rc 44 (the
+#      comment was deleted): DELETE /api/ticket-status-comments (compare-and-
+#      delete on that id), then POST one new comment (step 3). No list read on
+#      this path. A failed DELETE counts failed and posts nothing. Any other
+#      failed PATCH counts failed and moves to the next ticket: no adopt, no
+#      POST, nothing recorded, so the old hash stays and the next tick PATCHes
+#      again.
+#   2. no comment_id: adopt. Read the issue's comments once
+#      (TICKET_STATUS_COMMENT_ADOPT_PAGES pages of 100 at most, default 3,
 #      GH_REST_OPTIONAL=1). The newest comment whose first non-blank line is
 #      exactly the marker and whose author is one of our Apps (hs_ours,
-#      bin/lib/harness-self.sh) is PATCHed.
+#      bin/lib/harness-self.sh) is ours. Its id is recorded FIRST with
+#      fingerprint null (BH-10216), then PATCHed. A failed PATCH leaves that
+#      row, so the next tick PATCHes the id and lists nothing.
 #   3. none: POST one new comment.
 #   4. POST /api/ticket-status-comments records the comment id and the
 #      fingerprint. Write first, record after: a lost record is healed next
@@ -213,22 +220,31 @@ while IFS= read -r entry; do
   key=$(jq -r '.key' <<<"$entry"); issue=$(jq -r '.issue' <<<"$entry"); cid=$(jq -r '.comment_id // empty' <<<"$entry")
   [[ "$issue" =~ ^[0-9]+$ ]] || { failed=$((failed + 1)); continue; }
   jq -r '.body' <<<"$entry" > "$TMP/body.md"
-  how=""; grc=0
+  # arc: the adopt answer (0 found, 1 none, 75 unreadable). A row whose
+  # comment answered 404 skips adopt and POSTs (arc 1).
+  how=""; grc=0; arc=1
   if [[ "$cid" =~ ^[0-9]+$ ]]; then
     trk_gh_comment_edit "$cid" "$TMP/body.md" > "$TMP/out.json" || grc=$?
-    # Only rc 44 (the comment is gone) goes on to adopt and maybe POST. Any
-    # other failure is never a reason to post a second comment.
+    # Only rc 44 (the comment is gone) leads to a POST, and only after the row
+    # that names the dead comment is gone. Any other failure is never a reason
+    # to post a second comment.
     case "$grc" in
       0) how=patched ;;
-      44) ;;
+      44) _jobs_req DELETE "/api/ticket-status-comments?project=$PROJECT&key=$key&comment_id=$cid" >/dev/null \
+            || { failed=$((failed + 1)); continue; } ;;
       75) failed=$((failed + 1)); stop="rc75-patch:$key"; break ;;
       *) failed=$((failed + 1)); continue ;;
     esac
-  fi
-  if [ -z "$how" ]; then
+  else
     arc=0; aid=$(tsc_adopt "$issue") || arc=$?
     if [ "$arc" = 75 ]; then failed=$((failed + 1)); stop="rc75-thread:$key"; break; fi
+  fi
+  if [ -z "$how" ]; then
     if [ "$arc" = 0 ]; then
+      # Store the found id before the PATCH (fingerprint null = hash unknown).
+      pre=$(jq -c --arg p "$PROJECT" --argjson id "$aid" '{project: $p, ticket_key: .key, issue: .issue, comment_id: $id,
+        fingerprint: null, state: .state, final: false}' <<<"$entry")
+      _jobs_req POST /api/ticket-status-comments "$pre" >/dev/null || { failed=$((failed + 1)); continue; }
       grc=0; trk_gh_comment_edit "$aid" "$TMP/body.md" > "$TMP/out.json" || grc=$?
       case "$grc" in
         0) cid=$aid; how=adopted ;;

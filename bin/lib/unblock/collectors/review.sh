@@ -51,9 +51,23 @@
 #   UNBLOCK_REVIEW_BLOCK_LINES_MAX (60) `- [BLOCK` lines kept per record (block_lines)
 #   UNBLOCK_NOW                   epoch seconds for "now" (test seam; default the clock)
 #
+# THE STEP (BH-10158): lane.unblock.gh_source (bin/lib/unblock/prr.sh). R1 and
+# R2 go through ubp_read (keys <repo>#open@review and <repo>#cr): in step
+# record the PR record answers them. The reviews and comments reads of R4 and
+# R5 go through ubp_cached: in step record a PR with the same head and no `pr`
+# wake since its last read is served from state/unblock-prr/, 0 GitHub calls.
+# Steps off and shadow read GitHub as before.
+#
 # NO ROOT DEFAULT (D43): the root is $HARNESS, then $H; with neither it is rc 2.
 
 _UCR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_UCR_TMP=""
+
+# The record reads (BH-10158). No lib: today's GitHub reads.
+# shellcheck source=bin/lib/unblock/prr.sh
+. "$_UCR_DIR/../prr.sh" 2>/dev/null || true
+declare -F ubp_read >/dev/null || ubp_read() { local o="$2" g="$4"; shift 5; "$g" "$o" "$@"; }
+declare -F ubp_cached >/dev/null || ubp_cached() { shift 5; "$@"; }
 
 _ucr_log() {
   local h="${HARNESS:-${H:-}}"
@@ -76,6 +90,10 @@ _ucr_gh() {
   gh_rest GET "$3" > "$2" 2>/dev/null || rc=$?
   [ "$rc" = 0 ] && jq -e . "$2" >/dev/null 2>&1
 }
+
+# The GitHub side of R1 and R2 (prr_read's github-fn): <out-file> <slug>.
+_ucr_open_gh() { _ucr_gh "$_UCR_TMP" "$1" "repos/$2/pulls?state=open&per_page=100"; }
+_ucr_cr_gh() { _ucr_gh "$_UCR_TMP" "$1" "search/issues?q=repo:$2+is:pr+is:open+review:changes_requested&per_page=100"; }
 
 # _ucr_worker <tmp> <out-file> <path>: one jobs worker read. rc 0 = a 2xx JSON body.
 _ucr_worker() {
@@ -130,13 +148,17 @@ unblock_collect_review() {
   local tmp
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/unblock-review.XXXXXX") || { echo "review.sh: mktemp failed" >&2; return 2; }
   : > "$tmp/calls.rest"; : > "$tmp/calls.worker"; : > "$tmp/out.jsonl"
+  _UCR_TMP=$tmp
+  declare -F ubp_prepare >/dev/null && ubp_prepare
   local -a unreadable=()
   local truncated=false
 
   # R1 the open PRs, R2 the PRs with a CHANGES_REQUESTED review, R6 the running
   # lead review requests. Three reads, in parallel.
-  _ucr_gh "$tmp" "$tmp/pulls.json" "repos/$slug/pulls?state=open&per_page=100" && echo 0 > "$tmp/pulls.ok" &
-  _ucr_gh "$tmp" "$tmp/search.json" "search/issues?q=repo:$slug+is:pr+is:open+review:changes_requested&per_page=100" && echo 0 > "$tmp/search.ok" &
+  ubp_read "$slug#open@review" "$tmp/pulls.json" ub_open_record _ucr_open_gh ub_open_norm "$slug" \
+    && jq -e . "$tmp/pulls.json" >/dev/null 2>&1 && echo 0 > "$tmp/pulls.ok" &
+  ubp_read "$slug#cr" "$tmp/search.json" ub_cr_record _ucr_cr_gh ub_cr_norm "$slug" \
+    && jq -e . "$tmp/search.json" >/dev/null 2>&1 && echo 0 > "$tmp/search.ok" &
   _ucr_worker "$tmp" "$tmp/running.json" "/api/lead-reviews?status=running&repo=$slug" && echo 0 > "$tmp/running.ok" &
   wait
 
@@ -175,11 +197,14 @@ unblock_collect_review() {
       echo "$job" > "$tmp/job-$pr"
       _ucr_par "$par"
       { [ -z "$job" ] || { _ucr_worker "$tmp" "$tmp/art-$pr.json" "/api/jobs/$job/artifacts" && echo 0 > "$tmp/art-$pr.ok"; }
-        _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"
-        _ucr_gh "$tmp" "$tmp/cm-$pr.json" "repos/$slug/issues/$pr/comments?per_page=100" && echo 0 > "$tmp/cm-$pr.ok"; } &
+        ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
+          _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"
+        ubp_cached "$slug" "$pr" "$head" comments "$tmp/cm-$pr.json" \
+          _ucr_gh "$tmp" "$tmp/cm-$pr.json" "repos/$slug/issues/$pr/comments?per_page=100" && echo 0 > "$tmp/cm-$pr.ok"; } &
     elif [[ $sv == MERGE* ]] && [ -n "$crset" ] && jq -e --argjson n "$pr" 'index($n) != null' <<<"$crset" >/dev/null; then
       _ucr_par "$par"
-      { _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"; } &
+      { ubp_cached "$slug" "$pr" "$head" reviews "$tmp/rv-$pr.json" \
+          _ucr_gh "$tmp" "$tmp/rv-$pr.json" "repos/$slug/pulls/$pr/reviews?per_page=100" && echo 0 > "$tmp/rv-$pr.ok"; } &
     fi
   done < <(jq -r '.[] | [.pr, .head] | @tsv' <<<"$prs")
   wait

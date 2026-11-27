@@ -1,0 +1,3 @@
+[
+    {"path": "unblock-prr", "class": "cache", "authority": "the unblock lane's answer cache in step record (BH-10158)", "note": "state/unblock-prr/<owner>_<repo>/<n|repo>-<kind>.json and .meta: the last GitHub answer of a reviews, comments or closed-list read, written by ubp_cached (bin/lib/unblock/prr.sh) through wb_cache_put (bin/lib/wake-backstop.sh), meta <head or ->\\t<read start epoch>. Served only in step record, on the same head, with no pr wake since the read started and inside UNBLOCK_PRR_BACKSTOP_S. ubp_gc deletes files older than 3 days once per tick. Losing the directory costs one read per key. Machine-local, never carried"}
+]

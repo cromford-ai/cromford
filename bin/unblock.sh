@@ -26,8 +26,18 @@
 #      bin/lib/unblock/collectors/*.sh, at most UNBLOCK_MAX_RECORDS records.
 #      Then ub_ticket_pr_enrich (bin/lib/unblock/ticket-pr.sh, BH-9446) gives
 #      each ticket-subject record its open PR: pr, head, has_pr, pr_url,
-#      pr_source (the jobs ledger's pr_url first, then one GitHub read by
-#      branch ticket/<key>); unread = has_pr null, named in unknown.
+#      pr_source (the jobs ledger's pr_url first, then one read by branch
+#      ticket/<key>: the PR record, else GitHub, by the step below); unread =
+#      has_pr null, named in unknown.
+#      THE STEP (BH-10158): the settings row lane.unblock.gh_source (knob
+#      GH_SOURCE, default shadow) is read ONCE per tick, after lane_env_apply,
+#      by prr_step unblock (bin/lib/prr-shadow.sh) and exported as GH_SOURCE,
+#      so every collector subshell and the PR resolve use one value. A bad
+#      value is shadow plus one PRR_STEP line. off = GitHub only; shadow =
+#      GitHub plus the PR record, one PRR_SHADOW line per difference in
+#      logs/prr-shadow.log, the lane acts on GitHub; record = the PR record (a
+#      miss reads GitHub) and the wake-gated answer cache state/unblock-prr/
+#      (bin/lib/unblock/prr.sh). ubp_gc prunes that cache once per tick.
 #      Then ubs_fold (bin/lib/unblock/seam-defect.sh, BH-8748) removes each
 #      lane_defect record: one ALERT per project and reason per
 #      UNBLOCK_SEAM_ALERT_WINDOW_H, no card. The tick line adds
@@ -202,6 +212,10 @@ command -v lane_switch >/dev/null 2>&1 || lane_switch() { [ -f "$H/flags/$1" ]; 
 if lane_switch staff-off-tackler file; then ubt_log "killed by staff-off-tackler"; exit 0; fi
 command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit unblock
 command -v lane_env_apply >/dev/null 2>&1 && lane_env_apply unblock
+# BH-10158: the step of the lane's GitHub reads, once per tick (see THE STEP).
+# shellcheck source=bin/lib/prr-shadow.sh
+if . "$SELF/lib/prr-shadow.sh" 2>/dev/null; then GH_SOURCE=$(prr_step unblock); else GH_SOURCE=off; fi
+export GH_SOURCE
 EN=$(setting_get unblock.enabled 2>/dev/null); rc=$?
 EN=$(printf '%s' "$EN" | tr -d '[:space:]')
 case "$rc:$EN" in
@@ -222,6 +236,9 @@ if ! [[ $MAXREC =~ ^[0-9]+$ ]] || [ "$MAXREC" -lt 10 ] || [ "$MAXREC" -gt 1000 ]
 fi
 TMPD=$(mktemp -d "${TMPDIR:-/tmp}/unblock.XXXXXX") || exit 0
 trap 'rm -rf "$TMPD"' EXIT
+# The per-tick memo of the record's open lists (bin/lib/prr-shadow.d/unblock.sh).
+export UBP_MEMO_DIR="$TMPD/ubp-memo"
+mkdir -p "$UBP_MEMO_DIR" 2>/dev/null || UBP_MEMO_DIR=""
 
 # ubt_evidence <decision-json> — the stall record, redacted, at most 8000
 # bytes as it goes on the wire. A record over that is cut: the wrapper
@@ -426,4 +443,6 @@ while IFS=$'\t' read -r -u 3 P MODE; do
   printf '%s\n' "$LINE"
   ubt_unlock
 done 3<<< "$LIST"
+# BH-10158: the retention of the answer cache state/unblock-prr/ (3 days).
+declare -F ubp_gc >/dev/null && ubp_gc
 exit 0

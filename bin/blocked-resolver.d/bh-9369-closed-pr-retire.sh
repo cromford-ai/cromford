@@ -119,7 +119,11 @@ bcr_load_one() {
   br_use_token "$slug"
   tmp=$(mktemp "${TMPDIR:-/tmp}/br-bcr.XXXXXX" 2>/dev/null) || tmp=""
   stop=""; k=0; new=0
-  if [ -z "$tmp" ]; then
+  if command -v brd_closed_pages_off >/dev/null 2>&1 && brd_closed_pages_off; then
+    # BH-10157: step record reads no page; each row's state comes from the PR record (bcr_is_closed).
+    rm -f "$tmp"; stop="record-step"
+    say "closed-PR read for $slug: record step — no pages read, each row's state comes from the PR record"
+  elif [ -z "$tmp" ]; then
     stop="no scratch file"
   else
     while [ "$k" -lt "$maxp" ]; do
@@ -161,13 +165,23 @@ bcr_load_one() {
     done
     rm -f "$tmp"
   fi
-  if [ -n "$stop" ]; then
+  if [ "$stop" = record-step ]; then
+    newwm="$wm"
+  elif [ -n "$stop" ]; then
     say "closed-PR read for $slug stopped at $stop — the stored set still applies, the watermark stays"
     newwm="$wm"
   fi
   [ -n "$newwm" ] || newwm="$wm"
   # THE PRUNE, by closed_at age. ISO stamps of one shape compare as strings.
   [ "$keep" -gt 0 ] && kcut=$(date -u -d "@$(( $(date -u +%s) - keep * 86400 ))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+  # BH-10157: a record-step tick reads no page, so it rewrites the store only
+  # when a row is past the prune cut (the retention rule still holds).
+  if [ "$stop" = record-step ] && [ -n "$kcut" ]; then
+    for n in "${!rows[@]}"; do
+      IFS=$'\t' read -r word cat ret <<<"${rows["$n"]}"
+      [ "$cat" != "-" ] && [[ "$cat" < "$kcut" ]] && { new=1; break; }
+    done
+  fi
   if [ -z "$stop" ] || [ "$new" -gt 0 ]; then
     bcr_write "$store" "$newwm" "$kcut" rows || say "$store: the closed-PR store was not written — the next tick reads GitHub from the old watermark"
   fi
@@ -213,17 +227,25 @@ bcr_write() {
 
 # bcr_is_closed <url> <reason> — rc 0 and $_BCR_WORD (merged|closed) when this
 #   row's PR is closed on GitHub and the row may leave the list. Pure array
-#   lookups: it runs inside the pre-pass subshell, which inherits the arrays.
+#   lookups (plus, BH-10157, one PR-record peek per row in steps shadow and
+#   record): it runs inside the pre-pass subshell, which inherits the arrays.
 bcr_is_closed() {
   local url="${1:-}" reason="${2:-}" w slug
   _BCR_WORD=""
   case "$url" in https://github.com/*/*/pull/*) ;; *) return 1 ;; esac
   [[ "$url" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$ ]] || return 1
   w="${_BCR_CLOSED["$url"]:-}"
-  [ -n "$w" ] || return 1
   [ -z "${_BCR_OPEN["$url"]:-}" ] || return 1
   case "$reason" in rebuild-*) return 1 ;; esac
   slug="${url#https://github.com/}"; slug="${slug%/pull/*}"
+  # BH-10157: the word by the gh_source step (this tick's closed pages in off;
+  # plus a record compare in shadow; the PR record in record). After the veto,
+  # so a PR in the open list is never peeked; only for a repo this run loaded;
+  # and not for a row already said (its stored word stands).
+  if command -v brd_row_word >/dev/null 2>&1 && ! { [ -n "$w" ] && bcr_said "$url"; }; then
+    case " ${_BCR_SLUG[*]:-} " in *" $slug "*) brd_row_word "$url" "$w"; w="${_BRD_WORD:-}" ;; esac
+  fi
+  [ -n "$w" ] || return 1
   if [ "$w" != merged ] && [ -n "${_BCR_OPENBAD["$slug"]:-}" ]; then return 1; fi
   _BCR_WORD="$w"
   return 0
@@ -246,42 +268,48 @@ bcr_prepass_row() {
   if ! bcr_said "${url:--}"; then
     if [ "${OBSERVE:-0}" = 1 ]; then say "$key/$rkey [$reason]: WOULD retire — PR is $_BCR_WORD — observe mode"
     else br_event resolver_retired "$key" "$ck" "$reason" "PR is $_BCR_WORD — dropped from the candidate list, no rung" </dev/null
-         bcr_note_retired "${url:--}"; fi
+         bcr_note_retired "${url:--}" "$_BCR_WORD" "${_BRD_ROW_AT:-}"; fi
   fi
   return 0
 }
 
-# bcr_note_retired <url> — one url per line in $BCR_RETIRED_OUT (the pre-pass
-#   runs inside $(...), so the parent reads the file).
+# bcr_note_retired <url> [word] [at] — one line per url in $BCR_RETIRED_OUT,
+#   <url>\t<word>\t<at> (the pre-pass runs inside $(...), so the parent reads
+#   the file). BH-10157: the word and the record's time let bcr_commit add a
+#   store row for a PR the record retired and no closed page listed.
 #   The url is also marked said in this shell: a PR two sources report (a
 #   conductor row and a review row) gets one event line, not two.
 bcr_note_retired() {
   [ -n "${1:-}" ] && _BCR_RET["$1"]=1
-  [ -n "${BCR_RETIRED_OUT:-}" ] && printf '%s\n' "${1:-}" >> "$BCR_RETIRED_OUT" 2>/dev/null
+  [ -n "${BCR_RETIRED_OUT:-}" ] && printf '%s\t%s\t%s\n' "${1:-}" "${2:-}" "${3:-}" >> "$BCR_RETIRED_OUT" 2>/dev/null
   return 0
 }
 
 # bcr_commit — parent shell, after the pre-pass: `retired=1` on the store rows
-#   the pre-pass named. Observe mode writes nothing.
+#   the pre-pass named. Observe mode writes nothing. Field 1 of a line is the
+#   url; an old url-only line reads the same. A line with a word and an ISO
+#   time (BH-10157) also adds the row when the store has none.
 bcr_commit() {
   [ -n "${BCR_RETIRED_OUT:-}" ] && [ -s "$BCR_RETIRED_OUT" ] || return 0
   [ "${OBSERVE:-0}" = 1 ] && return 0
-  local p url
+  local p url word at
   local -A want=()
-  while IFS= read -r url; do [ -n "$url" ] && want["$url"]=1; done < "$BCR_RETIRED_OUT"
+  while IFS=$'\t' read -r url word at; do [ -n "$url" ] && want["$url"]="${word:-}	${at:-}"; done < "$BCR_RETIRED_OUT"
   for p in "${!_BCR_SLUG[@]}"; do
     bcr_commit_one "$(bcr_store "$p")" "${_BCR_SLUG["$p"]}" want
   done
   return 0
 }
 
-# bcr_commit_one <store> <slug> <want-array name> — one store's rewrite.
+# bcr_commit_one <store> <slug> <want-array name> — one store's rewrite. A
+#   wanted url of this slug with no row, a word (merged|closed) and an ISO
+#   time is added `<n> <word> <time> 1`; a line with no ISO time adds no row.
 bcr_commit_one() {
-  local store="$1" slug="$2" n word cat ret wm="" changed=0
+  local store="$1" slug="$2" n word cat ret wm="" changed=0 u
   local -n _bcr_want="$3"
   local -A rows=()
-  [ -r "$store" ] || return 0
-  while IFS=$'\t' read -r n word cat ret; do
+  [ -r "$store" ] || [ "${#_bcr_want[@]}" -gt 0 ] || return 0
+  [ -r "$store" ] && while IFS=$'\t' read -r n word cat ret; do
     if [ "$n" = "#wm" ]; then wm="$word"; continue; fi
     case "$n" in ''|*[!0-9]*) continue ;; esac
     case "$word" in merged|closed) ;; *) continue ;; esac
@@ -289,6 +317,14 @@ bcr_commit_one() {
     if [ "$ret" = 0 ] && [ -n "${_bcr_want["https://github.com/$slug/pull/$n"]:-}" ]; then ret=1; changed=1; fi
     rows["$n"]="$word	${cat:--}	$ret"
   done < "$store"
+  for u in "${!_bcr_want[@]}"; do
+    [[ "$u" =~ ^https://github\.com/([^/]+/[^/]+)/pull/([1-9][0-9]*)$ ]] && [ "${BASH_REMATCH[1]}" = "$slug" ] || continue
+    n="${BASH_REMATCH[2]}"; [ -z "${rows["$n"]:-}" ] || continue
+    IFS=$'\t' read -r word cat <<<"${_bcr_want["$u"]}"
+    case "$word" in merged|closed) ;; *) continue ;; esac
+    [[ "$cat" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || continue
+    rows["$n"]="$word	$cat	1"; changed=1
+  done
   [ "$changed" = 1 ] || return 0
   bcr_write "$store" "$wm" "" rows \
     || say "$store: the retired marks were not written — these rows are retired again next tick"

@@ -1,0 +1,9 @@
+{
+  "env": "GH_SOURCE",
+  "read_in": "bin/lib/prr-shadow.sh",
+  "type": "string",
+  "default": "shadow",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10158 (BH-9926 wave 5, slice C2 of #9937): settings row lane.unblock.gh_source. Where the unblock collectors and the ticket PR resolve (bin/lib/unblock/collectors/*.sh, bin/lib/unblock/ticket-pr.sh) read the open PR list, one PR, a ticket branch PR, the change-requested set and the CI word: off = GitHub only (today's reads); shadow (default) = the PR record and GitHub, the lane acts on GitHub and logs one PRR_SHADOW line in logs/prr-shadow.log when they differ; record = the PR record (a miss reads GitHub and logs PRR_MISS) plus the answer cache state/unblock-prr/ for the reviews, comments and closed-list reads: a PR with no pr wake since its last read makes 0 GitHub reads. Any other value is shadow plus one PRR_STEP line. Read once per tick by prr_step in bin/unblock.sh. Move to record only after a 48-hour shadow count of 0 (docs/notes/2026-11-26-BH-10158-unblock-record-read.md)."
+}

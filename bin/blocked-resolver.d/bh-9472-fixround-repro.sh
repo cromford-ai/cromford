@@ -22,7 +22,8 @@
 #                                gate off, not a ci-red park, a conflicted
 #                                merge, a red that names no test file, an
 #                                unreadable CI, a could-not-run.
-#   brfr_verify after the round's verify block (stdout appends to fix-verify.txt).
+#   brfr_verify after the round's verify block (stdout appends to fix-verify.txt;
+#               a 3rd arg, the verify output so far, applies brvb_tail_skip).
 #               When brfr_pre wrote repro.txt, the same files run on the
 #               round's tree: `REPRO_EXIT: passes | still-red | could-not-run`.
 #               still-red and could-not-run say "not proven green here" and
@@ -145,10 +146,12 @@ _brfr_end() {
 
 # brfr_verify <wt> <state-prefix> — the repro lines of the round's verify.
 brfr_verify() {
-  local wt="$1" pre="$2" sf="$2.repro.txt" files=() rc w
+  local wt="$1" pre="$2" vout="${3:-}" sf="$2.repro.txt" files=() rc w
   [ -f "$sf" ] || return 0
   mapfile -t files < <(sed -n 's/^file //p' "$sf")
   echo "== repro =="
+  # BH-10245: an earlier red step or a spent verify budget answers without the run (rc 0; the push is refused by that red, or the round is a verify timeout).
+  if [ -n "$vout" ] && command -v brvb_tail_skip >/dev/null 2>&1 && brvb_tail_skip repro "$vout"; then return 0; fi
   if [ "${#files[@]}" = 0 ] || ! command -v frr_confirm >/dev/null 2>&1; then
     w="could-not-run (no file or no lib)"
   else
