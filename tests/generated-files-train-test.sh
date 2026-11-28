@@ -141,8 +141,9 @@ WANT_ROW=$(printf '%s\n' \
   "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
   "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')" \
   "$(printf 'bin/lib/rb/plan.sh\tbin/render-split.sh --write')" \
-  "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')")
-#    …and of the last six rows four are still COMMITTED. rules/CLAUDE.md
+  "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')" \
+  "$(printf 'bin/merge-conductor.sh\tbin/render-split.sh --write')")
+#    …and of the last seven rows five are still COMMITTED. rules/CLAUDE.md
 #    (BH-1336): five scripts copy it verbatim onto every box, so it cannot leave
 #    git yet, which is exactly why a train must regenerate it rather than hand
 #    merge two siblings' renders. docs/PR-OWNERSHIP.md (BH-5235.2) is linked by
@@ -152,7 +153,8 @@ WANT_ROW=$(printf '%s\n' \
 #    catalog/state-paths.json (BH-8986) is not in git either.
 #    bin/lib/rb/plan.sh (BH-9704) is the committed render of config/rb-plan.d/.
 #    bin/fly-pool.sh (BH-9704 C1) is the committed render of config/fly-pool.d/,
-#    by the same command.
+#    by the same command. bin/merge-conductor.sh (BH-10226) is the committed
+#    render of config/merge-conductor.d/, by the same command too.
 if [ "$REGEN_TABLE" = "$WANT_ROW" ]; then ok
 else bad "GT-2: regen_table must print exactly the declared rows. Got:
 $(printf '%s' "$REGEN_TABLE" | cat -A)"; fi

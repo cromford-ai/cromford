@@ -150,7 +150,10 @@ WT1="$T/wt1"; mkwt "$WT1" "$X1F=$ADD"
 WT2="$T/wt2"; mkwt "$WT2" "prisma/sql/20261110000002_b.sql=$ADD" "prisma/sql/20261110000001_a.sql=$ADD"
 # two dirs: a path sort puts manual/..._z first, the file-name sort puts _a first
 WTO="$T/wto"; mkwt "$WTO" "prisma/migrations/manual/20261110000009_z.sql=$ADD" "prisma/sql/20261110000001_a.sql=$ADD"
-WTU="$T/wtu"; mkwt "$WTU" "prisma/sql/20261110000003_u.sql=UPDATE t SET x=2 WHERE id=7;"
+# A statement the local gate FLAGS and the workflow's allow-list may still take.
+# (An UPDATE is on the workflow refuse list since BH-9817: needs-operator, no
+# dispatch, tests/hotfix-migrate-needs-operator.bh-9817-test.sh.)
+WTU="$T/wtu"; mkwt "$WTU" "prisma/sql/20261110000003_u.sql=INSERT INTO t (a) VALUES (1) ON CONFLICT DO NOTHING;"
 TSF=prisma/migrations/manual/2026-11-10-t.sql
 WTT="$T/wtt"; mkwt "$WTT" "$TSF=$ADD"
 HEAD1=$(git -C "$WT1" rev-parse HEAD)
@@ -419,7 +422,7 @@ o1 '' 124 in-flight
   && ok || bad "O1 the refusal reason is the refused line"
 
 # ============================================================================
-# R1. an UPDATE: the workflow refuses, 0 retries, 1 alert, no label
+# R1. a statement the workflow refuses: 0 retries, 1 alert, no label
 # ============================================================================
 mkrow; newcase; : > "$T/alerts.log"
 printf '2026-11-13T00:00:01Z refused: 20261110000003_u.sql: 1 statement(s) not on the additive allow-list (UPDATE)\n' > "$FX/log-20261110000003_u.sql"

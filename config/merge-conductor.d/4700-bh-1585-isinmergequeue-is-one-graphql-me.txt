@@ -1,0 +1,61 @@
+  # BH-1585: isInMergeQueue is one GraphQL mergeQueue read per list
+  # (bin/lib/gh-pr-list.sh), so it is asked only where it is read — GitHub's
+  # NATIVE queue. A Mergify repo's witness is its labels, which ride the list.
+  INQ_RC=0
+  if [ "$QUEUE" = 1 ] && [ "$PROVIDER" = github ] && inq_list_ok "$SLUG"; then
+    INQ_ASKED=1
+    LIST=$(mc_lazy_scoped "$SLUG" harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,isInMergeQueue,updatedAt,isCrossRepository 100 2>/dev/null) || INQ_RC=$?
+    [ -n "$LIST" ] && { INQ_IN_LIST=1; rm -f "$(inq_mark "$SLUG")" 2>/dev/null; }
+  fi
+  if [ "$INQ_IN_LIST" = 0 ]; then
+    LIST=$(mc_lazy_scoped "$SLUG" harness_pr_list "$SLUG" open number,url,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus,mergeable,state,labels,updatedAt,isCrossRepository 100 2>/dev/null) || {
+      command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed merge-conductor "$SLUG" "$P: PR list failed this tick"; reset_token; mc_tick_metrics "$P" "$T0"; return 0; }
+    [ -n "$LIST" ] || { command -v gh_repo_list_failed >/dev/null 2>&1 && gh_repo_list_failed merge-conductor "$SLUG" "$P: PR list failed this tick"; reset_token; mc_tick_metrics "$P" "$T0"; return 0; }
+    # REMEMBERED ONLY WHEN IT WAS A REFUSAL (rc 65: GitHub answered the
+    # mergeQueue query with errors). A read that did not complete (44/75) says
+    # nothing about the repo: the witness is off for THIS tick and the next tick
+    # asks again. Remembering a blip used to switch it off for 24h.
+    if [ "$INQ_ASKED" = 1 ] && [ "$INQ_RC" = 65 ]; then
+      date -u +%s > "$(inq_mark "$SLUG")" 2>/dev/null
+      mc_log "$SLUG: gh refused --json isInMergeQueue (the mergeQueue read was refused) — remembered for $((MC_INQUEUE_PROBE_TTL_SECS/3600))h for this repo ($(inq_mark "$SLUG")), so no later tick asks again; the field is read per PR only where the merge state is one of: $MC_INQUEUE_STATES"
+    elif [ "$INQ_ASKED" = 1 ]; then
+      mc_log "$SLUG: mergeQueue read unverifiable (rc $INQ_RC) — isInMergeQueue is not in the list this tick only; nothing remembered, the next tick asks again"
+    fi
+  fi
+  # THE LIST WORKED, so whatever blind streak this lane was carrying on this repo
+  # is over (BH-847). This is the only lane that closes a streak, and it is the
+  # right one: the conductor is what enqueues PRs, so its blindness is the one
+  # that stops work. Guarded because merge-conductor-lib.sh is sourced standalone
+  # by fixtures that never load bin/lib/gh-repo-token.sh.
+  command -v gh_repo_list_ok >/dev/null 2>&1 && gh_repo_list_ok merge-conductor "$SLUG"
+  # The list is read into an array FIRST: gh, agent-call and npm inside the loop
+  # must never eat the loop's own stdin.
+  # baseRefName rides the list (2026-09-14): "is this PR stacked on another PR's
+  # branch" is one string comparison, and asking it per PR would be one extra
+  # API call each. It is APPENDED to the tsv, never inserted, so the positional
+  # read below keeps every existing field where it was.
+  #
+  # EVERY COLUMN EMITS A `-` RATHER THAN AN EMPTY STRING, and that is a
+  # correctness requirement, not tidiness (2026-09-14, project-5 #868/#885/
+  # #848/#850/#852). `IFS=$'\t' read` collapses runs of delimiters, because TAB
+  # is an IFS WHITESPACE character in bash — so a PR with no labels emitted
+  # `…\tfalse\t\tticket/TK-763` and the read slid baseRefName into RAWLBL and
+  # left BASEREF EMPTY. The stacked-child block below tests `[ -n "$BASEREF" ]`,
+  # so it never fired on a single PR: #868 sat WAIT_CI for an hour after its
+  # parent merged (no retarget) and #848/#850/#852 were never parked
+  # STACKED_WAIT at all. Harness PRs carry no labels on any repo without
+  # Mergify, which is why this bit every one of them.
+  #
+  # `updatedAt` IS THE 12TH COLUMN AND IT COSTS NOTHING (BH-1486). It is a
+  # `gh pr list --json` field and a mappable REST one, so it rides the list
+  # read this tick already makes — and it is the other half of the read memo's
+  # key: a PR whose head sha AND updated_at are both where they were is a PR
+  # whose diff and terminal CI answer this tick already knows. A list that does
+  # not carry it emits `-`, which read_memo_get treats as UNKNOWN and therefore
+  # as "memo off" — absent is not unchanged (D11).
+  #
+  # `isCrossRepository` IS THE 13TH (BH-1529), and it is spelled out rather
+  # than `// "-"` because `false // x` is x in jq: a same-repo PR would read as
+  # unknown. The head-lag check acts only on a literal `false`, so a list that
+  # does not carry it (or a deleted fork) is never read as "same repo".
+  mapfile -t ROWS < <(printf '%s' "$LIST" | jq -r '.[] | [.number, .url, .headRefOid, .headRefName, (.isDraft|tostring), (.mergeStateStatus // "UNKNOWN"), (.mergeable // "UNKNOWN"), .state, ((.isInMergeQueue // false)|tostring), ((((.labels // []) | map(.name) | join(",")) // "") | if . == "" then "-" else . end), ((.baseRefName // "") | if . == "" then "-" else . end), ((.updatedAt // "") | if . == "" then "-" else . end), (if .isCrossRepository == null then "-" else (.isCrossRepository|tostring) end)] | @tsv' 2>/dev/null)

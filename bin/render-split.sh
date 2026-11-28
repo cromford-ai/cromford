@@ -4,7 +4,7 @@
 #   bin/render-split.sh [--root <dir>] --check [<render path>...]
 #   bin/render-split.sh [--root <dir>] --write [<render path>...]
 #   bin/render-split.sh [--root <dir>] <render path>        (print to stdout)
-#   bin/render-split.sh [--root <dir>] --cut <render path> --min-lines <n>
+#   bin/render-split.sh [--root <dir>] --cut <render path> --min-lines <n> [--at <ERE>]
 #
 # EDIT the fragment dir, NEVER the render. The render is the fragments
 # concatenated verbatim in LC_ALL=C name order, with no banner, so its bytes
@@ -18,8 +18,10 @@
 # octal digits (the mode --write gives the render); the fragment extension is
 # `txt` (the default when the field is absent) or `sh`. `#` lines and blank
 # lines are skipped. The PLAN-stage lib bin/lib/rb/plan.sh (`txt`) is the first
-# subject; fly-pool (`sh`) is the second subject (BH-9704 C1). A new split adds its OWN registry file, never a line to a
-# shared one, and --check then covers it with no other edit.
+# subject; fly-pool (`sh`) is the second subject (BH-9704 C1). The merge
+# conductor bin/merge-conductor.sh (`txt`, cut with `--at '^ *# ' --min-lines
+# 60`) is the third (BH-10226). A new split adds its OWN registry file, never a
+# line to a shared one, and --check then covers it with no other edit.
 #
 # THE FRAGMENT DIR holds `NNNN-<slug>.<ext>` files (4 digits, then [a-z0-9-],
 # lowercase; <ext> from the row, so a .txt in an `sh` dir is refused and the
@@ -38,6 +40,9 @@
 # the committed render once: it starts a new fragment at a line that starts
 # `# >>> ` when the current fragment already has at least <n> lines. The first
 # fragment is 0100-head.<ext>, fragment k is <k*100>-<slug of the marker>.<ext>.
+# With --at <ERE> the cut point is a block start instead: a line that matches
+# the ERE when the line before it does not, so a comment block is never split.
+# The slug then comes from the whole line (leading spaces and `#` dropped).
 # It refuses a dir that already holds a .<ext>, and it removes what it wrote
 # when the fragments do not reproduce the file byte for byte.
 #
@@ -74,12 +79,14 @@ ROOT="$(cd "$HERE/.." && pwd)"
 MODE=print
 CUT_MIN=
 CUT_SET=
+AT=
+AT_SET=
 PATHS=()
 # frag_re <ext>: the fragment name rule for one row's extension.
 frag_re() { printf '^[0-9]{4}-[a-z0-9][a-z0-9-]*\\.%s$' "$1"; }
 
 usage() {
-  sed -n '3,6p' "$0" | sed 's/^# //' >&2
+  sed -n '3,7p' "$0" | sed 's/^# //' >&2
   exit 2
 }
 die() { local rc="$1"; shift; printf 'render-split: %s\n' "$*" >&2; exit "$rc"; }
@@ -92,7 +99,8 @@ while [ $# -gt 0 ]; do
     --write)     setmode write; shift ;;
     --cut)       setmode cut; [ -n "${2:-}" ] || usage; PATHS+=("$2"); shift 2 ;;
     --min-lines) CUT_SET=1; CUT_MIN="${2:-}"; [ $# -ge 2 ] && shift 2 || shift ;;
-    -h|--help)   sed -n '2,65p' "$0"; exit 0 ;;
+    --at)        AT_SET=1; AT="${2:-}"; [ $# -ge 2 ] && shift 2 || shift ;;
+    -h|--help)   sed -n '2,70p' "$0"; exit 0 ;;
     -*)          printf 'render-split: unknown argument %s\n' "$1" >&2; usage ;;
     *)           PATHS+=("$1"); shift ;;
   esac
@@ -100,9 +108,11 @@ done
 if [ "$MODE" = cut ]; then
   [ -n "$CUT_SET" ] || die 2 "--cut needs --min-lines <n>"
   [[ "$CUT_MIN" =~ ^[1-9][0-9]*$ ]] || die 2 "--min-lines must be a positive integer, got '$CUT_MIN'"
+  [ -z "$AT_SET" ] || [ -n "$AT" ] || die 2 "--at needs a non-empty ERE"
   [ "${#PATHS[@]}" -eq 1 ] || usage
 else
   [ -z "$CUT_SET" ] || die 2 "--min-lines is only for --cut"
+  [ -z "$AT_SET" ] || die 2 "--at is only for --cut"
 fi
 [ "$MODE" != print ] || [ "${#PATHS[@]}" -eq 1 ] || usage
 
@@ -286,20 +296,21 @@ cut_split() {
     for f in "$dir"/*."$ext"; do [ -e "$f" ] && die 2 "--cut: $dir/ already holds fragments; remove them first"; done
   fi
   stage=$(mktemp -d); TMPS+=("$stage")
-  awk -v n="$CUT_MIN" -v out="$stage" -v ext="$ext" '
+  # The ERE rides in the environment: awk -v would process backslash escapes.
+  RS_AT="$AT" awk -v n="$CUT_MIN" -v out="$stage" -v ext="$ext" '
     function slug(s) {
       s = tolower(s); gsub(/[^a-z0-9]+/, "-", s); sub(/^-+/, "", s); sub(/-+$/, "", s)
       s = substr(s, 1, 40); sub(/-+$/, "", s)
       return s == "" ? "block" : s
     }
-    BEGIN { k = 1; cnt = 0; f = out "/0100-head." ext }
+    BEGIN { k = 1; cnt = 0; f = out "/0100-head." ext; at = ENVIRON["RS_AT"]; prev = "" }
     {
-      if (substr($0, 1, 6) == "# >>> " && cnt >= n) {
+      if (at == "" ? (substr($0, 1, 6) == "# >>> " && cnt >= n) : ($0 ~ at && !(prev ~ at) && cnt >= n)) {
         close(f); k++
         if (k * 100 > 9999) { print "render-split: --cut: more than 99 fragments; use a larger --min-lines" > "/dev/stderr"; exit 2 }
-        f = sprintf("%s/%04d-%s.%s", out, k * 100, slug(substr($0, 7)), ext); cnt = 0
+        f = sprintf("%s/%04d-%s.%s", out, k * 100, slug(at == "" ? substr($0, 7) : $0), ext); cnt = 0
       }
-      print > f; cnt++
+      print > f; cnt++; prev = $0
     }' "$render" || die 2 "--cut: the walk of $render failed"
   [ -n "$(ls -A "$stage")" ] || die 2 "--cut: $render is empty"
   mkdir -p "$dir"

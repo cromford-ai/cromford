@@ -1,0 +1,94 @@
+{
+  "id": "staff-inspector-lever",
+  "name": "Staff inspector lever (samples hours_behind_main from the served-sha-watch state and the console Pages lag; at level file or act, files one fix-main-red issue per behind episode with the failing Vercel build step quoted)",
+  "scope": "hub",
+  "script": "bin/staff/inspector-lever.sh",
+  "cadence": "23 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-inspector-lever",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "HARNESS_CHECKOUT",
+      "type": "string",
+      "default": "/root/harness-checkout",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "Not a knob: the box's harness checkout, where the console part reads origin/main's last console-ui commit (bin/pipeline-health.sh fetches it). Plumbing. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "SERVED_SHA_CONF",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "Not a knob of this lane: the served-sha-watch lane's vercel.conf path (default $H/vercel.conf), read here so the inspector checks the same projects the watch checks. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "STAFF_FILE_REPO",
+      "type": "string",
+      "default": "example-org/cromford",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "BH-5562: owner/repo the staff agents file into (the staff lane's knob; else HARNESS_REPO), read here as the fix-main-red filing repo. NOT settable from the control plane; set it in env/global.env.",
+      "settable": false
+    },
+    {
+      "env": "INSPECTOR_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "BH-9419 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The level, target, day cap, dry mode, quote lines, quote line chars, fresh window, per-run cap and issue list cap are settings rows (staff.inspector.level, .target, .file_max_day, .lever_dry_run, .quote_lines, .quote_line_chars, .fresh_min, .lever_max_run, .issue_list_max), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "INSPECTOR_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "BH-9419 test seam: 1 = load the insp_* functions and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "INSPECTOR_CF_BASE",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "BH-9419 test seam: the Cloudflare API base URL, honored only with HARNESS_TEST_SANDBOX=1. The fallback is https://api.cloudflare.com/client/v4, the URL bin/pipeline-health.sh block 8c reads. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/inspector-lever.sh",
+      "note": "Test seam gate: bin/staff/inspector-lever.sh honors INSPECTOR_NOW and INSPECTOR_CF_BASE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-inspector-lever.log"
+  }
+}

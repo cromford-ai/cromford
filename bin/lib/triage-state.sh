@@ -122,6 +122,14 @@ _ts_libs() {
 [ -r "$(dirname "${BASH_SOURCE[0]}")/triage-state-unreadable.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/triage-state-unreadable.sh"
 # shellcheck source=bin/lib/triage-state-waste.sh
 [ -r "$(dirname "${BASH_SOURCE[0]}")/triage-state-waste.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/triage-state-waste.sh"
+# The BH-9555 contract seams (BH-9594), each owned by one later child:
+# _ts_cnr_skip (BH-9555.3) and _ts_pr_record_ref (BH-9555.5). The placeholders
+# answer rc 1, which is today's behaviour; a missing file is rc 127 at the call,
+# which no call site reads as handled.
+# shellcheck source=bin/lib/triage-state.d/bh-9555-3-cnr.sh
+[ -r "$(dirname "${BASH_SOURCE[0]}")/triage-state.d/bh-9555-3-cnr.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/triage-state.d/bh-9555-3-cnr.sh"
+# shellcheck source=bin/lib/triage-state.d/bh-9555-5-pr-record.sh
+[ -r "$(dirname "${BASH_SOURCE[0]}")/triage-state.d/bh-9555-5-pr-record.sh" ] && . "$(dirname "${BASH_SOURCE[0]}")/triage-state.d/bh-9555-5-pr-record.sh"
 
 # ts_mode <harness> <project> — off | shadow | enforce. The kill switch first;
 # then the settings rows for this lib (per project, then fleet); then the env.
@@ -218,14 +226,20 @@ _ts_fetch_refs() {
   for n in $(cat "$1" 2>/dev/null); do
     [ "$nf" -lt "$max" ] && [ -n "$slug" ] && command -v gh_rest >/dev/null 2>&1 || break
     case "$(jq -r --arg n "$n" '.[$n] // ""' "$refs" 2>/dev/null)" in CLOSED|MERGED|MISSING) continue ;; esac
-    nf=$((nf+1)); st=""
-    body=$(mktemp "$d/ref.XXXXXX" 2>/dev/null) || break
-    gh_rest GET "repos/$slug/issues/$n" > "$body" 2>/dev/null
-    case $? in   # the REST contract: 0 body, 44 absent, 75 no answer (bin/lib/gh-rest.sh)
-      0) st=$(jq -r 'if (.pull_request.merged_at // null) != null then "MERGED" else ((.state // "") | ascii_upcase) end' "$body" 2>/dev/null) ;;
-      44) st=MISSING ;;
-    esac
-    rm -f "$body"
+    st=""
+    # BH-9555.5 seam: a ref the PR record serves costs no read and no fetch cap.
+    if _ts_pr_record_ref "$slug" "$n" 2>/dev/null; then
+      st="${_TS_PR_REF_ST:-}"
+    else
+      nf=$((nf+1))
+      body=$(mktemp "$d/ref.XXXXXX" 2>/dev/null) || break
+      gh_rest GET "repos/$slug/issues/$n" > "$body" 2>/dev/null
+      case $? in   # the REST contract: 0 body, 44 absent, 75 no answer (bin/lib/gh-rest.sh)
+        0) st=$(jq -r 'if (.pull_request.merged_at // null) != null then "MERGED" else ((.state // "") | ascii_upcase) end' "$body" 2>/dev/null) ;;
+        44) st=MISSING ;;
+      esac
+      rm -f "$body"
+    fi
     case "$st" in OPEN|CLOSED|MERGED|MISSING)
       _ts_refs_merge "$refs" "$n" "$st"; fetched=1
       [ -n "${_TS_FETCH_LOG:-}" ] && printf '%s %s\n' "$n" "$st" >> "$_TS_FETCH_LOG" ;;
@@ -1024,7 +1038,10 @@ TRIAGE STATE (deterministic — bin/lib/triage-state.sh): every open ticket's in
 # _ts_record_run — bin/triage-state.py record, in ts_after_session's scope:
 # against $W / $DEC / $ROWS (the tick's files, or a shard's snapshot) and $priv
 # (a private copy of refs.json: the refs' PRE-session states).
+# BH-9555.3 seam: a shard (one key) whose session was a could-not-read skip
+# records nothing (rc 1, which both callers read as "record nothing").
 _ts_record_run() {
+  [ -n "${key:-}" ] && _ts_cnr_skip "$out" "$key" 2>/dev/null && return 1
   PYTHONDONTWRITEBYTECODE=1 python3 "$h/bin/triage-state.py" record --project "$p" --out "$out" --rc "$rc" \
     --now "$(_ts_now)" --ttl "$(ts_ttl)" --defer-ttl "$(ts_defer_ttl)" --decisions "$DEC" --key "$key" --hash "$hash" \
     --world "$W" --refs "$priv" --rows "$ROWS" --hnd-backoff "$(ts_hnd_backoff)" --nudge "$(ts_nudge)" \

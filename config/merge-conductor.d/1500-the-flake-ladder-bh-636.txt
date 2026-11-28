@@ -1,0 +1,72 @@
+  # ---- the flake ladder (BH-636) ------------------------------------------
+  # A KILLED RUNNER IS NOT A CODE FAILURE, and it is not an idle head either.
+  # mc_ci_state now drops `timed_out` with `cancelled`, which is right and which
+  # on its own would leave those heads sitting in `checks none` waiting for a run
+  # nobody is going to start. This is the other half: the runs that died are
+  # named, re-run ONCE in full, and said out loud.
+  #
+  # ASKED FOR TWO SHAPES ONLY, because it is one extra API read per row:
+  #   ci=none              every run we can see was cancelled/timed_out
+  #   ci=green + BLOCKED/UNSTABLE   every run we can SEE passed, but a required
+  #                        context is not green — i.e. the run that would have
+  #                        reported it was the one that died
+  # and never on a DIRTY/CONFLICTING head, where GitHub runs nothing by design
+  # and the rebase owns the row.
+  #
+  # The rung is the RED ladder's mark (`cirerun`), shared on purpose: one rerun
+  # per head whoever buys it. Rung 2 is not RED_TWICE here — the resolver's
+  # ladder ends in a fresh rebuild, and rebuilding a ticket because a runner was
+  # OOM-killed twice is the exact waste this exists to stop. It is one ALERTS
+  # line with an owner, and the row stays WAIT_CI.
+  mc_step identity
+  # >>> identity block
+  # BEFORE THE FLAKE LADDER, BECAUSE THE LADDER IS THE BURNED RETRY (BH-800,
+  # 2026-09-18). `green:BLOCKED` is one of the two shapes the ladder answers, so
+  # a PR blocked on a PUSH PERMISSION bought a second actions/runs read every
+  # tick and, at rung 0, a full CI re-run — neither of which can add this token
+  # to a branch's push allow-list. One protection read per (repo, base) per
+  # tick, cached in a file because the workers are subshells; a box without
+  # bin/lib/gh-push-identity.sh behaves as it always did, and so does every
+  # verdict the read could not settle.
+  MC_IDENTITY_BLOCKED=0; MC_IDENTITY_WORD=""
+  if [ "$MSTATE" = BLOCKED ] && [ "$CI" != red ] && [ "$MGABLE" != CONFLICTING ] \
+     && [ -n "${BASEREF:-}" ] && command -v gh_push_blocked_verdict >/dev/null 2>&1; then
+    IDVF=$(identity_verdict_file "$SLUG $BASEREF"); mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    # READ-OR-COMPUTE IS ONE CRITICAL SECTION, because MC_PR_PARALLEL defaults to
+    # 0 = unlimited: every PR of a repo reaches this line inside the same second.
+    # Unlocked, each would see no file and buy its own protection read (42 PRs =
+    # the spend this ticket exists to stop), and a worker reading the file
+    # mid-truncate would get nothing back and run the flake ladder after all. The
+    # file is its own lock, the way mc_count_file is; fd 9 is opened by the
+    # SUBSHELL only, so the PR lock pr_worker holds on fd 9 is untouched.
+    IDVLINE=$(
+      ( flock 9 2>/dev/null
+        if [ ! -s "$IDVF" ]; then
+          IFS=$'\t' read -r IDPST IDPJSON <<<"$(gh_branch_protection "$SLUG" "$BASEREF")"
+          if [ "$IDPST" = ok ]; then
+            IDWORD=$(gh_token_identity)
+            printf '%s\t%s\t%s\n' "$(gh_push_blocked_verdict "$IDPJSON" "$IDWORD")" "$IDWORD" \
+              "$(gh_push_allowlist_summary "$IDPJSON")" > "$IDVF"
+          else
+            printf '%s\t-\t-\n' "$IDPST" > "$IDVF"
+          fi
+        fi
+        cat "$IDVF" ) 9>>"$IDVF" 2>/dev/null )
+    IFS=$'\t' read -r IDV IDWORD IDLIST <<<"$IDVLINE"
+    if [ "$IDV" = identity ]; then
+      MC_IDENTITY_BLOCKED=1; MC_IDENTITY_WORD="$IDWORD"
+      mc_log "$KEY IDENTITY_NOT_PERMITTED $SLUG $MC_IDENTITY_WORD: mergeState BLOCKED on $BASEREF with no required checks and no required reviews — this identity cannot push (push allow-list: $IDLIST); no flake rerun, no re-review, no merge attempt on it: $URL"
+      # ONE page per (repo, identity, day) across every worker of the repo, so
+      # the check and the append are one critical section too — this marker is
+      # the only one in MC_ATTEMPTS that is not keyed by PR, so it is the only
+      # one two workers can race for. Same lock file mc_attempt_clear takes.
+      IDDAY=$(date -u +%Y%m%d)
+      IDOWN=$( ( flock 9 2>/dev/null
+        grep -qxF "identityalert $SLUG $MC_IDENTITY_WORD $IDDAY" "$MC_ATTEMPTS" 2>/dev/null && exit 0
+        echo "identityalert $SLUG $MC_IDENTITY_WORD $IDDAY" >> "$MC_ATTEMPTS"; printf 1
+      ) 9>>"$MC_ATTEMPTS.lock" 2>/dev/null )
+      if [ "$IDOWN" = 1 ]; then
+        mc_alert "$KEY" WAIT_CI "IDENTITY_NOT_PERMITTED $SLUG $MC_IDENTITY_WORD — add it to repos/$SLUG/branches/$BASEREF/protection/restrictions (a repo admin; this box cannot). Every approved PR on $SLUG is held until then: $URL"
+      fi
+    fi
+  fi

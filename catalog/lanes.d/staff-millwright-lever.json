@@ -1,0 +1,54 @@
+{
+  "id": "staff-millwright-lever",
+  "name": "Staff millwright lever (samples failed_bakes_and_broken_boxes: failed pool image bakes plus boxes with a broken resolv.conf, a full /tmp or a stale bin; at level act, re-runs a failed bake once per bake id)",
+  "scope": "hub",
+  "script": "bin/staff/millwright-lever.sh",
+  "cadence": "37 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-millwright-lever",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "MWL_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/millwright-lever.sh",
+      "note": "BH-10124 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The level and the re-run cap are settings rows (staff.millwright.level, staff.millwright.bake_rerun_max_day); the read knobs are lib rows (lib.staff-millwright.*), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "MWL_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/millwright-lever.sh",
+      "note": "BH-10124 test seam: 1 = load mwl_action_verdict and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/millwright-lever.sh",
+      "note": "Test seam gate: bin/staff/millwright-lever.sh honors MWL_NOW and MW_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-millwright-lever.log"
+  }
+}

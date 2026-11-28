@@ -1,0 +1,63 @@
+  # A MEMBER OF A LIVE BATCH TRAIN IS LEFT ALONE (BH-498). bin/batch-resolve.sh
+  # has this PR's approved head merged into a union branch that is on its way
+  # through the queue; merging it here as well would land the same work twice
+  # and re-dirty every sibling in that train, which is the tail the train exists
+  # to end. The hold is keyed on the HEAD, so a push to this branch ends it by
+  # construction and the PR comes straight back to this lane. One line per
+  # (PR, head), like every other marker.
+  mc_step park-holds
+  if TRAINURL=$(mc_batch_held "$SLUG" "$NUM" "$HEAD"); then
+    # COUNTED BEFORE THE RETURN. The batch lane is spawned off this counter, and
+    # a held member is exactly a PR that lane owns — counting it only after the
+    # early return meant a repo whose every approved PR was in a train scored
+    # ZERO, the lane was never spawned, and nothing read the train's landing.
+    mc_count_inc "$P" batchable >/dev/null
+    mc_attempt_has "batchheld $KEY $HEAD" 2>/dev/null \
+      || { mc_attempt_put "batchheld $KEY $HEAD"
+           mc_log "$KEY HELD on ${HEAD:0:8} — this approved head is a member of the batch train ${TRAINURL:-?}; bin/batch-resolve.sh closes it out when the train lands: $URL"; }
+    return 0
+  fi
+  # A LOSER OF A CONTESTED HOLD IS PARKED, NOT MERGED (BH-589). bin/blocked-resolver.sh
+  # wrote a hold naming who WON a path this PR also rewrites, and merging the loser
+  # first is the rebuild-on-the-same-conflict tail #579 exists to end. Same shape
+  # as the batch hold above: no gh write, no page (contested is in
+  # mc_resolver_owns), one attempts line per (PR, hold), and it sits BEFORE the
+  # verdict read so a parked loser buys no re-review and no rebase either.
+  #
+  # IT IS DELIBERATELY NOT STICKY (contested is not in mc_handoff_owns): a hold
+  # that vanishes without a release — expired, deleted by hand — lets the row
+  # fall straight back to ordinary classification on the next tick instead of
+  # freezing on a fact that is no longer true.
+  if CL=$(mc_contested_loser "$P" "$SLUG" "$NUM"); then
+    # One hold at a time: several holds can name this PR a loser, and the first
+    # one is enough to park it. The next tick re-parks on whatever is still live.
+    CL=$(head -1 <<<"$CL"); CPATH=$(cut -f1 <<<"$CL"); CWIN=$(cut -f2 <<<"$CL")
+    CWHY="contested:$CPATH (winner $CWIN)"
+    CHASH=$(basename "$(mc_contested_file "$P" "$CPATH")")
+    if [ "$(mc_row_field "$KEY" 2)" != BLOCKED_HUMAN ] || [ "$(mc_row_field "$KEY" 7)" != "$CWHY" ]; then
+      CREV=$(mc_row_field "$KEY" 5)
+      mc_transition "$KEY" BLOCKED_HUMAN "$CWHY" "$HEAD" "${CREV:--}" "$URL" "-" "$MSTATE" "$REC" >/dev/null
+    fi
+    mc_attempt_has "contested $KEY $CHASH" 2>/dev/null \
+      || { mc_attempt_put "contested $KEY $CHASH"
+           mc_log "$KEY PARKED on ${HEAD:0:8} — loser of the contested hold on $CPATH (winner $CWIN); bin/blocked-resolver.sh owns it and nothing here merges it until the winner lands or the hold expires: $URL"; }
+    return 0
+  fi
+  mc_step verdict-read
+  command -v mc_vr_begin >/dev/null 2>&1 && mc_vr_begin
+  # HEADBOUND is the head-bound gate's answer BOUND TO THE HEAD IT JUDGED:
+  # `n/a` bare, or `<word>@<sha>` for reapproved|blocked|no-verdict, or "-" for
+  # a record written before it existed. It only steers a PR whose head MOVED,
+  # and only when the sha it names IS that head — `blocked@<this head>` is a
+  # reviewer who already read exactly this code.
+  IFS=$'\t' read -r VERDICT PROV REVIEWED JOB HEADBOUND <<<"$(mc_verdict "$URL" "$REC")"
+  # A CONTRADICTION (BH-4585): on an older head it is head-moved (mc_classify),
+  # on this head it parks quoting both verdicts.
+  MC_CONTRA=""
+  if [ "$VERDICT" = CONTRADICTION ]; then
+    if [ -n "$REVIEWED" ] && [ "$REVIEWED" != "-" ] && [ "$REVIEWED" != "$HEAD" ]; then
+      mc_log "$KEY verdict contradiction is on ${REVIEWED:0:8}, not the head ${HEAD:0:8}: treated as head-moved, the head-bound re-review decides"
+    else
+      MC_CONTRA=$(mc_contradiction_words "$URL" "$REC")
+    fi
+  fi

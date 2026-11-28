@@ -1,0 +1,63 @@
+        # rc 7 spent NOTHING — no queue row, no job file — so the budget goes
+        # back and this head's one rebase is NOT recorded: the next tick asks
+        # again. Anything else reached the queue and counts.
+        if [ "$RC" = 7 ]; then mc_tick_budget_give "$P" rebase
+        else mc_attempt_put "rebase $KEY $HEAD"; mc_count_inc "$P" rebases >/dev/null; fi
+        rebase_result "$KEY" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$RC" "$OUT"
+        return 0
+      fi
+      # THE REBASE IS DETACHED (2026-09-14), for the reason the re-review is:
+      # a clone + merge + typecheck + push is minutes long and every one of
+      # them was spent inside this tick, holding the project's lock. The tick
+      # now spawns one job per (PR, head) and READS the result on a later
+      # tick; the approval reaches the pushed head through mc_rebase's own
+      # rebind inside the job, or through the patch-id rebind above.
+      # MC_DETACHED_REBASE=0 restores the inline call.
+      if [ "${MC_DETACHED_REBASE:-1}" = 0 ]; then
+        mc_attempted rebase "$KEY" "$HEAD" && return 0
+        mc_tick_budget_take "$P" rebase "$REBASE_BUDGET" || { budget_spent "$P" rebase "$KEY"; return 0; }
+        mc_count_inc "$P" rebases >/dev/null
+        mc_transition "$KEY" REBASING "merging origin/main into $BR" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+        OUT=$(mc_rebase "$SLUG" "$P" "$BR" "$HEAD" "$URL"); RC=$?
+        rebase_result "$KEY" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$RC" "$OUT"
+        return 0
+      fi
+      JOBF=$(mc_rb_file "$SLUG" "$NUM" "$HEAD"); JOBST=$(mc_rb_state "$JOBF")
+      case "$JOBST" in
+        running)
+          mc_log "$KEY REBASING ${HEAD:0:8} — detached job (pid $(mc_rr_field "$JOBF" pid)) still running; nothing waits on it"
+          mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (detached rebase running)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
+        done|failed|stale)
+          # rebase_consume above read this result and applied it, once per
+          # (PR, head). Reading it a second time would re-park a PR that has
+          # since moved on — but walking out in silence is what made the row
+          # look stranded (BH-764), so the exit names itself.
+          rebase_noop_say consumed "$KEY" "$HEAD" "the detached rebase of this head already produced its result ($JOBST) and it was applied on an earlier tick; the row is still NEEDS_REBASE, so nothing here re-runs it — the NEEDS_REBASE TTL forgets the attempt and a later tick may spawn a fresh one"
+          return 0 ;;
+        *)
+          # One rebase per (PR, head), recorded AFTER the spawn and not before:
+          # a spawn refused at the parallel cap must be retried on a later
+          # tick, never counted as this head's one rebase.
+          if mc_attempt_has "rebase $KEY $HEAD" 2>/dev/null; then
+            rebase_noop_say attempted "$KEY" "$HEAD" "this head has already had its one rebase and its detached job file is gone; nothing re-runs it here — the NEEDS_REBASE TTL forgets the attempt and a later tick may spawn a fresh one"
+            return 0
+          fi
+          # Taken BEFORE the spawn and handed back when the spawn did not
+          # happen: a claim made after the fact is one two workers can both
+          # make, and a refusal at the parallel cap must not cost the project a
+          # rebase it never ran.
+          mc_tick_budget_take "$P" rebase "$REBASE_BUDGET" || { budget_spent "$P" rebase "$KEY"; return 0; }
+          mc_rebase_spawn "$SLUG" "$NUM" "$P" "$BR" "$HEAD" "$URL"; RC=$?
+          [ "$RC" = 0 ] || mc_tick_budget_give "$P" rebase
+          case "$RC" in
+            0) mc_attempt_put "rebase $KEY $HEAD"; mc_count_inc "$P" rebases >/dev/null
+               mc_log "$KEY REBASE_SPAWNED — detached rebase of ${HEAD:0:8} into $BR ($(mc_rebase_job_ref "$SLUG" "$NUM" "$P" "$HEAD"))"
+               mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (detached rebase spawned)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
+            3) if [ "${MC_ON_MACHINE:-}" = 1 ]; then mc_log "$KEY REBASE_DEFERRED ${HEAD:0:8} — $(mc_rebase_spawn_why 3)"
+               else mc_log "$KEY REBASE_QUEUED — ${MC_REBASE_PARALLEL:-0} rebases already running fleet-wide (operator-set MC_REBASE_PARALLEL); spawning on a later tick"; fi ;;
+            4) mc_log "$KEY REBASE_ON_RECORD ${HEAD:0:8} — $(mc_rebase_spawn_why 4)" ;;
+            *) mc_log "$KEY detached rebase could not be spawned (rc $RC)" ;;
+          esac ;;
+      esac ;;
+    HEAD_MOVED)
+      [ "$ACTIONS" = 1 ] || return 0

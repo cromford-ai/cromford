@@ -50,8 +50,16 @@
 # isSidechain:true, so they are summed by construction. Some CLI versions write
 # a companion file instead; `<session>*.jsonl` in the same project directory is
 # summed too, and a file whose entries name this session as their parent is
-# picked up by the (bounded, off-by-default-able) sibling scan. --no-subagents
-# turns both off.
+# picked up by the (bounded, off-by-default-able) sibling scan.
+# CLI 2.1.331 (BH-10209) writes a third layout: <project>/<session>/subagents/
+# agent-<id>.jsonl (plus an agent-<id>.meta.json, never read). Its entries carry
+# isSidechain:true and the PARENT's sessionId, no parentSessionId, and the main
+# file holds none of them. That directory is summed too, unless the knob
+# COST_TRANSCRIPT_SUBAGENT_DIR is 0. --no-subagents turns off all three file
+# sources; in-file isSidechain entries are always counted.
+# An entry is SUBAGENT spend when it comes from any file but the primary one, or
+# carries isSidechain:true. --peak and the model column (field 6) read the main
+# session only; --subagent-usd reports the subagent part of usd.
 #
 # Options:
 #   --cwd <dir>          the directory the session ran in (narrows the search to
@@ -71,11 +79,16 @@
 #   --peak               (BH-9124) append one more field, LAST: `peak`, the
 #                        largest context of ONE API response in the sum
 #                        (input + cache_read + cache_write of that response).
-#                        It is field 10, or field 11 after --price-version.
+#                        It is field 10, or field 11 after --price-version,
+#                        and it is last unless --subagent-usd is given.
 #                        Opt-in for the same reason: cost-live's `unp` and the
 #                        --price-version readers name the last field, and an
 #                        extra field would land in it. The context meter's
 #                        declared kill (bin/agent-call.sh) reads it.
+#   --subagent-usd       (BH-10209) append one more field, LAST: `sub_usd`, the
+#                        priced dollars of the subagent entries (see SUBAGENTS),
+#                        %.6f, 0.000000 when there are none. Field order:
+#                        price_v (--price-version), peak (--peak), sub_usd.
 #   --advisor            price the ADVISOR instead (BH-3491): only the
 #                        usage.iterations[] entries of type advisor_message, each
 #                        at its own model, deduped on the response like the
@@ -84,7 +97,7 @@
 set -uo pipefail
 
 SESSION=""; CWD=""; CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; SINCE=""
-PRICES=""; FORMAT=line; SUBAGENTS=1; ADVISOR=0; PRICEV=0; PEAK=0
+PRICES=""; FORMAT=line; SUBAGENTS=1; ADVISOR=0; PRICEV=0; PEAK=0; SUBUSD=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd)         CWD="${2:-}"; shift 2 ;;
@@ -101,7 +114,8 @@ while [ $# -gt 0 ]; do
     --advisor)     ADVISOR=1; shift ;;
     --price-version) PRICEV=1; shift ;;
     --peak)        PEAK=1; shift ;;
-    -h|--help)     sed -n '2,83p' "$0"; exit 0 ;;
+    --subagent-usd) SUBUSD=1; shift ;;
+    -h|--help)     sed -n '2,96p' "$0"; exit 0 ;;
     *)             [ -z "$SESSION" ] && SESSION="$1"; shift ;;
   esac
 done
@@ -123,7 +137,8 @@ if [ -z "$PRICES" ]; then
   done
 fi
 
-# BH-1939: COST_TRANSCRIPT_SCAN_MAX and COST_CACHE_TTL have no literal here.
+# BH-1939: COST_TRANSCRIPT_SCAN_MAX and COST_CACHE_TTL have no literal here,
+# nor has COST_TRANSCRIPT_SUBAGENT_DIR (BH-10209).
 # They resolve through lib_env_apply transcript-cost
 # (catalog/lanes.d/_lib.transcript-cost.json), in a subshell, the way
 # bin/lib/gh-budget.sh does: a fail-closed `exit 75` never ends this cost read,
@@ -137,7 +152,7 @@ _TC_KV=$(
   if [ -z "${LANE_REGISTRY:-}" ] && [ ! -r "$(_lg_registry)" ] && . "$_TC_R/bin/lib/lanes-registry.sh" >/dev/null 2>&1; then
     LANE_REGISTRY=$(lanes_json_path "$_TC_R" 2>/dev/null) && export LANE_REGISTRY
   fi
-  trap 'for _TC_K in COST_TRANSCRIPT_SCAN_MAX COST_CACHE_TTL; do printf "%s\t%s\n" "$_TC_K" "${!_TC_K:-}" >&3; done' EXIT
+  trap 'for _TC_K in COST_TRANSCRIPT_SCAN_MAX COST_CACHE_TTL COST_TRANSCRIPT_SUBAGENT_DIR; do printf "%s\t%s\n" "$_TC_K" "${!_TC_K:-}" >&3; done' EXIT
   lib_env_apply transcript-cost >/dev/null 2>&1)
 while IFS=$'\t' read -r _TC_K _TC_V; do
   if [ -n "$_TC_V" ]; then printf -v "$_TC_K" '%s' "$_TC_V"; fi
@@ -146,6 +161,7 @@ unset _TC_KV _TC_K _TC_V
 MAXSCAN="${COST_TRANSCRIPT_SCAN_MAX:-}"
 OUT=$(SESSION="$SESSION" CWD="$CWD" CFG="$CFG" SINCE="$SINCE" PRICES="$PRICES" \
       FORMAT="$FORMAT" SUBAGENTS="$SUBAGENTS" MAXSCAN="$MAXSCAN" ADVISOR="$ADVISOR" PRICEV="$PRICEV" PEAK="$PEAK" \
+      SUBUSD="$SUBUSD" SUBDIR="${COST_TRANSCRIPT_SUBAGENT_DIR:-}" \
       CACHE_TTL="${COST_CACHE_TTL:-}" python3 - <<'PYEOF'
 import glob, json, os, sys
 
@@ -159,6 +175,10 @@ SUBAG   = os.environ.get("SUBAGENTS") != "0"
 MAXSCAN = int(os.environ.get("MAXSCAN") or 400)
 TTL     = (os.environ.get("CACHE_TTL") or "auto").lower()
 ADVISOR = os.environ.get("ADVISOR") == "1"
+# BH-10209: the knob COST_TRANSCRIPT_SUBAGENT_DIR (settings row
+# lib.transcript-cost.cost_transcript_subagent_dir). Empty = the documented
+# fallback 1; only "0" turns the <session>/subagents/ directory off.
+SUBDIR  = (os.environ.get("SUBDIR") or "1").strip() != "0"
 
 try:
     since = float(SINCE) if SINCE else 0.0
@@ -223,6 +243,13 @@ def find_files():
                                 break
                 except OSError:
                     continue
+        # CLI 2.1.331 (BH-10209): <session>/subagents/agent-<id>.jsonl. Not
+        # bounded by MAXSCAN: the glob is this one session's own directory.
+        # The *.meta.json beside each file is not a transcript and is not read.
+        if SUBDIR:
+            for p in sorted(glob.glob(os.path.join(seen_dir, SESSION, "subagents", "*.jsonl"))):
+                if p not in primary and p not in extra:
+                    extra.append(p)
     return primary + extra, seen_dir
 
 
@@ -310,9 +337,11 @@ def add_usage(agg, model, u):
 # entry per content block and every entry repeats the same usage.
 seen = set()
 agg = {}          # model -> [in, out, cache_read, cw_5m, cw_1h, msgs]
+sub_agg = {}      # BH-10209: the same, for the subagent entries only
+main_agg = {}     # ...and for the main session's entries (the model column)
 msgs = 0
 peak = 0          # BH-9124: the largest context of one response (--peak)
-for fp in files:
+for fi, fp in enumerate(files):
     try:
         fh = open(fp, errors="ignore")
     except OSError:
@@ -341,14 +370,20 @@ for fp in files:
             if key is None or key in seen:
                 continue
             seen.add(key)
+            # BH-10209: subagent spend = any file but the primary one, or an
+            # entry that says isSidechain. The location decides on its own: a
+            # subagents-dir entry with no isSidechain key is still a subagent's.
+            sub = fi > 0 or o.get("isSidechain") is True
             # One response's context: what it read plus what it wrote to cache.
-            # Read off the top-level usage, so one response counts once.
-            try:
-                one = (int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0)
-                       + int(u.get("cache_creation_input_tokens") or 0))
-            except (TypeError, ValueError):
-                one = 0
-            peak = max(peak, one)
+            # Read off the top-level usage, so one response counts once. The
+            # main session's only: a subagent's context is not the main one's.
+            if not sub:
+                try:
+                    one = (int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0)
+                           + int(u.get("cache_creation_input_tokens") or 0))
+                except (TypeError, ValueError):
+                    one = 0
+                peak = max(peak, one)
             if ADVISOR:
                 # The advisor's sub-inferences, each at its own model. One
                 # response counts once however many lines repeat it (above).
@@ -358,6 +393,7 @@ for fp in files:
                 parts = [(m.get("model") or "unknown", u)]
             for model, pu in parts:
                 add_usage(agg, model, pu)
+                add_usage(sub_agg if sub else main_agg, model, pu)
             msgs += 1 if parts else 0
 
 if not agg:
@@ -370,6 +406,25 @@ if not agg:
         "(killed or refused before its first turn).\n" % files[0])
     sys.exit(4)
 
+def price_usage(model, a):
+    """The dollars of one aggregate row, or None when the model is unpriced."""
+    p = price_for(model)
+    if p is None:
+        return None
+    g = lambda k: float(p.get(k) or 0)      # the table is PER TOKEN
+    # 1h cache writes cost 2x the prompt rate; the table's cache_write is
+    # the 5-minute (1.25x) rate. Derived from `prompt` so a catalog refresh
+    # cannot leave the two halves disagreeing; where a row has no prompt
+    # rate the 5m rate is scaled by the same 2/1.25 ratio instead.
+    r5 = g("cache_write")
+    # An explicit `cache_write_1h` in the row wins (P1) — the same order
+    # bin/lib/cost-row.sh's cost_price_tokens and cost-rollup's row_cost
+    # apply, so the three pricers give one answer for one row.
+    r1 = (g("cache_write_1h") or (g("prompt") * 2.0 if g("prompt") else r5 * 1.6))
+    return (a[0] * g("prompt") + a[1] * g("completion") + a[2] * g("cache_read")
+            + a[3] * r5 + a[4] * r1)
+
+
 tot_i = tot_o = tot_cr = tot_cw = 0
 usd = 0.0
 unpriced = []
@@ -377,35 +432,31 @@ models = {}
 for model, a in sorted(agg.items()):
     tot_i += a[0]; tot_o += a[1]; tot_cr += a[2]; tot_cw += a[3] + a[4]
     p = price_for(model)
-    if p is None:
+    c = price_usage(model, a)
+    if c is None:
         unpriced.append(model)
         c = 0.0
     else:
-        g = lambda k: float(p.get(k) or 0)      # the table is PER TOKEN
-        # 1h cache writes cost 2x the prompt rate; the table's cache_write is
-        # the 5-minute (1.25x) rate. Derived from `prompt` so a catalog refresh
-        # cannot leave the two halves disagreeing; where a row has no prompt
-        # rate the 5m rate is scaled by the same 2/1.25 ratio instead.
-        r5 = g("cache_write")
-        # An explicit `cache_write_1h` in the row wins (P1) — the same order
-        # bin/lib/cost-row.sh's cost_price_tokens and cost-rollup's row_cost
-        # apply, so the three pricers give one answer for one row.
-        r1 = (g("cache_write_1h") or (g("prompt") * 2.0 if g("prompt") else r5 * 1.6))
-        c = (a[0] * g("prompt") + a[1] * g("completion") + a[2] * g("cache_read")
-             + a[3] * r5 + a[4] * r1)
         usd += c
     models[model] = {"input": a[0], "output": a[1], "cache_read": a[2],
                      "cache_write_5m": a[3], "cache_write_1h": a[4],
                      "messages": a[5], "usd": round(c, 6), "priced": p is not None}
 
-top = max(agg.items(), key=lambda kv: (kv[1][1], kv[1][5]))[0]
+# BH-10209: the subagent part of usd, priced by the same code. An unpriced
+# subagent model is already named in `unpriced` and adds 0 here, as in usd.
+sub_usd = sum((price_usage(m, a) or 0.0) for m, a in sub_agg.items())
+
+# The model column is the main session's: a big subagent on a cheaper model
+# must not relabel the row. All entries decide only when the main has none.
+top = max((main_agg or agg).items(), key=lambda kv: (kv[1][1], kv[1][5]))[0]
 
 if FORMAT == "json":
     json.dump({"session": SESSION, "files": files, "messages": msgs,
                "input": tot_i, "output": tot_o, "cache_read": tot_cr,
                "cache_write": tot_cw, "usd": round(usd, 6), "model": top,
                "models": models, "unpriced": unpriced,
-               "prices": PRICES, "cache_ttl": TTL}, sys.stdout)
+               "prices": PRICES, "cache_ttl": TTL,
+               "subagent_usd": round(sub_usd, 6), "subagent_files": files[1:]}, sys.stdout)
     print()
 else:
     line = ("%d|%d|%d|%d|%.6f|%s|%d|%d|%s"
@@ -420,6 +471,8 @@ else:
         line += "|" + (str(v) if ok else "")
     if os.environ.get("PEAK") == "1":
         line += "|%d" % peak
+    if os.environ.get("SUBUSD") == "1":
+        line += "|%.6f" % sub_usd
     print(line)
 PYEOF
 )

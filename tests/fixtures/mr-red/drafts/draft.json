@@ -1,0 +1,12 @@
+{
+  "number": 9001,
+  "title": "merge queue: embarking main (#8990, #8991) together",
+  "html_url": "https://github.com/example-org/cromford/pull/9001",
+  "state": "closed",
+  "draft": true,
+  "user": { "login": "mergify[bot]" },
+  "head": { "ref": "mergify/merge-queue/9001fx", "sha": "9001ffffffffffffffffffffffffffffffffffff" },
+  "merged_at": null,
+  "closed_at": "2026-11-11T11:00:00Z",
+  "updated_at": "2026-11-11T11:00:05Z"
+}

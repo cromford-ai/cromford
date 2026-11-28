@@ -20,7 +20,7 @@ fragments and the render together.
 ## The fragments
 
 `0100-head.sh` is line 1 up to the line before the
-`# <<< pool terminal / spawn cap / hold gate` line. The tail is 20 fine
+`# <<< pool terminal / spawn cap / hold gate` line. The tail is 21 fine
 fragments, one per top-level unit (BH-8740). Each one starts at its
 `# >>>` marker, or at the `#` block above its function:
 
@@ -42,6 +42,7 @@ fragments, one per top-level unit (BH-8740). Each one starts at its
 | `3300-next-job-or-destroy.sh` | `next_job_or_destroy()`, and `pool_job_stamp()` / `pool_stage_reoffer()` (BH-9065) |
 | `3400-pool-listing-and-reap.sh` | the pool listing (BH-660) and the whole REAP loop |
 | `3500-dead-machine-sweep.sh` | the dead-machine sweep (BH-660) and the SPAWN preamble |
+| `3550-fleet-alloc-clamp.sh` | the fleet slot clamp (BH-7877): `pa_clamp` lowers `BUDGET` to the grant |
 | `3600-bundle-reason.sh` | the bundle reason (BH-4859) |
 | `3700-warmup-note.sh` | the warmup note (BH-7215) and the machine pull (BH-7430) |
 | `3800-spawn-one.sh` | `spawn_one()` |

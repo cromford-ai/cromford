@@ -64,6 +64,7 @@ bin/lib/hotfix-lib.sh
 bin/lib/inapp-deps/core.sh
 bin/lib/inapp-deps/release.sh
 bin/lib/issue-comment-cmd.sh
+bin/lib/issue-record.sh
 bin/lib/issue-state-lib.sh
 bin/lib/lead-gates-selfcheck.sh
 bin/lib/live-probes.sh

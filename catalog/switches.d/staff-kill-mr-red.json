@@ -1,0 +1,1 @@
+{"name":"staff-kill-mr-red","readers":["bin/lib/mr-red.sh"],"box_scoped":false,"what":"kills Mr Red: bin/staff/mr-red.sh tick and work stop before any request of their own (the same gate as staff-off-mr-red), for a person who wants Mr Red stopped and kept stopped; Archie never sets it"}

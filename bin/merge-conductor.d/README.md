@@ -24,3 +24,10 @@ A fragment only defines things. The driver still needs a call site, for
 example `command -v foo_gate >/dev/null 2>&1 && foo_gate ...` in `pr_worker`.
 `tests/merge-conductor-frags.bh-7453-test.sh` checks the name format, `bash -n`
 and the name rules over this directory.
+
+The driver `bin/merge-conductor.sh` is itself a committed render of
+`config/merge-conductor.d/` (BH-10226, `bin/render-split.sh`). That is a
+different directory: it holds the driver's own text as `NNNN-<slug>.txt`
+fragments. So a call site for a lib here goes in a fragment there, followed by
+`bin/render-split.sh --write bin/merge-conductor.sh`. Never edit the driver by
+hand.

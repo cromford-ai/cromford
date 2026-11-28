@@ -1,0 +1,76 @@
+      # Same shape as the main-red hold above: one dedupe line per (PR, head),
+      # one log line, `return 0`. The row stays READY, no transition, no gh
+      # write, and it sits BEFORE the budget check so a hold costs no merge
+      # budget. rc 2 (could not read) holds too, on its own dedupe key and with
+      # no alert — a dependency nobody could read is not one that closed.
+      # The dedupe line is appended BEFORE the alert is sent: an alert that dies
+      # then costs one line rather than one per tick.
+      #
+      # THE FOURTH ARGUMENT IS STILL "" ON PURPOSE (BH-994, 2026-09-19). This
+      # tick does not hold the PR's body and cannot: the rows it works from are
+      # the TAB-SEPARATED lines built at `mapfile -t ROWS` from the open-PR
+      # list, and a PR body is multi-line free text that no tsv row can carry —
+      # `IFS=$'\t' read` would tear it across the columns the way an empty
+      # labels column once tore baseRefName out of the row. Nor is the body in
+      # the list: this lane asks for mergeStateStatus, mergeable and
+      # isInMergeQueue, which are outside gh-pr-list.sh's REST-mappable set, so
+      # the list is a GraphQL read and adding `body` to it would grow exactly
+      # the budget BH-994 is moving OFF. So the gate fetches the body itself —
+      # over REST since BH-994 — and that read is the one GraphQL call this arm
+      # no longer makes.
+      #
+      # THE RELEASE IS SAID ONCE, AND THE HOLD IS NOTED EVERY TICK (BH-4497).
+      # #4415 was held at 21:33Z on 2026-10-04 behind "PR #4242 QUEUED"; #4242
+      # merged at 21:38, and at 21:57 its STUCK page still read "#4242 QUEUED"
+      # from a note written once, when the hold comment posted. Now every held
+      # tick rewrites the dep-hold ready-why note (mc_stuck_waiting_on re-reads
+      # the gate live for that kind), and the first passing tick on a head this
+      # gate held logs ONE RELEASED line naming what it read (PDG_SAY_PASS=1).
+      # It says the row goes on to the merge checks, never "enqueued": a ticket
+      # hold, merges-off or the budget can still stop it, each with its own line.
+      if command -v pdg_hold >/dev/null 2>&1; then
+        PDGOUT=$(PDG_SAY_PASS=1 pdg_hold "$SLUG" "$NUM" "$URL" ""); PDGRC=$?
+        if [ "$PDGRC" = 0 ]; then
+          if ! mc_attempt_has "depwaithold $KEY $HEAD" 2>/dev/null; then
+            mc_attempt_put "depwaithold $KEY $HEAD"
+            mc_log "$KEY READY and HELD by the PR-dependency gate on ${HEAD:0:8}: it declares ${PDGOUT:-a dependency} that is still open — it merges as soon as that closes, and nothing about this PR needs doing"
+            mc_alert "$KEY" READY "held by the PR-dependency gate on ${HEAD:0:8}: it declares ${PDGOUT:-a dependency} that is still open; it merges when that closes: $URL"
+          fi
+          command -v mc_hold_comment >/dev/null 2>&1 && mc_hold_comment "$KEY" "$HEAD" dep-hold "held by the PR-dependency gate: it declares ${PDGOUT:-a dependency} that is still open"
+          command -v mc_ready_why >/dev/null 2>&1 && mc_ready_why "$KEY" "$HEAD" dep-hold "held by the PR-dependency gate: it declares ${PDGOUT:-a dependency} that is still open" logged
+          return 0
+        elif [ "$PDGRC" = 1 ]; then
+          if mc_attempt_has "depwaithold $KEY $HEAD" 2>/dev/null && ! mc_attempt_has "depwaitrelease $KEY $HEAD" 2>/dev/null; then
+            mc_attempt_put "depwaitrelease $KEY $HEAD"
+            mc_log "$KEY READY and RELEASED by the PR-dependency gate on ${HEAD:0:8}: read this tick — ${PDGOUT:-no open dependency}; it goes on to the merge checks this tick"
+          fi
+        elif [ "$PDGRC" = 2 ]; then
+          mc_attempt_has "depwaitunread $KEY $HEAD" 2>/dev/null \
+            || { mc_attempt_put "depwaitunread $KEY $HEAD"
+                 mc_log "$KEY not merged this tick: the PR-dependency gate could not read its dependency — nothing written, the next tick asks again"; }
+          mc_ready_why "$KEY" "$HEAD" dep-unread "not merged this tick: the PR-dependency gate could not read its dependency — nothing written, the next tick asks again" logged
+          return 0
+        fi
+      fi
+      # <<< dep gate
+      # THE TIER-2 SELF-ENQUEUE ACTS ON THIS ROW ONLY IF IT GOT THIS FAR (BH-1668
+      # review F1). Everything above is the conductor's own answer to "may this
+      # head land": the classifier's provenance, iron-law, tightened, pre-arm and
+      # red-twice parks, the unread-diff refusal, the freeze and the dependency
+      # hold. ae_project posts `@mergifyio queue`, which on a Mergify repo IS a
+      # merge, so it reads this mark rather than re-deciding on fewer gates. It
+      # sits BEFORE the merge switch and the budget on purpose: the step keeps
+      # its own WOULD line under observe/kill and takes no merge budget.
+      # A HELD TICKET'S PR DOES NOT MERGE (BH-1526), and neither does a PR held
+      # by a HOLD on its own thread (BH-1668): one log line, no row, no alert.
+      # BEFORE the READY mark (review of #1926), so the self-enqueue never sees a
+      # held head as cleared — and before the merge switch, so observe mode says
+      # it too.
+      # EVERY HOLD FROM HERE ON SAYS WHY (2026-09-27): mc_ready_why refreshes a
+      # per-PR note each tick and logs ONE line per (PR, head, reason), so
+      # pipeline-health's sweepstall detector and the STUCK READY page can tell
+      # a PR held on purpose from one nobody is landing. These three returns
+      # were silent, and 816 false sweepstall pages came out of that silence.
+      mc_step ticket-hold
+      command -v to_lane_hold >/dev/null 2>&1 && to_lane_hold "$P" "$SLUG" "$NUM" \
+        && { mc_ready_why "$KEY" "$HEAD" ticket-hold "held by a HOLD on its ticket or on its own thread (to_lane_hold; the MERGE_HELD line names it)"; return 0; }

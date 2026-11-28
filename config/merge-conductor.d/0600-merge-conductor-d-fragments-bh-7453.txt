@@ -1,0 +1,64 @@
+# <<< merge-conductor.d fragments (BH-7453)
+# The fan-in assertion (BH-186): every PR a project tick launches a worker for is
+# accounted when the worker returns, and a tick that lost one says so. A tree
+# without the lib ticks exactly as before: no ledger, and the worker runs bare.
+# shellcheck source=bin/lib/fanin.sh
+. "$H/bin/lib/fanin.sh" 2>/dev/null || {
+  fanin_begin() { :; }; fanin_enumerate() { :; }; fanin_end() { :; }
+  fanin_run_sub() { shift 2; "$@"; }
+  fanin_trap_run() { :; }; fanin_streak() { echo 0; }; mc_fanin_solo() { return 1; }; fanin_account() { :; }
+  mc_worker_bounded() { pr_worker "$@"; }
+  mc_window_cap() { :; }; mc_window_defer() { :; }; mc_fanin_mark_locked() { :; }
+  mc_step() { :; }
+}
+# Lane liveness (BH-638). Optional exactly like the libs above: a box whose
+# harness sync has not landed bin/lib/heartbeat.sh runs this tick byte-for-byte
+# as it did before, because the three calls become no-ops.
+# shellcheck source=bin/lib/heartbeat.sh
+[ -r "$H/bin/lib/heartbeat.sh" ] && . "$H/bin/lib/heartbeat.sh"
+command -v hb_tick >/dev/null 2>&1 || { hb_start(){ :; }; hb_tick(){ :; }; hb_done(){ :; }; }
+# shellcheck source=bin/lib/gh-push-identity.sh
+[ -r "$H/bin/lib/gh-push-identity.sh" ] && . "$H/bin/lib/gh-push-identity.sh"
+# A conductor running out of a tree that has no hotfix-lib (the neighbouring
+# fixtures copy two libs and nothing else) answers "not a hotfix" to everything,
+# which is this script's behaviour before BH-369, line for line.
+command -v hotfix_pr_is >/dev/null 2>&1 || hotfix_pr_is() { return 1; }
+# PAUSES (BH-1672 / BH-1684). A merges pause is a row in the jobs worker's
+# `pauses` table, mirrored into state/pauses.json; bin/lib/pause.sh is the one
+# reader. Optional like the libs above: a tree without it answers "not paused"
+# to everything, which is this lane before BH-1672, line for line.
+# shellcheck source=bin/lib/pause.sh
+[ -r "$H/bin/lib/pause.sh" ] && . "$H/bin/lib/pause.sh"
+command -v pause_active >/dev/null 2>&1 || {
+  pause_active() { return 1; }; pause_label() { :; }; pause_refresh() { return 0; }; pause_env_shapes() { :; }; }
+mc_init
+# Once per tick, before anything reads the cache. Bounded, and it keeps the last
+# cache on an outage, so a worker that is down never stops the tick.
+pause_refresh || true
+# THE KEYED TICK (BH-1387, BH-1841): MC_ONLY_PR -> MC_ONLY_KEYS. The parse is
+# mc_keyed_tick_parse, in bin/lib/mc/tick-scope.sh (BH-6518).
+mc_keyed_tick_parse
+# THE FULL-TICK WINDOW (BH-5521): MC_FULL_TICK_BUDGET_S -> MC_WORKERS_DONE_BY.
+# The window is mc_full_tick_window, in bin/lib/mc/tick-scope.sh (BH-6518).
+mc_full_tick_window
+# THE KEYED READY-ARM FLOOR (BH-7376): when the launcher opted in
+# (MC_KEYED_READY_FLOOR=1), a READY row's PR worker gets at least
+# MC_KEYED_READY_ARM_S, so one READY PR can go through prequeue AND enqueue.
+command -v mc_keyed_deadline_floor >/dev/null 2>&1 && mc_keyed_deadline_floor
+# THE FULL-TICK CLOCK (BH-7139): a full tick stamps its start and logs
+# FULL_TICK wall_s= at its end; bin/merge-conductor-wake.sh alerts once on a
+# full tick older than 2 cron periods. Optional: a tree without the lib ticks
+# as before.
+# shellcheck source=bin/lib/mc-tick-clock.sh
+[ -r "$H/bin/lib/mc-tick-clock.sh" ] && . "$H/bin/lib/mc-tick-clock.sh"
+command -v mc_tick_clock_start >/dev/null 2>&1 && mc_tick_clock_start
+# NO GLOBAL LOCK (2026-09-14), AND SINCE 2026-09-15 NO PROJECT LOCK EITHER. The
+# parallelism boundary and the single-instance guard are now the per-PR lock
+# pr_worker takes (mc_pr_lock): two overlapping ticks can never handle the same
+# PR at once, and they no longer need to agree about a whole repo to do it.
+# BH-5463 adds back ONE project lock, for full (unkeyed) ticks only: see the
+# `>>> full-tick lock` block in mc_tick_fanout (bin/lib/mc/tick-scope.sh).
+
+flag_on() { # the file is the flag; flag_active reconciles it from the DB row first
+  if command -v flag_active >/dev/null 2>&1; then flag_active "$1"; else [ -f "$H/flags/$1" ]; fi
+}

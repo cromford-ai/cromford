@@ -1,0 +1,76 @@
+  # The branch this project's PRs are supposed to merge into. Any OPEN PR whose
+  # base is something else is a STACKED child (2026-09-14) — see the block in
+  # the open pass below and docs/MERGE-CONDUCTOR.md section 3.
+  PBASE=$(mc_project_base "$P")
+  # BH-7241: the CI-never-started window, read once per project per tick.
+  MST_NOSTART_MIN=""
+  if command -v mst_nostart_min >/dev/null 2>&1; then MST_NOSTART_MIN=$(mst_nostart_min "$P"); mst_prune; fi
+  # ---- did this project's base MOVE since the last completed fan-out? ------
+  # (BH-870) One authenticated ls-remote per project per tick, no gh budget.
+  # The sha is the trigger and the state file is what makes it fire once: a
+  # restart, a second overlapping tick or a crash mid-fan-out must not re-offer
+  # a rebase for a sha every PR already answered.
+  #   unreadable  nothing fires and the recorded sha stands. "Could not tell"
+  #               is never read as "main has not moved" — that would silently
+  #               skip the landing the outage straddled.
+  #   no record   BASELINE. The first tick after a rollout records the sha and
+  #               fans out nothing: seven repos each offering every open PR a
+  #               rebase on the same */5 is the wrong first event.
+  #   changed     LAND_FIRE=1, and every pr_worker below reads it.
+  # LAND_SHA and LAND_FIRE are plain variables of this function; the workers are
+  # its background subshells and inherit them, exactly as they do PBASE and SLUG.
+  # ONE digest of the scanner per project per tick (BH-1486 follow-up), read by
+  # every pr_worker of this project as a plain inherited variable, exactly as
+  # PBASE and LAND_SHA are. It is a component of the scan memo's key, so a check
+  # deployed to the hub invalidates every stored scan on the next tick.
+  MC_SCANNER_FP=$(scanner_fp)
+  LAND_SHA=""; LAND_PREV=""; LAND_FIRE=0
+  if [ "${MC_LAND_REBASE:-1}" != 0 ] && [ -z "$MC_ONLY_KEYS" ]; then
+    LAND_SHA=$(mc_land_main_sha "$SLUG" "$PBASE") || LAND_SHA=""
+    LAND_PREV=$(mc_land_prev "$P")
+    if [ -z "$LAND_SHA" ]; then
+      mc_log "$SLUG LAND: $PBASE sha unreadable this tick — no land rebase; the recorded sha (${LAND_PREV:-none}) stands"
+    elif [ -z "$LAND_PREV" ]; then
+      mc_land_record "$P" "$LAND_SHA"
+      mc_log "$SLUG LAND baseline $PBASE ${LAND_SHA:0:8} recorded — the first tick after rollout fires no fan-out"
+    elif [ "$LAND_PREV" != "$LAND_SHA" ]; then
+      LAND_FIRE=1
+      mc_log "$SLUG LAND $PBASE moved ${LAND_PREV:0:8} -> ${LAND_SHA:0:8} — every open $PBASE-based PR of $P is offered a rebase this tick"
+    fi
+  fi
+  # Is this repo's main red? One flag read per project per tick; while it is on,
+  # the READY arm below merges nothing here except the two exceptions.
+  MAIN_RED=""; MAIN_RED_WHY=""
+  if command -v main_red_flag >/dev/null 2>&1 && MAIN_RED=$(main_red_flag "$P" "$SLUG"); then
+    MAIN_RED_WHY=$(head -c 200 "$H/flags/$MAIN_RED" 2>/dev/null | tr '\n' ' ')
+    mc_log "$SLUG MAIN_RED_FREEZE in force (flags/$MAIN_RED${MAIN_RED_WHY:+: $MAIN_RED_WHY}) — nothing merges in this repo until the flag is gone, except a PR labelled $MC_MAIN_RED_LABEL or one whose whole diff is test files ($MC_MAIN_RED_TEST_PATHS)"
+  else
+    MAIN_RED=""
+  fi
+
+  # GitHub API budget guard: the closed-list settle pass is non-essential and
+  # skips when the shared budget is low; merge-queue settle and open-PR passes
+  # continue because they drive the conductor's core work.
+  MC_BUDGET_LOW=0
+  if command -v gh_budget_low >/dev/null 2>&1 && gh_budget_low merge-conductor >/dev/null 2>&1; then
+    MC_BUDGET_LOW=1
+    mc_log "budget low — closed-list settle pass skipped this tick"
+  fi
+
+  # ---- settle the merge queue --------------------------------------------------
+  # A PR GitHub merges OUT OF ITS QUEUE disappears from the open list (merged)
+  # and from the closed list (which selects mergedAt == null), so the open pass
+  # below would never see it land and NOTHING the landing owes would ever run —
+  # no issue close, no deploy train, no merge_sha. The rows this repo left in
+  # QUEUED are therefore read here, FIRST, and each one is settled, ejected, or
+  # left where it is. It runs before the open pass so an ejected PR is already
+  # out of READY by the time the classifier gets to it.
+  # NEVER ON A LANE-RUN MACHINE (BH-6495). This pass reads EVERY QUEUED row of
+  # the repo, not only MC_ONLY_PR's, and a settle is a landing: the issue close,
+  # the deployreq ledger row and the deploy-verify the machine cannot spawn.
+  # The hub runs this pass on every tick, so it owns each settle and ejection.
+  # A lease-held project run (BH-6890) runs it: it is the only conductor of
+  # the repo for the tick. Its settle still defers (deferred=settle), and the
+  # hub's next tick of the project settles it.
+  if [ "$QUEUE" = 1 ] && { [ "${MC_ON_MACHINE:-}" != 1 ] || { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ]; }; }; then
+    mapfile -t QROWS < <(awk -F'\t' -v p="$SLUG#" '$2=="QUEUED" && index($1,p)==1' "$MC_ROWS" 2>/dev/null)

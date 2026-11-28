@@ -1,0 +1,115 @@
+      # A HELD PR IS NOT RE-ASKED EVERY TICK (BH-2199). The hold below (rc 3,
+      # the queue acknowledged nothing) is counted per (PR, head) in the attempts
+      # ledger; between asks a held tick adds one to the count and stops here,
+      # so a repo whose queue product is off does not get an `@mergifyio queue`
+      # comment every five minutes. Every MC_MERGIFY_REASK_TICKS-th held tick
+      # asks again. Before the take, so a held tick spends no merge budget.
+      if [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && [ "${PREV:-}" != QUEUED ]; then
+        HELDN=$(mc_attempt_count mergifyhold "$KEY" "$HEAD"); HELDN=${HELDN:-0}
+        REASK=$(mergify_reask_ticks_for "$P")
+        if [ "$HELDN" -gt 0 ] && [ $((HELDN % REASK)) -ne 0 ]; then
+          mc_attempt_put_n mergifyhold "$KEY" "$HEAD"
+          mc_log "$KEY MERGE_HELD: the $PROVIDER queue has acknowledged nothing at ${HEAD:0:8} for $HELDN held tick(s) — NOT merged directly; the queue is asked again every $REASK held ticks"
+          mc_ready_why "$KEY" "$HEAD" queue-held "MERGE_HELD: the $PROVIDER queue has acknowledged nothing at ${HEAD:0:8} for $HELDN held tick(s); the queue is asked again every $REASK held ticks" logged
+          return 0
+        fi
+      fi
+      # ON A LANE-RUN MACHINE NOTHING LANDS (BH-6495). The machine has no
+      # builds/ record, so its verdict is the ledger's alone and the BH-4585
+      # CONTRADICTION park cannot fire, and its flock serialises against
+      # nobody. An enqueue and a direct merge are both landings, so both wait
+      # for the hub, which runs this PR itself on its next tick (deferred=land).
+      # Before the budget take, so a deferred PR spends no merge budget.
+      # A LEASE-HELD PROJECT RUN ENQUEUES (BH-6890): bin/merge-conductor-project.sh
+      # holds the project lease for the whole tick (MC_LEASED_RUN=1 with
+      # MC_LEASE_FENCE), and every landing writer renews that fence first. Only
+      # on a repo with a queue: its landing settles through the QUEUED pass,
+      # which the hub runs when the machine defers the settle. A direct merge
+      # (no queue, or landing_direct) settles in the same tick, and a settle
+      # needs hub files, so it still waits for the hub (deferred=land).
+      if [ "${MC_ON_MACHINE:-}" = 1 ] && ! { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ] && [ "$QUEUE" = 1 ]; }; then
+        mc_defer_word land "$KEY"
+        mc_log "$KEY READY at ${HEAD:0:8} on a lane-run machine — not landed here; the hub lands it on its next tick (deferred=land)"
+        mc_ready_why "$KEY" "$HEAD" machine-deferred "READY on a lane-run machine; the hub lands it on its next tick" logged
+        return 0
+      fi
+      mc_step enqueue
+      # The review source of record for the enqueue line (BH-9823).
+      MC_REVIEW_SRC=$(command -v mc_ovh_source >/dev/null 2>&1 && mc_ovh_source "$KEY" "$SLUG" "$NUM" "$HEAD"); MC_REVIEW_SRC=${MC_REVIEW_SRC:-unknown}
+      # The refusal above sits BEFORE the take, so a PR that never reached gh
+      # costs the project no unit of this tick's merge budget.
+      mc_tick_budget_take "$P" merge "$MERGE_BUDGET" || { budget_spent "$P" merge "$KEY"
+        mc_ready_why "$KEY" "$HEAD" budget "merge deferred — $P has spent this tick's merge budget" logged; return 0; }
+      # On a repo with a queue the conductor ENQUEUES (mc_enqueue picks the
+      # provider's own entry mechanism: `gh pr merge` under GitHub's native
+      # queue, the trigger LABEL under Mergify) and the landing settles on a
+      # later tick through the QUEUED pass above. On a repo without one it
+      # merges here and settles in the same tick.
+      if [ "$QUEUE" = 1 ]; then
+        # THE CALL — AND ONLY THE CALL — IS SERIALISED PER PROJECT. mc_merge_locked
+        # holds locks/merge-conductor-<project>-merge.lock for exactly this gh
+        # invocation, so two READY PRs of one repo can never race main, and the
+        # lock is gone before the settle, the issue close and the deploy lane
+        # below, every one of which forks a child that would otherwise inherit
+        # the fd and hold the lock for its whole life.
+        # EXCEPT A MERGIFY ENQUEUE (Lane D, 2026-09-24). That call is a label,
+        # a comment and a witness poll of up to MC_MERGIFY_WAIT_S (90s): it
+        # touches neither main nor the queue's order, so it has nothing to
+        # serialise against — and holding the lock through the poll let about
+        # two READY PRs per project per tick in while every other one timed out
+        # at MC_MERGE_LOCK_WAIT and waited a tick, in flock's random order
+        # (cromford PRs 30-175 min approved, CLEAN and unqueued). Nothing
+        # after it merges: a silent queue (rc 3) is HELD (BH-2199), so no gate
+        # read before the poll can go stale into a merge.
+        # OPTIMISTIC LANDING (BH-6745, wave 2 of #6541). With MC_LANDING_MODE
+        # optimistic on a Mergify repo, a PR that landing_eligible accepts is
+        # merged here, bound to its head and under the project merge lock, with
+        # no queue label, inside its own per-tick budget MC_DIRECT_MERGE_BUDGET.
+        # rc 1 is "not direct": the enqueue below runs exactly as before. A
+        # refused merge (405/409/422) is no strike: the queue takes the PR on
+        # the next tick (landing_direct's landingfail mark). Modes queue and
+        # shadow never get here. The step is marked HERE, not in the $( ):
+        # mc_step exits on a 401, and a subshell's exit 0 is not a merge, so
+        # only rc 0 WITH the `merged` token settles; anything else enqueues.
+        if [ "$PROVIDER" = mergify ] && command -v landing_direct_on >/dev/null 2>&1 && landing_direct_on "$P" "$PROVIDER"; then
+          mc_step landing-direct
+          LDOUT=$(landing_direct "$P" "$SLUG" "$NUM" "$HEAD" "$KEY" "${RAWLBL:-}" "$URL"); LDRC=$?
+          case "$LDRC:$(head -1 <<<"$LDOUT")" in
+            0:merged) mc_count_inc "$P" merges >/dev/null
+               mc_step settle
+               conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor (direct landing)" "$(sed -n 2p <<<"$LDOUT")"
+               return 0 ;;
+            2:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" budget "direct merge deferred — $P has spent this tick's direct-merge budget" logged
+               return 0 ;;
+            3:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" merge-lock "not merged directly this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — the next tick tries again" logged
+               return 0 ;;
+            4:*) mc_tick_budget_give "$P" merge
+               mc_ready_why "$KEY" "$HEAD" direct-failed "direct merge refused ($(head -1 <<<"$LDOUT")); the queue takes it on the next tick" logged
+               return 0 ;;
+          esac
+        fi
+        if [ "$PROVIDER" = mergify ]; then
+          ERR=$(mc_enqueue "$URL" "$HEAD"); RC=$?
+        else
+          ERR=$(mc_merge_locked "$P" mc_enqueue "$URL" "$HEAD"); RC=$?
+        fi
+        if [ "$RC" = 99 ]; then
+          mc_tick_budget_give "$P" merge
+          mc_log "$KEY not enqueued this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — nothing was written, the next tick tries again"
+          mc_ready_why "$KEY" "$HEAD" merge-lock "not enqueued this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — the next tick tries again" logged
+          return 0
+        fi
+        case "$RC" in
+          0) mc_count_inc "$P" merges >/dev/null
+             command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"   # BH-1668 F2: no second ask
+             mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: re-queued after a cleared CR
+             mc_log "$KEY enqueued in the $PROVIDER merge queue at ${HEAD:0:8} — the conductor settles it when the queue merges it review_source=$MC_REVIEW_SRC"
+             [ -n "${MC_LANDED_FILE:-}" ] && printf 'queued %s\n' "$KEY" >> "$MC_LANDED_FILE"
+             mc_transition "$KEY" QUEUED "enqueued at ${HEAD:0:8}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+             command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "$BR" "$NUM" "$HEAD" "enqueued in the $PROVIDER merge queue at ${HEAD:0:8}" ;;
+          2) mc_count_inc "$P" merges >/dev/null
+             command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"
+             mc_step settle
+             conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor (merge queue, landed in-tick)" ;;

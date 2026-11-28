@@ -1,0 +1,109 @@
+{
+  "libs": [
+    {
+      "id": "staff-millwright",
+      "file": "bin/lib/millwright-read.sh",
+      "note": "BH-10124: the reads behind Millwright's metric failed_bakes_and_broken_boxes (failed pool image bakes from state/fleet-propagate.json .pool_fail; boxes with a broken resolv.conf or a full /tmp from a read-only ssh probe; a stale bin from box_status.harness_lag_min). Applied with lib_env_apply staff-millwright by bin/staff/millwright-collect.sh and bin/staff/millwright-lever.sh. Note: docs/notes/2026-11-25-BH-10124-millwright.md.",
+      "knobs": [
+        {
+          "env": "MW_TMP_FULL_PCT",
+          "type": "int",
+          "default": 90,
+          "min": 50,
+          "max": 100,
+          "unit": "percent",
+          "zero_means": null,
+          "required": false,
+          "note": "A box's /tmp is full at or above this block use% (df -P). Out of range is one warn line in logs/staff.log and the default."
+        },
+        {
+          "env": "MW_SSH_TIMEOUT_S",
+          "type": "int",
+          "default": 15,
+          "min": 1,
+          "max": 120,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "Each box probe (one ssh read of /etc/resolv.conf and df /tmp) runs under timeout this many seconds; all probes run in parallel, so one read lasts about this long. A box that does not answer is unreachable, never a fault."
+        },
+        {
+          "env": "MW_LAG_FRESH_MIN",
+          "type": "int",
+          "default": 60,
+          "min": 10,
+          "max": 1440,
+          "unit": "minutes",
+          "zero_means": null,
+          "required": false,
+          "note": "A box_status harness_lag_min reading counts for stale-bin only when its lag_checked_at is younger than this many minutes (bin/fleet-version-check.sh writes it every 10 min). An older reading is unknown."
+        },
+        {
+          "env": "MW_BOXES_MAX",
+          "type": "int",
+          "default": 200,
+          "min": 1,
+          "max": 500,
+          "zero_means": null,
+          "required": false,
+          "note": "At most this many registry boxes are probed per read; the rest are not probed and one warn line says so."
+        },
+        {
+          "env": "MW_SSH",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam: the ssh command, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane."
+        },
+        {
+          "env": "MW_NOW",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam: the epoch the reads use as now, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane."
+        },
+        {
+          "env": "MW_FIXTURE",
+          "read_in": "bin/staff/millwright-collect.sh",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam: a file bin/staff/millwright-collect.sh sources after its libs (the lever's read is the lane knob staff-millwright-lever/MW_FIXTURE), only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources."
+        },
+        {
+          "env": "MW_RESOLV",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam: the resolv.conf path the LOCAL hub probe reads, only when HARNESS_TEST_SANDBOX=1. Never sent to a box. NOT settable from the control plane."
+        },
+        {
+          "env": "MW_TMPDIR",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam: the /tmp path the LOCAL hub probe reads, only when HARNESS_TEST_SANDBOX=1. Never sent to a box. NOT settable from the control plane."
+        },
+        {
+          "env": "HARNESS_TEST_SANDBOX",
+          "type": "string",
+          "default": "",
+          "settable": false,
+          "zero_means": null,
+          "required": false,
+          "note": "Test seam gate: the millwright reads honor MW_SSH, MW_NOW, MW_FIXTURE, MW_RESOLV and MW_TMPDIR only when this is 1. Never set on a box, and NOT settable from the control plane."
+        }
+      ]
+    }
+  ]
+}

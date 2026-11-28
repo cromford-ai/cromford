@@ -1,0 +1,3 @@
+[
+    {"path": "mr-red", "class": "box-local", "authority": "the Mr Red tick's check-run cache (BH-9532)", "note": "state/mr-red/checks/<repo with / as _>__<sha40>.json: bin/staff/mr-red-collect.d/10-drafts.sh keeps the check runs of a closed merge-queue draft once every run is completed (they do not change), written tmp+mv, so the draft is read from GitHub once and not every 5 minutes. bin/staff/mr-red.sh tick deletes files older than 2 x staff.mr-red.lookback_h at its start. A pure cache: losing it costs GitHub reads, never correctness. The action rows (mr_red_actions) are the record. Hub tick only, never carried"}
+]

@@ -599,6 +599,37 @@ api-key`), the call path and its cost rows (BH-9676 C0), the meter skips and the
 cost ceiling reader (BH-9719) exist. The Fly env bundle path (#9718) is still
 owed.
 
+## Subagent spend (BH-10209)
+
+Claude Code CLI 2.1.331 writes a subagent's turns to
+`<project dir>/<session>/subagents/agent-<id>.jsonl` (plus an
+`agent-<id>.meta.json`). The entries carry `isSidechain:true` and the parent's
+`sessionId`; the main session file holds none of them. Before BH-10209
+`bin/transcript-cost.sh` read only the project directory itself, so every
+claude cost row left the subagent spend out.
+
+- `bin/transcript-cost.sh` now sums that directory too. The `.meta.json` is
+  never read. One response is still counted once (the dedup key is global).
+- An entry is subagent spend when it comes from any file but the main one, or
+  carries `isSidechain:true`. `--peak` and the model column (field 6) read the
+  main session only.
+- `--subagent-usd` appends the subagent dollars as the last field.
+  `--format json` adds `subagent_usd` and `subagent_files`.
+- `bin/agent-call.sh` (`cost_row_source`) passes `--subagent-usd`, and a
+  transcript-priced claude row carries `sub_usd:<x>` as the FIRST token of its
+  `note` (`cost_sub_usd_token` in `bin/lib/cost-row.sh`). A measured zero is
+  `sub_usd:0.000000`. An envelope, grok or codex row has no token: not
+  measured. The DORA digest's subagent share block reads it (`docs/DORA.md`).
+- Knob `COST_TRANSCRIPT_SUBAGENT_DIR` (settings row
+  `lib.transcript-cost.cost_transcript_subagent_dir`, default `1`). `0` reads
+  the main file only, the sum before BH-10209. `--no-subagents` turns off all
+  extra files; in-file `isSidechain` entries are always counted.
+
+Expected effect: each claude row's `cost_usd` rises by the subagent part that
+was missing. A cost cap set against the old undercount trips earlier by that
+share. That is the correct number; `COST_TRANSCRIPT_SUBAGENT_DIR=0` restores
+the old sum on any box.
+
 ## Tests
 
 | what | where |
@@ -614,6 +645,8 @@ owed.
 | the rollup's daily unpriced line, its breakdown by cause and its link to this note | `tests/unpriced-alert-test.sh` |
 | `cost_ceiling.<p>`: the lower cap wins, `off`, `0`, junk, a tie keeps main's line, another project's row; the launch gate, the call gate, an admitted build and the real `bin/agent-call.sh` refusing with `key=cost_ceiling.<p>` | `tests/budget-stop-cost-ceiling.bh-9719-test.sh` |
 | the meter skips: `meter_skip_api_key`, one log line a day, `bin/account-capacity.sh` and `bin/concurrency-apply.sh` with an api-key project, `bin/extra-usage-track.sh` on an api-key box and every case that must still poll | `tests/meter-skip.bh-9719-test.sh` |
+| the `<session>/subagents/` sum, `--subagent-usd` field order, `--peak` and the model column on the main session only, the knob, `--since`, near-miss paths | `tests/transcript-cost-subagents.bh-10209-test.sh` |
+| `cost_sub_usd_token`, `cost_row_source` reading the sub_usd field, `bin/agent-call.sh` driven to a row whose note starts with `sub_usd:`, the round trip to the digest reader | `tests/cost-sub-usd.bh-10209-test.sh` |
 | `cost_row_price` (the catalog product with `cache_read` as reported, `UNPRICED:*` markers, a vendor figure never overwritten, empty never `0`), plus `bin/agent-call.sh` driven across openrouter and grok and a mutation guard that proves the priced row goes blank without the function | `tests/cost-row-priced-test.sh` |
 | the blank-cost flood alert driven through `bin/cost-reconcile.sh`: 21 blank rows page and 20 do not, failed and priced rows never count, the 24h window never runs it, the daily dedupe, the knob, and an unreadable ledger logging `unread` instead of `clean` | `tests/cost-reconcile.bh-1020-test.sh` |
 

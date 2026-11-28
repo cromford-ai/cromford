@@ -1,0 +1,74 @@
+# THE TICK MODE (BH-1201, BH-1672): the fleet flags and the fleet merges pause
+# -> KILL, ACTIONS, MERGES, MODE and the exported MC_MODE. The rule is
+# mc_tick_mode, in bin/lib/mc/tick-scope.sh (BH-6518). It calls flag_on, so the
+# call stays after the flag_on definition above.
+mc_tick_mode
+# The cron line is */30 since C2, and bin/merge-conductor-backstop.sh runs keyed
+# ticks every 5 minutes under `timeout 240`, so the rhythm is 300 and the
+# expected-by is 30 minutes. A killed tick is normal: as a `cron` lane (BH-4717)
+# it is judged by its last completed tick, the stamp hb_done writes.
+hb_start merge-conductor 300 1800 "PR merges fleet-wide" "" cron
+
+# THE TICK PRELUDE: the spend budgets, the isInMergeQueue knobs, the re-review
+# cap file, the knobs the detached lanes inherit and the tick id. They are set
+# by mc_tick_prelude, in bin/lib/mc/tick-scope.sh (BH-6518). It reads
+# MC_STATE_DIR, so the call stays after mc_init.
+mc_tick_prelude
+
+use_token() { # use_token <slug> — rc 1 when no token can see the repo (already alerted)
+  # TOKEN RESOLUTION ONLY; every caller and every gh call below is unchanged.
+  # A repo-scoped App installation token first (2026-09-14, the operator: one PAT is one
+  # 5000/h bucket for the whole fleet, which is the ceiling at 4000 builders, and
+  # one leak is fleet-wide forever). An installation token that minted is a token
+  # that can see the repo by construction, so the invisible-repo probe and its
+  # alert are not needed for it — they stay exactly as they are for the PAT path,
+  # which is what an unarmed box takes.
+  # The default-identity helper (#469) is ONE call for both halves: the App
+  # token when this box can mint one for the repo, today's PAT probe when it
+  # cannot, and GH_LIMIT_IDENTITY tagged either way so a rate-limit refusal says
+  # which bucket ran out. A box mid-harness-sync still has the old lib, which is
+  # what the command -v guard is for — its two branches below are unchanged.
+  #
+  # WHICH CREDENTIAL ANSWERED IS LOGGED (BH-597, ticket item 2), once per tick
+  # per slug — tick_project calls this once per project, so the line needs no
+  # dedupe file of its own. The WORDS app/default/admin and never a token value.
+  # #469's own tag (GH_LIMIT_IDENTITY, "app:<slug>" or "pat:<slug>") already
+  # says which bucket answered, so the log line asks gh_limit_identity_label
+  # (bin/lib/gh-app-auth.sh) for it rather than reading the tag itself — GH_
+  # LIMIT_IDENTITY is auth plumbing that file owns, not a knob this script
+  # reads and never assigns (tests/lanes-registry-test.sh section 7).
+  if command -v gh_default_auth_for_slug >/dev/null 2>&1; then
+    if gh_default_auth_for_slug "$1"; then
+      case "$(gh_limit_identity_label)" in
+        app) mc_log "$1: github auth: App installation token (this tick's gh calls bill the installation)" ;;
+        *)   mc_log "$1: github auth: default PAT" ;;
+      esac
+      return 0
+    fi
+    command -v gh_repo_invisible_alert >/dev/null 2>&1 && gh_repo_invisible_alert merge-conductor "$1" "conductor cannot list its PRs"
+    return 1
+  fi
+  if command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$1"; then
+    mc_log "$1: github auth: App installation token (this tick's gh calls bill the installation)"
+    return 0
+  fi
+  if command -v gh_repo_use_token >/dev/null 2>&1; then
+    gh_repo_use_token "$1" || { gh_repo_invisible_alert merge-conductor "$1" "conductor cannot list its PRs"; return 1; }
+    # `app` IS ONE OF THE FOUR ANSWERS HERE. gh_auth_for above refuses on an
+    # empty mint, but gh-repo-token.sh's own App rung mints again with
+    # --min-life and verifies the repo is visible, so this ladder can hand back
+    # an installation token after the rung above declined it. Printing
+    # "$(gh_repo_token_for) PAT" would then log "app PAT" — a credential that
+    # does not exist, in the one line an operator reads to know what a tick
+    # spent. `none` cannot reach here: gh_repo_use_token returns 1 for it and
+    # the alert above already fired.
+    local _mc_tok; _mc_tok=$(gh_repo_token_for "$1")
+    case "$_mc_tok" in
+      app) mc_log "$1: github auth: App installation token (this tick's gh calls bill the installation)" ;;
+      *)   mc_log "$1: github auth: $_mc_tok PAT" ;;
+    esac
+  else
+    mc_log "$1: github auth: default PAT"
+  fi
+  return 0
+}

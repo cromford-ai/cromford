@@ -1818,24 +1818,28 @@ COST_HDR="${COST_ROW_HDR:-ts,host,project,stage,runner,model,rc,duration_s,input
 # can drive it without driving a model call.
 #
 # Reads  : R_IN R_OUT R_CR R_CW R_USD (the envelope), $PROJECT $STAGE $HARNESS
-# Writes : IN OUTT CR CW USD ROW_SRC rmodel PRICE_V_SEEN   (locals of the
-#          caller; bash scoping is dynamic, which is what makes the split
+# Writes : IN OUTT CR CW USD ROW_SRC rmodel PRICE_V_SEEN SUB_USD_SEEN  (locals
+#          of the caller; bash scoping is dynamic, which is what makes the split
 #          possible at all). PRICE_V_SEEN (BH-5652) is the version of the price
 #          row the transcript priced rmodel from, empty when the row has none.
+#          SUB_USD_SEEN (BH-10209) is the subagent part of USD, empty when the
+#          helper printed no such field (an older transcript-cost.sh).
 # >>> cost_row_source (tests/transcript-cost-test.sh runs this function)
 cost_row_source() { # cost_row_source <runner> <session-id> <cwd>
-  local _runner="$1" _sid="${2:-}" _cwd="${3:-$PWD}" _TCB _TCL _TCM _TCN _TCF _TCU _TCV
+  local _runner="$1" _sid="${2:-}" _cwd="${3:-$PWD}" _TCB _TCL _TCM _TCN _TCF _TCU _TCV _TCS
   if [ "$_runner" = claude ] && cost_transcript_enabled; then
     _TCB="$(dirname "$0")/transcript-cost.sh"
     [ -x "$_TCB" ] || _TCB="$HARNESS/bin/transcript-cost.sh"
     if [ -n "$_sid" ] && [ -x "$_TCB" ]; then
-      _TCL=$(eval "${ACCT_EXPORTS:-}"; "$_TCB" "$_sid" --cwd "$_cwd" --price-version 2>>"$HARNESS/logs/claude-cost.log")
+      _TCL=$(eval "${ACCT_EXPORTS:-}"; "$_TCB" "$_sid" --cwd "$_cwd" --price-version --subagent-usd 2>>"$HARNESS/logs/claude-cost.log")
       if [ -n "$_TCL" ]; then
-        IFS='|' read -r IN OUTT CR CW USD _TCM _TCN _TCF _TCU _TCV <<<"$_TCL"
+        IFS='|' read -r IN OUTT CR CW USD _TCM _TCN _TCF _TCU _TCV _TCS <<<"$_TCL"
         ROW_SRC=transcript
         [ -n "${_TCM:-}" ] && rmodel="$_TCM"
         # The dollars came from a versioned price row; the row says which.
         PRICE_V_SEEN="${_TCV:-}"
+        # BH-10209: the subagent part of USD (field 11), for the sub_usd note.
+        SUB_USD_SEEN="${_TCS:-}"
         # An UNPRICED model makes cost_usd partial, and a partial number that
         # does not say so is the failure this wave is about. One line per call.
         [ -n "${_TCU:-}" ] && echo "$(STAMP) [$PROJECT] $STAGE: UNPRICED model(s) ${_TCU} in session $_sid — cost_usd is partial" >> "$HARNESS/logs/claude-cost.log"
@@ -2368,6 +2372,12 @@ ac_cost_row_write() {
     ROW_SRC=unbilled
     [ -n "${USD:-}" ] || USD=0
   fi
+  # BH-10209: the subagent part of a transcript-priced row rides the note as
+  # `sub_usd:<x>`, FIRST, so the 200-char cut of cost_csv_field cannot lose it.
+  # An envelope, grok or codex row has none and reads "not measured".
+  if [ "$ROW_SRC" = transcript ] && command -v cost_sub_usd_token >/dev/null 2>&1; then
+    local _SUT; _SUT=$(cost_sub_usd_token "${SUB_USD_SEEN:-}") && _RN="$_SUT${_RN:+;$_RN}"
+  fi
   _PN=$(cost_row_price "$runner" "$rmodel" "$RC" "$IN" "$OUTT" "$CR" "$CW" "$USD" "$_RN" "${CACHE_TTL_SEEN:-}" "${PRICE_V_SEEN:-}")
   USD="${_PN%%|*}"; _ROW_NOTE="${_PN#*|}"
   # The model column is what SERVED (a fallback rung, a grok/codex lane); the
@@ -2532,7 +2542,7 @@ ac_advisor_row_write() {
   # it was netted of them and this row carries exactly that share (split).
   [ "${ADV_ENV_MODE:-}" = skip ] && return 0
   local _TCB _TCL _trc=3 _TCM _TCN _TCF _TCU
-  local STAGE="$STAGE-advisor" rmodel="" IN="" OUTT="" CR="" CW="" USD="" ROW_SRC=none R_USD="" CACHE_TTL_SEEN="" PRICE_V_SEEN="" CLIFF_ROUTE_NOTE="advisor"
+  local STAGE="$STAGE-advisor" rmodel="" IN="" OUTT="" CR="" CW="" USD="" ROW_SRC=none R_USD="" CACHE_TTL_SEEN="" PRICE_V_SEEN="" SUB_USD_SEEN="" CLIFF_ROUTE_NOTE="advisor"
   if [ "${ADV_ENV_MODE:-}" = split ]; then
     IFS='|' read -r IN OUTT CR CW USD rmodel <<<"$ADV_ENV_LINE"
     R_USD="$USD"; ROW_SRC=result-modelusage
@@ -2586,7 +2596,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
   # transcript path is known even when the run dies; ROW_SRC says where the
   # numbers on the row came from; R_* keep the CLI envelope's own reading so
   # the two stay comparable instead of one silently replacing the other.
-  local SESSION_ID="" ROW_SRC=none R_IN="" R_OUT="" R_CR="" R_CW="" R_USD="" CACHE_TTL_SEEN="" PRICE_V_SEEN=""
+  local SESSION_ID="" ROW_SRC=none R_IN="" R_OUT="" R_CR="" R_CW="" R_USD="" CACHE_TTL_SEEN="" PRICE_V_SEEN="" SUB_USD_SEEN=""
   T0=$(date +%s); RC=1; ADV_ATTEMPT=""; ADV_USD=""; ADV_ENV_MODE=""; ADV_ENV_LINE=""
   # THE ACCOUNT SIDECAR IS THIS ATTEMPT'S, NEVER THE LAST ONE'S (BH-1090
   # review). $OUT is keyed on (PR, head) by the merge conductor, so a re-spawn
@@ -2922,7 +2932,7 @@ run_attempt() { # run_attempt <runner> ; sets RC, writes $OUT, appends cost row
       while [ "$_ci" -lt "${#CANDIDATES[@]}" ]; do
         cm="${CANDIDATES[$_ci]}"; _ci=$((_ci+1))
         rmodel="$cm"
-        CACHE_TTL_SEEN=""; PRICE_V_SEEN=""
+        CACHE_TTL_SEEN=""; PRICE_V_SEEN=""; SUB_USD_SEEN=""
         # ONE SESSION ID PER ATTEMPT, minted up front. The survival ladder can
         # run this loop twice (fable, then opus) and each run is its own
         # session and its own row, so a single id for the attempt would price

@@ -18,7 +18,8 @@
 #
 #   usage: hotfix-migrate.sh <project> <build-dir>
 #   exit 0 applied or deferred-to-deploy | 2 gate FLAGGED the SQL | 3 hold (checks
-#   not green, a failure word, a proof that would not post) | 4 no migration files
+#   not green, a failure word, a proof that would not post, or needs-operator: a
+#   file the workflow can never apply, a 422 on the approval) | 4 no migration files
 #   here, or a before-merge PR with no workflow to dispatch (HM_BEFORE_MERGE=1: one
 #   alert, no proof) | 5 no-path, neither shape | 75 busy, we never wait.
 #   HM_BEFORE_MERGE=1 (run-build's stage block, BH-9403) runs it for a NORMAL PR of
@@ -204,15 +205,18 @@ hm_post_proof() {
 # written AFTER the side effect it records and rewritten once the comment lands.
 # `applied` with posted_comment_id:null is a real and honest state: the SQL ran,
 # the proof did not, and the conductor must not accept it.
+# HM_LEDGER_EXTRA (a JSON object, set by hm_op_stop) adds keys such as `cause`
+# and `approve_refused` (BH-9817). Unset or empty: the object is as before.
 hm_write_ledger() {
-  local decision="$1" fjson="${2:-[]}" run="${3:-}"
+  local decision="$1" fjson="${2:-[]}" run="${3:-}" extra="${HM_LEDGER_EXTRA:-}"
   [ -n "$fjson" ] || fjson='[]'   # an empty string is not valid --argjson
+  jq -e 'type == "object"' >/dev/null 2>&1 <<<"$extra" || extra='{}'
   jq -n --arg fp "$FP" --arg mode "$MODE" --arg d "$decision" --arg cid "${HM_COMMENT_ID:-}" \
-        --arg run "$run" --argjson files "$fjson" \
+        --arg run "$run" --argjson files "$fjson" --argjson extra "$extra" \
     '{fp:$fp, mode:$mode, decision:$d,
       files:(if $run == "" then $files else ($files | map(. + {run_id:$run})) end),
       posted_comment_id:(if $cid == "" then null else (($cid|tonumber?) // $cid) end),
-      after_deploy:null}' > "$LEDGER.tmp" 2>/dev/null && mv "$LEDGER.tmp" "$LEDGER"
+      after_deploy:null} + $extra' > "$LEDGER.tmp" 2>/dev/null && mv "$LEDGER.tmp" "$LEDGER"
 }
 
 # hm_revert_lines <file...>: the undo story for every data-edit file. A CREATE
@@ -246,6 +250,9 @@ hm_revert_lines() {
 
 # The seam BH-370.3 plugs into, sourced AFTER the helpers so the lib can use them.
 [ -f "$HARNESS/bin/lib/hotfix-migrate-workflow.sh" ] && . "$HARNESS/bin/lib/hotfix-migrate-workflow.sh"
+# The needs-operator stop (BH-9817): a file the workflow can never apply, or a
+# head GitHub refused to approve.
+[ -f "$HARNESS/bin/lib/hotfix-migrate-operator.sh" ] && . "$HARNESS/bin/lib/hotfix-migrate-operator.sh"
 
 hm_files_json() { # hm_files_json <status>  (one status for every file)
   printf '%s\n' "${FILES[@]}" \
@@ -524,6 +531,14 @@ hm_main() {
     # local_gate=advisory: the workflow's own allow-list runs from main and
     # decides. Our gate's report rides in the proof, and a refusal comes back as
     # the outcome word `refused`.
+    # BH-9817: a FLAGGED statement whose first keyword is on the project's
+    # workflow refuse list can never pass that allow-list. A run would only be
+    # refused, so stop here with needs-operator: no approval, no dispatch.
+    if declare -F hm_op_refuses >/dev/null 2>&1 \
+       && hm_op_refuses "$BUILD/hotfix-gate.txt" > "$BUILD/hotfix-refused.txt"; then
+      hm_op_stop outside-allowlist "$BUILD/hotfix-refused.txt"
+      return $?
+    fi
     HM_GATE_NOTE=$(printf 'The local appliability gate flagged these; the workflow'"'"'s allow-list decides:\n\n```\n%s\n```' \
       "$(head -c 1500 "$BUILD/hotfix-gate.txt")")
     grc=0

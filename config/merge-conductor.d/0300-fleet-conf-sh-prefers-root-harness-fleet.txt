@@ -1,0 +1,68 @@
+# fleet-conf.sh prefers /root/harness/fleet.conf; point it at THIS tree's registry
+# so a scratch HARNESS (the fixtures) drives a scratch fleet. Identical in prod.
+[ -f "$H/fleet.conf" ] && export FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}"
+mkdir -p "$H/logs" "$H/locks" "$H/state" "$H/flags" 2>/dev/null
+if [ -f "$HENV/global.env" ]; then set -a; # shellcheck disable=SC1091
+  . "$HENV/global.env"; set +a; fi
+# shellcheck source=/dev/null
+[ -r "$H/bin/jobs-client.sh" ] && . "$H/bin/jobs-client.sh"
+# Carry an iron-law acceptance across heads (BH-4474). Missing, ilc_covered is
+# undefined and the per-head marker is the only acceptance, as before.
+# shellcheck source=bin/lib/ironlaw-carry.sh
+[ -r "$H/bin/lib/ironlaw-carry.sh" ] && . "$H/bin/lib/ironlaw-carry.sh"
+# One owner per ticket (BH-1526): the merge-time HOLD and one-PR-per-ticket.
+# shellcheck source=bin/lib/ticket-ownership.sh
+[ -r "$H/bin/lib/ticket-ownership.sh" ] && . "$H/bin/lib/ticket-ownership.sh"
+
+# --- BH-1132: the lane's one off-switch -------------------------------------
+# flags/all-off, flags/lane-off-merge-conductor, or the D1 pause_flags row of the
+# same name stops this tick (exit 0 — a paused lane is not a failure). With no
+# flag and no row this returns immediately and the lane behaves exactly as it
+# always has, and an unreachable worker fails OPEN to the last cached answer.
+# Registry: catalog/lanes.json. Operator: bin/harness-ctl.sh off merge-conductor.
+# shellcheck disable=SC1091
+. "${H}/bin/lib/lane-gate.sh" 2>/dev/null || true
+command -v lane_gate_or_exit >/dev/null 2>&1 && lane_gate_or_exit merge-conductor
+# THE KNOBS, BELOW THE ENV LOAD (BH-1165). The gate above stops this lane; this
+# is what lets a settings row reach its own unmodified ${KNOB:-default} reads.
+# It is BELOW `set -a; . env/global.env` on purpose: above it, the env file
+# re-assigns every name and the row silently loses. Fails open — with no row,
+# nothing is exported and the lane behaves byte-for-byte as it does today.
+command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    merge-conductor
+# BH-4659 (BH-4656.1): the open list and its per-PR merge-state reads come from
+# the shared snapshot (bin/lib/gh-pr-list.sh reads HPL_SNAPSHOT). The decision
+# and readback reads (mc_pr_view, mc_rest_pr_json, mc_pr_live_head) stay live.
+# shellcheck source=bin/lib/pr-snapshot.sh
+. "$H/bin/lib/pr-snapshot.sh" 2>/dev/null || true
+command -v prs_open_list >/dev/null 2>&1 && export HPL_SNAPSHOT=1
+
+# shellcheck source=bin/lib/gh-repo-token.sh
+[ -r "$H/bin/lib/gh-repo-token.sh" ] && . "$H/bin/lib/gh-repo-token.sh"
+# shellcheck source=bin/lib/gh-app-auth.sh
+[ -r "$H/bin/lib/gh-app-auth.sh" ] && . "$H/bin/lib/gh-app-auth.sh"
+# shellcheck source=bin/lib/gh-limit-logger.sh
+[ -r "$H/bin/lib/gh-limit-logger.sh" ] && . "$H/bin/lib/gh-limit-logger.sh"
+# shellcheck source=bin/lib/gh-budget.sh
+[ -r "$H/bin/lib/gh-budget.sh" ] && . "$H/bin/lib/gh-budget.sh"
+# shellcheck source=bin/lib/gh-pr-list.sh
+[ -r "$H/bin/lib/gh-pr-list.sh" ] && . "$H/bin/lib/gh-pr-list.sh"
+# shellcheck source=bin/lib/merge-conductor-lib.sh
+# The lib sources bin/lib/gh-rest.sh, which is what every decision read below
+# goes through — 0 acted on, 44 ABSENT, 75 UNVERIFIABLE (#768). The marker is
+# what tests/gh-no-graphql-decision-guard-test.sh scans this file for.
+# gh-rest: no-graphql
+. "$H/bin/lib/merge-conductor-lib.sh"
+# >>> tick scope (BH-6518)
+# The keyed-tick parse, the full-tick window, the tick mode, the tick
+# prelude, the main-red detector call, the per-project fan-out and the fleet
+# sweeps live in bin/lib/mc/tick-scope.sh, a
+# driver-only file (no module header, so the lib's other users never load
+# it). A box mid-sync can see
+# this script new and that file missing or old: the tick refuses, before any
+# GitHub read, rather than run a scope it cannot parse.
+# shellcheck source=bin/lib/mc/tick-scope.sh
+if ! . "$H/bin/lib/mc/tick-scope.sh" || ! declare -F mc_keyed_tick_parse >/dev/null || ! declare -F mc_full_tick_window >/dev/null || ! declare -F mc_tick_mode >/dev/null || ! declare -F mc_tick_prelude >/dev/null || ! declare -F mc_tick_fanout >/dev/null || ! declare -F mc_tick_main_red >/dev/null || ! declare -F mc_tick_sweeps >/dev/null; then
+  HARNESS="$H" "$H/bin/alert-line.sh" --id conductor-module-missing "CONDUCTOR MODULE MISSING: bin/lib/mc/tick-scope.sh is missing or unusable on $(hostname) — the box's bin/ is half-synced; no PR was ticked this tick" 2>/dev/null || true
+  mc_log "bin/lib/mc/tick-scope.sh is missing or unusable — refusing the tick"
+  exit 1
+fi

@@ -1,0 +1,12 @@
+{
+  "env": "STALE_REAPER_OPEN_PR",
+  "read_in": "bin/stale-build-reaper.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9484 item 5. Read by bin/stale-build-reaper.sh. 1: for a dead build whose newest ticket branch has finished commits, no PR and a tip newer than the build, the lane opens the PR (act mode) or logs pr=would-open (observe). 0 (off): no GitHub read and no PR; the lane only marks builds dead. Read as ${STALE_REAPER_OPEN_PR:-1}."
+}

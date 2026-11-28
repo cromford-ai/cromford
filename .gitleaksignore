@@ -35,8 +35,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
+tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -209,6 +209,7 @@ tests/secret-literals-token-length.bh-1124-test.sh:github-app-token:59
 tests/slice-board-remainder.bh-10080-test.sh:generic-api-key:37
 tests/slice-board.bh-8333-test.sh:generic-api-key:35
 tests/spend-lane-push.bh-6174-test.sh:curl-auth-header:214
+tests/staff-inspector-lever.bh-9419-test.sh:generic-api-key:244
 tests/state-backup-lowpri.bh-6173-test.sh:generic-api-key:120
 tests/state-restore-standby.bh-401-test.sh:generic-api-key:50
 tests/ticket-status-comment.bh-9503-test.sh:generic-api-key:228
@@ -250,6 +251,7 @@ worker/jobs/test/fleet-accounts.bh-7939.test.js:generic-api-key:17
 worker/jobs/test/fleet-first-run.bh-7939.test.js:generic-api-key:18
 worker/jobs/test/ironlaw-accept-indexes.bh-4157.test.js:generic-api-key:13
 worker/jobs/test/ironlaw-accept.bh-4157.test.js:generic-api-key:25
+worker/jobs/test/issue-records.bh-10199.test.js:generic-api-key:43
 worker/jobs/test/landing-decisions-cursor.bh-6748.test.js:generic-api-key:17
 worker/jobs/test/landing-decisions.bh-6744.test.js:generic-api-key:18
 worker/jobs/test/landing-outcome.bh-6745.test.js:generic-api-key:16

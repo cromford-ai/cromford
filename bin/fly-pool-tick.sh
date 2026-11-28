@@ -228,6 +228,20 @@ for f in "$H"/flags/fly-pool-*; do
   case "$f" in *fly-pool-app-*) continue;; esac   # app-name flag, not a project
   TICK_PROJECTS+=("${f##*fly-pool-}")
 done
+# >>> fleet slot allocator (BH-7877)
+# One grant file per project in state/fly-pool-alloc/ when the row
+# lane.fly-pool.fleet_slots is set; bin/fly-pool.sh clamps its spawn budget to
+# it (config/fly-pool.d/3550-fleet-alloc-clamp.sh). No row: the files go and
+# nothing changes. Before ptb_split, so a fly snapshot carries the fresh grant.
+# project-ceiling.sh is sourced here, at the top level (see its header).
+# shellcheck source=bin/lib/project-ceiling.sh
+. "$H/bin/lib/project-ceiling.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/project-ceiling.sh" 2>/dev/null || true
+# shellcheck source=bin/lib/pool-alloc.sh
+. "$H/bin/lib/pool-alloc.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-alloc.sh" 2>/dev/null || true
+if [ "${#TICK_PROJECTS[@]}" -gt 0 ] && command -v pa_tick >/dev/null 2>&1; then
+  HARNESS="$H" PA_PARALLEL="$(tick_cap)" pa_tick "${TICK_PROJECTS[@]}"
+fi
+# <<< fleet slot allocator
 # BATCHED ENQUEUE (BH-7432). ptb_split enqueues every fly-placed project in
 # one POST /api/lane-runs/batch and leaves in PTB_HUB only the projects that
 # still need a hub tick. With no fly row, the knob POOL_TICK_BATCH=0 or no

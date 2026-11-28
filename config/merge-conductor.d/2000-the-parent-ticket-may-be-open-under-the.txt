@@ -1,0 +1,62 @@
+        # The parent TICKET may be open under the other head shape (agent/<KEY>
+        # vs ticket/<key>): open_pr_for_key, the BH-3948 contract. Open or
+        # unreadable keeps the child waiting; no derivable key skips the guard.
+        if [ -n "$NWHY" ]; then
+          PKEY=$(mc_stack_parent_key "$BASEREF"); PRC=1; POPEN=""
+          [ -n "$PKEY" ] && { POPEN=$(mc_parent_pr_open "$SLUG" "$PKEY"); PRC=$?; }
+          case "$PRC" in
+            0) MC_STACK_BASE="$BASEREF (no PR on it; parent ticket $PKEY is open as $POPEN)"; NWHY="" ;;
+            1) ;;
+            *) mc_attempt_has "nonekunread $KEY $HEAD" 2>/dev/null || { mc_attempt_put "nonekunread $KEY $HEAD"
+                 mc_log "$KEY no PR on $BASEREF, but whether parent ticket $PKEY has an open PR is UNVERIFIABLE — keeps waiting"; }
+               NWHY="" ;;
+          esac
+        fi
+        # open_pr_for_key sees agent/<KEY> and ticket/<key> only. A parent
+        # REBUILT as ticket/<key>-rN is the CLOSED arm's mc_retry_pr probe; an
+        # open rebuild is still the parent, so the child keeps waiting on it.
+        if [ -n "$NWHY" ]; then
+          IFS=$'\t' read -r RSTATE RURL RBR <<<"$(mc_retry_pr "$SLUG" "$BASEREF")"
+          [ "${RSTATE:-NONE}" = OPEN ] && { MC_STACK_BASE="$BASEREF (no PR on it; the parent's rebuild ${RURL:-?} on $RBR is open)"; NWHY=""; }
+        fi
+        if [ -n "$NWHY" ] && { [ "$ACTIONS" != 1 ] || [ "${MC_ORPHAN_RETARGET:-1}" = 0 ]; }; then
+          if [ "$ACTIONS" != 1 ]; then
+            mc_log "$KEY would retarget to $PBASE — no parent PR on $BASEREF (branch $NWHY) (observe mode: nothing written)"
+          else
+            mc_attempt_has "noneparked $KEY $HEAD" 2>/dev/null || { mc_attempt_put "noneparked $KEY $HEAD"
+              mc_log "$KEY no parent PR on $BASEREF (branch $NWHY) — parked (MC_ORPHAN_RETARGET=0)"; }
+          fi
+        elif [ -n "$NWHY" ]; then
+          NOLD="$BASEREF"
+          # carry=0 (judge a gone parent on the conflict half alone) ONLY while
+          # the owed re-review stands: it is what reads the parent's commits the
+          # child brings along. With MC_RETARGET_REREVIEW=0 nothing would read
+          # them, so the full check runs and a gone parent parks orphaned-child.
+          NCARRY=1; [ "$NWHY" = gone ] && [ "$MC_RETARGET_REREVIEW" != 0 ] && NCARRY=0
+          OWHY=$(mc_orphan_clean "$SLUG" "$P" "$PBASE" "$BASEREF" "$HEAD" "$NCARRY"); ORC=$?
+          case "$ORC" in
+            0)
+              stack_orphan_retarget \
+                "$KEY no parent PR on $BASEREF (branch $NWHY) — $OWHY, so this PR was retargeted to $PBASE" \
+                "$KEY no parent PR on $BASEREF (branch $NWHY)" \
+                "$KEY no parent PR on $BASEREF (branch $NWHY) and this PR is clean against $PBASE ($OWHY), but the retarget PATCH was refused — it keeps waiting and the retarget is retried next tick" \
+                && mc_log "RETARGETED $KEY base $NOLD -> $PBASE (parent: none, branch $NWHY)" ;;
+            1)
+              MC_STACK=parent-closed-orphan
+              MC_STACK_BASE="$BASEREF (no parent PR; branch $NWHY; $OWHY)"
+              mc_attempt_has "noneorphan $KEY $HEAD" 2>/dev/null || { mc_attempt_put "noneorphan $KEY $HEAD"
+                mc_log "$KEY BLOCKED_AGENT orphaned-child: no PR was ever opened on $BASEREF (branch $NWHY), and this PR cannot be retargeted to $PBASE as it stands — $OWHY — handed to bin/blocked-resolver.sh (fix round on $BR, then a fresh rebuild); nothing closes it here: $URL"; } ;;
+            *)
+              mc_attempt_has "noneorphanunknown $KEY $HEAD" 2>/dev/null || { mc_attempt_put "noneorphanunknown $KEY $HEAD"
+                mc_log "$KEY no parent PR on $BASEREF (branch $NWHY), but this tick could not judge $BR against $PBASE ($OWHY) — keeps waiting and is re-read on the next tick"; } ;;
+          esac
+        fi ;;
+      CLOSED)
+        # THE PARENT WAS CLOSED FOR A REBUILD, AND THE REBUILD IS A DIFFERENT
+        # BRANCH (BH-458, 2026-09-16). `mc_stack_parent` answers about the base
+        # branch, which is the parent's FIRST attempt; when that attempt was
+        # closed and the ticket rebuilt, the work is now on `ticket/<key>-rN`
+        # and this child is sitting on a branch nothing will ever merge.
+        # GitHub's own retarget cannot help either: it fires when the MERGED
+        # branch is deleted, and the branch that merges is the retry.
+        #

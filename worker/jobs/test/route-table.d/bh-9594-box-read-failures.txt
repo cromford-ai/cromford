@@ -1,0 +1,4 @@
+# BOX READ FAILURES (BH-9594, the BH-9555 contract): a GitHub read that could
+# not read is recorded against the box; ok resets the box's count.
+POST /api/box-read-failures
+GET /api/box-read-failures

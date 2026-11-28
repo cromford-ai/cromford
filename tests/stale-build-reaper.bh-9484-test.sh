@@ -27,6 +27,8 @@ printf 'CONSOLE_URL=http://console.invalid\nHARNESS_SECRET=fixture-secret-exampl
 printf '#!/bin/bash\ntrue\n' > "$T/bin/beat.sh"; chmod +x "$T/bin/beat.sh"
 printf '#!/bin/bash\nshift; exec "$@"\n' > "$T/fakebin/timeout"; chmod +x "$T/fakebin/timeout"
 printf '#!/bin/bash\n[ -f "%s/fx/LOCK_HELD" ] && exit 1\nexit 0\n' "$T" > "$T/fakebin/flock"; chmod +x "$T/fakebin/flock"
+# BH-9484 C1: the PR step's gh, refused and recorded (these bkeys have no build start, so 0 calls).
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "%s/fx/GH.log"\nexit 1\n' "$T" > "$T/fakebin/gh"; chmod +x "$T/fakebin/gh"
 
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); }
@@ -294,6 +296,9 @@ feed
 RC=$(STALE_REAPER_ACT=1 run)
 [ "$RC" = 0 ] && [ "$(nposts)" = 0 ] && logged | grep -q '0 candidates' && ok || bad "E1 empty feed: rc 0 and a 0-candidates line (rc=$RC): $(logged)"
 grep -qi 'clean' <<<"$(logged)" && bad "E1 an empty feed is never called clean: $(logged)" || ok
+
+# ---------- H1 BH-9484 C1: no bkey above names a build start, so the PR step made 0 gh calls ----------
+[ ! -s "$T/fx/GH.log" ] && ok || bad "H1 the act and observe cases made 0 gh calls: $(cat "$T/fx/GH.log")"
 
 # ---------- G1 the state-paths guard passes the new script ----------
 printf 'bin/stale-build-reaper.sh\n' > "$T/spg.txt"

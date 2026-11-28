@@ -1,0 +1,54 @@
+{
+  "id": "staff-mr-red",
+  "name": "Staff Mr Red (owns red minutes: collects failed merge-queue batches, claims each finding, records one mr_red_actions row per action before any act; C0 records observe rows only)",
+  "scope": "hub",
+  "script": "bin/staff/mr-red.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-mr-red",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "MRR_TICK",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/mr-red-collect.sh",
+      "note": "BH-9532 collector guard: bin/staff/mr-red.sh tick sets it to 1 for its own collector run. Without it bin/staff/mr-red-collect.sh and its sources print nothing, so bin/staff.sh tick-all claims nothing for mr-red. NOT settable from the control plane. The level, item cap, lookback and tick timeout are settings rows (staff.mr-red.level, .max_items_tick, .lookback_h, .tick_timeout_s), not lane knobs.",
+      "settable": false
+    },
+    {
+      "env": "MRR_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/mr-red-collect.d/10-drafts.sh",
+      "note": "BH-9532 test seam: epoch seconds used as the clock of the lookback cutoff, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/mr-red-collect.d/10-drafts.sh",
+      "note": "Test seam gate: MRR_NOW is honored only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-mr-red.log"
+  }
+}

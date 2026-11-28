@@ -1,0 +1,62 @@
+# <<< tick scope (BH-6518)
+# The REST contract the review poster's comment goes out on (BH-783): sourcing
+# it costs no API budget and has no side effect, and without it rp_post can only
+# answer "not posted".
+# shellcheck source=bin/lib/gh-rest.sh
+[ -r "$H/bin/lib/gh-rest.sh" ] && . "$H/bin/lib/gh-rest.sh"
+# The review poster (BH-641): renders the findings a review carries into the
+# body it posts, and writes the review + its raw envelope into the build record
+# BEFORE the network call.
+# shellcheck source=bin/lib/review-post.sh
+[ -r "$H/bin/lib/review-post.sh" ] && . "$H/bin/lib/review-post.sh"
+# A box mid-sync can carry this script with the old bin/lib — the same staggered
+# sync every other gate here degrades for. With no renderer the comment is the
+# agent's stdout, which is this script's behaviour before BH-641, line for line:
+# unrendered is bad, and losing the comment entirely would be worse.
+# mc_pr_comment (bin/lib/mc/classify.sh) is the REST writer BH-783/784 moved
+# this lane's comments onto — sourced by the lib two lines above, body by
+# file, no GraphQL (this file carries BH-784's `# gh-rest: no-graphql`
+# marker). It already returns 75 on anything that did not land — a bad token,
+# bad args, or a real HTTP failure — so there is no "not attempted" rc left to
+# retry through a second channel; that retry is how a PR got two copies of
+# one review.
+command -v rp_post >/dev/null 2>&1 || rp_post() {
+  local body rc
+  printf -- '-\n'
+  body=$(printf '%s\n\n---\n%s\n' "$(cat "$3" 2>/dev/null)" "$5")
+  mc_pr_comment "$4" "$body"; rc=$?
+  return "$rc"
+}
+# shellcheck source=bin/lib/hotfix-lib.sh
+[ -r "$H/bin/lib/hotfix-lib.sh" ] && . "$H/bin/lib/hotfix-lib.sh"
+# The self-enqueue (BH-1668): an approved, green, clean PR on a Mergify
+# repo gets one `@mergifyio queue` per head, posted with a PAT. Optional like
+# the libs above: a tree without it runs this tick exactly as before.
+# shellcheck source=bin/lib/autoenqueue.sh
+[ -r "$H/bin/lib/autoenqueue.sh" ] && . "$H/bin/lib/autoenqueue.sh"
+# shellcheck source=bin/lib/mc-hold-comment.sh
+[ -r "$H/bin/lib/mc-hold-comment.sh" ] && . "$H/bin/lib/mc-hold-comment.sh"
+# The external-author enqueue (BH-4580), same optional rule: it rides on
+# autoenqueue.sh's gates and send, and does nothing without them.
+# shellcheck source=bin/lib/mc/external-enqueue.sh
+[ -r "$H/bin/lib/mc/external-enqueue.sh" ] && . "$H/bin/lib/mc/external-enqueue.sh"
+# The landing contract's shadow decisions (BH-6744), same optional rule: a tree
+# without it ticks exactly as before, and its default mode `queue` reads nothing.
+# shellcheck source=bin/lib/mc/landing.sh
+[ -r "$H/bin/lib/mc/landing.sh" ] && . "$H/bin/lib/mc/landing.sh"
+# The per-PR workers on lane-run machines (BH-6495), same optional rule: a
+# tree without it starts every worker on this box, as before.
+# shellcheck source=bin/lib/mc/fly-workers.sh
+[ -r "$H/bin/lib/mc/fly-workers.sh" ] && . "$H/bin/lib/mc/fly-workers.sh"
+# The stale-dequeue requeue (BH-3480). Optional like the libs above: a tree
+# without it ticks exactly as before.
+# shellcheck source=bin/lib/mc-stale-dequeue.sh
+[ -r "$H/bin/lib/mc-stale-dequeue.sh" ] && . "$H/bin/lib/mc-stale-dequeue.sh"
+# The batch-reset classifier (BH-5372): observe only. A tree without it ticks
+# exactly as before.
+# shellcheck source=bin/lib/mc-batch-reset.sh
+[ -r "$H/bin/lib/mc-batch-reset.sh" ] && . "$H/bin/lib/mc-batch-reset.sh"
+# The queue waste ledger (BH-5374): CI minutes per batch draft run. A tree
+# without it ticks exactly as before.
+# shellcheck source=bin/lib/mc-batch-minutes.sh
+[ -r "$H/bin/lib/mc-batch-minutes.sh" ] && . "$H/bin/lib/mc-batch-minutes.sh"

@@ -1,0 +1,62 @@
+  # ---- what the read memo saved this tick (BH-1486) --------------------------
+  # One line per project per tick, read AFTER the workers have answered because
+  # the counters are files they write and this shell only reads. Together with
+  # the `gh-etag lane=merge-conductor:<P> fetched= cached=` line each project
+  # subshell logs a moment later, this is the whole per-tick read ledger: what
+  # was not asked for at all, and what was asked for conditionally and 304'd.
+  mc_log "$SLUG READ-MEMO tick=${MC_TICK_ID:-notick} stack_hits=$(mc_count_get "$P" stackmemo) ci_skipped=$(mc_count_get "$P" cimemo) scan_skipped=$(mc_count_get "$P" scanmemo)"
+  # ---- the tier-2 self-enqueue (BH-1668) -------------------------------------
+  # AFTER every worker has answered, over the rows this tick already listed,
+  # and only on a row whose worker reached the READY arm's enqueue point this
+  # tick (ae_mark above). It writes nothing outside MODE=merge (a WOULD line
+  # instead), takes no merge budget (a post is not a merge) and has its own cap,
+  # MC_AUTOENQUEUE_CAP.
+  # Both steps post `@mergifyio queue`, which is a landing, so a lane-run
+  # machine (MC_ON_MACHINE=1) runs neither (BH-6495). The hub runs them.
+  # A lease-held project run (BH-6890) runs both, unless it was told to stop.
+  local _land_ok=1
+  [ "${MC_ON_MACHINE:-}" = 1 ] && ! { [ "${MC_LEASED_RUN:-}" = 1 ] && [ -n "${MC_LEASE_FENCE:-}" ]; } && _land_ok=0
+  [ -n "${MC_STOP_FILE:-}" ] && [ -e "$MC_STOP_FILE" ] && _land_ok=0
+  [ "$_land_ok" = 1 ] && command -v ae_project >/dev/null 2>&1 && ae_project "$P" "$SLUG" "$PROVIDER" "$PBASE" "${ROWS[@]}"
+  # The same step for the open PRs of NON-harness authors (BH-4580), which the
+  # list above never carries: one REST page, review-prs' APPROVE on the head, the
+  # iron-law scan in the READY mark's place, the same cap (bin/lib/mc/external-enqueue.sh).
+  [ "$_land_ok" = 1 ] && command -v xe_project >/dev/null 2>&1 && xe_project "$P" "$SLUG" "$PROVIDER" "$PBASE"
+
+  # ---- what the land fan-out actually reached (BH-870) -----------------------
+  # The handled sha is recorded HERE, after every worker has answered, and only
+  # when NONE of them deferred. A deferral is a PR this fan-out did not reach —
+  # a spawn refused at the cap, a PR another worker held, a re-review in flight,
+  # a merge-tree this tick could not run — and recording the sha over it would
+  # drop that PR's rebase for good. Capped work is re-offered, never dropped.
+  if [ "$LAND_FIRE" = 1 ]; then
+    LSP=$(mc_count_get "$P" landspawned);  LCU=$(mc_count_get "$P" landcurrent)
+    LCO=$(mc_count_get "$P" landconflict); LSK=$(mc_count_get "$P" landskipped)
+    LDF=$(mc_count_get "$P" landdeferred); LWD=$(mc_count_get "$P" landwould)
+    if [ "$ACTIONS" != 1 ]; then
+      mc_log "$SLUG LAND $PBASE ${LAND_SHA:0:8} observe mode: would=$LWD, nothing spawned, sha not recorded — turning actions on re-offers this landing"
+    elif [ "${LDF:-0}" -gt 0 ]; then
+      mc_log "$SLUG LAND $PBASE ${LAND_SHA:0:8} PARTIAL: spawned=$LSP deferred=$LDF (MC_LAND_REBASE_PARALLEL=${MC_LAND_REBASE_PARALLEL:-4}, a PR lock, a read in flight, or a test this tick could not make) — sha NOT recorded, the next tick re-offers the deferred PRs"
+    else
+      mc_land_record "$P" "$LAND_SHA"
+      mc_log "$SLUG LAND $PBASE ${LAND_SHA:0:8} handled: spawned=$LSP current=$LCU conflict=$LCO skipped=$LSK"
+    fi
+  fi
+
+  # ---- the batch train (BH-498) ----------------------------------------------
+  # AFTER CLASSIFICATION, because the count it keys on is what classification
+  # produced: two or more approved PRs of this repo sitting in READY or
+  # NEEDS_REBASE is the only shape a merge-time train can be made of. Below two
+  # the lane is not spawned at all, which keeps a quiet repo at zero extra API
+  # calls per tick.
+  #
+  # AND DETACHED, for the reason the rebase and the deploy verifier are: it
+  # clones, merges, regenerates and runs the repo's whole verification contract
+  # once, which is minutes. A lane that can hold a tick is the 03:54-04:02Z
+  # stall this conductor was rebuilt to make impossible. batch-resolve.sh takes
+  # its own `flock -n`, so a second spawn while one is working is a no-op, and
+  # the fds are closed for the same reason every other setsid line closes them.
+  # mc_batch_should_spawn, not an inline `-ge 2`: an OPEN TRAIN is its own reason
+  # to run the lane, because settling that train is work only the lane does and
+  # this conductor is its only invoker.
+  BATCHABLE=$(mc_count_get "$P" batchable)

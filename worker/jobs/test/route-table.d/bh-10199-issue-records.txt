@@ -1,0 +1,9 @@
+# BH-10199 (slice 1): the fleet's own record of an issue or PR thread (issue
+# state and comments). Written by POST /webhooks/github (issues,
+# issue_comment), by bin/lib/issue-record.sh after a full GitHub read (PUT) and
+# by its per-repo list backstop (the two sync routes); read by
+# bin/lib/issue-record.sh for hold_read and hold_check_thread. Bearer-gated.
+GET /api/issue-records
+PUT /api/issue-records
+POST /api/issue-record-syncs/claim
+POST /api/issue-record-syncs

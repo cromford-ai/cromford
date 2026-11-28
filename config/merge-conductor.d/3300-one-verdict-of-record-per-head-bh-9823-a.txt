@@ -1,0 +1,65 @@
+      # ONE VERDICT OF RECORD PER HEAD (BH-9823): a pending lead review is waited for, not raced.
+      command -v mc_ovh_moved_hold >/dev/null 2>&1 && mc_ovh_moved_hold && return 0
+      headbound_review moved "$KEY" "$SLUG" "$NUM" "$P" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$CI" ;;
+    READY)
+      mc_step base-guard
+      # NOTHING MERGES INTO ANYTHING BUT THE PROJECT'S BASE (BH-410). This runs
+      # before the freeze, before the flags and before the budget, because it is
+      # not a policy about WHEN to merge — it is the answer to "would this write
+      # land the PR into somebody's feature branch", and that answer is the same
+      # in observe mode, under a red main and with the budget spent. A refusal
+      # writes one row and nothing to GitHub.
+      #
+      # It is the SECOND check, and deliberately redundant with the classifier's
+      # MC_STACK=wait arm above, which is what parks a stacked child today.
+      # mc_base_guard reads no label and depends on no clause ordering, so a
+      # future reordering of mc_classify cannot turn into a merge into a feature
+      # branch — BH-491 hoisted one clause in that classifier on 2026-09-16 and
+      # shadowed two branches that had nothing to do with it.
+      if WRONGB=$(mc_base_guard "$PBASE" "${BASEREF:-}" ""); then :; else
+        mc_log "$KEY MERGE_REFUSED: the PR list says this PR is based on $WRONGB, not $PBASE — a merge or enqueue would land it INTO that branch. Parked STACKED_WAIT; no gh write"
+        mc_transition "$KEY" STACKED_WAIT "merge refused: based on $WRONGB, not $PBASE — waiting for the parent to merge and retarget" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+        return 0
+      fi
+      # NOTHING MERGES ON A DIFF NOBODY READ (BH-784). The scan above answered
+      # "0 hits" out of an empty file because GitHub refused the diff, not
+      # because the diff is clean, and this arm is the one that lands or
+      # enqueues the PR. The row keeps the state the classifier gave it —
+      # nothing is parked, relabelled or dequeued for a rate limit — and the
+      # next tick asks for the diff again. bin/merge-sweep.sh's scan takes the
+      # same rule one line before its own merge verb.
+      if [ "${DIFF_UNREAD:-0}" = 1 ]; then
+        mc_log "$KEY not merged this tick: ${DIFF_WHY:-the diff read was UNVERIFIABLE so the iron-law scan NOT run} — row left as-is, the next tick re-reads it"
+        mc_ready_why "$KEY" "$HEAD" diff-unread "not merged this tick: ${DIFF_WHY:-the diff read was UNVERIFIABLE so the iron-law scan NOT run} — row left as-is, the next tick re-reads it" logged
+        return 0
+      fi
+      # THE FREEZE COMES FIRST, before the budget and before any gh write: a
+      # merge into a red main is a merge whose CI signal is worthless, and on
+      # a queue repo it is an ejection for everything behind it too.
+      if [ -n "$MAIN_RED" ]; then
+        if main_red_exempt "$SLUG" "$NUM" "$URL" "$HEAD" "${RAWLBL:-}"; then
+          mc_attempt_has "mainredpass $KEY $HEAD" 2>/dev/null \
+            || { mc_attempt_put "mainredpass $KEY $HEAD"
+                 mc_log "$KEY is exempt from the main-red freeze (labelled $MC_MAIN_RED_LABEL, or its whole diff is test files) — it may merge while flags/$MAIN_RED is on"; }
+        else
+          mc_attempt_has "mainredhold $KEY $HEAD" 2>/dev/null \
+            || { mc_attempt_put "mainredhold $KEY $HEAD"
+                 mc_log "$KEY READY and HELD by the main-red freeze on ${HEAD:0:8} — $SLUG main is red (flags/$MAIN_RED); it merges as soon as the flag is gone, and nothing about this PR needs doing"; }
+          mc_ready_why "$KEY" "$HEAD" main-red "HELD by the main-red freeze: $SLUG main is red (flags/$MAIN_RED); it merges as soon as the flag is gone" logged
+          return 0
+        fi
+      fi
+      # PRODUCTION RED HOLDS THE MERGE (BH-8781): mc_prod_red_hold, fragment
+      # bh-8781-prod-red-hold.sh. The row stays READY; no gh write, no budget.
+      if command -v mc_prod_red_hold >/dev/null 2>&1 && mc_prod_red_hold; then return 0; fi
+      # END-TO-END RED HOLDS THE ENQUEUE (BH-9071): mc_e2e_red_hold, fragment
+      # bh-9071-e2e-red-hold.sh. A red or running E2E check on HEAD holds a Mergify row.
+      if command -v mc_e2e_red_hold >/dev/null 2>&1 && mc_e2e_red_hold; then return 0; fi
+      mc_step dep-gate
+      # >>> dep gate
+      # AN OPEN DECLARED DEPENDENCY HOLDS THIS MERGE (BH-629). #615 merged with
+      # "Depends on #459 (PR #609)" in its own body while #609 was still open,
+      # so main carried a suite sourcing a file main did not have and every open
+      # PR in the repo was red for 7.5 hours. Nothing between READY and
+      # `gh pr merge` had ever read the PR's own body.
+      #

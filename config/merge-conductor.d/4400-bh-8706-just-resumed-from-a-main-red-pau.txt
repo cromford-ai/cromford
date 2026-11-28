@@ -1,0 +1,66 @@
+          # BH-8706: just resumed from a main-red pause, Mergify not back yet.
+          command -v mc_queue_left_resumed >/dev/null 2>&1 && mc_queue_left_resumed "$QKEY" "$QHEAD" && { exec 9>&-; continue; }
+          # <<< queue left confirm
+          # OPEN, not merged, and the queue no longer holds it = EJECTED. Under
+          # the native queue that means its merge_group build (main + the entries
+          # ahead of it + this PR) went red; under Mergify, that its batch failed
+          # and Mergify removed the culprit. Either way it is a CI fact about a
+          # tree the PR's own checks never saw, so it goes back to WAIT_CI rather
+          # than to a human — but it is COUNTED, because a PR that keeps being
+          # ejected is a human's problem and re-enqueueing it forever is the
+          # exact loop this replaces.
+          mc_attempt_has "ejected $QKEY $QHEAD" || mc_attempt_put "ejected $QKEY $QHEAD"
+          # The failure follows the PATCH, not only the sha (BH-8186): a rebase of
+          # this head must not come back READY with no failure on it.
+          [ "$PROVIDER" = mergify ] && command -v mc_fbh_record >/dev/null 2>&1 && mc_fbh_record "$SLUG" "$P" "$QKEY" "$QURL" "$QHEAD"
+          # EJECTED AGAIN AFTER WE PUT IT BACK (BH-636). The `ejected` line is
+          # already there from the first time, so without this the second
+          # ejection of the SAME head would be invisible and the re-entry arm
+          # would offer it to the queue for ever. One more line, counted with
+          # the first, which is what hands it to bin/blocked-resolver.sh on
+          # `queue-ejected-twice` instead.
+          if [ -n "$(mc_requeued_mark "$QKEY" "$QHEAD")" ]; then
+            mc_attempt_has "reejected $QKEY $QHEAD" || mc_attempt_put "reejected $QKEY $QHEAD"
+          fi
+          # This tick made this ejection, so this tick does not undo it.
+          mc_tick_eject_note "$P" "$QKEY" "$QHEAD"
+          # A BASE-CONFLICT EJECTION IS NOT A STRIKE (BH-1677). Main moved under
+          # the PR; the answer is a rebase, not the resolver. Marked before the
+          # count reads the file. Mergify only: the native queue has no dequeue
+          # comment to read (see the dequeue surface below).
+          [ "$PROVIDER" = mergify ] && mc_eject_conflict_note "$SLUG" "$QKEY" "$QURL" "$QHEAD"
+          EJN=$(mc_eject_head_strikes "$QKEY" "$QHEAD")
+          # Mergify does not take OUR trigger label off — its own signal is the
+          # check run and its own `dequeued` label — so a label left behind would
+          # read as "queued" on every later tick and the PR would never be
+          # reclassified. Take it back so the next enqueue is a fresh signal.
+          # It is a gh WRITE, so it happens only in merge mode, exactly like the
+          # enqueue it undoes.
+          [ "$MERGES" = 1 ] && { mc_dequeue_label "$QURL" \
+            && mc_log "$QKEY ejected — removed the $MC_MERGIFY_LABEL label" \
+            || mc_log "$QKEY ejected but the $MC_MERGIFY_LABEL label could not be removed — the next tick reads it as queued until it goes (gh pr edit --remove-label $MC_MERGIFY_LABEL)"; }  # gh-guard-allow: prose in a log line, not a call
+          # >>> dequeue surface
+          # WHY IT LEFT, not just that it left (BH-872). The arms below call
+          # every Mergify ejection a red batch, and most are. The one that is
+          # not is a standing changes-requested review: it makes Mergify's
+          # `github-review-approved` condition false, Mergify drops the PR, and
+          # the requeue arm then waits for a CLEAN merge state that same review
+          # denies. Only mergify answers this question — the native queue ejects
+          # on its merge_group build and has no dequeue comment to read — so the
+          # read is spent nowhere else. One comment and one beat per (PR, head).
+          if [ "$PROVIDER" = mergify ]; then
+            QDQ=$(mc_dequeue_reason "$SLUG" "$QURL" "$QHEAD")
+            [ -n "$QDQ" ] && mc_dequeue_surface "$QKEY" "$QURL" "$QHEAD" "$QDQ" "$MERGES"
+          fi
+          # <<< dequeue surface
+          # WHAT THE CAUSE WAS (BH-6161): one comments read, one record line, one
+          # EJECT_CAUSE line, and the cause in the row reason below.
+          QEC=""; QEWHY=""
+          if command -v ec_cause >/dev/null 2>&1 && [ "$(ec_knob MC_EJECT_CAUSE 1)" != 0 ]; then
+            QEC=$(ec_cause "$PROVIDER" "$SLUG" "$QURL" "$QHEAD" "${QLIVE:-}")
+            QORD=first; [ -n "$(mc_requeued_mark "$QKEY" "$QHEAD")" ] && QORD=again
+            command -v mc_eu_ord >/dev/null 2>&1 && QORD=$(mc_eu_ord "$QKEY" "$QHEAD" "$QORD")
+            ec_record "$SLUG" "${QKEY##*#}" "$QHEAD" "$QORD" "${QEC%%$'\t'*}" "${QEC#*$'\t'}"
+            QEWHY="${QEC%%$'\t'*}"; [ -n "${QEC#*$'\t'}" ] && QEWHY="$QEWHY (${QEC#*$'\t'})"
+            mc_log "EJECT_CAUSE $QKEY ${QHEAD:0:8} $QORD $QEWHY"
+          fi

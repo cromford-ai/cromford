@@ -46,7 +46,8 @@ test('BH-5559 staff charter and autonomy', async (t) => {
   await t.test('S1 seeds: 7 roles in observe mode, capped at augmentation; the settings row reads 5', async () => {
     const { db } = await openDb();
     // BH-7722: tackler (cap autonomy, lane unblock) is pinned in unblock-decisions.bh-7722.test.js W3.
-    const rows = db.prepare("SELECT * FROM staff_agents WHERE name <> 'tackler' ORDER BY name").all();
+    // BH-9532: mr-red (cap autonomy, lane staff-mr-red) is pinned in mr-red.bh-9532.test.js roster.
+    const rows = db.prepare("SELECT * FROM staff_agents WHERE name NOT IN ('tackler', 'mr-red') ORDER BY name").all();
     assert.deepEqual(rows.map((r) => r.name), NAMES);
     for (const r of rows) {
       assert.equal(r.autonomy, 'automation', r.name);
@@ -59,7 +60,7 @@ test('BH-5559 staff charter and autonomy', async (t) => {
     // BH-5564: quartermaster owns the 7 cost lanes (BH-10231 adds box-watch, 8); BH-5566: dispatcher owns the
     // 11 health lanes; BH-5565: watchman owns the 4 security lanes; no other
     // agent has a lane yet.
-    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher', 'watchman', 'tackler')").get().n, 0);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM staff_lanes WHERE agent NOT IN ('quartermaster', 'dispatcher', 'watchman', 'tackler', 'mr-red')").get().n, 0);
     assert.deepEqual(db.prepare("SELECT lane FROM staff_lanes WHERE agent = 'quartermaster' ORDER BY lane").all().map((r) => r.lane),
       ['box-watch', 'cap-loss-detector', 'ci-minutes-watch', 'cost-local-brake', 'cost-reconcile', 'extra-usage-track', 'orchestrator-burn',
         'vendor-spend-pull']);
@@ -92,7 +93,7 @@ test('BH-5559 staff charter and autonomy', async (t) => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.complete, true);
     assert.deepEqual(r.body.invalid, []);
-    assert.deepEqual(r.body.agents.map((a) => a.name).filter((n) => n !== 'tackler'), NAMES);
+    assert.deepEqual(r.body.agents.map((a) => a.name).filter((n) => n !== 'tackler' && n !== 'mr-red'), NAMES);
     assert.ok(r.body.agents.some((a) => a.name === 'tackler'), 'BH-7722 seeds tackler');
     for (const a of r.body.agents) assert.deepEqual(validate(CHARTER, a), { ok: true, errors: [] }, a.name);
     const w = r.body.agents.find((a) => a.name === 'watchman');
@@ -117,7 +118,7 @@ test('BH-5559 staff charter and autonomy', async (t) => {
     const r = await roster(DB);
     assert.equal(r.status, 200);
     assert.equal(r.body.complete, false);
-    assert.deepEqual(r.body.agents.map((a) => a.name).filter((n) => n !== 'tackler'), NAMES);
+    assert.deepEqual(r.body.agents.map((a) => a.name).filter((n) => n !== 'tackler' && n !== 'mr-red'), NAMES);
     assert.ok(r.body.agents.some((a) => a.name === 'tackler'), 'BH-7722 seeds tackler');
     assert.equal(r.body.invalid.length, 1);
     assert.equal(r.body.invalid[0].name, 'blank-role');

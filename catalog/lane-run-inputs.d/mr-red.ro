@@ -1,0 +1,12 @@
+# catalog/lane-run-inputs.d/mr-red.ro — what one
+# `bin/staff/mr-red.sh work <payload>` run reads and never writes back
+# (BH-9532, C0 of #9532). The file:line after each entry is where the run
+# reads it. A lever's _work reads GitHub over REST and the jobs worker for
+# everything else; the C0 seams add no input.
+#
+# bin/staff/mr-red-collect.d/10-drafts.sh (the repos), bin/lib/lane-placement.sh
+fleet.conf
+# bin/lib/mr-red.sh mrr_killed (the kill flags, through flag_active)
+flags/*
+# bin/lib/lane-gate.sh (the lane registry the gate and lane_env_apply read)
+catalog/lanes.d/*

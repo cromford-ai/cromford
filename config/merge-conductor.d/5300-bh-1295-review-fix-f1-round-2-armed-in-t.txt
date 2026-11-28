@@ -1,0 +1,45 @@
+# BH-1295 REVIEW FIX (F1, round 2): armed in the PARENT shell too, not only
+# inside each project's subshell below — gh-rest-etag.sh's _gh_etag_count is
+# now a no-op with nothing exported, so any gh_rest traffic from this
+# process's own sequential work (before the loop, and the *_gc calls after
+# `wait`) would otherwise go uncounted even though this tick reports.
+# BH-1322: under the box's state dir, with an EXIT trap so a SIGTERM (deploy,
+# tick deadline) takes the parent's file with it. The trap is the parent's
+# alone: bash runs an EXIT trap once, in the shell that set it, and each
+# project subshell below re-exports GH_ETAG_COUNT_FILE and sets its own trap,
+# so neither can remove the other's file.
+export GH_ETAG_COUNT_FILE="$H/state/gh-etag/counts/merge-conductor.$$"
+# BH-10316: the tick memo of the review list and pulls/<n> (bin/lib/mc/
+# tick-memo.sh), a temp dir this trap removes with the tick.
+command -v mc_tm_arm >/dev/null 2>&1 && mc_tm_arm
+trap 'rm -f "$GH_ETAG_COUNT_FILE"; [ -n "${BG_PERM_MEMO_DIR:-}" ] && rm -rf -- "$BG_PERM_MEMO_DIR"; [ -n "${_mc_tm_dir:-}" ] && rm -rf -- "$_mc_tm_dir"' EXIT
+
+# THE PER-PROJECT FAN-OUT (BH-7879): the held-page flush, the project gate and
+# one backgrounded tick_project subshell per project live in mc_tick_fanout
+# (bin/lib/mc/tick-scope.sh). It runs after the parent GH_ETAG_COUNT_FILE
+# trap above and returns when every project subshell is done.
+mc_tick_fanout
+command -v mc_tm_report >/dev/null 2>&1 && mc_tm_report
+# The *_gc housekeeping and mc_dv_reap are fleet sweeps: the cron tick's alone.
+if [ "$MC_FLEET_SWEEPS" != 1 ]; then
+  command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor
+  hb_done merge-conductor; exit 0
+fi
+# THE FLEET SWEEPS (BH-7879): the *_gc housekeeping and mc_dv_reap live in
+# mc_tick_sweeps (bin/lib/mc/tick-scope.sh). It runs after every project
+# subshell is done, on a fleet-sweep tick only.
+mc_tick_sweeps
+
+# Rows for PRs GitHub no longer lists as open (merged/closed by anyone) are
+# settled on the next pass through the closed list or by the open pass; a row
+# whose PR is neither listed open nor closed in 30 is left as-is and ages out
+# of the mirror by hand — never deleted here.
+# BH-1295: how much of this tick's PR-state/diff/list traffic a 304 answered.
+command -v gh_rest_etag_report >/dev/null 2>&1 && gh_rest_etag_report merge-conductor
+# BH-1201: the tick's held-page summary, the two published settings rows every
+# reader keys on, and the once-every-MC_HOLD_REMINDER_S PAUSED reminder. After
+# the fan-out, because the counters it sums are written by the workers.
+command -v mc_hold_tick_end >/dev/null 2>&1 && mc_hold_tick_end
+command -v mc_tick_clock_end >/dev/null 2>&1 && mc_tick_clock_end
+hb_done merge-conductor
+exit 0

@@ -1,0 +1,61 @@
+      # A head Mergify ejected for a base conflict gets its one rebase ahead of
+      # the budget and the merge-tree test (eject_rebase_arm, BH-1677).
+      eject_rebase_arm && return 0
+      # THE BUDGET IS A FILE, NOT A VARIABLE (2026-09-15). The PR workers of one
+      # project run side by side and each is its own subshell, so a decremented
+      # variable would be decremented in a copy and every worker would spend the
+      # same last rebase. mc_tick_budget_left is the cheap guard; the claim is
+      # the take, next to the spawn.
+      mc_tick_budget_left "$P" rebase "$REBASE_BUDGET" || { budget_spent "$P" rebase "$KEY"; return 0; }
+      # THE CONFLICT TEST COMES FIRST (W2-D, 2026-09-14). A merge into main
+      # marks every open PR on the repo DIRTY-or-stale, and today each one of
+      # them buys a rebase — a clone, a typecheck, a push, and a moved head
+      # that then costs a re-review. `git merge-tree --write-tree` asks the
+      # same question locally, touching nothing, and a clean answer means
+      # there was nothing to rebase. The row stays NEEDS_REBASE and says why:
+      # this is not a state change, it is this tick declining to spend one,
+      # and the next tick asks again (capped — see merge_tree_clean).
+      # MC_MERGE_TREE=0 skips the test and rebases exactly as before.
+      # THE LAND ARM IS THE DELIBERATE EXCEPTION (land_rebase_arm, BH-870): a
+      # landing on the base brings every clean open PR current on purpose, and
+      # it runs before this case. What stays true here is the narrower claim
+      # this block was written for — a head GitHub calls DIRTY that git says
+      # merges clean does not buy a rebase on that evidence alone.
+      if [ "${MC_MERGE_TREE:-1}" != 0 ] && merge_tree_clean "$KEY" "$SLUG" "$P" "$HEAD" "$NUM"; then
+        mc_transition "$KEY" NEEDS_REBASE "MERGE_TREE clean on ${HEAD:0:8} — no conflict with origin/main, head left alone" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+        return 0
+      fi
+      # THE POOL PATH (BH-486) WINS OVER BOTH REBASE BRANCHES BELOW. Under
+      # REBASE_ON_POOL there is no hub work to detach: mc_rebase writes a queue
+      # row and returns, so the call is INLINE and no lane job, no setsid child
+      # and no hub worktree exist for this PR at all. The detached knob is about
+      # how long a rebase holds this tick, and a pool rebase holds it for one
+      # HTTP call.
+      if mc_pool_rebase_enabled "$P"; then
+        JOBF=$(mc_rb_file "$SLUG" "$NUM" "$HEAD"); JOBST=$(mc_rb_state "$JOBF")
+        case "$JOBST" in
+          running)
+            if [ "$(mc_rr_field "$JOBF" status)" = pool ]; then
+              mc_log "$KEY REBASING ${HEAD:0:8} — pool rebase running on a pool machine; nothing waits on it"
+              mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (pool rebase running)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+            else
+              # A pid job spawned before the flag flipped: today's line, kept
+              # verbatim so `pid 0` can never render for a file that has no pid
+              # to report.
+              mc_log "$KEY REBASING ${HEAD:0:8} — detached job (pid $(mc_rr_field "$JOBF" pid)) still running; nothing waits on it"
+              mc_transition "$KEY" REBASING "REBASING ${HEAD:0:8} (detached rebase running)" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+            fi
+            return 0 ;;
+          done|failed|stale)
+            # rebase_consume above read this result and applied it, once per
+            # (PR, head); walking out in silence is what made the row look
+            # stranded (BH-764), so the exit names itself.
+            rebase_noop_say consumed "$KEY" "$HEAD" "the pool rebase of this head already produced its result ($JOBST) and it was applied on an earlier tick; the row is still NEEDS_REBASE, so nothing here re-queues it — the NEEDS_REBASE TTL forgets the attempt and a later tick may queue a fresh one"
+            return 0 ;;
+        esac
+        if mc_attempt_has "rebase $KEY $HEAD" 2>/dev/null; then
+          rebase_noop_say attempted "$KEY" "$HEAD" "this head has already had its one pool rebase and its job file is gone; nothing re-queues it here — the NEEDS_REBASE TTL forgets the attempt and a later tick may queue a fresh one"
+          return 0
+        fi
+        mc_tick_budget_take "$P" rebase "$REBASE_BUDGET" || { budget_spent "$P" rebase "$KEY"; return 0; }
+        OUT=$(mc_rebase "$SLUG" "$P" "$BR" "$HEAD" "$URL"); RC=$?

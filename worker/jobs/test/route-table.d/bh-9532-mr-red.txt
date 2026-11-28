@@ -1,0 +1,5 @@
+# MR RED (BH-9532, C0 of #9532): Mr Red's audit rows. One row per action
+# (natural key action_key), the state and verification PATCH, the paged list.
+POST /api/mr-red/actions
+PATCH re:/^\/api\/mr-red\/actions\/([^/]+)$/
+GET /api/mr-red/actions

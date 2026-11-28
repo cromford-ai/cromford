@@ -111,10 +111,14 @@ function findSecret(body) {
 
 // ── The read: ONE batch, two statements ────────────────────────────────────
 // The settings read is three PK range scans on settings.key (W8 proves the
-// plan): `connection.*`, `tracker_*` and `webhook_route.*`.
+// plan): `connection.*`, `tracker_*` and `webhook_route.*`. BH-10199: one
+// SELECT per range, UNION ALL (the ranges do not overlap). The OR form left
+// the choice to the planner, which picked a full SCAN once 9 more seed rows
+// moved the statistics.
 export const CONNECTION_SETTINGS_SQL =
-  "SELECT key, value, updated_at FROM settings WHERE (key >= 'connection.' AND key < 'connection/') " +
-  "OR (key >= 'tracker_' AND key < 'tracker`') OR (key >= 'webhook_route.' AND key < 'webhook_route/')";
+  "SELECT key, value, updated_at FROM settings WHERE key >= 'connection.' AND key < 'connection/' " +
+  "UNION ALL SELECT key, value, updated_at FROM settings WHERE key >= 'tracker_' AND key < 'tracker`' " +
+  "UNION ALL SELECT key, value, updated_at FROM settings WHERE key >= 'webhook_route.' AND key < 'webhook_route/'";
 const PROJECTS_SQL = "SELECT project, repo, board_api_prefix FROM projects";
 
 async function loadState(env) {

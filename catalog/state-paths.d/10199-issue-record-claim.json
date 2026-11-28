@@ -1,0 +1,3 @@
+[
+    {"path": "issue-record-claim", "class": "cache", "authority": "the issue record's per-repo claim marker (BH-10199)", "note": "state/issue-record-claim/<owner>_<repo>: one line `<epoch>\\t<every_s>`, written tmp+mv by _irr_claim_mark (bin/lib/issue-record.sh) after each answer of POST /api/issue-record-syncs/claim. Inside every_s (the worker's issue_records.sync_every_s row) the box does not POST the claim for that repo again, so a shadow read makes no D1 write attempt. Both values come from this box (its clock, the worker's answer). One file per repo, no growth, no retention job. Losing it costs one claim POST. Machine-local, never carried"}
+]

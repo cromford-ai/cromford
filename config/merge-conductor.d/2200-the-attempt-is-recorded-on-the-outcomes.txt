@@ -1,0 +1,87 @@
+          # The attempt is recorded on the outcomes that MEAN something (pushed,
+          # or closed for rebuild), never on a setup failure or a moved head —
+          # the same rule mc_rebase's marker follows, so a token outage cannot
+          # strand a child for the life of its head.
+          RSOUT=$(mc_restack "$SLUG" "$P" "$BR" "$HEAD" "$BASEREF" "$RNEWBASE" "$URL"); RSRC=$?
+          case "$RSRC" in
+            0)
+              mc_attempt_put "restack $KEY $HEAD"
+              if mc_retarget_base "$SLUG" "$NUM" "$RNEWBASE"; then
+                # A base change fires no workflow and the push's own
+                # `synchronize` run was started against the OLD base, so the
+                # kick is what gives this head a run of the tree that will
+                # actually merge (the same lesson as the MERGED arm above).
+                # No expected head (BH-3804): the PR's head lags our own push of
+                # $RSOUT, so a head check here would refuse our own kick.
+                if mc_kick_ci "$SLUG" "$NUM"; then
+                  mc_attempt_has "cikick $KEY $RSOUT" 2>/dev/null || mc_attempt_put "cikick $KEY $RSOUT"
+                  mc_log "$KEY restacked: parent ${PARURL:-?} closed unmerged on dead base $BASEREF, rebuilt as ${RURL:-?} ($RSTATE) — rebased onto $RNEWBASE (${RSOUT:0:8}), base PATCHed and CI kicked; the head-bound re-review runs on the new head"
+                else
+                  mc_log "$KEY restacked: parent ${PARURL:-?} closed unmerged on dead base $BASEREF, rebuilt as ${RURL:-?} ($RSTATE) — rebased onto $RNEWBASE (${RSOUT:0:8}) and base PATCHed, but the CI kick FAILED; the generic kick picks it up on a later tick"
+                fi
+                # Parked for THIS tick on purpose: every field read above (head,
+                # base, CI) is about the PR as it was before the push, so
+                # classifying on it would be classifying stale facts. The next
+                # tick reads the new head on the new base and treats it as the
+                # ordinary stack it now is.
+                MC_STACK=wait; MC_STACK_BASE="$RNEWBASE (restacked off the dead $BASEREF; rebuilt parent ${RURL:-?})"
+              else
+                mc_log "$KEY rebased onto $RNEWBASE (${RSOUT:0:8}) — parent ${PARURL:-?} closed unmerged on dead base $BASEREF, rebuilt as ${RURL:-?} — but the base PATCH was REFUSED; the branch is moved and a later tick retries the base"
+              fi ;;
+            1)
+              # THE ONLY PATH THAT STILL THROWS A BUILD AWAY, and it is the one
+              # where the child's own work genuinely has to be redone: its
+              # commits do not apply on the branch that replaced its parent.
+              # The comment names the files because that is everything the
+              # rebuild has to go on; the ticket is left OPEN so the next
+              # triage tick picks it up.
+              RCONF=$(printf '%s' "$RSOUT" | tr '\n' ' ')
+              if mc_close_for_rebuild "$SLUG" "$NUM" \
+                   "$(printf 'Closing this one for a rebuild. The PR it was stacked on (%s) was closed without merging and rebuilt as %s, and replaying this change onto %s conflicts in files this PR owns: %s. The ticket stays open, so the next build starts fresh against %s.' "${PARURL:-the parent}" "${RURL:-the rebuild}" "$RNEWBASE" "$RCONF" "$RNEWBASE")"; then
+                mc_attempt_put "restack $KEY $HEAD"
+                mc_log "$KEY closed for rebuild: parent ${PARURL:-?} closed unmerged on dead base $BASEREF, rebuilt as ${RURL:-?} ($RSTATE) — the rebase onto $RNEWBASE conflicts in $RCONF; the ticket stays open for a fresh build"
+              else
+                mc_log "$KEY the rebase onto $RNEWBASE conflicts in $RCONF (parent ${PARURL:-?}, rebuilt as ${RURL:-?}) and the close FAILED — left open and parked parent-closed; the next tick tries again"
+              fi
+              MC_STACK_BASE="$BASEREF (parent ${PARURL:-?}; closed for rebuild — the rebase onto $RNEWBASE conflicts in $RCONF)" ;;
+            3)
+              mc_log "$KEY restack onto $RNEWBASE refused the lease on ${HEAD:0:8} (parent ${PARURL:-?}, rebuilt as ${RURL:-?}) — the head moved under the tick; the next one reads it and tries again" ;;
+            *)
+              mc_log "$KEY restack onto $RNEWBASE failed to set up (rc $RSRC; parent ${PARURL:-?}, rebuilt as ${RURL:-?}) — parked parent-closed and retried on the next tick" ;;
+          esac
+        fi ;;
+    esac
+  fi
+  # ---- a retarget off a closed or absent parent owes a re-review (BH-3950) --
+  # stack_orphan_retarget wrote `rtreview <key> <head>`. Until a claude
+  # head-bound read bought AFTER the retarget APPROVES this head, the row is
+  # held on WAIT_REVIEW and never reaches the classifier's READY on the review
+  # it had before. The release is its own record, `rtcleared <key> <head>`,
+  # and NOT mc_prov_cleared: a retarget does not move the head, so a
+  # `provcleared` row or a lead/human MERGE on it can predate the retarget, and
+  # both judged the diff against the dead parent. The read is the detached one
+  # headbound_review buys (job body mc_rereview_run -> mc_rereview), with all
+  # its debounces: CI green, budget, cap, call-guard. A head that already had a
+  # read when it was retargeted (`rtpreread`) cannot buy another one — that job
+  # is one per (PR, head) — so it stays held until a push, whose new head the
+  # HEAD_MOVED arm re-reviews against the new base. Not on the retarget's own
+  # tick (its CI was just kicked), and not on a DIRTY/CONFLICTING head, which
+  # the rebase path owns.
+  MC_PROV_CLEARED=0
+  if [ -z "$MC_STACK" ] && [ "$MC_RETARGET_REREVIEW" != 0 ] && [ "$MSTATE" != DIRTY ] && [ "$MGABLE" != CONFLICTING ] \
+     && mc_attempt_has "rtreview $KEY $HEAD" 2>/dev/null && ! mc_attempt_has "rtcleared $KEY $HEAD" 2>/dev/null; then
+    RTWHY="retargeted off closed parent - re-review owed"
+    if mc_attempt_has "rtpreread $KEY $HEAD" 2>/dev/null; then
+      RTWHY="$RTWHY; ${HEAD:0:8} was already read against the dead parent, so a push buys the read against $PBASE"
+    elif [ "$MC_RT_THIS_TICK" = 0 ] && [ "$ACTIONS" = 1 ]; then
+      headbound_review provenance "$KEY" "$SLUG" "$NUM" "$P" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$CI" || return 0
+      if [ "$MC_PROV_CLEARED" = 1 ]; then
+        mc_attempt_put "rtcleared $KEY $HEAD"
+        mc_log "$KEY re-review owed after the retarget APPROVED ${HEAD:0:8} — the hold is released"
+      fi
+    fi
+    if ! mc_attempt_has "rtcleared $KEY $HEAD" 2>/dev/null; then
+      mc_transition "$KEY" WAIT_REVIEW "$RTWHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+      return 0
+    fi
+  fi

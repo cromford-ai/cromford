@@ -347,6 +347,58 @@ The page caps are settings rows, seeded by
 `landing.report.gh_pages` (3); env `LANDING_REPORT_DECISION_PAGES`,
 `LANDING_REPORT_LEDGER_PAGES`, `LANDING_REPORT_GH_PAGES` when there is no row.
 
+## Subagent share block (BH-10209)
+
+`fleet.subagent_share` in `state/dora/<date>.json`, and one message line:
+
+```
+subagent share of execute $, 7d: fleet 12.3% ($41.20 of $335.00 measured, 52 of 60 rows); boardh 20.1%, mk 8.0%
+```
+
+What it is: the part of execute spend that subagents (Agent/Task calls inside
+the session) bought, per project and fleet, over the last
+`DORA_SUBAGENT_SHARE_DAYS` days (default 7). This window does not follow
+`--window`: the ticket asks for 7 days. The counting is `bin/dora_subagent.py`.
+
+Source: `state/cost/fleet-cost.csv`, read by header name (`ts`, `project`,
+`stage`, `cost_usd`, `note`). Rows count when `stage` is in
+`DORA_SUBAGENT_STAGES` (default `execute`) and `ts` is in the window. A claude
+row priced from its transcript carries the note token `sub_usd:<x>`: the
+subagent part of its `cost_usd` (`docs/COST.md`, "Subagent spend"). A row
+without the token was not measured. It is never read as 0.
+
+Per project and fleet: `execute_rows`/`execute_usd` (all counted rows),
+`measured_rows`/`measured_usd` (rows with a token), `sub_usd` (sum of the
+tokens), `share = sub_usd / measured_usd`, `coverage = measured_usd /
+execute_usd`. `source` names the path, the columns, `rows_read`,
+`rows_in_window` (any stage), `rows_counted` (the stages), the stages and the
+window.
+
+`n/a` forms: `n/a (source state/cost/fleet-cost.csv absent)` (status
+`absent`); `n/a (state/cost/fleet-cost.csv header lacks note)` or a read
+failure (status `error`); `n/a (no execute row carries sub_usd yet; ...)` when
+no counted row is measured. A project with no measured row shows `n/a`.
+
+Re-derive the fleet figure by hand (7 days, stage execute):
+
+```bash
+SINCE=$(date -u -d '7 days ago' +%FT%TZ)
+python3 - "$SINCE" <<'PY2'
+import csv, re, sys
+m = s = 0.0
+for r in csv.DictReader(open("/root/harness/state/cost/fleet-cost.csv")):
+    if r["stage"] != "execute" or r["ts"][:19] + "Z" < sys.argv[1]:
+        continue
+    t = re.search(r"(?:^|[;.])sub_usd:([0-9]+(?:\.[0-9]+)?)(?=$|[;.])", r["note"] or "")
+    if t:
+        m += float(r["cost_usd"] or 0); s += float(t.group(1))
+print("sub %.2f of measured %.2f = %s" % (s, m, "%.1f%%" % (100 * s / m) if m else "n/a"))
+PY2
+```
+
+Nothing in this block pages. The route decision on the share (10% or more adds
+a subagent model route) is a later slice of BH-10209.
+
 ## Config
 
 Every threshold is a config value. Environment first, then
@@ -371,6 +423,8 @@ config cannot become a second entry point into the lane.
 | `DORA_REVIEW_TIER_REVERT_MARGIN` | `0.02` | the review-tiers alert margin, a decimal 0..1, read after the settings row `review.tier_revert_margin` (BH-6969). |
 | `DORA_REVIEW_TIER_REVERT_MIN_N` | `5` | the fewest 7-day merges a cohort (and the full cohort) needs before the review-tiers alert compares it, read after the settings row `review.tier_revert_min_n` (BH-6969). |
 | `DORA_REVIEW_COST_STAGE_RE` | `review` | the `stage_breakdown` stages counted as review cost in the review block. |
+| `DORA_SUBAGENT_SHARE_DAYS` | `7` | the trailing days of the subagent share block (settings row `conf.dora-digest.dora_subagent_share_days`). Not a positive integer: a logged fallback to 7. |
+| `DORA_SUBAGENT_STAGES` | `execute` | the `fleet-cost.csv` stages the subagent share block counts, joined with `+` (`execute+fix`); settings row `conf.dora-digest.dora_subagent_stages`. |
 
 Kill switch: `flags/dora-digest-off`.
 

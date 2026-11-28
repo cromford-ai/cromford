@@ -1,0 +1,65 @@
+  # ---- one worker per PR (2026-09-15) ---------------------------------------
+  # The list is walked here and the WORK is done in pr_worker, one background
+  # subshell per PR under that PR's own lock. N PRs of one repo therefore make
+  # progress in the same tick, and the PR that is slow — a rebase result to
+  # read, a re-review to dispatch, a merge to settle — holds up nobody but
+  # itself. MC_PR_PARALLEL caps how many of them run at once for one project
+  # (0 = unlimited, the MC_REREVIEW_PARALLEL/MC_REBASE_PARALLEL convention);
+  # a box that wants a ceiling on the whole fleet sets it with the others.
+  #
+  # FAN-IN (BH-186): every row is enumerated BEFORE the first worker starts, and
+  # each worker runs pr_worker in a nested subshell inside fanin_run_sub, which
+  # accounts the PR when it comes back, whichever return (or exit) it took. A
+  # worker killed outright is what fanin_end names as missing; a tick killed
+  # outright is named by the next tick's fanin_begin.
+  #
+  # EACH WORKER HAS ITS OWN DEADLINE (BH-4918). mc_worker_bounded kills a worker
+  # past MC_WORKER_DEADLINE_S on its own, so one slow PR no longer holds the
+  # tick, and its siblings and ae_project below, until an outer `timeout` kills
+  # them all. MC_FANIN_T0 is the tick's start for mc_fanin_outcome: a ready-why
+  # note older than it is not this tick's reason.
+  #
+  # WHY IT DIED, AND WORKED ALONE (BH-4842). fanin_trap_run stamps a TERM/INT/
+  # HUP to this subshell into the ledger (the backstop's `timeout` signals the
+  # whole process group), and fanin_run_sub stamps its own worker's signal and
+  # the last mc_log line that worker wrote, so the alert says why. A PR missing
+  # from fan-in on MC_FANIN_SOLO_AFTER runs in a row (0 = off) is handed to its
+  # own keyed run (mc_fanin_solo → kw_conductor), accounted deferred:solo here
+  # and dropped from ROWS, so a slow PR can no longer take its siblings' enqueue
+  # down with it every fire. Never from a solo run (MC_FANIN_SOLO_RUN=1, set by
+  # kw_conductor on the run mc_fanin_solo launches); a one-key run that is not
+  # one (a backstop fire, under its `timeout`) does solo. A refused launch keeps
+  # the row in this run.
+  #
+  # THE WINDOW (BH-4842). A backstop fire passes MC_WORKERS_DONE_BY, the epoch
+  # by which its workers must be gone. mc_window_cap starts a worker only while
+  # 15 s or more are left until then, and caps its deadline to fit; a row it
+  # cannot fit is accounted deferred:window and handed back
+  # (MC_WINDOW_DEFER_FILE) for the next fire.
+  PRPIDS=()
+  MC_FANIN_T0=$(mc_now)
+  fanin_begin merge-conductor "$SLUG" "$MC_LOG"
+  fanin_trap_run
+  local SOLO_AFTER="${MC_FANIN_SOLO_AFTER:-2}"; [[ "$SOLO_AFTER" =~ ^[0-9]+$ ]] || SOLO_AFTER=2
+  [ "${MC_FANIN_SOLO_RUN:-}" = 1 ] && SOLO_AFTER=0
+  local _batch=() _solo=0 _sn
+  for ROW in "${ROWS[@]}"; do
+    [ -n "$ROW" ] || continue
+    fanin_enumerate "$SLUG#${ROW%%$'\t'*}"
+    if [ "$SOLO_AFTER" -gt 0 ]; then
+      _sn=$(fanin_streak "$SLUG#${ROW%%$'\t'*}")
+      if [ "${_sn:-0}" -ge "$SOLO_AFTER" ] && mc_fanin_solo "$SLUG" "${ROW%%$'\t'*}" "$_sn"; then
+        fanin_account "$SLUG#${ROW%%$'\t'*}" deferred:solo
+        hotfix_pending_is "$P" "${ROW%%$'\t'*}" 2>/dev/null && hotfix_pending_drop "$P" "${ROW%%$'\t'*}"
+        _solo=1; continue
+      fi
+    fi
+    _batch+=("$ROW")
+  done
+  [ "$_solo" = 1 ] && ROWS=("${_batch[@]}")
+  # THE REFS PIN (BH-6462): one refs read per branch prefix for the whole tick,
+  # before any worker starts, so no worker's head-lag step reads them again.
+  local MC_REFS_PIN_PREFIX _pinbr=()
+  MC_REFS_PIN_PREFIX="$MC_TICK_DIR/$(mc_safe_name "${MC_TICK_ID:-notick}").refspin-"
+  mapfile -t _pinbr < <(printf '%s\n' "${ROWS[@]}" | cut -f4)
+  command -v prs_refs_pin >/dev/null 2>&1 && prs_refs_pin "$SLUG" "$MC_REFS_PIN_PREFIX" "${_pinbr[@]}"

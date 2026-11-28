@@ -1434,7 +1434,9 @@ mc_hotfix_proof() {
   [ -n "$mfp" ] && [ "$mfp" = "$fp" ] || { echo stale; return 0; }
   case "$dec" in
     applied|deferred-to-deploy) echo ok ;;
-    hold|flagged|no-path)       echo hold ;;
+    # needs-operator (BH-9817): a person must act (a file the workflow can
+    # never apply, or a 422 on the approval). It parks like a hold.
+    hold|flagged|no-path|needs-operator) echo hold ;;
     # retry (BH-9403): a before-merge stop before any dispatch, for a cause a
     # later run clears. It parks nothing; the PR takes the ordinary path.
     retry)                      echo stale ;;

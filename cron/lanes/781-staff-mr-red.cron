@@ -1,0 +1,13 @@
+# @hub-lanes
+
+# ── STAFF MR RED (BH-9532, C0 of #9532) ─────────────────────────────────────
+# Every 5 minutes. Mr Red owns red minutes. One tick collects the failed
+# merge-queue batches (closed-unmerged mergify/merge-queue/* drafts with a
+# failed check run, read-only over REST), claims each finding
+# (POST /api/staff/findings/claim, seen_count) and records one mr_red_actions
+# row per action BEFORE any act. In C0 no lever matches, so every row is lever
+# observe. One summary line per tick in logs/staff-mr-red.log.
+# Off: flags/lane-off-staff-mr-red (bin/harness-ctl.sh off staff-mr-red), or
+# the staff kill flags (staff-off-all, staff-kill-all, staff-off-mr-red,
+# staff-kill-mr-red) or STAFF_ENABLED=0.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/mr-red.sh tick >> /root/harness/logs/staff-mr-red-cron.log 2>&1

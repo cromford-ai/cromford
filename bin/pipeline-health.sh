@@ -1530,7 +1530,7 @@ fi
 # >>> stall alerts (BH-6308) (tests/stall-alerts.bh-6308-test.sh runs this block)
 command -v ph_open_rows >/dev/null 2>&1 || ph_open_rows() { gh_rest_pr_list_all "$1" open "$2"; }
 st_carry() { awk -v p="$1" 'index($0, p) == 1' "$ACTIVE" >> "$FIRED" 2>/dev/null || true; }
-STH=0; STP=0; STMAX=30; STW=12; STPART=""; STF=$(mktemp "${TMPDIR:-/tmp}/ph-stall.XXXXXX") || STF=""
+STH=0; STP=0; STMAX=30; STW=12; STPART=""; STSRCH=0; STF=$(mktemp "${TMPDIR:-/tmp}/ph-stall.XXXXXX") || STF=""
 # shellcheck source=bin/lib/stall-alerts.sh
 if [ -r "$H/bin/lib/stall-alerts.sh" ] && . "$H/bin/lib/stall-alerts.sh"; then
   STH=$(stall_knob STALL_HOLD_CHECK); STP=$(stall_knob STALL_PARENT_CHECK)
@@ -1546,7 +1546,7 @@ elif [ "$STH" = 1 ] || [ "$STP" = 1 ]; then
       || { st_carry "stalehold:$P:"; st_carry "stalledblocker:$P:"; continue; }
     STPRS=""
     if [ "$STH" = 1 ]; then
-      STC=$(stall_hold_candidates "$SLUG"); STRC=$?
+      STC=$(stall_hold_candidates "$SLUG"); STRC=$?; STSRCH=$((STSRCH + 1))
       [ "$STRC" = 1 ] && { st_carry "stalehold:$P:"; STC='[]'; }
       if [ "$STRC" = 2 ] || [ "$(jq 'length' <<<"$STC")" -gt "$STMAX" ]; then
         alert 21600 "stalehold:$P:page-cut" "$P: the stale HOLD check found more HOLD threads than it reads in one tick ($STMAX, STALL_MAX_THREADS, or a search past 100); the rest were not judged this tick"
@@ -1605,6 +1605,10 @@ elif [ "$STH" = 1 ] || [ "$STP" = 1 ]; then
     fi
   done
   command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
+  # BH-10350: the HOLD search still runs, and says why. It is an issue search
+  # over comment text, and no record holds issue comments (the issue record
+  # is BH-10199). One line per tick.
+  [ "$STSRCH" -gt 0 ] && echo "$(STAMP) stall hold: $STSRCH HOLD search read(s), reason=issue-comment-text (no record holds issue comments; the issue record is BH-10199)" >> "$H/logs/pipeline-health.log"
 fi
 [ -z "$STF" ] || rm -f "$STF"
 # <<< stall alerts

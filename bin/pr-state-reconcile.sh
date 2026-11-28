@@ -69,6 +69,13 @@
 #           and marked only when none of its reads was skipped, deferred or
 #           failed, so an unread input is read again next tick. A db PR that
 #           the record calls closed or merged gets closed=1 with no GitHub read.
+# THE ISSUE RECORD (BH-10199). The held fact's PR thread read
+# (hold_check_thread, bin/lib/hold.sh) goes through irr_read
+# (bin/lib/issue-record.sh) under the knob GH_SOURCE_ISSUES (row
+# lane.pr-state-reconcile.gh_source_issues, default shadow; GH_SOURCE off
+# makes it off): off = GitHub;
+# shadow = GitHub decides, the record is compared (PRR_SHADOW key=<repo>#<n>@comments);
+# record = the record, a miss reads GitHub and writes it back.
 # Hub only. Kill switch: flags/lane-off-pr-state-reconcile.
 # Log: logs/pr-state-reconcile.log, one line per correction, one per reset, and one
 # `checked= corrected= skipped= deferred= failed= repos=` summary a sweep; in step
@@ -90,6 +97,16 @@ command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    pr-state-recon
 PSR_STEP=off
 # shellcheck source=bin/lib/prr-shadow.sh
 if . "${HARNESS:-/root/harness}/bin/lib/prr-shadow.sh" 2>/dev/null; then PSR_STEP=$(prr_step pr-state-reconcile); fi
+# The issue-record step (BH-10199), read once here too: the held fact's PR
+# thread read (hold_check_thread) goes through bin/lib/issue-record.sh while
+# IRR_LANE is set. Knob GH_SOURCE_ISSUES (row
+# lane.pr-state-reconcile.gh_source_issues, default shadow); off, or no lib,
+# leaves IRR_LANE empty: today's GitHub read. The lane's GH_SOURCE step off
+# turns it off too: off makes no record read at all.
+IRR_STEP="${GH_SOURCE_ISSUES:-}"; IRR_LANE=""
+[ "$PSR_STEP" = off ] && IRR_STEP=off
+# shellcheck source=bin/lib/issue-record.sh
+if [ "$IRR_STEP" != off ] && . "${HARNESS:-/root/harness}/bin/lib/issue-record.sh" 2>/dev/null; then IRR_LANE=pr-state-reconcile; fi
 # LEAD_REVIEW_AUTO_REPOS is lead-review-land's knob (BH-3479.0 contract).
 command -v lane_env_apply    >/dev/null 2>&1 && lane_env_apply    lead-review-land
 

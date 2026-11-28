@@ -1,0 +1,12 @@
+{
+  "env": "COST_TRANSCRIPT_SUBAGENT_DIR",
+  "read_in": "bin/transcript-cost.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "main file only, as before BH-10209",
+  "required": true,
+  "note": "BH-10209. 1 = sum <session>/subagents/*.jsonl (CLI 2.1.331 layout) into the cost row and its sub_usd; 0 = main file only, as before BH-10209. Read as ${COST_TRANSCRIPT_SUBAGENT_DIR:-1} in the python reader."
+}

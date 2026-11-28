@@ -426,6 +426,19 @@ cost_price_version_token() {
 }
 # <<< cost_price_tokens
 
+# >>> cost_sub_usd_token (tests/cost-sub-usd.bh-10209-test.sh runs this function)
+# cost_sub_usd_token <usd> — `sub_usd:<usd>` for a non-negative decimal (digits,
+# then an optional `.` and digits), nothing (rc 1) for anything else (BH-10209).
+# The subagent part of a transcript-priced claude row, read by the DORA digest
+# (bin/dora_subagent.py parse_sub_usd). A measured 0 IS printed: a measured
+# zero must stay different from a row that was not measured.
+cost_sub_usd_token() {
+  local _v="${1:-}"
+  case "$_v" in ''|*[!0-9.]*|.*|*.|*.*.*) return 1 ;; esac
+  printf 'sub_usd:%s' "$_v"
+}
+# <<< cost_sub_usd_token
+
 # >>> cost_parity_alert (tests/cost-grok-usage-test.sh runs this function)
 # cost_parity_alert <runner> <model> <stage> <rc> <in> <out>
 #

@@ -1,0 +1,12 @@
+{
+  "env": "FLEET_SLOTS",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 10000,
+  "unit": "machines",
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-7877. The fleet total of pool machines, settings row `lane.fly-pool.fleet_slots`. Once a tick bin/fly-pool-tick.sh shares the free slots (this total minus every live pool machine) among the projects with queued work, by `lane.fly-pool.<project>.weight` (WEIGHT), each bounded by its pool_cap, and 0 for a project over its daily spend ceiling. Each project tick clamps its spawn count to its grant (state/fly-pool-alloc/<project>). Hotfix rows still spawn past the share. Read from the .values of state/settings-cache.json; a registry-seed row does not turn it on. No row or 0 = off: no grant, the pool spawns as before. POOL_AUTOSCALE=0 also turns it off.",
+  "read_in": "bin/lib/pool-alloc.sh"
+}

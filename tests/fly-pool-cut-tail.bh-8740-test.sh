@@ -1,11 +1,11 @@
 #!/bin/bash
 # tests/fly-pool-cut-tail.bh-8740-test.sh — BH-8740 (BH-7454 slice C1 plus the
-# fine tail cut): config/fly-pool.d/ holds 0100-head.sh and the 20 fine tail
+# fine tail cut): config/fly-pool.d/ holds 0100-head.sh and the 21 fine tail
 # fragments, and their render is bin/fly-pool.sh byte for byte.
 #
 # Every case reads the real tree and writes only under $T.
 #   K1 bin/fly-pool-build.sh --check on the real tree: rc 0, no output
-#   K2 2000-tail.sh does not exist; the 20 named tail fragments exist, each is
+#   K2 2000-tail.sh does not exist; the 21 named tail fragments exist, each is
 #      not empty, passes bash -n and ends in a newline; no other [23]NNN file
 #   K3 ^QROW(), ^next_job_or_destroy() and ^spawn_one() are each defined in one
 #      fragment only, the one named for it
@@ -14,7 +14,7 @@
 #   K5 each "# >>> <section>" anchor is line 1 of its fragment; each function
 #      fragment starts at the "#" block above its definition (or at the
 #      definition when a blank line is above it)
-#   K6 the line counts of the 21 fragments sum to the line count of
+#   K6 the line counts of the 22 fragments sum to the line count of
 #      bin/fly-pool.sh (no line is lost or in two fragments)
 #
 # Run from anywhere: tests/fly-pool-cut-tail.bh-8740-test.sh (exit 0 = pass)
@@ -29,7 +29,7 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1"; }
 
-# The 20 tail fragments, in render order.
+# The 21 tail fragments, in render order (3550 = the BH-7877 fleet slot clamp).
 TAIL=(
   config/fly-pool.d/2000-qrow-and-machine-io.sh
   config/fly-pool.d/2100-mput-error-note.sh
@@ -47,6 +47,7 @@ TAIL=(
   config/fly-pool.d/3300-next-job-or-destroy.sh
   config/fly-pool.d/3400-pool-listing-and-reap.sh
   config/fly-pool.d/3500-dead-machine-sweep.sh
+  config/fly-pool.d/3550-fleet-alloc-clamp.sh
   config/fly-pool.d/3600-bundle-reason.sh
   config/fly-pool.d/3700-warmup-note.sh
   config/fly-pool.d/3800-spawn-one.sh
@@ -71,7 +72,7 @@ done
 [ "$k2" = 0 ] && ok "K2 the ${#TAIL[@]} named tail fragments exist, are not empty, pass bash -n, end in a newline"
 got=$(cd "$REPO" && printf '%s\n' config/fly-pool.d/[23][0-9][0-9][0-9]-*.sh)
 want=$(printf '%s\n' "${TAIL[@]}")
-[ "$got" = "$want" ] && ok "K2 config/fly-pool.d/[23]NNN-*.sh is exactly the 20 named fragments" \
+[ "$got" = "$want" ] && ok "K2 config/fly-pool.d/[23]NNN-*.sh is exactly the 21 named fragments" \
   || bad "K2 [23]NNN fragment set differs: $(diff <(echo "$want") <(echo "$got") | tr '\n' ' ')"
 
 # K3 — <regex> <the one fragment that may define it>
@@ -110,6 +111,7 @@ k5 config/fly-pool.d/3100-pool-relay-retry.sh '# >>> pool relay retry (BH-1041)'
 k5 config/fly-pool.d/3200-pool-custody-sweep.sh '# >>> pool custody sweep (BH-5006)'
 k5 config/fly-pool.d/3400-pool-listing-and-reap.sh '# >>> pool listing (BH-660)'
 k5 config/fly-pool.d/3500-dead-machine-sweep.sh '# >>> dead-machine sweep (BH-660)'
+k5 config/fly-pool.d/3550-fleet-alloc-clamp.sh '# >>> fleet slot clamp (BH-7877)'
 k5 config/fly-pool.d/3600-bundle-reason.sh '# >>> bundle reason (BH-4859)'
 k5 config/fly-pool.d/3700-warmup-note.sh '# >>> warmup note (BH-7215)'
 # The four anchors with a long tail on the marker line, and the two function
@@ -130,7 +132,7 @@ k5p config/fly-pool.d/3800-spawn-one.sh 'spawn_one() {'
 sum=$(wc -l < "$FRAG/0100-head.sh")
 for rel in "${TAIL[@]}"; do [ -f "$REPO/$rel" ] && sum=$((sum + $(wc -l < "$REPO/$rel"))); done
 src_n=$(wc -l < "$SRC")
-[ "$sum" = "$src_n" ] && ok "K6 0100-head.sh + 20 tail fragments = $sum lines = bin/fly-pool.sh" \
+[ "$sum" = "$src_n" ] && ok "K6 0100-head.sh + 21 tail fragments = $sum lines = bin/fly-pool.sh" \
   || bad "K6 fragments sum to $sum lines, bin/fly-pool.sh has $src_n"
 
 echo "fly-pool-cut-tail: $PASS passed, $FAIL failed"

@@ -97,6 +97,37 @@ hold_push__load() {
   command -v hold_check >/dev/null 2>&1 && command -v hold_is_pause >/dev/null 2>&1
 }
 
+# hold__read_gh <out> <owner/repo> <n> — hold_read's GitHub read (BH-10199
+# moved it here, unchanged): the issue, then its comment pages, 100 at a time
+# up to 1000. <out> gets {"issue": {...}, "comments": [...]}. rc 0; 75 a read
+# failed or the issue has no state (hold_read then asks hold_check); 3 more
+# than 1000 comments; 4 the pages did not parse. irr_read calls it as its
+# github-fn, so its GitHub calls are the same in every step.
+hold__read_gh() {
+  local out="${1:-}" slug="${2:-}" n="${3:-}" t ij acc='[]' page len rc
+  [ -n "$out" ] || return 75
+  : > "$out"
+  t=$(mktemp "${TMPDIR:-/tmp}/hold-read-gh.XXXXXX" 2>/dev/null) || return 75
+  rc=0; gh_rest GET "repos/$slug/issues/$n" > "$t" 2>/dev/null || rc=$?
+  if [ "$rc" != 0 ] || ! jq -e 'type == "object" and has("state")' "$t" >/dev/null 2>&1; then
+    rm -f "$t"; return 75
+  fi
+  ij=$(cat "$t")
+  for page in 1 2 3 4 5 6 7 8 9 10; do
+    rc=0; gh_rest GET "repos/$slug/issues/$n/comments?per_page=100&page=$page" > "$t" 2>/dev/null || rc=$?
+    if [ "$rc" != 0 ] || ! jq -e 'type == "array"' "$t" >/dev/null 2>&1; then
+      rm -f "$t"; return 75
+    fi
+    acc=$(jq -sc '.[0] + .[1]' <(printf '%s\n' "$acc") "$t" 2>/dev/null) || { rm -f "$t"; return 4; }
+    len=$(jq 'length' "$t")
+    [ "$len" -lt 100 ] && break
+    [ "$page" = 10 ] && { rm -f "$t"; return 3; }
+  done
+  rm -f "$t"
+  { printf '%s\n' "$ij"; printf '%s\n' "$acc"; } | jq -sc '{issue: .[0], comments: .[1]}' > "$out" 2>/dev/null || return 4
+  return 0
+}
+
 # hold_read <owner/repo> <n> — hold_check's answer (stdout line, rc 0/1/2),
 # read through the REST contract (bin/lib/gh-rest.sh) when the lane has loaded
 # it: the caller's armed token and ETag-revalidated. When that read fails, or the
@@ -104,31 +135,30 @@ hold_push__load() {
 # it exactly as before. Either way the verdict is hold_classify's, so there is
 # one reading of what a hold is.
 hold_read() {
-  local slug="${1:-}" n="${2:-}" t ij acc='[]' page len rc
+  local slug="${1:-}" n="${2:-}" t ij acc='[]' rc
   hold_push__load || { printf 'unreadable\tbin/lib/hold.sh is not beside bin/lib/hold-push.sh\n'; return 2; }
   if ! command -v gh_rest >/dev/null 2>&1 || ! command -v hold_classify >/dev/null 2>&1; then
     hold_check "$slug" "$n"; return $?
   fi
   t=$(mktemp "${TMPDIR:-/tmp}/hold-read.XXXXXX" 2>/dev/null) || { printf 'unreadable\tno temp file\n'; return 2; }
-  rc=0; gh_rest GET "repos/$slug/issues/$n" > "$t" 2>/dev/null || rc=$?
-  if [ "$rc" != 0 ] || ! jq -e 'type == "object" and has("state")' "$t" >/dev/null 2>&1; then
+  # BH-10199: a lane that set IRR_LANE reads the thread through the issue
+  # record (bin/lib/issue-record.sh irr_read, its step GH_SOURCE_ISSUES); any
+  # other caller reads GitHub exactly as before (hold__read_gh).
+  rc=0
+  if [ -n "${IRR_LANE:-}" ] && command -v irr_read >/dev/null 2>&1; then
+    irr_read thread hold__read_gh "$slug" "$n" "$t" || rc=$?
+  else
+    hold__read_gh "$t" "$slug" "$n" || rc=$?
+  fi
+  case "$rc" in
+    0) ij=$(jq -c '.issue' "$t" 2>/dev/null); acc=$(jq -c '.comments' "$t" 2>/dev/null) ;;
+    3) rm -f "$t"; printf 'unreadable\t%s#%s has more than 1000 comments\n' "$slug" "$n"; return 2 ;;
+    4) rm -f "$t"; printf 'unreadable\tthe thread of %s#%s did not parse\n' "$slug" "$n"; return 2 ;;
     # The contract could not answer (an outage, its quota reserve, a cache
     # miss). hold_check is the older reader of the same thing, and its answer
     # carries gh's own words when it cannot read either — so it gets the last say.
-    rm -f "$t"; hold_check "$slug" "$n"; return $?
-  fi
-  ij=$(cat "$t")
-  for page in 1 2 3 4 5 6 7 8 9 10; do
-    rc=0; gh_rest GET "repos/$slug/issues/$n/comments?per_page=100&page=$page" > "$t" 2>/dev/null || rc=$?
-    if [ "$rc" != 0 ] || ! jq -e 'type == "array"' "$t" >/dev/null 2>&1; then
-      rm -f "$t"; hold_check "$slug" "$n"; return $?
-    fi
-    acc=$(jq -sc '.[0] + .[1]' <(printf '%s\n' "$acc") "$t" 2>/dev/null) \
-      || { rm -f "$t"; printf 'unreadable\tthe thread of %s#%s did not parse\n' "$slug" "$n"; return 2; }
-    len=$(jq 'length' "$t")
-    [ "$len" -lt 100 ] && break
-    [ "$page" = 10 ] && { rm -f "$t"; printf 'unreadable\t%s#%s has more than 1000 comments\n' "$slug" "$n"; return 2; }
-  done
+    *) rm -f "$t"; hold_check "$slug" "$n"; return $? ;;
+  esac
   rm -f "$t"
   local v vrc
   v=$(hold_classify "$ij" "$acc"); vrc=$?

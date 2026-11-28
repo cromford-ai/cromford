@@ -1,0 +1,68 @@
+  # <<< identity block
+  MC_FLAKE=""; MC_CI_FLAKE=0; MC_FLAKE_RUNG=0; MC_CI_TIMEOUT_FIRING=0; MC_CI_TIMEOUT_CHECK=""; MC_CI_TIMEOUT_T=""; CIT_RUNS_LEFT=""; CIT_SKIP_RUNG=0
+  if [ "$MC_IDENTITY_BLOCKED" != 1 ] && [ "$MSTATE" != DIRTY ] && [ "$MGABLE" != CONFLICTING ]; then
+    # BH-8012: green:UNSTABLE:1 = every required check passed and only
+    # non-required ones are not green, so a cancelled run buys no rerun.
+    case "$CI:$MSTATE:${MC_CI_REQUIRED_GREEN:-0}" in
+      green:UNSTABLE:1) ;;
+      none:*|green:BLOCKED:*|green:UNSTABLE:*) MC_FLAKE=$(mc_ci_flake_runs "$SLUG" "$HEAD" "$NUM") ;;
+    esac
+  fi
+  if [ -n "$MC_FLAKE" ]; then
+    MC_CI_FLAKE=1
+    # BH-3775: the ci-timeout budget sees the flake list first and answers what
+    # is left for the rungs below. MC_FLAKE itself is never changed here.
+    CIT_RUNS_LEFT=$MC_FLAKE
+    if command -v cit_assess >/dev/null 2>&1; then
+      cit_assess "$SLUG" "$KEY" "$HEAD" "${BASEREF:-}" "$NUM" "$MC_FLAKE"
+      MC_CI_TIMEOUT_FIRING=$CIT_FIRING; MC_CI_TIMEOUT_CHECK=$CIT_CHECK; MC_CI_TIMEOUT_T=$CIT_T
+    fi
+    if [ "${CIT_SKIP_RUNG:-0}" != 1 ] && [ -n "$CIT_RUNS_LEFT" ]; then
+      MC_FLAKE_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+      FLAKENAMES=$(cut -d'|' -f2 <<<"$CIT_RUNS_LEFT" | tr '\n' ';' | sed 's/;$//')
+      case "$MC_FLAKE_RUNG" in
+        0) if [ "$ACTIONS" = 1 ]; then
+             mc_flake_kick "$SLUG" "$KEY" "$HEAD" "$CIT_RUNS_LEFT" || true
+             MC_FLAKE_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+           else
+             mc_log "$KEY would re-run $(wc -l <<<"$CIT_RUNS_LEFT") cancelled/timed_out run(s) on ${HEAD:0:8} ($FLAKENAMES) — observe mode: nothing written"
+           fi ;;
+        1) mc_log "$KEY flake rerun in flight on ${HEAD:0:8} ($FLAKENAMES) — waiting for the fresh run to report" ;;
+        *) if ! mc_attempt_has "flakealert $KEY $HEAD" 2>/dev/null; then
+             mc_attempt_put "flakealert $KEY $HEAD"
+             mc_alert "$KEY" WAIT_CI "CI_FLAKE_TWICE: $FLAKENAMES cancelled/timed out again on ${HEAD:0:8} after one full rerun — a killed runner is not a code failure, so nothing here will park this PR for you; check the runner (OOM on a 16GB hosted runner?) or re-run it by hand: $URL"
+             mc_log "$KEY CI_FLAKE_TWICE $KEY $HEAD ($FLAKENAMES) — one full rerun spent and the runs died again; alerted once, row stays WAIT_CI"
+           fi ;;
+      esac
+    fi
+  fi
+  EFF=$(mc_discount "$SLUG" "$MSTATE" "$CI")
+  PREV=$(mc_row_field "$KEY" 2)
+  # In the queue? Never asked at all on a repo that has no queue.
+  #   github   isInMergeQueue, from the list when gh gave us the field and per
+  #            PR (mc_inqueue) when its --json allowlist refused it.
+  #   mergify  the trigger label, from the list. HEALTH is not asked here: a
+  #            labelled PR whose batch has gone red is still QUEUED this tick
+  #            and the settle pass above ejects it on the next one, which runs
+  #            BEFORE the list is read — so it converges in one tick and the
+  #            open pass stays one API call per repo instead of two per PR.
+  MC_INQUEUE=0
+  if [ "$QUEUE" = 1 ]; then
+    case "$PROVIDER" in
+      github)
+        # From the list when gh gave us the field; otherwise ONE read per PR,
+        # and only for a PR in a merge state where the queue can be holding it
+        # (inq_matters). Asking it for every open PR on the repo was one API
+        # call per PR per tick to learn `false` about a DIRTY head.
+        if [ "$INQ_IN_LIST" = 1 ]; then [ "${RAWINQ:-false}" = true ] && MC_INQUEUE=1
+        # NO LIST FIELD AND NO REST FIELD EITHER (BH-784): a row THIS conductor
+        # put in QUEUED stays queued. mc_inqueue now answers `unknown` -> false
+        # for a native-queue PR, so without this the row would classify READY and
+        # be re-enqueued every tick — two strikes and the PR is BLOCKED_AGENT for
+        # a queue that was holding it correctly. The opposite error (a genuinely
+        # ejected PR sitting QUEUED until the settle pass or a hand moves it) is
+        # the cheaper one, and neither arises on a gh that carries the field —
+        # 2.97 does, so this is the shim path only. Also one read fewer.
+        elif [ "${PREV:-}" = QUEUED ]; then MC_INQUEUE=1
+        elif inq_matters "$MSTATE" "${PREV:-}"; then mc_inqueue "$URL" && MC_INQUEUE=1; fi ;;
+      mergify)

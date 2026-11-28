@@ -212,12 +212,14 @@ if command -v mc_regen_table >/dev/null 2>&1; then
     "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
     "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')" \
     "$(printf 'bin/lib/rb/plan.sh\tbin/render-split.sh --write')" \
-    "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')")
-  # Of the last six rows four are still COMMITTED: rules/CLAUDE.md (BH-1336),
+    "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')" \
+    "$(printf 'bin/merge-conductor.sh\tbin/render-split.sh --write')")
+  # Of the last seven rows five are still COMMITTED: rules/CLAUDE.md (BH-1336),
   # a render five box scripts copy verbatim, and docs/PR-OWNERSHIP.md
   # (BH-5235.2), linked by path, and bin/lib/rb/plan.sh (BH-9704), the render
   # of config/rb-plan.d/, and bin/fly-pool.sh (BH-9704 C1), the render of
-  # config/fly-pool.d/. worker/jobs/schema.sql, the composition of
+  # config/fly-pool.d/, and bin/merge-conductor.sh (BH-10226), the render of
+  # config/merge-conductor.d/. worker/jobs/schema.sql, the composition of
   # worker/jobs/schema.d/, is not in git since BH-6005 (BH-5239.4 deleted the
   # Cloud schema row), and catalog/state-paths.json is not in git (BH-8986). Each is declared here so a conflict on it is regenerated
   # instead of hand merged. GT-2 pins the same list; the two must not drift.

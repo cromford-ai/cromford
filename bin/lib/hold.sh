@@ -596,24 +596,53 @@ hold_ambiguous_note() {
 #   1000 comments — is UNREADABLE, never "no hold".
 #   stdout/rc: hold_classify_thread's — rc 1 held, 0 clear, 2 unreadable.
 hold_check_thread() {
-  local slug="${1:-}" n="${2:-}" t acc='[]' page len rc
+  local slug="${1:-}" n="${2:-}" t acc rc
   case "$slug" in */*) ;; *) printf 'unreadable\tno owner/repo to read\n'; return 2 ;; esac
   case "$n" in ''|*[!0-9]*) printf 'unreadable\tno number to read\n'; return 2 ;; esac
   command -v gh_rest >/dev/null 2>&1 || { printf 'unreadable\tno REST contract lib (gh_rest) on this box\n'; return 2; }
   t=$(mktemp "${TMPDIR:-/tmp}/hold-thread.XXXXXX" 2>/dev/null) || { printf 'unreadable\tno temp file\n'; return 2; }
+  # BH-10199: a lane that set IRR_LANE reads the comments through the issue
+  # record (bin/lib/issue-record.sh irr_read, its step GH_SOURCE_ISSUES); any
+  # other caller reads GitHub exactly as before (hold__thread_gh).
+  rc=0
+  if [ -n "${IRR_LANE:-}" ] && command -v irr_read >/dev/null 2>&1; then
+    irr_read comments hold__thread_gh "$slug" "$n" "$t" || rc=$?
+  else
+    hold__thread_gh "$t" "$slug" "$n" || rc=$?
+  fi
+  if [ "$rc" != 0 ]; then
+    if [ -s "$t.err" ]; then cat "$t.err"; else printf 'unreadable\tthe thread of %s#%s could not be read\n' "$slug" "$n"; fi
+    rm -f "$t" "$t.err"; return 2
+  fi
+  acc=$(jq -c '.comments' "$t" 2>/dev/null)
+  rm -f "$t" "$t.err"
+  hold_classify_thread "$acc"
+}
+
+# hold__thread_gh <out> <owner/repo> <n> — hold_check_thread's GitHub read
+# (BH-10199 moved it here, unchanged): the comment pages, 100 at a time up to
+# 1000. <out> gets {"comments": [...]}. rc 0, else 2 with the verdict line
+# in <out>.err. irr_read calls it as its github-fn.
+hold__thread_gh() {
+  local out="${1:-}" slug="${2:-}" n="${3:-}" t acc='[]' page len rc
+  [ -n "$out" ] || return 2
+  : > "$out"; rm -f "$out.err"
+  t=$(mktemp "${TMPDIR:-/tmp}/hold-thread-gh.XXXXXX" 2>/dev/null) || { printf 'unreadable\tno temp file\n' > "$out.err"; return 2; }
   for page in 1 2 3 4 5 6 7 8 9 10; do
     rc=0; gh_rest GET "repos/$slug/issues/$n/comments?per_page=100&page=$page" > "$t" 2>/dev/null || rc=$?
     if [ "$rc" != 0 ] || ! jq -e 'type == "array"' "$t" >/dev/null 2>&1; then
-      rm -f "$t"; printf 'unreadable\tthe thread of %s#%s could not be read (HTTP %s)\n' "$slug" "$n" "${GH_REST_STATUS:-000}"; return 2
+      rm -f "$t"; printf 'unreadable\tthe thread of %s#%s could not be read (HTTP %s)\n' "$slug" "$n" "${GH_REST_STATUS:-000}" > "$out.err"; return 2
     fi
     acc=$(jq -sc '.[0] + .[1]' <(printf '%s\n' "$acc") "$t" 2>/dev/null) \
-      || { rm -f "$t"; printf 'unreadable\tthe thread of %s#%s did not parse\n' "$slug" "$n"; return 2; }
+      || { rm -f "$t"; printf 'unreadable\tthe thread of %s#%s did not parse\n' "$slug" "$n" > "$out.err"; return 2; }
     len=$(jq 'length' "$t")
     [ "$len" -lt 100 ] && break
-    [ "$page" = 10 ] && { rm -f "$t"; printf 'unreadable\t%s#%s has more than 1000 comments\n' "$slug" "$n"; return 2; }
+    [ "$page" = 10 ] && { rm -f "$t"; printf 'unreadable\t%s#%s has more than 1000 comments\n' "$slug" "$n" > "$out.err"; return 2; }
   done
   rm -f "$t"
-  hold_classify_thread "$acc"
+  printf '%s\n' "$acc" | jq -c '{comments: .}' > "$out" 2>/dev/null \
+    || { printf 'unreadable\tthe thread of %s#%s did not parse\n' "$slug" "$n" > "$out.err"; return 2; }
+  return 0
 }
 
 # A PR THREAD IS JUDGED LINE-ANCHORED, BOTH WAYS (review of #1926 round 2). A

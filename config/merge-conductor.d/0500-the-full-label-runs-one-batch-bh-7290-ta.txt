@@ -1,0 +1,61 @@
+# The `full` label runs one batch (BH-7290): taken off after a completed batch.
+# A tree without it ticks exactly as before.
+# shellcheck source=bin/lib/mc-full-label-expiry.sh
+[ -r "$H/bin/lib/mc-full-label-expiry.sh" ] && . "$H/bin/lib/mc-full-label-expiry.sh"
+# The foreign-red attribution for the BH-636 re-entry arm (BH-3776). A tree
+# without it gates re-entry on the raw merge state alone, as before.
+# shellcheck source=bin/lib/mc-foreign-red.sh
+[ -r "$H/bin/lib/mc-foreign-red.sh" ] && . "$H/bin/lib/mc-foreign-red.sh"
+command -v fr_reentry_gate >/dev/null 2>&1 || {
+  fr_reentry_gate() { FR_WHY=""; FR_LINE=""; [ "$6" = CLEAN ]; }
+  fr_requeue_note() { :; }
+}
+# Mergify's own culprit/bystander verdict for the same arm (BH-4428): wraps
+# fr_reentry_gate. A tree without it gates re-entry exactly as above.
+# shellcheck source=bin/lib/mc-batch-eject.sh
+[ -r "$H/bin/lib/mc-batch-eject.sh" ] && . "$H/bin/lib/mc-batch-eject.sh"
+# Why a head left the queue, and the pre-queue gate before its requeue
+# (BH-6161). A tree without it ejects and requeues exactly as before.
+# shellcheck source=bin/lib/mc-eject-cause.sh
+[ -r "$H/bin/lib/mc-eject-cause.sh" ] && . "$H/bin/lib/mc-eject-cause.sh"
+# The stuck-PR timers (BH-7241): CI never started, a failed rebase, red on two
+# heads. A tree without it ticks exactly as before. MC_FIX_NOW_ON is NOT
+# exported: only this process launches a resolver from mc_transition.
+# shellcheck source=bin/lib/mc-stuck-timers.sh
+[ -r "$H/bin/lib/mc-stuck-timers.sh" ] && . "$H/bin/lib/mc-stuck-timers.sh"
+MC_FIX_NOW_ON=1
+# The pre-queue isolation gate (BH-4545). A tree without it enqueues a READY
+# head exactly as before.
+# shellcheck source=bin/lib/mc-prequeue.sh
+[ -r "$H/bin/lib/mc-prequeue.sh" ] && . "$H/bin/lib/mc-prequeue.sh"
+# The lead-cleared head (BH-3778). Optional like the libs above: a tree
+# without it ticks exactly as before.
+# shellcheck source=bin/lib/mc-lead-ready.sh
+[ -r "$H/bin/lib/mc-lead-ready.sh" ] && . "$H/bin/lib/mc-lead-ready.sh"
+# The ci-timeout budget (BH-3775). Optional like the libs above: a tree without
+# it ticks exactly as before.
+# shellcheck source=bin/lib/mc-ci-timeout.sh
+[ -r "$H/bin/lib/mc-ci-timeout.sh" ] && . "$H/bin/lib/mc-ci-timeout.sh"
+# The fast parent merge (BH-5520). Optional: a tree without it ticks as before.
+# shellcheck source=bin/lib/mc-stack-fast.sh
+[ -r "$H/bin/lib/mc-stack-fast.sh" ] && . "$H/bin/lib/mc-stack-fast.sh"
+# The Sentry reporter (BH-5617): the WORKER_DEADLINE and autoenqueue-ledger
+# events. Optional like the libs above: without it, the `command -v
+# sentry_report` guards are false and the tick runs as before.
+# shellcheck source=bin/lib/sentry-report.sh
+[ -r "$H/bin/lib/sentry-report.sh" ] && . "$H/bin/lib/sentry-report.sh"
+# ph_knob for the pr_owner.enroll_external kill switch (BH-3933). A tree
+# without it reads the switch as off, so no enrolled external PR is evaluated.
+# shellcheck source=bin/lib/pr-health.sh
+[ -r "$H/bin/lib/pr-health.sh" ] && . "$H/bin/lib/pr-health.sh"
+# >>> merge-conductor.d fragments (BH-7453)
+# A new optional lib is its own file, bin/merge-conductor.d/<key>-<name>.sh,
+# not one more source line above: bin/list-file-lint.sh refuses that. Each
+# regular *.sh there is sourced once, in LC_ALL=C name order, after the in-file
+# libs. A fragment that fails to source is one log line, and the tick goes on.
+mapfile -t _mc_frags < <(set +f; for _f in "$H"/bin/merge-conductor.d/*.sh; do [ -f "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort)
+for _mc_frag in "${_mc_frags[@]}"; do
+  # shellcheck source=/dev/null
+  . "$_mc_frag" || mc_log "merge-conductor.d: ${_mc_frag##*/} failed to source (rc $?); skipped this tick"
+done
+unset _mc_frags _mc_frag

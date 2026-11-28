@@ -176,7 +176,7 @@ test('S8 the cost read fails: every spend null, unread, the roster still answers
   assert.equal(by.watchman.last_tick_at, '2026-11-06T07:59:00Z');
 });
 
-test('S9 archie last_tick_at; the roster runs at most 14 statements', async (t) => {
+test('S9 archie last_tick_at; the roster runs at most 15 statements', async (t) => {
   const o = await fresh(t); if (!o) return;
   const { DB } = o;
   const COUNTS = { collected: 0, new_items: 0, deferred: 0, model_calls: 1, digested: 0, filed: 0, refused: 0, unsupported: 0, failed: 0, held: 0 };
@@ -195,7 +195,9 @@ test('S9 archie last_tick_at; the roster runs at most 14 statements', async (t) 
   });
   const { by } = await roster(counting);
   assert.equal(by.archie.last_tick_at, '2026-11-06T11:59:00Z');
-  assert.ok(stmts <= 14, `the roster ran ${stmts} statements`);
+  // lastTicks runs one parallel index seek per roster agent (BH-6822). BH-9532
+  // seeds one more agent (mr-red), so the bound is the old 14 plus that one seek.
+  assert.ok(stmts <= 15, `the roster ran ${stmts} statements`);
 });
 
 test('S10 window_days out of range or absent is 7, flagged default; 30 is 30', async (t) => {

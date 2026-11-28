@@ -1,0 +1,62 @@
+  # Every PR the open list shows gets a closed-watch memo (BH-1592), and the
+  # closed-unmerged settle below skips the numbers that are open this tick.
+  closed_watch_seen "$SLUG" "${ROWS[@]}"
+  OPEN_NUMS=$(printf '%s\n' "${ROWS[@]}" | cut -f1 | tr '\n' ' ')
+  # BH-1606: the MERGE_HELD dedupe files of this repo's closed PRs go, off the
+  # same open numbers (a PR the list does not carry is asked once first).
+  # A keyed tick (BH-1387) skips it: the prune is a repo sweep, the cron tick's.
+  # shellcheck disable=SC2086  # one PR number per word, on purpose
+  [ -z "$MC_ONLY_KEYS" ] && command -v to_held_prune >/dev/null 2>&1 && to_held_prune "$SLUG" $OPEN_NUMS
+  if [ -n "$MC_ONLY_KEYS" ]; then # keyed tick: only the woken PRs
+    local _kr=() _r; for _r in "${ROWS[@]}"; do mc_only_has "$SLUG#${_r%%$'\t'*}" && _kr+=("$_r"); done; ROWS=("${_kr[@]}")
+    # A key bin/pr-owner-sweep.sh enrolled whose author the list filters out (BH-3933).
+    mc_enroll_external_load
+    mapfile -t -O "${#ROWS[@]}" ROWS < <(mc_enrolled_rows "$SLUG" "$OPEN_NUMS")
+  fi
+  # ---- the hotfix lane heads the order (BH-369) ------------------------------
+  # A PR carrying the hotfix label is launched before every plain PR of this
+  # repo AND is written into this tick's marker before the first worker starts,
+  # which is what the degraded direct merge in pr_worker reads. Launch order
+  # alone would not be enough: the workers are background subshells, so the
+  # marker is the part that actually orders the merges.
+  #
+  # THE ORDER IS FOR EVERY REPO; THE MARKER IS FOR QUEUE REPOS (BH-645). This
+  # block was `QUEUE=1` whole, which was right for the marker and wrong for the
+  # order: a repo with no merge queue at all — PROVIDER none, most of the fleet
+  # — worked its PRs in whatever order GitHub listed them, which is the state
+  # this lane exists to remove. So the classification and the reorder run
+  # wherever there are rows, and hotfix_pending_write (the degraded-merge
+  # marker that a plain PR reads before bypassing a silent queue) stays inside
+  # its own QUEUE=1 guard, semantics untouched. While the queue IS answering,
+  # Mergify's own hotfix queue does the ordering and this costs one label read
+  # per PR and changes nothing else.
+  if [ "${#ROWS[@]}" -gt 0 ]; then
+    HOTROWS=(); PLAINROWS=(); HOTNUMS=()
+    for ROW in "${ROWS[@]}"; do
+      [ -n "$ROW" ] || continue
+      IFS=$'\t' read -r HNUM HURL _ _ HDRAFT _ _ _ _ HLBL _ <<<"$ROW"
+      # The list row's labels first (a `-` there means none, and hotfix-lib
+      # reads it as none); the build record's ticket-meta.json is the fallback
+      # for a harness PR built before the PR label existed.
+      if [ -n "$HNUM" ] && [ "$HDRAFT" != true ] \
+         && hotfix_pr_is "$HLBL" "$(mc_record_for "$HURL" 2>/dev/null || true)"; then
+        HOTROWS+=("$ROW"); HOTNUMS+=("$HNUM")
+        # The tail is queue-only because the wait it describes is queue-only: on
+        # a repo with no queue there is no degraded merge to hold back, and a
+        # log line that says there is would be describing something that cannot
+        # happen.
+        HWAIT=""
+        [ "$QUEUE" = 1 ] && HWAIT=" and a plain degraded merge waits a tick for it"
+        mc_log "$SLUG#$HNUM heads this tick's order — it carries the $(hotfix_label "$H") label, so it is launched before $P's other PRs$HWAIT"
+      else
+        PLAINROWS+=("$ROW")
+      fi
+    done
+    [ "${#HOTNUMS[@]}" -gt 0 ] && [ "$QUEUE" = 1 ] && hotfix_pending_write "$P" "${HOTNUMS[@]}"
+    # READY ROWS COME NEXT (BH-7376): after the hotfix rows, every READY row
+    # gets the worker window before any WAIT_CI or HEAD_MOVED row, so the
+    # full tick's window never runs out on re-reads while a merge waits.
+    command -v mc_ready_first >/dev/null 2>&1 && [ "${#PLAINROWS[@]}" -gt 0 ] \
+      && mapfile -t PLAINROWS < <(mc_ready_first "$SLUG" "${PLAINROWS[@]}")
+    ROWS=("${HOTROWS[@]}" "${PLAINROWS[@]:-}")
+  fi

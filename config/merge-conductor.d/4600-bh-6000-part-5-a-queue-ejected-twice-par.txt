@@ -1,0 +1,65 @@
+        # BH-6000 part 5: a queue-ejected-twice park whose hand-over could not
+        # read the dequeue comments is asked again here, once a tick, until it
+        # is stamped (mc_eject_fix_now returns at once for a stamped head).
+        # BH-9253: a parked batch victim is requeued solo first; any other
+        # queue-ejected-twice park (rc 1) gets the fix round as before.
+        # BH-9695: else a park with no named cause gets its one Mergify event
+        # read and one more requeue (rc 0); rc 2 (a budget) waits a tick.
+        case "$QWHY" in queue-ejected-twice*)
+          if ! { command -v mc_bv_solo >/dev/null 2>&1 && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; }; then
+            QEU=1; command -v mc_eu_requeue >/dev/null 2>&1 && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
+            [ "$QEU" = 1 ] && mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
+          fi ;;
+        esac
+      fi
+      exec 9>&-
+    done
+    exec 9>&-
+    # <<< parked merged settle
+  fi
+  command -v mc_qr_pass >/dev/null 2>&1 && mc_qr_pass "$P" "$SLUG"   # BH-10201: a PR that left the queue and is not back; reads only, never a requeue
+
+  # ---- a Mergify batch draft that sits green (BH-1790) ------------------------
+  # Mergify sometimes misses a check's completion event and leaves a batch draft
+  # green and unmerged, which stalls the whole queue behind it. One list read
+  # per Mergify repo per tick; mc_mergify_stuck_pass posts `@mergifyio refresh`
+  # on a draft green for MC_MERGIFY_STUCK_SECS, once per window. The comment
+  # makes the queue MERGE, so it is written in merge mode only, like the
+  # enqueue label; every other mode logs what it would post.
+  if [ "$PROVIDER" = mergify ] && [ -z "$MC_ONLY_KEYS" ]; then
+    mc_mergify_stuck_pass "$P" "$SLUG" "$MERGES"
+    # BH-5372: one BATCH_RESET line per batch draft main moved under; a log line
+    # and a mark only, so it runs in every mode. A failed read is one line.
+    if command -v bres_tick >/dev/null 2>&1; then
+      BRC=0; bres_tick "$SLUG" || BRC=$?
+      [ "$BRC" = 0 ] || mc_log "$SLUG BATCH_RESET_UNREAD rc=$BRC — closed batch drafts not classified this tick"
+    fi
+    # BH-5374: the minutes each finished draft spent, after bres_tick logged its resets.
+    command -v bmin_tick >/dev/null 2>&1 && { bmin_tick "$SLUG" || mc_log "$SLUG QUEUE_MINUTES_UNREAD rc=$? — batch minutes not recorded this tick"; }
+    # BH-7290: the `full` label comes off each open member after one completed batch.
+    command -v fle_tick >/dev/null 2>&1 && { fle_tick "$SLUG" "$MERGES" || mc_log "$SLUG FULL_LABEL_EXPIRY_UNREAD rc=$? — the full label was not checked this tick"; }
+  fi
+
+  # ---- open PRs ---------------------------------------------------------------
+  # isInMergeQueue is requested in the list because mergeStateStatus has no
+  # QUEUED value. gh's --json allowlist is a separate thing from the GraphQL
+  # type, so a refusal must not blind the whole tick: the list is retried
+  # without the field and the flag is then read per PR (mc_inqueue).
+  # `labels` rides along because it is the Mergify provider's queue witness, and
+  # in the LIST it costs nothing: the open pass then knows "is this PR queued"
+  # for every PR on the repo without one extra call each.
+  # THE FIELD IS ASKED FOR ONLY WHERE IT CAN BE USED AND ONLY WHILE gh TAKES IT
+  # (2026-09-15): never on a repo with no queue, and never at all while the
+  # refusal marker is fresh. A refusal is recorded ONCE — and only when the
+  # plain list then succeeded, which is what proves the field was the problem
+  # rather than the repo.
+  # ONE PR PER TICKET (BH-1526), before the list this tick works from, so a
+  # duplicate it closes is simply absent from that list. A lead PR always wins.
+  # A CLOSE IS A WRITE, so it obeys ACTIONS like every other write here: in
+  # observe mode and under the kill switch it only says what it would close.
+  # AND IT IS OPT-IN PER PROJECT (MC_TICKET_DEDUPE, default 0): a project whose
+  # row is not 1 is not listed, not logged about, not touched.
+  if command -v to_dedupe_open_prs >/dev/null 2>&1 && [ "$(ticket_dedupe_for "$P")" = 1 ]; then
+    if [ "$ACTIONS" = 1 ]; then to_dedupe_open_prs "$SLUG"; else TO_DEDUPE_DRY=1 to_dedupe_open_prs "$SLUG"; fi
+  fi
+  INQ_IN_LIST=0; LIST=""; INQ_ASKED=0

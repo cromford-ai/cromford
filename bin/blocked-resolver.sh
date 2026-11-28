@@ -3450,13 +3450,12 @@ br_park_time() {
   return 1
 }
 
-# br_merged_prs_for <owner/repo> <ticket-key> — TSV of the repo's MERGED PRs for
-# this ticket: url, mergedAt, branch. Two searches, because a PR names its ticket
-# in one of two places and neither is reliable alone: the TITLE and the BRANCH
-# this pipeline always builds on (`ticket/<key>`, lowercased, sometimes with an
-# -rN rebuild suffix). Each arm is capped at 20 hits.
-# GitHub's search tokenises on the hyphen, so TK-53 can come back with TK-531's
-# PR — every row is re-checked HERE against the whole key before it counts.
+# br_merged_prs_for <owner/repo> <ticket-key> [since-epoch] — TSV of the repo's
+# MERGED PRs for this ticket: url, mergedAt, branch. BH-10350: brmr_read answers
+# from the PR record first; a miss runs two searches, as a PR names its ticket in
+# the TITLE or the BRANCH (`ticket/<key>`, lowercased, maybe -rN) and neither
+# alone is reliable. Each arm caps at 20 hits. Search tokenises on the hyphen
+# (TK-53 can return TK-531's PR), so every row is re-checked HERE on the whole key.
 #
 #   rc 0   the searches answered; the TSV (possibly empty) is the answer.
 #   rc 75  a search or a per-hit read did not answer. THERE IS NO PARTIAL
@@ -3468,6 +3467,7 @@ br_park_time() {
 # the PR itself (<= 40 worst case, typically 0-3) to keep the whole-key filter
 # exactly as strict as it was.
 br_merged_prs_for() {
+  [ -z "${_BRMR_GH:-}" ] && command -v brmr_read >/dev/null 2>&1 && { brmr_read "$1" "$2" "${3:-}"; return $?; }
   local slug="$1" tkey="$2" lk q hits f u n at brn ti rc
   lk=$(printf '%s' "$tkey" | tr '[:upper:]' '[:lower:]')
   hits=$(mktemp) || return 75
@@ -3576,7 +3576,7 @@ br_already_merged() {
   # substitution hides it. An unreadable search is rc 2 — unknown, not "this
   # ticket has no merged PR".
   rows=$(mktemp) || return 2
-  br_merged_prs_for "$slug" "$tkey" > "$rows"; mrc=$?
+  br_merged_prs_for "$slug" "$tkey" "$park" > "$rows"; mrc=$?
   [ "$mrc" = 75 ] && { rm -f "$rows"; return 2; }
   while IFS=$'\t' read -r u at brn; do
     [ -n "$u" ] || continue

@@ -1,0 +1,63 @@
+  # THE ATTEMPTS READ (BH-4156): one batch read of these PRs' attempt rows.
+  command -v mc_tick_prefetch >/dev/null 2>&1 && mc_tick_prefetch "$SLUG" "${ROWS[@]}"
+  local _wcap
+  # ON A LANE-RUN MACHINE (BH-6495, bin/lib/mc/fly-workers.sh). With the
+  # conductor_workers_on_fly switch on, a row is enqueued as one lane_runs row
+  # and starts no worker here (mc_fly_arm rc 0); any other answer runs it here
+  # as before. A run on a machine (MC_ON_MACHINE=1) never enqueues.
+  # Each row's enqueue runs in the background inside the pr_slot_wait bound,
+  # like a local worker, so its 2 jobs-worker reads never queue behind the
+  # other rows' reads in this loop; the tally comes back through a tick file.
+  local _fly=0
+  MC_FLY_N_ENQ=0; MC_FLY_N_SKIP=0; MC_FLY_N_FB=0; MC_FLY_COUNT_FILE=""
+  [ "${MC_ON_MACHINE:-}" != 1 ] && [ "${#ROWS[@]}" -gt 0 ] && command -v mc_fly_workers_on >/dev/null 2>&1 \
+    && mc_fly_workers_on "$P" && _fly=1
+  if [ "$_fly" = 1 ]; then
+    mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    MC_FLY_COUNT_FILE="$MC_TICK_DIR/fly-count.$(mc_safe_name "$P").$BASHPID"
+    : > "$MC_FLY_COUNT_FILE" 2>/dev/null || MC_FLY_COUNT_FILE=""
+  fi
+  local _stopped=0
+  for ROW in "${ROWS[@]}"; do
+    [ -n "$ROW" ] || continue
+    # THE PR BOUNDARY (BH-6890): a project run that was told to stop (TERM, or
+    # a lost project lease) starts no further worker; the running ones finish.
+    if [ -n "${MC_STOP_FILE:-}" ] && [ -e "$MC_STOP_FILE" ]; then
+      [ "$_stopped" = 1 ] || mc_log "$SLUG stop asked ($MC_STOP_FILE) — no further PR worker starts this tick"
+      _stopped=1; fanin_account "$SLUG#${ROW%%$'\t'*}" deferred:stop; continue
+    fi
+    # THE WINDOW (BH-4842). Under the backstop's timeout, a worker starts only
+    # if it can finish before it; the rest wait for the next fire.
+    if ! _wcap=$(mc_window_cap); then
+      fanin_account "$SLUG#${ROW%%$'\t'*}" deferred:window
+      mc_window_defer "$SLUG#${ROW%%$'\t'*}"
+      hotfix_pending_is "$P" "${ROW%%$'\t'*}" 2>/dev/null && hotfix_pending_drop "$P" "${ROW%%$'\t'*}"
+      continue
+    fi
+    if [ "$_fly" = 1 ] && [ -n "$MC_FLY_COUNT_FILE" ]; then
+      MC_WORKER_DEADLINE_CAP_S="${_wcap:-${MC_WORKER_DEADLINE_CAP_S:-}}" \
+        mc_fly_launch "$P" "$SLUG" "$ROW" &
+      PRPIDS+=("$!")
+      pr_slot_wait
+      continue
+    fi
+    [ "$_fly" = 1 ] && mc_fly_arm "$P" "$SLUG" "$ROW" && continue
+    MC_WORKER_DEADLINE_CAP_S="${_wcap:-${MC_WORKER_DEADLINE_CAP_S:-}}" \
+      fanin_run_sub "$SLUG#${ROW%%$'\t'*}" mc_fanin_outcome mc_worker_bounded "$ROW" &
+    PRPIDS+=("$!")
+    pr_slot_wait
+  done
+  # Explicit pids, never a bare `wait`: a settle in this same tick may have
+  # spawned a deploy-verify lane as a child of this subshell, and `wait` would
+  # sit on that verifier's twenty minutes. A pid an earlier pr_slot_wait already
+  # reaped answers rc 127 on stderr, which is why this is quiet and unchecked.
+  for PID in "${PRPIDS[@]:-}"; do [ -n "$PID" ] && wait "$PID" 2>/dev/null; done
+  fanin_end
+  # PREQUEUE GROUPS (BH-8327): one prequeue group gate run per (repo, main).
+  command -v mc_pq_group_tick_end >/dev/null 2>&1 && mc_pq_group_tick_end "$SLUG"
+  if [ "$_fly" = 1 ] && [ -n "$MC_FLY_COUNT_FILE" ]; then
+    MC_FLY_N_ENQ=$(grep -cx enq "$MC_FLY_COUNT_FILE" 2>/dev/null); MC_FLY_N_SKIP=$(grep -cx skip "$MC_FLY_COUNT_FILE" 2>/dev/null)
+    MC_FLY_N_FB=$(grep -cx fb "$MC_FLY_COUNT_FILE" 2>/dev/null); rm -f "$MC_FLY_COUNT_FILE"
+  fi
+  [ "$_fly" = 1 ] && mc_log "FLY-ENQUEUE $SLUG enqueued=${MC_FLY_N_ENQ:-0} skipped=${MC_FLY_N_SKIP:-0} fallback=${MC_FLY_N_FB:-0}"
+

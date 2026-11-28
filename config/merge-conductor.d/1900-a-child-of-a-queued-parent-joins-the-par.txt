@@ -1,0 +1,80 @@
+        # A child of a QUEUED parent joins the parent's batch (BH-5520, bin/lib/mc-stack-fast.sh).
+        if command -v msf_eligible >/dev/null 2>&1 && [ "${SMRC:-}" != 5 ] && [ "${CROSS:--}" = false ] \
+           && msf_try "$SLUG" "$P" "$KEY" "$NUM" "${PARURL:-}" "$HEAD" "$REVIEWED" "$VERDICT" "$CI" "$MSTATE" "$MGABLE" "$BASEREF" "$BR" "$PBASE" "$ACTIONS"; then
+          MC_STACK=""; MC_STACK_BASE=""; BASEREF="$PBASE"
+        fi ;;
+      MERGED)
+        if [ "$ACTIONS" = 1 ] && mc_retarget_base "$SLUG" "$NUM" "$PBASE"; then
+          # AND THE RETARGET NEEDS A CI KICK (2026-09-15, project-5
+          # #913/#943/#1011/#1020/#1021). The base change fires no
+          # `pull_request` workflow — the default activity types are
+          # opened|synchronize|reopened — so this head still carries the runs
+          # it had, which for a child cut from a feature branch is none. The
+          # row would classify `WAIT_CI checks none` and stay there for ever
+          # with the required check never reporting. mc_kick_ci is the
+          # close/reopen that fires it; a FAILED kick must not undo the
+          # retarget, so it is logged and the generic kick below picks the PR
+          # up on a later tick.
+          #
+          # ONLY WHEN THE HEAD HAS NO RUNS AT ALL (review of #352). Not every
+          # repo in the fleet leaves a stacked child unbuilt: project-2
+          # (migration-sql-gate.yml, verification-map-freshness.yml) and
+          # project-4 (typecheck.yml) trigger on a bare `pull_request`, so their
+          # children DO have runs on the head by the time the parent merges.
+          # Closing and reopening one of those cancels whatever is in flight
+          # through the repo's own cancel-in-progress concurrency group and
+          # buys a duplicate build for nothing. CI was read at the top of this
+          # iteration; `none` is the only state a kick answers.
+          if [ "$CI" != none ]; then
+            mc_log "$KEY parent ${PARURL:-?} merged but GitHub left this PR based on $BASEREF — retargeted to $PBASE; CI is already $CI on ${HEAD:0:8}, so no kick (a close/reopen would cancel it)"
+            MC_STACK=""; MC_STACK_BASE=""
+          elif mc_kick_ci "$SLUG" "$NUM" "$HEAD"; then
+            mc_attempt_has "cikick $KEY $HEAD" 2>/dev/null || mc_attempt_put "cikick $KEY $HEAD"
+            mc_log "$KEY parent ${PARURL:-?} merged but GitHub left this PR based on $BASEREF — retargeted to $PBASE and CI kicked (close/reopen); it classifies normally from here"
+            MC_STACK=""; MC_STACK_BASE=""
+          else
+            mc_log "$KEY parent ${PARURL:-?} merged but GitHub left this PR based on $BASEREF — retargeted to $PBASE; the CI kick FAILED and the retarget stands — the generic kick retries on a later tick"
+            MC_STACK=""; MC_STACK_BASE=""
+          fi
+          # THE LIST'S BASE IS STALE FROM HERE ON, AND THE READY ARM READS IT
+          # (BH-410). GitHub has this PR on $PBASE from this PATCH on; the
+          # BASEREF this worker read at the top of the tick still names the
+          # parent branch, and the merge guard's list-side check would refuse a
+          # PR that is now correctly based. It is refreshed AFTER the log lines
+          # above on purpose — every one of them reports the base the PR was
+          # moved OFF, and that is the fact an operator reading the line wants.
+          BASEREF="$PBASE"
+        else
+          MC_STACK_BASE="$BASEREF (parent ${PARURL:-?} MERGED; the retarget to $PBASE has not landed — observe-only tick, or the PATCH was refused)"
+        fi ;;
+      NONE)
+        # NO PARENT PR AT ALL (BH-3950). project-4 #1778 sat on agent/TK-2102 for
+        # 4.6 days: nothing ever opened a PR on that branch, this word had no
+        # arm, and the stuck detector paged the row every tick. NONE is a failed
+        # read OR an empty list, so the read's own answer (NANS, written by
+        # mc_stack_parent) decides, and only a VERIFIED `none` goes on — no
+        # second list read. Then the branch: gone (404), or still there,
+        # PR-less and past the STACKED_WAIT TTL, is a parent nothing will ever
+        # merge, and the child takes the CLOSED arm's orphan path below. Every
+        # unreadable answer keeps it waiting (D9/D11).
+        NWHY=""
+        if [ "$NANS" != none ]; then
+          mc_attempt_has "nonepunread $KEY $HEAD" 2>/dev/null || { mc_attempt_put "nonepunread $KEY $HEAD"
+            mc_log "$KEY no parent PR read for $BASEREF is UNVERIFIABLE (${NANS:-no answer recorded}) — keeps waiting"; }
+        else
+          BRC=0; mc_branch_exists "$SLUG" "$BASEREF" || BRC=$?
+          case "$BRC" in
+            1) NWHY=gone ;;
+            0)
+              NSINCE=$(mc_row_field "$KEY" 3); NTTL=$(mc_ttl STACKED_WAIT)
+              if [ "$(mc_row_field "$KEY" 2)" = STACKED_WAIT ] && [[ "$NSINCE" =~ ^[0-9]+$ ]] && [[ "$NTTL" =~ ^[0-9]+$ ]] \
+                 && [ $(( $(mc_now) - NSINCE )) -ge "$NTTL" ]; then
+                NWHY=ttl
+              else
+                MC_STACK_BASE="$BASEREF (no parent PR; branch present, inside the STACKED_WAIT TTL)"
+              fi ;;
+            *)
+              mc_attempt_has "nonebunread $KEY $HEAD" 2>/dev/null || { mc_attempt_put "nonebunread $KEY $HEAD"
+                mc_log "$KEY no PR on $BASEREF, but the branch read is UNVERIFIABLE (HTTP ${GH_REST_STATUS:-000}${GH_REST_REASON:+ $GH_REST_REASON}) — keeps waiting"; } ;;
+          esac
+        fi

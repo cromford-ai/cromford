@@ -1,0 +1,63 @@
+  # ---- a provenance hold consumes its head-bound re-review (2026-09-14) ----
+  # `provenance` is the one BLOCKED_HUMAN reason whose FIX this lane can buy:
+  # it says a non-primary runner authored the build's own APPROVE, and a
+  # claude read of the head sitting here answers it. Today that read was
+  # already being bought (#864 got one at 20:25Z) and then thrown away, because
+  # mc_classify returns `provenance` BEFORE the drift branch and the done-job
+  # handling lived only in the HEAD_MOVED arm. #864 and #867 were merged by
+  # hand; #865 and #866 were still parked when this was written.
+  #
+  # So the hold is resolved HERE, ahead of the classifier, in the same four
+  # answers the HEAD_MOVED arm gives (headbound_review). A consumed APPROVE
+  # sets MC_PROV_CLEARED and the row classifies normally on this very tick; a
+  # BLOCK parks it `head-not-reapproved`, which is a reason the resolver owns,
+  # rather than `provenance`, which nothing does.
+  #
+  # NOT for a stacked child or a PR the queue holds (neither may be reviewed
+  # or merged from here), and not for a verdict that is already BLOCK or
+  # CONTRADICTION or a tightened repo — mc_classify parks all three ahead of
+  # provenance, and buying a review to argue with them would be spend for
+  # nothing.
+  if mc_prov_held "$PROV" && [ -z "$MC_STACK" ] && [ "$MC_INQUEUE" = 0 ] && \
+     [ "$TIGHT" = 0 ] && [ "$VERDICT" != BLOCK ] && [ "$VERDICT" != CONTRADICTION ]; then
+    if mc_prov_cleared "$KEY" "$HEAD"; then
+      # The marker records exactly what the consume recorded: a claude
+      # head-bound review APPROVED this head. Every later tick reads it back
+      # as the same three facts, so the row does not oscillate.
+      MC_PROV_CLEARED=1; REVIEWED="$HEAD"; VERDICT=APPROVE
+    elif [ "$ACTIONS" = 1 ] && [ "$MSTATE" != DIRTY ] && [ "$MGABLE" != CONFLICTING ]; then
+      # BH-491: skip buying a review on a DIRTY head — no CI can run, the read would
+      # wait forever. The new head the rebase pushes gets its own review.
+      headbound_review provenance "$KEY" "$SLUG" "$NUM" "$P" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "$CI" || return 0
+    fi
+  fi
+  # ---- has OUR OWN read already refused this exact head? (2026-09-16) -----
+  # The one thing that still parks a `blocked@<this head>` on sight. The build's
+  # own head-bound gate no longer does: mc_classify sends that head to
+  # HEAD_MOVED, the arm below buys the detached Claude re-review, and only when
+  # THAT comes back BLOCK is `hbrefused <key> <head>` written (mc_hb_refuse, in
+  # headbound_review) and the row parked on head-not-reapproved for the resolver.
+  # A NAMED variable for the same reason MC_INQUEUE, MC_STACK and
+  # MC_PROV_CLEARED are: it is not a word gh's PR fields produce, it is a fact
+  # about (this PR, this head) that only the caller can look up.
+  # MC_REREVIEW_ON_MOVE=0 restores the immediate park and this read costs
+  # nothing, because the classifier stops consulting it.
+  MC_HB_REFUSED=0
+  mc_hb_refused "$KEY" "$HEAD" && MC_HB_REFUSED=1
+  # ...and has the lane already PARKED this exact head for want of a verdict?
+  # (BH-1019.) Same shape, same reason, the other stop: without it the park is
+  # undone on the next tick by the very head drift that produced it, and the
+  # spawn re-arms on a head nobody has pushed to (cromford#818).
+  mc_step diff-scan
+  # THE EPOCH IS READ HERE, FOR EVERY ROW (BH-1019 review, BLOCK 1). It used
+  # to be evaluated only inside the lanefail and spawn arms — which a PARKED row
+  # never reaches — so a lane recovery was invisible to exactly the rows waiting
+  # for it and the park never released. Read once per PR per tick: a file read,
+  # and a write only on a transition.
+  MC_HB_PARKED=0
+  mc_hb_parked "$KEY" "$HEAD" "$MC_LANE_EPOCH" && MC_HB_PARKED=1
+  # The scan and the pre-arm guards cost a gh diff / a workflow dispatch, so
+  # they run only when everything cheaper already says READY.
+  SCAN=0; PREARM=0; DIFF_UNREAD=0; DIFF_WHY=""; MC_HIT_NAMES=""; MC_NEEDS_HV=""; DF=""
+  PRE=$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" 0 0 "$PREV" "${HEADBOUND:--}" | cut -f1)
+  if [ "$PRE" = READY ]; then

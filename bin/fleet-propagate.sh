@@ -40,6 +40,9 @@
 #     `images=pending(<n>)`. The bake step MERGES .pools, .bake, .bake_sha and
 #     .bake_finished_at under locks/fleet-propagate-state.lock (fd 5). It never
 #     writes .last_sha. The final line keeps its shape and is still the last.
+#   * .pool_fail.<p> = {sha, at, reason}: the last failed bake of a pool, set by
+#     a failed bake, removed by an ok one, carried by every record write
+#     (fp_pool_fail; reader: bin/lib/millwright-read.sh).
 #   * Dirty marks go through fp_mark_dirty / fp_clear_dirty: an older run never
 #     removes or overwrites a newer run's mark.
 #
@@ -220,6 +223,14 @@ CHECKOUT="${HARNESS_CHECKOUT:-/root/harness-checkout}"
 [ -f "$H/fleet.conf" ] && export FLEET_CONF="${FLEET_CONF:-$H/fleet.conf}"
 LOG="$H/logs/fleet-propagate.log"
 STATE="$H/state/fleet-propagate.json"
+# fp_pool_fail — the record's .pool_fail now ({} when none). Every record
+# write below carries it, so an entry lives until an ok bake of that pool.
+fp_pool_fail() {
+  local v
+  v=$(jq -c '(.pool_fail // {}) | if type == "object" then . else {} end' "$STATE" 2>/dev/null) || v=""
+  [ -n "$v" ] || v='{}'
+  printf '%s' "$v"
+}
 WORK="$H/state/fleet-propagate"
 STAMP() { date -u '+%Y-%m-%d %H:%M:%SZ'; }
 
@@ -562,8 +573,8 @@ if [ "$MODE" != check ]; then
     # last_sha at LAST (not NEW) so the range this tick missed still propagates
     # once the checkout is back on main; nothing below the guard runs.
     T0=$(STAMP)
-    jq -n --arg s "$LAST" --arg t "$T0" --arg hub "$HUB" --arg hub_reason "$HUB_REASON" \
-      '{last_sha:$s,started_at:$t,finished_at:$t,hub:$hub,hub_reason:$hub_reason,cron:"not-needed",drain:false,boxes:{},pools:{},changed_paths:[]}' \
+    jq -n --arg s "$LAST" --arg t "$T0" --arg hub "$HUB" --arg hub_reason "$HUB_REASON" --argjson pf "$(fp_pool_fail)" \
+      '{last_sha:$s,started_at:$t,finished_at:$t,hub:$hub,hub_reason:$hub_reason,cron:"not-needed",drain:false,boxes:{},pools:{},changed_paths:[],pool_fail:$pf}' \
       > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
     echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} hub=$HUB ($HUB_REASON) — NOT propagated, no box or pool touched" >> "$LOG"
     "$H/bin/lane-alert.sh" --critical fleet-propagate \
@@ -845,8 +856,8 @@ if [ "$MODE" = check ]; then
 fi
 
 if [ "$HUB" = ok ] && [ -z "$MATCHED" ] && [ "$FORCE" = 0 ]; then
-  jq -n --arg s "$NEW" --arg t "$(STAMP)" \
-    '{last_sha:$s,started_at:$t,finished_at:$t,skipped:true,hub:"skipped",hub_reason:"",boxes:{},pools:{},changed_paths:[]}' \
+  jq -n --arg s "$NEW" --arg t "$(STAMP)" --argjson pf "$(fp_pool_fail)" \
+    '{last_sha:$s,started_at:$t,finished_at:$t,skipped:true,hub:"skipped",hub_reason:"",boxes:{},pools:{},changed_paths:[],pool_fail:$pf}' \
     > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
   echo "$(STAMP) ${LAST:0:7}..${NEW:0:7} touches no fleet path — skipped" >> "$LOG"
   exit 0
@@ -1124,7 +1135,8 @@ flock -w 30 5 || echo "$(STAMP) state lock busy for 30s — writing the sync rec
 jq -n --arg s "$NEW" --arg a "$STARTED" --arg b "$(STAMP)" --arg hub "$HUB" --arg cron "$CRON" --arg hub_reason "$HUB_REASON" \
       --argjson boxes "$BOXES_JSON" --argjson pools "$DEFER_JSON" --argjson paths "$PATHS_JSON" \
       --argjson drain "$DRAIN_JSON" --arg bake "$BAKE" --arg hub_pc "$HUB_PC" --arg hub_pending "$HUB_PENDING" \
-  '{last_sha:$s,started_at:$a,finished_at:$b,hub:$hub,hub_reason:$hub_reason,cron:$cron,drain:$drain,boxes:$boxes,pools:$pools,changed_paths:$paths,bake:$bake,hub_post_copy:$hub_pc,hub_pending:($hub_pending|split("\n")|map(select(length>0)))}' \
+      --argjson pf "$(fp_pool_fail)" \
+  '{last_sha:$s,started_at:$a,finished_at:$b,hub:$hub,hub_reason:$hub_reason,cron:$cron,drain:$drain,boxes:$boxes,pools:$pools,changed_paths:$paths,bake:$bake,hub_post_copy:$hub_pc,hub_pending:($hub_pending|split("\n")|map(select(length>0))),pool_fail:$pf}' \
   > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 exec 5>&-
 
@@ -1435,9 +1447,13 @@ if [ "$BAKE" = pending ]; then
   FINISHED=$(STAMP)
   exec 5>"$STATE_LOCK"
   if flock -w 30 5; then
-    jq --argjson pools "$POOLS_JSON" --arg s "$NEW" --arg t "$FINISHED" \
+    jq --argjson pools "$POOLS_JSON" --arg s "$NEW" --arg t "$FINISHED" --argjson ts "$(date -u +%s)" \
       '.pools=((.pools // {}) + $pools) | .bake="done" | .bake_sha=$s | .bake_finished_at=$t
-       | if .last_sha == $s then .finished_at=$t else . end' \
+       | if .last_sha == $s then .finished_at=$t else . end
+       | .pool_fail = reduce ($pools | to_entries[]) as $e ((.pool_fail // {});
+           if $e.value.status == "ok" then del(.[$e.key])
+           elif ($e.value.status | IN("debounced", "busy", "known-fail")) then .
+           else .[$e.key] = {sha: $s, at: $ts, reason: $e.value.reason} end)' \
       "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
   else
     echo "$(STAMP) state lock busy for 30s — the bake result for ${NEW:0:7} is not merged into $STATE (the line below has it)" >> "$LOG"

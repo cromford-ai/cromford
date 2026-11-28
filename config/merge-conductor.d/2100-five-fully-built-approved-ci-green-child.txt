@@ -1,0 +1,82 @@
+        # Five fully built, APPROVED, CI-green children were closed by hand in
+        # one six-hour window on 2026-09-15 for exactly this, about 50 minutes
+        # of paid build each. the operator's decision (2026-09-16): stacking stays on
+        # and the answer is to RETARGET, never to close. So:
+        #   retry OPEN    rebase the child onto the retry branch and move its
+        #                 base there; it waits on the new parent like any
+        #                 healthy stack.
+        #   retry MERGED  the work is in the project base now, so the child is
+        #                 rebased and retargeted onto that.
+        #   no retry      nothing has replaced the dead branch, so there is
+        #                 nothing to move the child ONTO — and that is where the
+        #                 orphan read takes over rather than where the child
+        #                 stops (see the arm below).
+        # `git rebase --onto <new> <old>` replays ONLY the child's own commits,
+        # so its diff stays one ticket's change (mc_restack). Close-for-rebuild
+        # survives as the fallback for a rebase that CONFLICTS, and then the
+        # comment names the files, because that is all a rebuild has to go on.
+        #
+        # AND `no retry` IS NO LONGER A DEAD END EITHER (2026-09-16): a parent
+        # closed with nothing to replace it gets its child's branch READ, and
+        # the child is either retargeted to the project base or handed to
+        # bin/blocked-resolver.sh. See that arm below. Kill flag
+        # MC_ORPHAN_RETARGET=0 restores the park.
+        MC_STACK=parent-closed; MC_STACK_BASE="$BASEREF (parent ${PARURL:-?})"
+        IFS=$'\t' read -r RSTATE RURL RBR <<<"$(mc_retry_pr "$SLUG" "$BASEREF")"
+        RNEWBASE=""
+        case "${RSTATE:-NONE}" in
+          OPEN)   RNEWBASE="$RBR" ;;
+          MERGED) RNEWBASE="$PBASE" ;;
+        esac
+        NOREPL="nothing live has replaced it (newest rebuild: ${RURL:--} ${RSTATE:-NONE}, probed to -r${MC_RETRY_MAX:-6})"
+        if [ -z "$RNEWBASE" ]; then
+          # NOTHING REPLACED THE DEAD BRANCH — AND THAT IS STILL AN EVENT
+          # (2026-09-16). The restack above answers the parent that was closed
+          # FOR A REBUILD, because the rebuild is a branch to move onto. The
+          # other ending has no replacement at all: bin/blocked-resolver.sh
+          # closed project-5 #1556 at 09:35Z to rebuild TK-1529 fresh, and its
+          # three children (#1586/#1585/#1587, all based on ticket/TK-1529) were
+          # parked `parent-closed` — a reason no lane owns — and stopped moving.
+          #
+          # So before parking, the BRANCH is read (mc_orphan_clean, read-only,
+          # local, no ref written):
+          #   clean    it carries nothing of the dead parent beyond the base and
+          #            merges into the base — retarget it to the base, exactly
+          #            like the MERGED arm above, kick included. It keeps its
+          #            number and its CI; its review is re-bought (BH-3950,
+          #            reversing 2026-09-16's "keeps its review"): the review it
+          #            has was of its diff against a branch that never merged,
+          #            so a head-bound re-review is owed before it can merge.
+          #            MC_RETARGET_REREVIEW=0 restores keeping it.
+          #   not      it still carries the parent's commits, its parent branch
+          #            is gone, or it conflicts — park it on a reason the
+          #            RESOLVER owns, which gets it a fix round on this same
+          #            branch and, if that fails, a fresh rebuild. Never a
+          #            close, and never a timer (the operator, 2026-09-16).
+          #   unknown  no checkout, no token, an old git — say so once per head
+          #            and leave the row exactly where it was.
+          if [ "$ACTIONS" = 1 ] && [ "${MC_ORPHAN_RETARGET:-1}" != 0 ]; then
+            OWHY=$(mc_orphan_clean "$SLUG" "$P" "$PBASE" "$BASEREF" "$HEAD"); ORC=$?
+            case "$ORC" in
+              0)
+                stack_orphan_retarget \
+                  "$KEY parent ${PARURL:-?} CLOSED without merging on $BASEREF and $NOREPL — $OWHY, so this PR was retargeted to $PBASE" \
+                  "$KEY parent ${PARURL:-?} CLOSED without merging on $BASEREF" \
+                  "$KEY parent ${PARURL:-?} CLOSED without merging and this PR is clean against $PBASE ($OWHY), but the retarget PATCH was refused — the park stands and the retarget is retried next tick" ;;
+              1)
+                MC_STACK=parent-closed-orphan
+                MC_STACK_BASE="$BASEREF (parent ${PARURL:-?} closed without merging; $OWHY)"
+                mc_attempt_has "orphan $KEY $HEAD" 2>/dev/null || { mc_attempt_put "orphan $KEY $HEAD"
+                  mc_log "$KEY BLOCKED_AGENT orphaned-child: the parent ${PARURL:-?} closed without merging on $BASEREF, $NOREPL, and this PR cannot be retargeted to $PBASE as it stands — $OWHY — handed to bin/blocked-resolver.sh (fix round on $BR, then a fresh rebuild); nothing closes it here: $URL"; } ;;
+              *)
+                mc_attempt_has "orphanunknown $KEY $HEAD" 2>/dev/null || { mc_attempt_put "orphanunknown $KEY $HEAD"
+                  mc_log "$KEY parent ${PARURL:-?} CLOSED without merging on $BASEREF and $NOREPL, but this tick could not judge $BR against $PBASE ($OWHY) — left parked on parent-closed and re-read on the next tick"; } ;;
+            esac
+          else
+            mc_log "$KEY parent ${PARURL:-?} closed unmerged on $BASEREF and $NOREPL — parked parent-closed"
+          fi
+        elif [ "$ACTIONS" != 1 ]; then
+          mc_log "$KEY would restack onto $RNEWBASE — parent ${PARURL:-?} closed unmerged on $BASEREF, rebuilt as ${RURL:-?} ($RSTATE) (observe mode: nothing written)"
+        elif mc_attempt_has "restack $KEY $HEAD" 2>/dev/null; then
+          mc_log "$KEY has already had its one restack attempt on ${HEAD:0:8} — nothing retried until the head moves"
+        else

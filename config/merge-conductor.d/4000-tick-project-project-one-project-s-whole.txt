@@ -1,0 +1,67 @@
+# tick_project <project> — one project's whole tick: the merge-queue settle
+# pass, the open-PR pass, the closed-unmerged pass. Run in its OWN background
+# subshell (see mc_tick_fanout in bin/lib/mc/tick-scope.sh).
+#
+# THE PROJECT-WIDE LOCK IS GONE (2026-09-15). It was one flock per project taken
+# with `flock -n` for the WHOLE tick, so a tick that was still working — a queue
+# settle, a rebase result, a slow list — cost its repo the next one to three
+# ticks ENTIRELY. Measured 21:00-23:00Z on 2026-09-15: 102 "an earlier conductor
+# tick still holds this project's lock — skipped" lines in two hours
+# (cromford 30, project-5 21, project-7 15, project-2 9,
+# project-8 9, project-4 6, the rest 3 each) — every one of them a whole
+# repo's PRs standing still because ONE of them was busy.
+#
+# What replaces it is two much smaller locks (mc_pr_lock, mc_merge_lock):
+# pr_worker holds PR N's own lock for PR N's work, and the merge call alone is
+# serialised per project. Two overlapping ticks of one project are therefore
+# fine by construction — they meet on a PR, not on the repo, and the one that
+# arrives second skips THAT PR and carries on with the others.
+#
+# The per-tick spend budgets moved with it: they were bash variables, which a
+# concurrent worker would inherit a copy of, and they are now flock'd counter
+# files keyed by tick id (mc_tick_budget_take).
+#
+# BH-5463 (2026-10-08) puts back a lock for FULL ticks only, outside this
+# function: wake-loop started a full tick every 12-15 min, each ran 536-1167 s,
+# and the overlap paid twice for one repo. Keyed ticks still meet a full tick
+# only on PR locks. The lock fd is never open in here.
+tick_project() {
+  local P="$1"
+  hb_tick merge-conductor "tick $P"
+  # >>> project hold
+  # IS THIS PROJECT HELD (BH-1465)? First thing after the heartbeat and before
+  # everything that costs: no lock, no mc_tick_budget_take, no use_token, no
+  # GitHub read, and no mc_tick_metrics — that last one rewrites
+  # tick-<p>.json.started_at, which the cadence hold below measures from, and a
+  # hold that stamped it would hold the project for ever (the same reason
+  # BH-1486's hold skips it). hb_tick has already fired, so the heartbeat and
+  # bin/lane-reaper.sh still see a live lane rather than a dead one.
+  if command -v lane_project_held >/dev/null 2>&1 && lane_project_held merge-conductor "$P"; then
+    mc_log "$(command -v pause_label >/dev/null 2>&1 && pause_label "$P")TICK $P held: flags/$LANE_HELD_FLAG is set — no lock, no budget and no GitHub read this tick (decision=held)"
+    return 0
+  fi
+  # <<< project hold
+  # >>> project on a machine (BH-6890)
+  # lane_placement.merge-conductor.<project> = fly: the whole project runs on
+  # a lane-run machine (bin/lib/mc/project-placement.sh). rc 0 = a row is
+  # enqueued or live, or the fallback is off: no PR work here. rc 2 = the hub
+  # takes a finished row back (failed or deferred) and runs the whole project
+  # once: a full tick runs on, a keyed tick starts a full tick of this one
+  # project under the BH-5463 full-tick lock (mc_proj_takeback_full). rc 4
+  # (BH-7635) = a deferred row that names its PRs: on a full or a keyed tick,
+  # the hub runs ONE keyed tick of only those PRs (mc_proj_takeback_keyed,
+  # MC_PROJ_TAKEBACK_KEYS) and nothing more for the project. rc 1 = today's
+  # tick. A machine is never gated; MC_PROJ_GATE=0 (set once by
+  # mc_tick_fanout from the settings cache) skips the gate when no project is placed fly.
+  if [ "${MC_PROJ_GATE:-1}" != 0 ] && command -v mc_fly_project_gate >/dev/null 2>&1; then
+    mc_fly_project_gate "$P"
+    case $? in
+      0) return 0 ;;
+      2) if [ -n "$MC_ONLY_KEYS" ] && command -v mc_proj_takeback_full >/dev/null 2>&1; then
+           mc_proj_takeback_full "$P"; return 0
+         fi ;;
+      4) if command -v mc_proj_takeback_keyed >/dev/null 2>&1; then
+           mc_proj_takeback_keyed "$P" "${MC_PROJ_TAKEBACK_KEYS:-}"; return 0
+         fi ;;
+    esac
+  fi

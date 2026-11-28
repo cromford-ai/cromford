@@ -25,3 +25,16 @@ REPORT:
 - a log file that grows with no rotation
 - a disk that is more than 80 percent full
 - a dependency that is more than one major version behind
+- a pool image bake that failed and has no ok bake since
+- a box whose /etc/resolv.conf is broken
+- a box whose /tmp is full
+- a box whose harness checkout lags main (a stale bin)
+
+## When I file a ticket for a bake or a box
+
+The ticket names the fix for its class.
+For a failed bake: run bin/fly-image-build.sh for that project, and read the reason word in the finding first.
+For a broken resolv.conf: run bin/dns-guard.sh on that box.
+For a full /tmp: clear the files the box's own housekeeping owns. I do not delete them myself.
+For a stale bin: run bin/harness-sync.sh on that box.
+At level act, the hourly lever lane re-runs a failed bake once. So a bake ticket is for a bake whose re-run is spent.

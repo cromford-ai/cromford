@@ -50,6 +50,8 @@ export const ARCHIVE_TABLES = {
   prompt_versions: { key: ["id"], time: "created_at" },
   // BH-8731: the ticket lifecycle ledger (routes/retention.d/bh-8731-ticket-events.js).
   ticket_events: { key: ["id"], time: "at" },
+  // BH-9554: the custody action log (routes/retention.d/bh-9554-custody.js).
+  custody_actions: { key: ["id"], time: "at" },
   ...BH9076_ARCHIVE_TABLES,
 };
 

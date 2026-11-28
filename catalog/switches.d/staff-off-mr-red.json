@@ -1,0 +1,1 @@
+{"name":"staff-off-mr-red","readers":["bin/lib/mr-red.sh"],"box_scoped":false,"what":"pauses Mr Red: bin/staff/mr-red.sh tick and work stop before any request of their own, so no collector, claim, action row, act or lane-run. bin/archie-overlook.sh sets staff-off-<agent> on a tripwire for a staff roster agent; a person clears it"}

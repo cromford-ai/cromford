@@ -65,6 +65,15 @@ scratch() {
   cp -r "$DIR/$FD" "$DIR/$PD" "$G/config/"
   cp -p "$DIR/$FP" "$G/$FP"; cp -p "$DIR/$PLAN" "$G/$PLAN"
   cp -p "$DIR/bin/fly-pool-build.sh" "$G/bin/fly-pool-build.sh"
+  # Every other registered split too (the merge conductor, BH-10226): --check
+  # with no path renders every row of the copied registry.
+  local r d
+  while IFS=$'\t' read -r r d _; do
+    case "$r" in ''|'#'*) continue ;; esac
+    [ -e "$G/$r" ] && continue
+    mkdir -p "$G/$(dirname "$r")" "$G/$(dirname "${d%/}")"
+    cp -p "$DIR/$r" "$G/$r"; cp -r "$DIR/${d%/}" "$G/${d%/}"
+  done < <(cat "$DIR"/catalog/splits.d/*.tsv)
 }
 G="$T/g"
 

@@ -1,0 +1,64 @@
+# NO STATE WITHOUT A NEXT MOVE, AND NOTHING SITS IN ONE FOR EVER (2026-09-15,
+# the operator). Two halves, both here:
+#   * THE RED LADDER. `WAIT_CI checks red once` had no next transition — the
+#     red-twice park counts reds on DIFFERENT heads — so project-5 #1045 went
+#     red at 02:04Z, was logged once, and was untouched for ten hours until it
+#     was closed by hand. A red now buys ONE `gh run rerun --failed` of its
+#     failing runs (mc_red_rerun, the flake path's mechanics for every red,
+#     flake forgiveness unchanged) and a head that is still red after it is
+#     RED_TWICE, which bin/blocked-resolver.sh owns like every BLOCKED_AGENT
+#     reason.
+#   * THE STUCK DETECTOR. Every state has a TTL (mc_ttl, MC_TTL_<STATE>), and a
+#     PR past its state's TTL raises ONE alert per (PR, state, head) naming what
+#     it is waiting on and takes the deterministic re-kick for that state where
+#     one exists (stuck_rekick). #1124/#1136 parked for hours with no owner and
+#     nothing said so.
+#
+# A REFUSED HEAD IS RE-REVIEWED BEFORE IT IS PARKED (2026-09-16, the operator's
+# project-5 acceleration, lever 2). A moved head the patch-id rebind and the
+# no-overlap rebind could not vouch for used to have two fates, and they were
+# decided by WHO HAD ALREADY SPOKEN. With no head-bound word it went HEAD_MOVED
+# and bought a detached Claude read; with the BUILD's own gate saying
+# `blocked@<this head>` it went straight to BLOCKED_HUMAN `head-not-reapproved`
+# and bin/blocked-resolver.sh owed it a FULL agent fix round — 61 of those on
+# project-5 on 2026-09-16, each one a lane, a branch and a park, for a refusal
+# authored by whatever runner that build's survival ladder happened to reach.
+#
+# Both fates are the same one now: BUY THE READ FIRST. The row stays HEAD_MOVED
+# while the detached head-bound re-review runs (the tick waits for nothing, as
+# ever), and what our own read answers decides it —
+#   APPROVE   the approval is rebound to the new head and the PR merges as
+#             normal, with no fix round and no park at all.
+#   BLOCK     NOW the BLOCKED_HUMAN `head-not-reapproved` hand-off, with the
+#             findings posted on the PR, exactly as it reads today. The refusal
+#             is recorded per (PR, head) (mc_hb_refuse), so every later tick of
+#             that head agrees and the row cannot oscillate.
+#   no answer a LANE failure, not a verdict: the job file is forgotten and ONE
+#             more read is bought (rereview_lane_retry), then today's
+#             `no-verdict` park. Nothing here is on a clock — the retry fires on
+#             the event of a dead job and the park on the event of a second one.
+# MC_REREVIEW_ON_MOVE=0 restores the immediate park, byte-for-byte. A DIRTY or
+# CONFLICTING head still parks on sight whatever the knob says: GitHub runs no
+# workflow on a head that cannot merge, so the CI-green debounce would defer
+# that read for ever (BH-491). docs/MERGE-CONDUCTOR.md section 4.
+#
+# FLAGS (docs section 8). Absent = observe-only: classify, rows, alerts, no
+# gh write, no push.
+#   flags/merge-conductor-actions   rebase DIRTY PRs, buy the head-bound re-review
+#   flags/merge-conductor-merge     merge READY PRs (needs -actions too)
+#   flags/merge-conductor-observe   pins observe-only even with the two above
+#   flags/automerge-disabled        the fleet kill switch: states+alerts only
+# Every gh call runs on a repo-scoped GitHub App installation token when this box
+# has one (bin/lib/gh-app-auth.sh), otherwise on the PAT bin/lib/gh-repo-token.sh
+# picks for the repo (project-5 and project-7 need the admin PAT); a repo no token
+# can see is an alert, never an empty loop. No token value ever reaches a log.
+set -uo pipefail
+# BH-7635: the PR keys of a take-back tick, set by mc_proj_gate
+# (bin/lib/mc/project-placement.sh); empty = the whole project.
+MC_PROJ_TAKEBACK_KEYS=""
+# BH-2303: every model call this lane makes names the lane, so its cost rows
+# carry lane_id and its LLM_* knobs (on/off, runners, daily cap) bind it alone.
+export AGENT_CALL_LANE=merge-conductor
+H="${HARNESS:-/root/harness}"
+. "${HARNESS:-/root/harness}/bin/lib/env-path.sh" 2>/dev/null || . "$(dirname "${BASH_SOURCE[0]}")/lib/env-path.sh" 2>/dev/null || harness_env_dir() { printf '%s\n' "${1:-${HARNESS:-/root/harness}}/env"; }; HENV=$(harness_env_dir "$H")
+export HARNESS="$H"

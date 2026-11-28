@@ -1,0 +1,61 @@
+# Both resets run: gh_auth_reset restores the GH_TOKEN this process started with
+# whichever of the two paths above exported something, and gh_repo_token_reset is
+# unchanged for the boxes that have no App configured.
+reset_token() {
+  command -v gh_default_auth_reset >/dev/null 2>&1 && gh_default_auth_reset
+  command -v gh_auth_reset >/dev/null 2>&1 && gh_auth_reset
+  command -v gh_repo_token_reset >/dev/null 2>&1 && gh_repo_token_reset
+  return 0
+}
+
+# ---- closed-unmerged discovery from the harness's OWN records (BH-1592) -----
+# The settle used to page the repo's raw closed list (3 x 100, author-filtered
+# on the client). On a repo where another author closes most PRs, that cap is
+# reached before any of ours: project-9 had 11 harness PRs in its last 300
+# closed, and one closed a little later than it was created was never seen.
+# So the candidates are PR numbers the harness already knows are its own — this
+# slug's non-terminal pr-state rows, its build records, and a closed-watch memo
+# written the first time the open list shows a PR (drafts and record-less
+# ticket/* PRs have neither of the other two) — and each is read by number,
+# through gh_rest and so with If-None-Match. At most GH_PR_LIST_REST_PAGES
+# reads a tick, which is what the walk it replaces cost.
+#
+# The memo is state/merge-conductor/closed-watch/<safe-slug>/<num>, one line:
+# state (open|closed|merged|gone) TAB last-probe epoch TAB url TAB branch.
+# It is a memo, never the record of a settle: the CLOSED row is. Losing it
+# costs one re-probe per candidate.
+MC_CLOSED_WATCH_DIR="$MC_STATE_DIR/closed-watch"
+
+# ---- a PR whose head LAGS its branch tip (BH-1529) --------------------------
+# 2026-09-22, #1480: the branch was pushed to b3bd7457 and GitHub's PR object
+# kept answering head 1cfafae7 for ~20 minutes. The pushed head had zero check
+# runs and nothing moved until the lead closed and reopened the PR by hand.
+# ci_absent_kick and the retarget kick both act on a head the PR object KNOWS
+# about; this is the shape where the PR object has not heard of the head at all.
+#
+# So each tick compares the list's head sha with the branch tip (REST branches
+# endpoint: ETag-cached, so an unchanged branch is a 304 that costs no counted
+# read, and memoised per tick). A mismatch older than MC_HEAD_LAG_MINS is closed
+# and reopened ONCE per tip — the attempt is in the PR's state file, so no tick
+# after it can loop — and a mismatch that outlives the reopen by the same window
+# pages ONCE. Fork PRs (their head ref names a branch in someone else's repo) and
+# a tip that cannot be read are skipped: unverifiable is never a mismatch.
+#
+# The state file, one line:
+#   <head> <tip> <since> <spent-at|0> <alerted 0|1> <outcome> <refused-closes> <held-at|0>
+# where outcome is `-` (not spent), `pending` (written before the kick, so a
+# kick that dies half-way still counts as spent), `reopened`, `closed` (LEFT
+# CLOSED, mc_kick_ci already paged) or `refused` (GitHub refused the close on
+# MC_KICK_REOPEN_TRIES ticks; nothing on GitHub changed), and held-at is when a
+# hold last kept this tip from its kick (cached for
+# MC_HEAD_LAG_HELD_RECHECK_MINS). Since BH-1564 that file is a read-through
+# cache: every change is also a `headlag` pr_attempts row (behind the
+# pr-state-rows flag), and a file that does not hold the tip reads the record
+# back from the rows — so a wiped state dir or a hub move cannot buy a tip a
+# second reopen or a second page. bin/lib/mc/rebase.sh lists the row facts.
+
+# pr_worker <tsv-row> — ONE open PR of the project ticking, from the classifier
+#   to the action, under that PR's own lock. Called with `&` from tick_project,
+#   so it is a subshell: nothing it assigns is visible to the tick or to the
+#   other PRs, which is precisely why the spend budgets are files now.
+#

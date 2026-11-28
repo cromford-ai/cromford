@@ -1,0 +1,65 @@
+      # THE PRE-QUEUE GATE (BH-4545): a head that fails its suites merged onto
+      # current main never enters the queue. Asked only on a tick that can
+      # enqueue, before the READY mark and the budget, so a hold or a park
+      # spends no merge unit and the tier-2 self-enqueue never sees the head.
+      # The park is a resolver hand-off: no label, no @mergifyio. An invariant
+      # red (BH-5439) also posts ONE evidence comment per (PR, head, main);
+      # every other red posts none.
+      # BH-5572: `rebase` is a reused green whose head conflicts with current
+      # main, so the row goes to NEEDS_REBASE. `defer` is a dispatch the gate
+      # skipped because the lead fence or the block gate below will refuse this
+      # head; the arm goes on so they refuse it as usual (`# >>> prequeue defer`).
+      mc_step prequeue
+      PQ_DEFER=0
+      if [ "$MERGES" = 1 ] && [ "${QUEUE:-0}" = 1 ] && [ "${PREV:-}" != QUEUED ] && command -v pq_gate >/dev/null 2>&1; then
+        pq_gate "$SLUG" "$NUM" "$URL" "$HEAD" "$PBASE" >/dev/null
+        case "$PQ_VERDICT" in
+          hold) mc_ready_why "$KEY" "$HEAD" prequeue-pending "$PQ_WHY"; return 0 ;;
+          # BH-9243: a stale schema stamp (PQ_RESTAMP_LAND=1) spawns its restamp
+          # rebase here, in this tick; NEEDS_REBASE would flap back to READY.
+          rebase) [ "$PQ_RESTAMP_LAND" = 1 ] && command -v mc_pq_restamp_rebase >/dev/null 2>&1 && mc_pq_restamp_rebase && return 0
+                  mc_transition "$KEY" NEEDS_REBASE "prequeue reuse: $PQ_WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+                  return 0 ;;
+          defer) PQ_DEFER=1 ;;
+          red)  PQ_WHY=""; [ -n "$PQ_PATH" ] && [ -r "$PQ_PATH.why" ] && PQ_WHY=$(head -n1 "$PQ_PATH.why")
+                PQ_RSN="the head merged onto current main fails them"
+                case "$PQ_WHY" in invariant:*) PQ_RSN="$PQ_WHY: $PQ_RSN" ;; esac
+                mc_attempt_has "pqred $KEY $HEAD $PQ_MAIN" 2>/dev/null \
+                  || { mc_attempt_put "pqred $KEY $HEAD $PQ_MAIN"
+                       mc_log "$KEY PREQUEUE_RED on ${HEAD:0:8}: $PQ_SUITES fail merged onto main ${PQ_MAIN:0:12} — not enqueued, handed to bin/blocked-resolver.sh: $URL"
+                       case "$PQ_WHY" in invariant:*)
+                         if [ -s "$PQ_PATH.fail" ] && command -v pq_red_comment >/dev/null 2>&1; then pq_red_comment "$SLUG" "$NUM" "$URL" "$HEAD" "$PQ_MAIN" "$PQ_PATH"
+                         else mc_log "$SLUG#$NUM prequeue: invariant red with no fail lines, no comment"; fi ;;
+                       esac; }
+                mc_transition "$KEY" BLOCKED_HUMAN "prequeue-red: $PQ_SUITES on main ${PQ_MAIN:0:12} — $PQ_RSN" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+                return 0 ;;
+        esac
+      fi
+      [ "$PQ_DEFER" = 1 ] || { command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" ready "$KEY" "$HEAD"; }
+      # A READY ROW THAT IS NOT ENQUEUED SAYS WHY (Lane D, 2026-09-24): this
+      # return was silent, so a READY row under a merges pause, observe mode or
+      # a missing merge flag read as the silent-skip shape. Once per (PR, head).
+      # Only when this tick TAKES actions: an observe or kill-switch tick is
+      # inert as a whole and says so once per tick already. The ready-why NOTE
+      # is written on every tick either way (2026-09-27, `logged`: Lane D's line
+      # below is this hold's one reason line, so mc_ready_why adds none).
+      if [ "$MERGES" != 1 ]; then
+        mc_ready_why "$KEY" "$HEAD" merges-off "merges are off this tick (mode ${MODE:-?} — a merges pause or no merge flag); it enqueues on the first tick they are on" logged
+        [ "$ACTIONS" = 1 ] && ! mc_attempt_has "readymergesoff $KEY $HEAD" 2>/dev/null && { mc_attempt_put "readymergesoff $KEY $HEAD"
+          mc_log "$KEY READY on ${HEAD:0:8} and NOT enqueued: merges are off this tick (mode $MODE — a merges pause or no merge flag); it enqueues on the first tick they are on"; }
+        return 0
+      fi
+      mc_tick_budget_left "$P" merge "$MERGE_BUDGET" || { budget_spent "$P" merge "$KEY"
+        mc_ready_why "$KEY" "$HEAD" budget "merge deferred — $P has spent this tick's merge budget" logged; return 0; }
+      # Re-read immediately before acting: the tick's own read may be minutes
+      # old and a human may have merged or pushed since.
+      # baseRefName RIDES ALONG ON IT (BH-410) — one more field on a call the arm
+      # already makes, so the guard costs no API call. This is the read that
+      # matters: the list's base column has been lost before (the collapsed tsv
+      # that hid every stacked child until #342) and a positional column added
+      # without a `-` placeholder would lose it again, and when it is lost the
+      # classifier's stacked-child test abstains and the row arrives here READY.
+      # `// ""` so a field GitHub answers null renders as EMPTY and the guard
+      # ABSTAINS on it; the bare template would print the word `null`, which is
+      # not a branch name and would refuse every merge on the fleet.
+      mc_step state-guard

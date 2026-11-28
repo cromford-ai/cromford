@@ -281,3 +281,25 @@ them, today) none of it can run at all.
 
 The log file does not exist on any box today, because nothing has ever called
 the shim on one.
+
+## 17. Could not read is not a fact (BH-9594)
+
+A REST answer is one of two kinds. A **decision** is a fact the lane may act
+on: 200, 304, 404 (the thing is absent), 422 and every other status. A
+**could-not-read** tells the lane nothing about the board: 401, 403, 429, 500,
+502, 503, 504 (gateway timeout), `000` (no status line: network, timeout), or `GH_REST_REASON`
+`rate-limit` or `auth-skipped` with any status.
+
+`bin/lib/could-not-read.sh` holds the rule. `cnr_classify_status <status>
+<reason>` classifies a `GH_REST_STATUS` / `GH_REST_REASON` pair, and
+`cnr_classify_text <reason>` classifies a free-text skip reason (a status
+number counts only after `gh`, `github`, `api` or `http`, never after `#` and
+never before ` days`). A lane that gets a could-not-read keeps its fail-closed
+reading and calls `cnr_record`, which records the read against the box (see
+`docs/STATE-STORES.md`, `box_read_failures`). The local refusals
+`quota-reserve`, `bad-args` and `cache-miss` are not recorded: they are not a
+fault of the box's credential.
+
+## BH-9555.5 pr_records first
+
+## BH-9555.6 lane budget

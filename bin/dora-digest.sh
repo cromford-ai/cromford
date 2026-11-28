@@ -108,6 +108,11 @@
 #                            review.tier_revert_min_n (BH-6969)
 #   DORA_REVIEW_COST_STAGE_RE=review  the cost-per-pr.csv stage_breakdown stages
 #                            counted as review cost (case-insensitive search)
+#   DORA_SUBAGENT_SHARE_DAYS=7  the trailing days of the subagent_share block
+#                            (BH-10209), whatever --window says; a positive
+#                            integer, anything else falls back to 7
+#   DORA_SUBAGENT_STAGES=execute  the fleet-cost.csv stages the subagent_share
+#                            block counts, joined with + (execute+fix)
 #   QUOTA_DIR=$H/state/quota
 # Kill switch: settings row switch.dora-digest-off.<box> or switch.dora-digest-off
 # (1 = off), read by lane_switch (bin/lib/lane-switch.sh); flags/dora-digest-off
@@ -212,6 +217,10 @@ case "$TEXT_MAX" in ''|*[!0-9]*)
   say "DORA_TEXT_MAX_CHARS='$TEXT_MAX' is not a number — using 3500"; TEXT_MAX=3500 ;; esac
 case "$WARN_PCT" in ''|*[!0-9]*)
   say "DORA_QUOTA_WARN_PCT='$WARN_PCT' is not a number — using 80"; WARN_PCT=80 ;; esac
+# BH-10209: the subagent_share window. 0 is not a window either.
+SA_DAYS="${DORA_SUBAGENT_SHARE_DAYS:-7}"
+case "$SA_DAYS" in ''|*[!0-9]*|0|00*)
+  say "DORA_SUBAGENT_SHARE_DAYS='$SA_DAYS' is not a number — using 7"; SA_DAYS=7 ;; esac
 
 # <n>h / <n>d -> hours. A window nobody can parse is refused rather than guessed:
 # every number below is labelled with it, and a mislabelled window is worse than
@@ -420,6 +429,7 @@ DORA_REVIEW_MIN_N="$RV_MIN_N" DORA_REVIEW_MIN_N_SRC="$RV_MIN_N_SRC" \
 DORA_REVIEW_ALERT_FILE="$WORK/review-alert" DORA_REVIEW_COST_STAGE_RE="${DORA_REVIEW_COST_STAGE_RE:-review}" \
 DORA_LANDING_DIR="$LANDING_DIR" DORA_LANDING_STATUS="$LANDING_STATUS" DORA_LANDING_WHY="$LANDING_WHY" \
 DORA_MAIN_RED_LABEL="$LANDING_LABEL" \
+DORA_SUBAGENT_SHARE_DAYS="$SA_DAYS" DORA_SUBAGENT_STAGES="${DORA_SUBAGENT_STAGES:-execute}" \
   python3 "$BIN/dora-digest.py"
 RC=$?
 if [ "$RC" -ne 0 ]; then

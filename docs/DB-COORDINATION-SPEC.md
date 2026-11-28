@@ -1703,7 +1703,7 @@ SQL) the decision is `applied` and the work is done in the stage.
 First line, exactly:
 
 ```
-<!-- hotfix-migrate-proof fp=<FP> decision=<applied|deferred-to-deploy|hold|flagged|no-path> -->
+<!-- hotfix-migrate-proof fp=<FP> decision=<applied|deferred-to-deploy|hold|flagged|no-path|retry|needs-operator> -->
 ```
 
 then plain text: the file names, the per-file result (the endpoint's own status

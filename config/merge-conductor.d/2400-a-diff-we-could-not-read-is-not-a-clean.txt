@@ -1,0 +1,70 @@
+    # A DIFF WE COULD NOT READ IS NOT A CLEAN DIFF (BH-784), the same rule
+    # bin/merge-sweep.sh's scan takes. An unread diff is an EMPTY file and the
+    # scan finds the zero hits an empty file always has — so without the flag
+    # below a 403/429 burst, the exact condition this change is about, would
+    # merge PRs the iron-law scan never ran on. SCAN stays 0 because 0 is the
+    # honest count of hits FOUND; what the flag carries is that nobody looked,
+    # and the READY arm refuses to act on it.
+    # AND THE DIFF READ IS MEMOISED ACROSS TICKS TOO (BH-1486): a READY PR
+    # nobody has pushed to is re-scanned every five minutes on bytes that did
+    # not move. Only a scan from a diff we actually READ is stored — a
+    # DIFF_UNREAD is the one thing that must never be remembered as "no hits",
+    # which is the BH-784 rule this arm exists for.
+    # The scan's fingerprint is NOT the plain attempts count: it also carries
+    # the scanner and the base tip (see scan_memo_fp). An unknown component
+    # leaves MC_SCAN_FP empty, and an empty fingerprint turns the memo off for
+    # this PR — read_memo_get and read_memo_put both refuse it — so the diff is
+    # read, which is what every unknown gets here.
+    MC_SCAN_FP=$(scan_memo_fp "$MC_MEMO_FP" "${MC_SCANNER_FP:-}" "${LAND_SHA:-}") || MC_SCAN_FP=""
+    SCANMEMO=$(read_memo_get scan "$KEY" "$HEAD" "$UPDATED" "$MC_SCAN_FP") || SCANMEMO=""
+    case "$SCANMEMO" in ''|*[!0-9]*) SCANMEMO="" ;; esac
+    if [ -n "$SCANMEMO" ]; then
+      SCAN="$SCANMEMO"; mc_count_inc "$P" scanmemo >/dev/null
+    else
+      DF=$(mktemp)
+      # >>> iron-law diff read (BH-5914; tests/mc-diff-local.bh-5914-test.sh drives this block)
+      # BH-5914: a diff too large for the API (HTTP 406) is read from a local
+      # clone instead, so a big PR is scanned rather than held forever.
+      mc_pr_diff_or_local "$URL" "$DF" "$SLUG" "$P" "$NUM" "${BASEREF:-$PBASE}" "$HEAD" 2>/dev/null; DRC=$?
+      if [ "$DRC" = 0 ]; then
+        SCAN=$(mc_iron_law_scan "$DF")
+        read_memo_put scan "$KEY" "$HEAD" "$UPDATED" "$MC_SCAN_FP" "$SCAN"
+      elif [ "$DRC" = 3 ]; then
+        # A PARTIAL SCAN IS NOT A CLEAN ONE (BH-5914 review). The local diff has
+        # file(s) with no text to scan (binary): what IS there is scanned so its
+        # hits are counted and named, but the head is held like an unread diff,
+        # and the count is never stored in the scan memo.
+        SCAN=$(mc_iron_law_scan "$DF"); DIFF_UNREAD=1
+        DIFF_WHY="iron-law: ${MC_DIFF_UNSCANNED-?} file(s) not scanned (no text in the local diff)"
+        mc_log "$KEY $DIFF_WHY on ${HEAD:0:8} — held, not stored as a clean scan"
+      else DIFF_UNREAD=1
+        mc_log "$KEY diff read UNVERIFIABLE (HTTP $(mc_rest_status)) — iron-law scan NOT run on ${HEAD:0:8}"
+      fi
+      if [ "${SCAN:-0}" -gt 0 ] 2>/dev/null; then MC_HIT_NAMES=$(mc_iron_law_names "$DF" | awk 'NR <= 10' | paste -sd';' -); fi
+      # <<< iron-law diff read
+    fi
+    # AN ACCEPT IN THE DB IS AN ACCEPT (BH-4157): mc_ila_accept, fragment bh-4157-ironlaw-accept.sh.
+    # The row is bound to the sha it judged: a push after the adjudication is
+    # code nobody adjudicated, and the scan must bite again.
+    command -v mc_ila_accept >/dev/null 2>&1 && mc_ila_accept
+    # THE SAME HITS ON A NEW HEAD ARE STILL ADJUDICATED (BH-4474). An ACCEPT
+    # also records each hit's fingerprint (rule, file, the flagged line's
+    # content hash) in the jobs ledger, so a push that never touched those lines
+    # (a merge of main, a renumber) does not buy the same ruling again. Every
+    # hit must be covered for THIS PR; a new or changed one, or anything
+    # ilc_covered cannot prove (outage, crashed check), parks exactly as before.
+    if [ "${SCAN:-0}" -gt 0 ] 2>/dev/null && [ "$DIFF_UNREAD" = 0 ] && command -v ilc_covered >/dev/null 2>&1; then
+      if [ -z "$DF" ] || [ ! -s "$DF" ]; then
+        [ -n "$DF" ] || DF=$(mktemp)
+        mc_pr_diff "$URL" "$DF" 2>/dev/null || : > "$DF"
+      fi
+      if [ -s "$DF" ]; then
+        ILC_OUT=$(ilc_covered "$URL" "$SCAN" "$DF"); ILC_RC=$?
+      else ILC_OUT="diff unreadable"; ILC_RC=2; fi
+      case "$ILC_RC" in
+        0) mc_log "$KEY iron-law: carried acceptance from $(printf '%s\n' "$ILC_OUT" | cut -c1-8 | paste -sd, -) — $SCAN hit(s) on ${HEAD:0:8} match an adjudicated set on this PR, not parking"
+           SCAN=0 ;;
+        1) mc_log "$KEY iron-law: carry refused on ${HEAD:0:8} — new or changed hit(s): $(printf '%s\n' "$ILC_OUT" | paste -sd';' -)" ;;
+        *) mc_log "$KEY iron-law: carry UNVERIFIABLE on ${HEAD:0:8} ($(printf '%s' "$ILC_OUT" | head -1)) — parking as before" ;;
+      esac
+    fi

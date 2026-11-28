@@ -1,0 +1,86 @@
+      # BH-10316: the guard below and the block gate after it read GitHub live,
+      # never the tick memo's answer from earlier in the tick (bin/lib/mc/tick-memo.sh).
+      command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$SLUG" "$NUM"
+      # >>> pre-merge state guard
+      # THIS READ IS REST, NEVER `gh pr view` (BH-994, 2026-09-19; the whole
+      # merge family followed it in BH-784). It is the read that actually stops
+      # a merge: with the App installation's GraphQL budget exhausted,
+      # `gh pr view` answered nothing, NOWST was EMPTY, and the test below
+      # refused every READY row on the fleet with "not merged: state changed
+      # under the tick ()" — an empty parenthesis that names no state at all,
+      # which is what the hub logged on 2026-09-19 while REST on the same token
+      # still had 3141/6600 points.
+      #
+      # THE THREE FIELDS ARE THE SAME THREE, IN THE SAME ORDER AND CASE.
+      # mc_pr_view normalises REST's `.state` (lower case, plus merged_at) into
+      # STATE, and `.head.sha` / `.base.ref` are REST's spelling of the other
+      # two. `// ""` keeps its job: a null renders EMPTY so the base guard below
+      # ABSTAINS rather than reading the word `null` as a branch.
+      # ONE NUANCE, in the log line only: GraphQL distinguishes MERGED from
+      # CLOSED and so does MC_REST_NORM (merged_at set = MERGED), so the log
+      # line still names the state it read. The GUARD is unchanged either way —
+      # it tests `= OPEN`, and neither spelling is OPEN.
+      # BH-1606 (#1624 review S1): the PR's AUTHOR rides on the same read, after a
+      # `|`, for the lead fence below — no second GET of the pull. Split off
+      # before the three words are read, so an answer without it (an older
+      # stub, a field GitHub left out) is the three words exactly as before and
+      # the fence reads the author itself.
+      NOWST=$(mc_pr_view "$URL" '"\(.STATE) \(.head.sha) \(.base.ref // "")|\(.user.login // "")"' 2>/dev/null); NOWRC=$?
+      NLOGIN=""
+      case "$NOWST" in *'|'*) NLOGIN="${NOWST##*|}"; NOWST="${NOWST%|*}" ;; esac
+      # A READ THAT COULD NOT ANSWER IS NOT A STATE CHANGE (BH-784). Before this
+      # it fell into the line below and logged "state changed under the tick ()",
+      # which is a claim about the PR made out of an empty answer — the #768
+      # sentence. Now the row is left exactly where it is, nothing is written,
+      # and the next tick asks again.
+      # 404 and 403 are not the same sentence: an ABSENT PR is a fact the next
+      # list read will act on by simply not offering the row, while a 403 is a
+      # question to ask again. Neither writes anything here.
+      if [ "$NOWRC" = 44 ]; then
+        mc_log "$KEY not merged this tick: PR ABSENT (HTTP 404) — row left as-is, the list read decides next tick"
+        mc_ready_why "$KEY" "$HEAD" gh-unread "not merged this tick: PR ABSENT (HTTP 404) — row left as-is, the list read decides next tick" logged; return 0
+      elif [ "$NOWRC" != 0 ]; then
+        NOWHTTP=$(mc_rest_status)
+        mc_log "$KEY not merged this tick: GitHub read UNVERIFIABLE (HTTP $NOWHTTP) — row left as-is"
+        mc_ready_why "$KEY" "$HEAD" gh-unread "not merged this tick: GitHub read UNVERIFIABLE (HTTP $NOWHTTP) — row left as-is" logged; return 0
+      fi
+      read -r NPS NHEAD NBASE <<<"$NOWST"
+      [ "$NPS" = OPEN ] && [ "$NHEAD" = "$HEAD" ] || { mc_log "$KEY not merged: state changed under the tick ($NOWST)"
+        mc_ready_why "$KEY" "$HEAD" state-moved "not merged: state changed under the tick ($NOWST)" logged; return 0; }
+      # <<< pre-merge state guard
+      # A read that FAILED never reaches the line above — the rc arms answered
+      # it first, and said which failure it was. A read that SUCCEEDED but is
+      # missing a field renders empty under `-q`, and an empty NPS is not OPEN:
+      # that merge stops, loudly, in the log, rather than landing unchecked.
+      if WRONGB=$(mc_base_guard "$PBASE" "" "${NBASE:-}"); then :; else
+        mc_log "$KEY MERGE_REFUSED: GitHub says this PR is based on $WRONGB, not $PBASE (the list said '${BASEREF:-unknown}') — a merge or enqueue would land it INTO that branch. Parked STACKED_WAIT; no gh write"
+        mc_transition "$KEY" STACKED_WAIT "merge refused: based on $WRONGB, not $PBASE — waiting for the parent to merge and retarget" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+        return 0
+      fi
+      # A LEAD PR MERGES ONLY ON A LEAD/HUMAN MERGE ROW ON THIS HEAD (BH-1606).
+      # to_lane_hold below exempts a lead PR, so it cannot stop the lead's own
+      # PR landing on this row's APPROVE. The fence is asked on $HEAD, the head
+      # the state guard above just re-read and the one mc_merge / mc_enqueue pin
+      # to, so the verdict and the merge are about one sha. It is asked AFTER
+      # MC_PROV_CLEARED (#1536) and does not read it: a provenance clearance —
+      # a claude head-bound re-review, or the provcleared marker — makes a row
+      # READY and is never a lead verdict. A lead row is read here, in
+      # vd_standing, and nowhere else. Unreadable holds this tick (rc 2) and
+      # feeds the lane-wide outage alert. AHEAD of the block gate, whose clean
+      # scan would otherwise restart that alert's count on every tick. No row,
+      # no budget, no alert for a lead PR simply waiting on its lead.
+      mc_step lead-fence
+      MC_LEAD_CLEARED=0
+      if command -v to_lane_lead_fence >/dev/null 2>&1; then
+        to_lane_lead_fence "$P" "$SLUG" "$NUM" "$HEAD" "$NLOGIN"; MC_LEAD_RC=$?
+        if [ "$MC_LEAD_RC" != 1 ]; then
+          if [ "$MC_LEAD_RC" = 0 ]; then
+            mc_ready_why "$KEY" "$HEAD" lead-held "lead PR: merges only on a lead/human MERGE row on this head (the MERGE_HELD lead-pr line names it)"
+          else
+            mc_ready_why "$KEY" "$HEAD" lead-unread "the lead fence could not be read this tick (${TO_LEAD_KIND:-unknown}) — asked again next tick"
+          fi
+          return 0
+        fi
+        MC_LEAD_CLEARED="$TO_LEAD_CLEARED"   # to_lane_lead_hold always sets it
+      fi
+      mc_step block-gate

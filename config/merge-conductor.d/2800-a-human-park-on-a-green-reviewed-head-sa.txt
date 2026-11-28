@@ -1,0 +1,65 @@
+  # A HUMAN PARK ON A GREEN, REVIEWED HEAD SAYS SO ON THE PR (BH-3456). The
+  # likely project-5#3414 path: a classifier park the self-enqueue then skips
+  # as gate `conductor`, silently. Every tick; mc_hold_comment dedupes.
+  if [ "$STATE" = BLOCKED_HUMAN ] && [ "$CI" = green ] && [ "$REVIEWED" = "$HEAD" ] && command -v mc_hold_comment >/dev/null 2>&1; then
+    case "$WHY" in tightened*) HCK=tightened ;; provenance*) HCK=provenance ;; iron-law*) HCK=iron-law ;; *) HCK="" ;; esac
+    [ -n "$HCK" ] && mc_hold_comment "$KEY" "$HEAD" "$HCK" "$WHY"
+  fi
+  # ---- a failed batch follows its patch (BH-8186) --------------------------
+  # A READY head that carries the patch of a head Mergify dequeued for a failed
+  # batch is not enqueued (mc_fbh_apply, the BH-8186 fragment).
+  if [ "$STATE" = READY ] && [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && command -v mc_fbh_apply >/dev/null 2>&1; then
+    mc_fbh_apply || true
+  fi
+  # ---- a stale Mergify dequeue on a freshly approved head (BH-3480) -------
+  # Our merge-queue label plus a row that was QUEUED last tick reads as "in the
+  # queue" (mc_mergify_inqueue) even after Mergify dequeued the PR, and a plain
+  # `@mergifyio queue` does nothing on a dequeued PR. sdq_arm reads Mergify's
+  # payload and requeues ONCE per head when a verdict newer than the dequeue
+  # binds it, on BH-636's requeue mark and tick budget. Only for a labelled PR
+  # Mergify is not visibly holding (no queued/checking label), so a queued PR
+  # costs no read. MC_QUEUE_REENTRY=0 switches it off with the BH-636 arm.
+  if [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && [ "${CRHOLD:-0}" = 0 ] \
+     && [ "${MC_QUEUE_REENTRY:-1}" != 0 ] && [ "${PSTATE:-}" = OPEN ] \
+     && { [ "$STATE" = READY ] || [ "$STATE" = QUEUED ]; } \
+     && grep -qE "(^|,)$MC_MERGIFY_LABEL(,|\$)" <<<"${RAWLBL:-}" \
+     && ! grep -qE '(^|,)(queued|checking)(,|$)' <<<"${RAWLBL:-}" \
+     && command -v sdq_arm >/dev/null 2>&1; then
+    sdq_arm
+  fi
+  # ---- a hotfix PR with migration SQL needs its proof first (BH-370.2) ----
+  # A migration PR is always tier 2 — bin/run-build.sh forces TIER=2 on any diff
+  # matching `migrations?/|\.sql$`, so its own gated tier-1 merge never lands one
+  # and this lane is the only merger left. THIS is therefore the gate that
+  # decides whether unapplied SQL reaches main. It sits
+  # above the `case "$STATE"` below, which is where both writes live — the
+  # merge-queue label add and the degraded `gh pr merge` — so a hotfix whose SQL
+  # nobody has applied cannot take either exit.
+  #
+  # It only READS. bin/hotfix-migrate.sh posts the proof; nothing here runs it.
+  # The hold is not sticky either: the row is re-derived every tick, so the tick
+  # after the stage posts an accepted proof takes the ordinary READY path.
+  if [ "$STATE" = READY ] && hotfix_pr_is "${RAWLBL:-}" "${REC:-}"; then
+    HP=$(mc_hotfix_proof "$SLUG" "$NUM" "${RAWLBL:-}" "${REC:-}" "${P:-}")
+    case "$HP" in
+      ok|n/a) ;;
+      # A hold is a decision a person made about this SQL, so it parks for a
+      # person: the reason is deliberately NOT in mc_resolver_owns, which is
+      # what makes it page at once and keeps bin/blocked-resolver.sh's rebuild
+      # ladder off a PR whose problem is a database.
+      hold) STATE=BLOCKED_HUMAN; WHY="hotfix-migration-hold: the stage held (flagged, quiet window, or no apply path); a human reads the proof comment" ;;
+      # missing, stale, and any word a later contract adds: wait and re-read.
+      *)    STATE=WAIT_CI; WHY="hotfix migration proof $HP: bin/hotfix-migrate.sh must post its proof on this head before the queue" ;;
+    esac
+    [ "$HP" = n/a ] || mc_log "$KEY hotfix migration proof on ${HEAD:0:8}: $HP"
+  fi
+  # ---- a head with NO workflow run at all gets ONE kick (2026-09-15) ------
+  # The catch-all under the retarget above, for every OTHER way a head ends
+  # up with no run: GitHub retargets a child by ITSELF when the parent's
+  # branch is deleted, and that base change fires no `pull_request` workflow
+  # either (default activity types opened|synchronize|reopened). project-5
+  # #913/#943/#1011/#1020/#1021 each carried a base_ref_changed event by
+  # cromford[bot] and zero runs on the head, sat in `WAIT_CI checks
+  # none` with the required check never reporting and the merge-queue label
+  # never added, and were unstuck one at a time by hand with a close/reopen.
+  #

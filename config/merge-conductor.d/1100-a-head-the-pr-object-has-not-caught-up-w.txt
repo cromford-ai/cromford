@@ -1,0 +1,60 @@
+  # A HEAD THE PR OBJECT HAS NOT CAUGHT UP WITH (BH-1529) is read before every
+  # other arm — they would all be judging a head GitHub is still reporting
+  # wrong — and AFTER the lane-epoch observation above, which must see every
+  # row before any return (BH-1019).
+  # BH-6810: head-lag logs STEP_START/STEP_END on every run (knob
+  # MC_STEP_LOG_HEAD_LAG, default 1, 0 = only when slow), so the next slow read
+  # shows where the time went. The flag is restored for the steps after it.
+  local mc_sl0="$MC_STEP_LOG"
+  [ "${MC_STEP_LOG_HEAD_LAG:-1}" = 0 ] || MC_STEP_LOG=1
+  mc_step head-lag
+  MC_STEP_LOG="$mc_sl0"
+  head_lag_check "$P" "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD" "$BR" "${CROSS:--}" && return 0
+  # A HAND-OFF TO THE RESOLVER IS STICKY (2026-09-14). This row is parked with
+  # bin/blocked-resolver.sh and nothing this tick can do moves it, so the tick
+  # does nothing at all with it: no verdict read, no merge-tree test, no rebase
+  # spawn, no re-review, no merge, and — the part that matters — no
+  # re-classification. Re-classifying is what flipped project-5 #759 out of
+  # BLOCKED_HUMAN 22 seconds after the hand-off and made it invisible to the
+  # lane that owns it. See mc_handoff_sticky for how the park ends.
+  # THE ONE WAY A PERSON ENDS A PARK (BH-292): the release label on the PR. The
+  # labels are already in this row (RAWLBL, off the same list read), so it costs
+  # nothing to ask, and a release is honoured ONCE per (PR, head) — a label that
+  # stays on the PR (observe mode never removes it, and a removal can fail) must
+  # not release every re-park on that head and recreate the oscillation.
+  # BH-9368: a red-twice / WAIT_MIGRATION park whose CI is green on a fresh
+  # read is released first (fragment bh-9368-park-ci-recheck).
+  command -v mc_park_ci_recheck >/dev/null 2>&1 && mc_park_ci_recheck
+  mc_step handoff-sticky
+  # A cleared review-block park (BH-9260, fragment bh-9260) classifies now.
+  if mc_handoff_sticky "$KEY" "$HEAD" && ! { command -v mc_rbp_sticky_release >/dev/null 2>&1 && mc_rbp_sticky_release; }; then
+    # A PARK ON OUR OWN RE-REVIEW BLOCK IS RE-CHECKED FOR A NEWER HUMAN MERGE
+    # (BH-3814). A lead/human MERGE row on this exact head, newer than the
+    # BLOCK, ends the park: the approval is rebound and the resolver's fix round
+    # is never bought. rc 1 and rc 2 (verdicts unreadable) keep the park.
+    case "$(mc_row_field "$KEY" 7)" in head-not-reapproved*)
+      if [ "$ACTIONS" = 1 ] && command -v mc_hv_override >/dev/null 2>&1 && mc_hv_override "$KEY" "$HEAD"; then
+        mc_attempt_put "hvoverride $KEY $HEAD"
+        mc_attempt_clear hbrefused "$KEY" "$HEAD"
+        mc_handoff_release "$KEY" human-verdict
+        mc_log "$KEY human verdict #$MC_HV_ID overrides re-review BLOCK on ${HEAD:0:8} — park released, approval rebound; bin/blocked-resolver.sh starts no fix round: $URL"
+        hb_approve_bind moved "$KEY" "$SLUG" "$P" "$NUM" "$URL" "$REC" "$HEAD" "$MSTATE" \
+          "$(printf '_Merge conductor: human verdict #%s (%s, %s) on %s is newer than the re-review BLOCK of this head, so it stands. Park released, approval rebound, no agent fix round._' "$MC_HV_ID" "$MC_HV_VERDICT" "$MC_HV_AT" "${HEAD:0:12}")" \
+          "" "human verdict #$MC_HV_ID overrides re-review BLOCK on ${HEAD:0:8}; reclassify next tick"
+        return 0
+      fi ;;
+    esac
+    if mc_handoff_human_release "$KEY" "$HEAD" "${RAWLBL:-}" "$URL"; then
+      mc_log "$KEY RELEASED by the $MC_RELEASE_LABEL label on ${HEAD:0:8} ($(mc_row_field "$KEY" 7)) — this head's rebase attempt is forgotten and the PR classifies again now; the label works once per head, so a fresh park on this same head stays parked until the head moves: $URL"
+      # Observe mode releases the park locally (classifying a row is not a
+      # GitHub write) and leaves the label where the person put it.
+      if [ "$ACTIONS" = 1 ]; then
+        mc_label_remove "$URL" "$MC_RELEASE_LABEL" \
+          || mc_log "$KEY the $MC_RELEASE_LABEL label could not be removed — take it off by hand (gh pr edit $URL --remove-label $MC_RELEASE_LABEL) or it releases the next park on the next head: $URL"  # gh-guard-allow: prose in a log line, not a call
+      fi
+      # ...and fall through: this PR classifies exactly like any un-parked one.
+    else
+      mc_handoff_sticky_log "$KEY" "$URL" "$HEAD"
+      return 0
+    fi
+  fi

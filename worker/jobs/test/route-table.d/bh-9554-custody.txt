@@ -1,0 +1,13 @@
+# BH-9554 (custody C0): the ticket custody table. A lane claims a ticket
+# (owner + lease), renews, releases it to the custodian, or sets the next
+# action and deadline; settle ends the row; act is the custodian's CAS step.
+# due, row and gaps are the reads. Bearer-gated.
+POST /api/custody/claim
+POST /api/custody/renew
+POST /api/custody/release
+POST /api/custody/next
+POST /api/custody/settle
+POST /api/custody/act
+GET /api/custody/due
+GET /api/custody/row
+GET /api/custody/gaps

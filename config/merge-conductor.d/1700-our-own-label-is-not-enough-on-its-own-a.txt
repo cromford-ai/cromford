@@ -1,0 +1,74 @@
+        # Our own label is NOT enough on its own — after an rc-3 enqueue it is
+        # deliberately left on a PR the queue never took. mc_mergify_inqueue
+        # wants Mergify's own label, or a row already QUEUED, or a check run;
+        # and an ejected head is never queued whatever the label says.
+        mc_mergify_inqueue "$SLUG" "$KEY" "$URL" "$HEAD" "${RAWLBL:-}" "${PREV:-}" && MC_INQUEUE=1
+        # LABELLED BEFORE THE GATE EXISTED (BH-3806). A row the enqueue labelled
+        # while BH-3683 withheld its status (#3798, #3799) wins here as QUEUED and
+        # never reaches the BH-3777 gate below. With no lead-verdict success on
+        # the head and la_decide rc 1, our label comes off once per (PR, head)
+        # and the row falls through to the gate, which makes it
+        # NEEDS_HUMAN_VERDICT in this same tick.
+        [ "$MC_INQUEUE" = 1 ] && mc_nhv_unqueue "$SLUG" "$KEY" "$URL" "$NUM" "$HEAD" "${RAWLBL:-}" "$MERGES" && MC_INQUEUE=0 ;;
+    esac
+  fi
+  # ---- the NATIVE queue's ejection witness now lives here (BH-784) ----------
+  # `isInMergeQueue` is GraphQL-only and has no REST field, so mc_queue_state —
+  # which the settle pass above uses — answers `unknown` for a native-queue PR
+  # and can no longer tell "still queued" from "ejected". It must not guess: an
+  # ejection invented out of a rate limit costs a PR its place in the queue.
+  # The LIST still carries the field (bin/lib/gh-pr-list.sh, untouched by the
+  # REST conversion), and here it is: a row THIS conductor put in QUEUED whose
+  # list row says the queue no longer holds it has been ejected. Recorded in the
+  # same place the settle pass recorded it, so the strike count and the
+  # "an ejected head is not READY" guard below keep working unchanged — without
+  # it an ejected PR would classify READY and be re-enqueued every five minutes,
+  # which is the forever-loop the guard exists to stop.
+  if [ "$PROVIDER" = github ] && [ "$INQ_IN_LIST" = 1 ] && [ "$MC_INQUEUE" = 0 ] \
+     && [ "${PREV:-}" = QUEUED ] && [ "${PSTATE:-}" = OPEN ]; then
+    mc_attempt_has "ejected $KEY $HEAD" 2>/dev/null \
+      || mc_attempt_put "ejected $KEY $HEAD"
+  fi
+  # ---- stacked child PRs (2026-09-14) -------------------------------------
+  # This PR's base is not $PBASE, so it was built on another PR's branch. Ask
+  # what that parent is doing, and answer in one of three ways:
+  #   MERGED  GitHub should have retargeted this PR to $PBASE when the parent's
+  #           branch was deleted. On a repo that keeps merged branches it did
+  #           not, so we do it ourselves — a gh WRITE, so only in actions mode;
+  #           in observe mode the row simply stays STACKED_WAIT and says why.
+  #   CLOSED  the parent was closed WITHOUT merging (a resolver rebuild, or a
+  #           hand close): the base branch is dead. Since 2026-09-16 that is an
+  #           EVENT with two answers rather than a park — the branch is read,
+  #           and a child that carries nothing of the dead parent is retargeted
+  #           to $PBASE like the MERGED case, while one that does is handed to
+  #           bin/blocked-resolver.sh. See the arm itself.
+  #   else    keep waiting (this is the ordinary, healthy case).
+  # Kill flag: STACKED_BUILDS=0 / flags/stacked-builds-off stops stacked builds
+  # being CREATED; this classification is about PRs that already exist and is
+  # deliberately not behind it — parking a PR whose base is a feature branch is
+  # correct whether or not this fleet still opens them.
+  # ---- a parent the conductor merged owes this child a restack (BH-1670) ----
+  # conductor_settle follows each child at once unless the child's worker (this
+  # one) held the PR lock; then the owed follow waits here, and this worker
+  # already holds the lock. A settle that pushed this child EARLIER IN THIS TICK
+  # left a `.pushed` marker: this worker's list row predates that push, so every
+  # field above is stale. Both cases end the worker for this tick; the next tick
+  # classifies the new head on the new base from fresh reads (CI included).
+  SFMARK="$(mc_stack_pending_file "$SLUG" "$NUM").pushed"
+  if [ -s "$SFMARK" ]; then
+    IFS=$'\t' read -r SFTICK SFNEW < "$SFMARK"
+    rm -f "$SFMARK"
+    if [ "$SFTICK" = "${MC_TICK_ID:-notick}" ] && [ "$SFNEW" != "$HEAD" ]; then
+      mc_log "$KEY was restacked to ${SFNEW:0:8} earlier this tick; this row read ${HEAD:0:8} — classified on the next tick"
+      return 0
+    fi
+  fi
+  if SFPEND=$(mc_stack_pending_get "$SLUG" "$NUM"); then
+    IFS=$'\t' read -r SFPN SFPURL SFPBR SFPHEAD SFBASE _ _ <<<"$SFPEND"
+    SFOUT=$(mc_stack_follow "$P" "$SLUG" "$NUM" "$SFPN" "$SFPURL" "$SFPBR" "$SFPHEAD" "$SFBASE"); SFRC=$?
+    rm -f "$SFMARK"
+    case "$SFRC" in
+      0) [ -n "$SFOUT" ] && return 0 ;;
+      1) return 0 ;;
+    esac
+  fi

@@ -1,0 +1,3 @@
+[
+    {"path": "fly-pool-alloc", "class": "box-local", "authority": "the pool fleet slot grant (BH-7877)", "note": "state/fly-pool-alloc/<project>: one line `fleet-alloc v1 <epoch> <target> <grant> <weight> <queued> <live> <fleet>`, rewritten whole (tmp + mv) by pa_tick (bin/lib/pool-alloc.sh) on every bin/fly-pool-tick.sh run while the row lane.fly-pool.fleet_slots is set, and read by pa_clamp in bin/fly-pool.sh (config/fly-pool.d/3550-fleet-alloc-clamp.sh). One file per pool project; a project that leaves the pool loses its file on the next tick, and every file goes when the row is unset. Carried read-only in the fly-pool lane snapshot (catalog/lane-run-inputs.d/fly-pool.ro). Losing it means no clamp for one tick: the pool spawns as before the allocator."}
+]

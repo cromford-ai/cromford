@@ -31,16 +31,29 @@
 # every tick, also when the feed is empty, so the latch always clears.
 #
 # OBSERVE FIRST (item 7). Unless STALE_REAPER_ACT is exactly 1, the lane writes
-# one `OBSERVE would reap` line per dead row and changes nothing.
+# one `OBSERVE would reap` line per dead row and changes nothing. With the PR
+# step on (STALE_REAPER_OPEN_PR=1, the default), the line ends ` pr=<outcome>`:
+# what act mode would do about the build's branch (`would-open <br> ...`,
+# `none ...`, `unknown ...`), from at most 3 GitHub REST reads per dead row.
+# STALE_REAPER_OPEN_PR=0 is ` pr=off` and no GitHub read.
 #
 # ACT, per dead row, up to STALE_REAPER_MAX per tick (the rest are DEFERRED to
 # the next tick, never dropped):
 #   a. close each running `build` job row of (project, key) that was quiet for
 #      the whole window: job_update <id> status=failed. That frees its claim
 #      (GET /api/file-claims counts a claim only while its job is running).
-#   b. POST /api/builds/close {"closed":[bkey]}: the console sets stage=stale.
-#   c. only after ok:true: one alert line and one REAPED log line. A refused
-#      POST is one REFUSED line; one alert per tick names the refused count.
+#   b. the PR step (item 5, bin/lib/stale-build-pr.sh, in a subshell): when
+#      the newest ticket/<key>[-rN] branch holds finished commits, no PR in any
+#      state, and a tip newer than the build start, open the PR from it through
+#      the item 3 path (pool rebase when behind main, lead review, pr_created
+#      beat). An opened PR skips step c: the pr_created beat moves the console
+#      row, and one alert and one REAPED line name the PR.
+#   c. POST /api/builds/close {"closed":[bkey]}: the console sets stage=stale.
+#   d. only after ok:true: one alert line and one REAPED log line (both carry
+#      the PR step's outcome). A refused POST is one REFUSED line; one alert
+#      per tick names the refused count.
+# The PR step never changes the exit code. PR steps per tick are capped at
+# STALE_REAPER_MAX in both modes.
 #
 # EXIT CODES. The cron line sends output to /dev/null; the alert line is the
 # operator signal. The rc is for a human or a test running it directly.
@@ -136,6 +149,38 @@ jq -e '.builds | type == "array"' >/dev/null 2>&1 <<<"$FEED" \
 # shellcheck source=/dev/null
 [ -r "$HARNESS/bin/jobs-client.sh" ] && . "$HARNESS/bin/jobs-client.sh"
 command -v queue_list >/dev/null 2>&1 || refuse "no bin/jobs-client.sh on this box (queue evidence unknown)"
+# The PR step (item 5). A static source line, so the scratch closure finds it.
+# shellcheck source=bin/lib/stale-build-pr.sh
+. "$HARNESS/bin/lib/stale-build-pr.sh" 2>/dev/null
+OPEN_PR=0; [ "${STALE_REAPER_OPEN_PR:-1}" = 1 ] && OPEN_PR=1   # row STALE_REAPER_OPEN_PR, default 1; only 1 is on
+if [ "$OPEN_PR" = 1 ] && ! command -v sbp_open >/dev/null 2>&1; then
+  OPEN_PR=0; say "PR step off: bin/lib/stale-build-pr.sh is missing"
+fi
+SBP_TIMEOUT_S="$HTTP_T"   # each GitHub read of the PR step, row STALE_REAPER_HTTP_TIMEOUT_S
+PRSTEPS=0
+
+# pr_step <observe|act> <bkey> <project> <key> <stage> — prints the PR step's
+# one outcome line. ALWAYS a subshell: the ppr globals, the GitHub token and an
+# `exit` inside a sourced lib stay out of this script. TMPDIR=$WORK, so the
+# step's scratch dir goes with the EXIT trap.
+pr_step() {
+  local out="$WORK/sbp.out"
+  : > "$out"
+  if [ "$1" = act ]; then
+    ( TMPDIR="$WORK"; sbp_open "$3" "$4" "$5" "$2" "$out" ) </dev/null >/dev/null 2>&1
+  else
+    ( TMPDIR="$WORK"; sbp_decide "$3" "$4" "$2"; printf '%s\n' "$SBP_OUT" > "$out" ) </dev/null >/dev/null 2>&1
+  fi
+  if [ -s "$out" ]; then head -n 1 "$out" | tr -d '\r'; else printf 'failed the PR step ended with no outcome\n'; fi
+}
+# pr_outcome <observe|act> <bkey> <project> <key> <stage> — the capped PR step.
+# Sets PR in THIS shell (a $(...) would lose the PRSTEPS count).
+pr_outcome() {
+  if [ "$OPEN_PR" != 1 ]; then PR=off; return 0; fi
+  if [ "$PRSTEPS" -ge "$MAX" ]; then PR='not-read (over STALE_REAPER_MAX)'; return 0; fi
+  PRSTEPS=$((PRSTEPS+1))
+  PR=$(pr_step "$@")
+}
 
 # 2a. build_queue rows, queued and claimed. A full page may be truncated.
 for QST in queued claimed; do
@@ -213,7 +258,7 @@ if [ -f "$LATCH" ]; then rm -f "$LATCH"; say "evidence readable again, latch rem
 
 # ---------- 3. candidates and the subtraction ----------
 NOW="$ARG_NOW"; case "$NOW" in ''|*[!0-9]*) NOW=$(date +%s) ;; esac   # --now, else the real clock
-CAND=0; HELD=0; SKIPPED=0; REAPED=0; DEFERRED=0; REFUSED=0
+CAND=0; HELD=0; SKIPPED=0; REAPED=0; DEFERRED=0; REFUSED=0; OPENED=0
 SURV="$WORK/survivors"; : > "$SURV"
 # Unit separator, not tab: a tab IFS collapses an empty field (an empty bkey
 # would shift every field after it).
@@ -247,7 +292,8 @@ done < <(jq -r '.builds[] | [(.bkey // ""), (.project // ""), (.ticket_key // ""
 while IFS=$'\t' read -r BKEY PROJ TKEY STAGE UPD AGE_M; do
   [ -n "$BKEY" ] || continue
   if [ "$ACT" != 1 ]; then
-    say "OBSERVE would reap $BKEY project=$PROJ ticket=$TKEY stage=$STAGE updated_at=$UPD age_min=$AGE_M"
+    pr_outcome observe "$BKEY" "$PROJ" "$TKEY" "$STAGE"
+    say "OBSERVE would reap $BKEY project=$PROJ ticket=$TKEY stage=$STAGE updated_at=$UPD age_min=$AGE_M pr=$PR"
     continue
   fi
   if [ $((REAPED + REFUSED)) -ge "$MAX" ]; then   # the cap counts close POSTs
@@ -264,18 +310,31 @@ while IFS=$'\t' read -r BKEY PROJ TKEY STAGE UPD AGE_M; do
     fi
   done < "$STALEJ"
   CLAIM="${CLAIM:-claim none}"
-  # b. mark dead
+  # b. the PR step. Opened: no close POST (the pr_created beat moves the row;
+  #    a close would set it stale), one alert, one REAPED line.
+  pr_outcome act "$BKEY" "$PROJ" "$TKEY" "$STAGE"
+  case "$PR" in
+    "opened "*)
+      PURL="${PR#opened }"; PURL="${PURL%% *}"
+      PRB=$(sed -n 's/.* \(rebase=[^ ]*\).*/\1/p' <<<"$PR"); PRV=$(sed -n 's/.* \(review=[^ ]*\).*/\1/p' <<<"$PR")
+      alert --id "stale-build-reaper.$PROJ.$TKEY" --project "$PROJ" \
+        "[stale-build-reaper] $PROJ $TKEY: build $BKEY died in $STAGE (${AGE_M} min quiet); opened $PURL from its branch (${PRB:-rebase=none}, ${PRV:-review=none}); $CLAIM"
+      say "REAPED $BKEY project=$PROJ ticket=$TKEY was_stage=$STAGE updated_at=$UPD age_min=$AGE_M $CLAIM pr=$PR"
+      REAPED=$((REAPED+1)); OPENED=$((OPENED+1))
+      continue ;;
+  esac
+  # c. mark dead
   BODY=$(jq -nc --arg b "$BKEY" '{closed: [$b]}')
   RESP=$(curl -sS --max-time "$HTTP_T" -X POST -H "Authorization: Bearer $HARNESS_SECRET" \
     -H 'Content-Type: application/json' -d "$BODY" "$CONSOLE_URL/api/builds/close" 2>&1)
   if jq -e '.ok == true' >/dev/null 2>&1 <<<"$RESP"; then
-    # c. one alert, only after the console said ok
+    # d. one alert, only after the console said ok
     alert --id "stale-build-reaper.$PROJ.$TKEY" --project "$PROJ" \
-      "[stale-build-reaper] $PROJ $TKEY: build $BKEY marked dead (stage=$STAGE, ${AGE_M} min quiet; no queue row, no machine, no fresh job, no fresh build dir; $CLAIM)"
-    say "REAPED $BKEY project=$PROJ ticket=$TKEY was_stage=$STAGE updated_at=$UPD age_min=$AGE_M $CLAIM"
+      "[stale-build-reaper] $PROJ $TKEY: build $BKEY marked dead (stage=$STAGE, ${AGE_M} min quiet; no queue row, no machine, no fresh job, no fresh build dir; $CLAIM); PR: $PR"
+    say "REAPED $BKEY project=$PROJ ticket=$TKEY was_stage=$STAGE updated_at=$UPD age_min=$AGE_M $CLAIM pr=$PR"
     REAPED=$((REAPED+1))
   else
-    say "REFUSED $BKEY ($PROJ $TKEY) by the console: $(head -c 200 <<<"$RESP" | tr '\n' ' ') ($CLAIM)"
+    say "REFUSED $BKEY ($PROJ $TKEY) by the console: $(head -c 200 <<<"$RESP" | tr '\n' ' ') ($CLAIM) pr=$PR"
     REFUSED=$((REFUSED+1))
   fi
 done < "$SURV"
@@ -305,5 +364,5 @@ fi
 
 [ "$REFUSED" -eq 0 ] || alert --id stale-build-reaper.refused \
   "[stale-build-reaper] the console refused $REFUSED build close(s) this tick — see logs/stale-build-reaper.log"
-say "mode=$MODE candidates=$CAND held=$HELD skipped=$SKIPPED reaped=$REAPED deferred=$DEFERRED refused=$REFUSED"
+say "mode=$MODE candidates=$CAND held=$HELD skipped=$SKIPPED reaped=$REAPED deferred=$DEFERRED refused=$REFUSED opened=$OPENED"
 exit 0

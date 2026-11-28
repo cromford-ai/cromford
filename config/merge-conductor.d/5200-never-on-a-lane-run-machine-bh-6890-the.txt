@@ -1,0 +1,70 @@
+  # Never on a lane-run machine (BH-6890): the lane is detached, clones and
+  # runs for minutes, and the machine stops when its run ends.
+  if [ -z "$MC_ONLY_KEYS" ] && [ "${MC_ON_MACHINE:-}" != 1 ] && [ "$ACTIONS" = 1 ] && [ -x "$H/bin/batch-resolve.sh" ] && mc_batch_should_spawn "$P" "${BATCHABLE:-0}"; then
+    setsid nohup env PATH="$MC_RR_PATH" HARNESS="$H" bash -c \
+      '"$1/bin/batch-resolve.sh" "$2"' _ "$H" "$P" >/dev/null 2>&1 9>&- 8>&- 7>&- &
+    if mc_batch_train_open "$P"; then
+      mc_log "$P: bin/batch-resolve.sh spawned — a batch train of this project is still in flight and only that lane settles it (batchable=$BATCHABLE)"
+    else
+      mc_log "$P: $BATCHABLE approved PRs are READY or waiting on a rebase — bin/batch-resolve.sh spawned to look for a merge-time train"
+    fi
+  fi
+
+  # ---- recently closed, not merged (the #319 shape) ----------------------------
+  if [ "$MC_BUDGET_LOW" != 1 ]; then
+    # ---- recently closed, not merged (the #319 shape) ----------------------------
+    # Read from the harness's own PR records, never the repo's raw closed list
+    # (BH-1592): see closed_unmerged_rows.
+    CLOSED=$(closed_unmerged_rows "$P" "$SLUG" "$OPEN_NUMS")
+    mapfile -t CROWS <<<"$CLOSED"
+    if [ -n "$MC_ONLY_KEYS" ]; then
+      # A keyed tick settles only its keys; every other candidate the probe just
+      # memo'd closed goes back to "never probed", so the cron tick settles it.
+      local _kc=() _c; for _c in "${CROWS[@]}"; do
+        [ -n "$_c" ] || continue
+        if mc_only_has "$SLUG#${_c%%$'\t'*}"; then _kc+=("$_c"); else closed_watch_reoffer "$SLUG" "${_c%%$'\t'*}"; fi
+      done; CROWS=("${_kc[@]}")
+    fi
+    for ROW in "${CROWS[@]}"; do
+      IFS=$'\t' read -r NUM URL BR CAT <<<"$ROW"
+      [ -n "$NUM" ] || continue
+      KEY="$SLUG#$NUM"
+      [ "$(mc_row_field "$KEY" 2)" = CLOSED ] && continue
+      # Under that PR's lock as well: the alert below fires once per PR and is
+      # guarded by the row, so two overlapping ticks reading the same freshly
+      # closed PR must not both get past the guard. The fd is replaced on each
+      # iteration and closed after the loop.
+      exec 9>"$(mc_pr_lock "$P" "$NUM")"
+      flock -n 9 || { exec 9>&-
+        closed_watch_reoffer "$SLUG" "$NUM"
+        mc_log "$KEY: another conductor worker holds this PR's lock — its closed-unmerged settle waits for the next tick"; continue; }
+      REC=$(mc_record_for "$URL" || true)
+      mc_is_harness_pr "$BR" "$REC" || continue
+      if ticket_open "$P" "$SLUG" "$REC" "$BR"; then WHY="closed-unmerged-issue-open"; else WHY="closed without merging"; fi
+      mc_transition "$KEY" CLOSED "$WHY" "-" "-" "$URL" "-" "-" "$REC" >/dev/null
+      [ "$WHY" = closed-unmerged-issue-open ] && mc_alert "$KEY" CLOSED "closed $CAT without merging and its issue is still open — rebuild or close the issue: $URL"
+      exec 9>&-
+    done
+    exec 9>&-
+    command -v mc_offlist_settle_tick >/dev/null 2>&1 && mc_offlist_settle_tick "$SLUG" "$OPEN_NUMS"
+    command -v mc_ca_close_tick >/dev/null 2>&1 && mc_ca_close_tick "$SLUG" "$OPEN_NUMS"
+    # A memo nothing has touched in 30 days goes (D21); losing one costs a re-probe.
+    find "$MC_CLOSED_WATCH_DIR" -type f -mtime +30 -delete 2>/dev/null
+  fi
+  command -v mc_parks_tick_end >/dev/null 2>&1 && mc_parks_tick_end "$P" "$SLUG" "$T0"
+  reset_token
+  mc_tick_metrics "$P" "$T0"
+  return 0
+}
+
+# ---- the fleet, one background tick per project -----------------------------
+# ONE cron line and ONE entry script, as before; what changed is that the
+# projects no longer queue behind each other. Shared state stays safe because
+# the only file the tick rewrites whole (pr-state.tsv) is written under its own
+# flock in mc_row_put, and everything else it writes is append-only or keyed by
+# project, repo or PR.
+# THE MAIN-RED DETECTOR (BH-636) and the fleet-sweeps decision (BH-6890) live
+# in mc_tick_main_red (bin/lib/mc/tick-scope.sh). It sets MC_FLEET_SWEEPS, which
+# mc_tick_fanout and the keyed exit below read.
+mc_tick_main_red
+

@@ -20,6 +20,7 @@ import {
 import { mapMergeQueueDelivery } from "../lib/merge-queue-intake.js";
 import { recordGithubGate } from "../lib/pr-gate-intake.js";
 import { recordPrRecord, prRecordStmts } from "../lib/pr-record-intake.js";
+import { recordIssueRecord, issueRecordStmts } from "../lib/issue-record-intake.js";
 import {
   bodyCapOf, readCappedBody, receiverKnobs, selfSenderOf, selfAppOf, deadLetterStmt,
 } from "../lib/webhook-receiver.js";
@@ -168,6 +169,8 @@ async function githubDelivery(env, t, event, raw, deliveryId) {
   // delivery wakeOf drops). Never throws.
   const inBatch = wakes && Boolean(deliveryId);
   if (!inBatch) await recordPrRecord(env, t, event, payload);
+  // BH-10199: the issue record (issues, issue_comment, and a PR's issue fields) the same way.
+  if (!inBatch) await recordIssueRecord(env, t, event, payload);
   // BH-5667: a Mergify batch draft's rows ride the same batch as the
   // delivery row. null for every other delivery, with no read.
   const mq = (await mapMergeQueueDelivery(env.DB, event, payload, { repo, at: t })) || [];
@@ -191,6 +194,7 @@ async function githubDelivery(env, t, event, raw, deliveryId) {
     await ensureColumns(env, "webhook_deliveries");
     claim = crypto.randomUUID();
     records = await prRecordStmts(env, t, event, payload, { deliveryId, claim });
+    records = [...records, ...await issueRecordStmts(env, t, event, payload, { deliveryId, claim })];
   }
   return json(200, await recordWake(env, t, {
     vendor: "github", deliveryId, repo, kind: w.kind, key: w.key, ev, keepS, extra: mq, claim, records,

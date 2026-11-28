@@ -1,0 +1,83 @@
+    # THE BLOCK NAMES THE RULE AND THE LINES (BH-9696): ilr_rules, fragment bh-9696-ironlaw-rules.sh.
+    MC_HIT_RULES=""; command -v ilr_rules >/dev/null 2>&1 && [ "${SCAN:-0}" -gt 0 ] 2>/dev/null && [ -n "$DF" ] && [ -s "$DF" ] && MC_HIT_RULES=$(ilr_rules "$DF")
+    [ -n "$DF" ] && rm -f "$DF"; DF=""
+    # >>> merge verdict publish (BH-5914; tests/mc-diff-local.bh-5914-test.sh drives this block)
+    # THE VERDICT LEAVES THIS PROCESS (BH-5914). Other lanes merge too (the
+    # per-box bin/merge-queue.sh merged project-6 #27 twenty seconds after this
+    # arm refused it), so the answer for this head goes to the jobs ledger,
+    # where their gate reads it.
+    # Hits first, so a held head always names what the scan found.
+    if [ "${SCAN:-0}" -gt 0 ] 2>/dev/null; then
+      mc_merge_verdict_put "$KEY" "$HEAD" hold "iron-law: $SCAN hit(s) on this head${MC_HIT_NAMES:+: $MC_HIT_NAMES}${DIFF_WHY:+; $DIFF_WHY}"
+    elif [ "$DIFF_UNREAD" = 1 ]; then
+      mc_merge_verdict_put "$KEY" "$HEAD" hold "${DIFF_WHY:-diff-unread: the diff read was UNVERIFIABLE (HTTP $(mc_rest_status)), iron-law scan NOT run}"
+    else
+      mc_merge_verdict_put "$KEY" "$HEAD" clear "iron-law scan clean"
+    fi
+    # <<< merge verdict publish
+    # The pre-arm guards are SKIPPED on a merge-queue repo: the queue's own
+    # merge_group run builds main + the entries ahead + this PR and runs the
+    # required check on exactly that tree, which is the same question asked
+    # better — and pre-arm's rc-3 "main moved since" path is unsatisfiable in
+    # a busy repo, the tail this whole change exists to kill. The script stays
+    # exactly as it is for every repo without the rule.
+    if [ "${SCAN:-0}" -eq 0 ] && [ -x "$H/bin/pre-arm-guards.sh" ] && [ "$MODE" = merge ] && [ "$QUEUE" = 0 ]; then
+      "$H/bin/pre-arm-guards.sh" "$SLUG" "$NUM" >/dev/null 2>>"$MC_LOG"; PA_RC=$?
+      [ "$PA_RC" -eq 1 ] && PREARM=1
+      [ "$PA_RC" -eq 3 ] && { mc_log "$KEY pre-arm guards not green (rc 3) — retry next tick"; EFF=UNKNOWN; }
+    fi
+    # A WITHHELD LEAD-VERDICT IS NOT READY (BH-3777). On a Mergify repo the
+    # READY arm labels the PR and asks the queue, and a head BH-3683 withholds
+    # the status on then waits on queue_conditions for a person while every
+    # surface says QUEUED. Asked here, before the classify below, so such a row
+    # is NEEDS_HUMAN_VERDICT and never reaches the arm; re-asked every tick, so a
+    # human verdict on the head makes the next tick READY and it enqueues.
+    if [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && [ "${SCAN:-0}" -eq 0 ] 2>/dev/null && [ "$DIFF_UNREAD" = 0 ]; then
+      mc_nhv_gate "$SLUG" "$NUM" "$HEAD" "$ACTIONS"
+    fi
+  fi
+  mc_step classify
+  IFS=$'\t' read -r STATE WHY <<<"$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" "$SCAN" "$PREARM" "$PREV" "${HEADBOUND:--}")"
+  command -v ilr_why >/dev/null 2>&1 && WHY=$(ilr_why "$STATE" "$WHY" "${MC_HIT_RULES:-}" "$(mc_ilr_max)")
+  # MIGRATION NOT IN PROD IS NOT READY (BH-7785): mc_mig_hold, fragment bh-7785-migration-hold.sh
+  command -v mc_mig_hold >/dev/null 2>&1 && mc_mig_hold
+  # A BUILDER APPROVE ALONE IS NOT READY ON A LEAD-REQUIRED REPO (BH-8890): fragment bh-8890-lead-required.sh
+  command -v mc_lead_req_hold >/dev/null 2>&1 && mc_lead_req_hold
+  # NO QUEUE WHILE A LEAD REVIEW OF THIS HEAD IS PENDING (BH-9823): fragment bh-9823-one-verdict.sh
+  command -v mc_ovh_ready_hold >/dev/null 2>&1 && mc_ovh_ready_hold
+  # ---- the merge-queue re-entry arm (BH-636) ------------------------------
+  # A head the merge queue already EJECTED is not READY, whatever the PR's own
+  # checks say: the merge_group build tested main+this and went red, and
+  # re-enqueueing the same sha just burns another build and ejects again.
+  #
+  # EXCEPT WHEN THE BATCH, NOT THE PR, WAS THE PROBLEM. Mergify ejects the
+  # culprit of a batch, and a batch goes red for a sibling's flake or a killed
+  # runner as readily as for this diff. Those PRs sat in `WAIT_CI queue-ejected`
+  # with every required check green at their head, an approval bound to that
+  # exact sha and a clean merge state — waiting for a push that was never
+  # coming, because nothing else in the harness pushes to a finished PR.
+  #
+  # SO IT GOES BACK IN, ONCE PER (PR, sha), and every clause below is a guard
+  # somebody would otherwise pay for:
+  #   READY               = approval bound to THIS head, checks green at THIS
+  #                         head (mc_ci_state reads actions/runs?head_sha=<full
+  #                         sha>, never the PR's rollup) — re-asserted by name
+  #                         so a future reordering of mc_classify cannot turn
+  #                         into a requeue over a red or unreviewed head
+  #   CLEAN + MERGEABLE   GitHub's own word for "required contexts green and
+  #                         this merges" — BLOCKED/DIRTY/UNKNOWN never requeue
+  #   requeued mark       one per (PR, sha). A head already put back WAITS; it
+  #                         is never put back twice, and — the load-bearing half
+  #                         — it never falls through to the READY arm's degraded
+  #                         direct merge either. This sweep does not merge.
+  #   EJN >= 2            ejected again after a requeue: the resolver's, on the
+  #                         reason it already owns
+  #   tick cap            MC_REQUEUE_CAP per project per tick, deferred and
+  #                         re-offered next tick, never dropped
+  # A red head keeps today's answer and is NAMED once (DEQUEUED_RED) so a reader
+  # can tell "left alone on purpose" from "nothing looked at it".
+  if [ "$QUEUE" = 1 ] && [ "$CI" = red ] && mc_ejection_live "$KEY" "$HEAD" \
+     && ! mc_attempt_has "dequeuedred $KEY $HEAD" 2>/dev/null; then
+    mc_attempt_put "dequeuedred $KEY $HEAD"
+    mc_log "DEQUEUED_RED $KEY $HEAD — ejected from the queue and a required check is genuinely failed at this head; left alone, the red ladder owns it"
+  fi

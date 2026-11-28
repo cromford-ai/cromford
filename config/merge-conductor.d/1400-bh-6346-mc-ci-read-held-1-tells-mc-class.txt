@@ -1,0 +1,70 @@
+  # BH-6346: MC_CI_READ_HELD=1 tells mc_classify this tick's CI read was cut
+  # at its bound, so the row stays WAIT_CI and is never READY on an unread CI.
+  MC_CI_READ_HELD=0
+  if CIMEMO=$(read_memo_get ci "$KEY" "$HEAD" "$UPDATED" "$MC_MEMO_FP"); then
+    CI="$CIMEMO"; mc_count_inc "$P" cimemo >/dev/null
+  else
+    # BH-6346: a plain command into a tick file, never $( ), so mc_ci_state's
+    # MC_CI_READ_HELD reaches this worker. A read cut by MC_CI_READ_TIMEOUT_S is
+    # `unavailable`, as any failed read, plus one CI_READ_HELD line per
+    # (PR, head): no alert, no Sentry, no memo, the next tick reads again.
+    CIF="$MC_TICK_DIR/ci-state.$BASHPID"; mkdir -p "$MC_TICK_DIR" 2>/dev/null
+    mc_ci_state "$SLUG" "$HEAD" "$NUM" > "$CIF" 2>/dev/null || true
+    CI=$(cat "$CIF" 2>/dev/null); rm -f "$CIF"; [ -n "$CI" ] || CI=unavailable
+    [ "$CI" = unavailable ] || MC_CI_READ_HELD=0
+    if [ "$MC_CI_READ_HELD" = 1 ] && ! mc_attempt_has "cireadheld $KEY $HEAD"; then
+      mc_attempt_put "cireadheld $KEY $HEAD"
+      mc_log "$KEY CI_READ_HELD reason=read-timeout on ${HEAD:0:8} (bound $(mc_ci_read_timeout_s)s): the actions/runs read passed its bound; the row stays WAIT_CI this tick, no alert, the next tick reads again"
+    fi
+    case "$CI" in green|red) read_memo_put ci "$KEY" "$HEAD" "$UPDATED" "$MC_MEMO_FP" "$CI" ;; esac
+  fi
+  # A non-required check does not hold a PR (BH-8012): pending/red becomes
+  # green when every required check is green (fragment bh-8012-required-ci).
+  MC_CI_REQUIRED_GREEN=0; command -v mc_cireq_apply >/dev/null 2>&1 && mc_cireq_apply
+  # BH-9368: a red whose failing required checks are all migration gates is
+  # WAIT_MIGRATION, with no rerun and no strike (fragment bh-9368-migration-gate).
+  MC_CI_MIGRATION_GATE=""; MC_CI_MIGRATION_SQL=""; command -v mc_miggate_apply >/dev/null 2>&1 && mc_miggate_apply
+  # BH-8417: the head commit time for the STUCK clock (kept across memo hits)
+  # and the hung-CI arm (fragment bh-8417-head-clock).
+  MC_CI_HUNG=""; command -v mc_ci_hung_check >/dev/null 2>&1 && { mc_headclock_note "$KEY" "$HEAD"; mc_ci_hung_check; }
+  # The strike ledger: one `red <key> <head>` per DIFFERENT head of this PR
+  # that went red, not the same red seen on two ticks. Since BH-1671 it is a
+  # record only — mc_classify no longer parks on it (`red-ci-twice` counted
+  # across heads); a red head is judged on its own ladder below.
+  # A red whose failing tests are ALL known flakes (the ci_flakes ledger:
+  # >= FLAKY_MIN distinct heads each inside the window) buys ONE
+  # `gh run rerun --failed` per (PR, head) INSTEAD of a strike — see
+  # mc_flake_rerun, docs/FLAKY-TESTS.md. The STRIKE bookkeeping is unchanged:
+  # every other red still records its strike on sight, and the second red on
+  # the same head still counts.
+  #
+  # AND EVERY RED NOW CLIMBS A LADDER (2026-09-15, project-5 #1045). The line
+  # above forgives a flake; this one gives a REAL red its next transition,
+  # which `checks red once` never had — #1045 went red at 02:04Z, was logged
+  # once, and was still in WAIT_CI ten hours later because the strike counter
+  # only moves when a NEW head goes red. mc_red_rung is where this (PR, head)
+  # stands: 0 nothing tried, 1 one rerun of the failed jobs in flight,
+  # 2 red again on the same head — and 2 is RED_TWICE, which the resolver owns.
+  # A push resets the ladder by construction: the mark is keyed on the head.
+  REDS=0; MC_RED_RUNG=0
+  # RED ON TWO CONSECUTIVE SETTLED HEADS (BH-7241) skips the one-rerun rung:
+  # MC_RED_CONSEC is what mc_classify reads to answer RED_TWICE at once. The
+  # logic is bin/lib/mc-stuck-timers.sh's; without it the variable stays empty.
+  MC_RED_CONSEC=""
+  case "$CI" in green|red) command -v mst_cihead_put >/dev/null 2>&1 && mst_cihead_put "$KEY" "$HEAD" "$CI" ;; esac
+  if [ "$CI" = red ] && [ -z "${MC_CI_MIGRATION_GATE:-}" ]; then
+    MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+    [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && command -v mst_red_known >/dev/null 2>&1 && MC_RED_CONSEC=$(mst_red_known "$KEY" "$HEAD")
+    if [ -z "$MC_RED_CONSEC" ] && [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && mc_flake_rerun "$SLUG" "$KEY" "$HEAD"; then
+      MC_RED_RUNG=1
+    else
+      mc_attempt_has "red $KEY $HEAD" || mc_attempt_put "red $KEY $HEAD"; REDS=$(mc_attempt_count red "$KEY")
+      if [ "$ACTIONS" = 1 ] && [ "$MC_RED_RUNG" = 0 ] && [ -z "$MC_RED_CONSEC" ]; then
+        command -v mst_red_consec >/dev/null 2>&1 && MC_RED_CONSEC=$(mst_red_consec "$SLUG" "$KEY" "$HEAD")
+        if [ -z "$MC_RED_CONSEC" ]; then
+          mc_red_rerun "$SLUG" "$KEY" "$HEAD" || true
+          MC_RED_RUNG=$(mc_red_rung "$KEY" "$HEAD")
+        fi
+      fi
+    fi
+  fi

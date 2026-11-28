@@ -1,0 +1,66 @@
+  # FOUR GUARDS, and each of them is load-bearing:
+  #   MERGEABLE   `ci=none` is the NORMAL state of a CONFLICTING PR — GitHub
+  #               runs no workflow on a tree it cannot merge (see the DIRTY
+  #               clause in mc_classify) — so kicking one would close and
+  #               reopen every conflicted PR on the fleet for nothing.
+  #   on $PBASE   a PR still based on a feature branch is STACKED_WAIT and
+  #               belongs to the block above, not to this one.
+  #   >= 10m      the clock is the ROW's age in WAIT_CI, not the age of this
+  #               reason: mc_transition keeps `since` across a reason-only
+  #               change, so a PR that waited on a pending run and then lost
+  #               it carries that older `since` here. Below the window, a head
+  #               with no run is a run that has not APPEARED yet; above it, it
+  #               is a run that is never coming. Note `checks none` also
+  #               covers a head whose every run was CANCELLED (mc_ci_state
+  #               answers `none` for that too) — a kick is the right answer
+  #               there as well, and it is why this is not written as "no run
+  #               has ever existed".
+  #   once        recorded as `cikick <key> <head>` in MC_ATTEMPTS, beside
+  #               `rebase`, `red` and `ejected`, so a second tick over the
+  #               same head never closes the PR again.
+  # ACTIONS only, like every other gh write in this lane; observe mode says
+  # what it would have done and writes nothing.
+  #   not flaky   a head whose runs were CANCELLED reads `checks flake` now and
+  #               is RE-RUN by the ladder above; closing and reopening it as
+  #               well would be two builds of the same tree.
+  #   identity    BH-800, and the reason it is guarded HERE too: `checks none`
+  #               wins over the BLOCKED arm in mc_classify, so an identity-blocked
+  #               head GitHub has also never run a workflow on lands in this
+  #               block — and stuck_rekick already refuses this exact
+  #               close/reopen for this exact reason: it cannot add a push
+  #               permission. The IDENTITY_NOT_PERMITTED line above is this
+  #               tick's record and the ALERT is the action. The escalate arm
+  #               below needs a `cikick` row this never writes, so it stays quiet
+  #               too.
+  # CI NEVER STARTED (BH-7241): every state, its own first-seen clock, one
+  # workflow_dispatch and one alert per head. It writes cikick on a dispatch, so
+  # the close/reopen below stays quiet on a head it already re-triggered.
+  command -v mst_ci_nostart >/dev/null 2>&1 && mst_ci_nostart "$P" "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD" \
+    "$CI" "${MC_FLAKE:-}" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$WHY" "$BR"
+  if [ "$STATE" = WAIT_CI ] && [ "$WHY" = "checks none" ] && [ "$MGABLE" = MERGEABLE ] && \
+     [ "${MC_IDENTITY_BLOCKED:-0}" != 1 ] && \
+     [ "$MSTATE" != DIRTY ] && [ -z "${MC_FLAKE:-}" ] && \
+     [ -n "$PBASE" ] && [ -n "${BASEREF:-}" ] && [ "$BASEREF" = "$PBASE" ] && \
+     [ "$PREV" = WAIT_CI ] && ! mc_attempt_has "cikick $KEY $HEAD" 2>/dev/null; then
+    KSINCE=$(mc_row_field "$KEY" 3); KAGE=$(( $(mc_now) - ${KSINCE:-0} ))
+    if [ -n "$KSINCE" ] && [ "$KAGE" -ge "${MC_CI_KICK_MIN_AGE:-600}" ]; then
+      if [ "$ACTIONS" != 1 ]; then
+        mc_log "$KEY would kick CI on ${HEAD:0:8} — $((KAGE/60))m in WAIT_CI on $PBASE with no workflow run at all (observe mode: nothing written)"
+      elif mc_kick_ci "$SLUG" "$NUM" "$HEAD"; then
+        mc_attempt_put "cikick $KEY $HEAD"
+        mc_log "$KEY CI kicked (close/reopen) on ${HEAD:0:8} — $((KAGE/60))m in WAIT_CI on $PBASE and GitHub has never run a workflow on this head"
+      else
+        mc_log "$KEY CI kick FAILED on ${HEAD:0:8} — the row stays WAIT_CI and a later tick tries again"
+      fi
+    fi
+  # AND THE KICK THAT DID NOT WORK GETS AN OWNER (BH-636). The block above fires
+  # once per head and then has nothing left to do, which is how #1827/#1645 sat
+  # in WAIT_CI after their kick with no further line ever written. A head that is
+  # still run-less at twice the window is a workflow that is never going to fire
+  # for it, and that is a sentence, not a wait.
+  elif [ "$STATE" = WAIT_CI ] && [ "$WHY" = "checks none" ] && [ "$MGABLE" = MERGEABLE ] && \
+       [ "$MSTATE" != DIRTY ] && [ -z "${MC_FLAKE:-}" ] && \
+       mc_attempt_has "cikick $KEY $HEAD" 2>/dev/null; then
+    KSINCE=$(mc_row_field "$KEY" 3); KAGE=$(( $(mc_now) - ${KSINCE:-0} ))
+    [ -n "$KSINCE" ] && ci_absent_escalate "$KEY" "$URL" "$HEAD" "$KAGE"
+  fi

@@ -1,0 +1,66 @@
+#!/bin/bash
+# bin/merge-conductor.sh — hub cron (*/5): ONE owner for every harness PR from
+# open to merged. Design and the why: docs/MERGE-CONDUCTOR.md.
+#
+# EACH PROJECT TICKS IN ITS OWN BACKGROUND SUBSHELL (2026-09-14): a slow authed
+# rebase clone on one repo no longer holds every other project's PRs behind it,
+# and the head-bound re-review is no longer run inline at all — it is a DETACHED
+# per-PR job and the tick only reads its result (mc_rereview_spawn /
+# mc_rr_state).
+#
+# AND EACH PR OF A PROJECT NOW TICKS UNDER ITS OWN LOCK (2026-09-15). The tick
+# used to take one flock for the whole project and `flock -n || skipped`, which
+# cost a busy repo its next one to three ticks in full: 102 skipped project
+# ticks in the two hours of 2026-09-15 21:00-23:00Z. pr_worker holds
+# locks/merge-conductor-<project>-<pr>.lock for one PR's work, the merge call
+# alone is serialised on locks/merge-conductor-<project>-merge.lock
+# (mc_merge_locked), the spend budgets became flock'd per-tick counter files, and
+# each project logs ONE metrics line plus state/merge-conductor/tick-<p>.json
+# saying how long its tick took and what it did. MC_PR_PARALLEL caps the
+# workers; docs/MERGE-CONDUCTOR.md section 2.
+#
+# A FULL-TICK LOCK IS BACK, FOR UNKEYED TICKS ONLY (BH-5463, 2026-10-08).
+# Overlapping full ticks doubled the API and re-review spend: the second one
+# counted locked=82 of 100. locks/merge-conductor-<project>-fulltick.lock is
+# held by a holder subshell that tick_project cannot see; keyed ticks skip it.
+#
+# THE REBASE AND THE DEPLOY VERIFIER ARE THE SAME SHAPE (2026-09-14, the operator).
+# Both used to run from inside the tick, which holds the project's flock on
+# fd 9 — the rebase for the minutes a clone + typecheck + push takes, the
+# verifier for the twenty a deploy poll takes (a verifier spawned at 03:54Z on
+# project-5 held that lock until 04:02Z and every tick in between skipped the
+# project). Each is now its own detached lane with its own state dir and result
+# file, spawned with the tick's lock fd CLOSED, and the tick only ever reads a
+# result: mc_rebase_spawn / mc_rb_state, mc_dv_spawn / mc_dv_reap.
+#
+# FOUR WAYS A PR GOT STRANDED, ALL CLOSED 2026-09-14 (the operator, "fix the conductor
+# problems"). Every one of them ended the same way — a row nothing moved and no
+# alert that said so — and three of the four never reached an action at all:
+#   1. mc_classify tested CI before DIRTY, and GitHub runs no pull_request
+#      workflow on a conflicted PR, so every DIRTY PR answered `WAIT_CI checks
+#      none` for ever and none ever reached mc_rebase (project-5 #799 4h,
+#      #826/#838/#863 the same). The classifier now rebases a conflicted head
+#      whatever CI says. See the DIRTY clause in the lib.
+#   2. A PR parked on `provenance` never consumed the head-bound re-review it
+#      had already bought (#864 APPROVE at 20:34Z, merged by hand at 20:45Z;
+#      #867, #865, #866 the same). The done-job handling was the HEAD_MOVED
+#      arm's alone; it is headbound_review now, and the provenance block below
+#      calls it with the same four answers.
+#   3. The stacked-child block never fired ON ANY PR, because `IFS=$'\t' read`
+#      collapses an empty field (tab is IFS whitespace) and a PR with no labels
+#      slid baseRefName into the labels variable: #868 sat an hour after its
+#      parent merged with no retarget, #848/#850/#852 were never STACKED_WAIT.
+#      The tsv emits `-` for every column that can be empty.
+#   4. The tick bought a Fable review of a PR whose OWN build was still running
+#      and about to review it (mc_job_running — a bounded wait, not a park).
+#
+# Every open harness PR in every fleet.conf repo (plus recently closed-unmerged
+# ones) is put in exactly one named state — WAIT_CI, WAIT_REVIEW, HEAD_MOVED,
+# NEEDS_REBASE, REBASING, BLOCKED_HUMAN, RED_TWICE, READY, QUEUED, MERGED, CLOSED —
+# persisted as a jobs-ledger row (kind=pr_state) with a file mirror, aged against
+# a budget, and moved forward by this script or handed to bin/blocked-resolver.sh.
+# One log line per transition, one alert per PR per state — except the
+# BLOCKED_HUMAN reasons the resolver owns (mc_resolver_owns), which log and do
+# NOT page: the resolver drains them on an agent ladder and alerts once, on
+# ABANDONED.
+#

@@ -1,0 +1,14 @@
+# @hub-lanes
+
+# ── STAFF MILLWRIGHT LEVER (BH-10124, C3 of #9423) ──────────────────────────
+# Hourly at :37. Samples failed_bakes_and_broken_boxes (failed pool image
+# bakes plus boxes with a broken resolv.conf, a full /tmp or a stale bin) as
+# the millwright staff agent's metric; the sample settles millwright's due
+# lever actions. At staff.millwright.level = act (seed: observe), re-runs each
+# failed bake ONCE per bake id by writing its state/fly/<p>.image-dirty mark,
+# at most staff.millwright.bake_rerun_max_day a day. One line per run in
+# logs/staff-millwright-lever.log.
+# Off: flags/lane-off-staff-millwright-lever (bin/harness-ctl.sh off
+# staff-millwright-lever), or the staff kill flags (staff-off-all,
+# staff-kill-all, staff-off-millwright, staff-kill-millwright).
+37 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/millwright-lever.sh >> /root/harness/logs/staff-millwright-lever-cron.log 2>&1

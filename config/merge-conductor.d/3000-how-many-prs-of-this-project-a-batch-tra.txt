@@ -1,0 +1,62 @@
+  # HOW MANY PRs OF THIS PROJECT A BATCH TRAIN COULD BE MADE OF (BH-498). An
+  # approved PR that is READY or waiting on a rebase is exactly what
+  # bin/batch-resolve.sh looks for; counting them here is what lets the tick
+  # decide whether to spawn that lane at all, instead of paying for a PR list
+  # and a fetch on every repo every five minutes to learn there is nothing to do.
+  case "$STATE" in
+    READY|NEEDS_REBASE) [ "$VERDICT" = APPROVE ] && mc_count_inc "$P" batchable >/dev/null ;;
+  esac
+  # BH-8417: queue truth (a QUEUED row Mergify does not hold is reconciled
+  # here) and the GitHub facts for the log and the STUCK page (fragment
+  # bh-8417-repo-truth).
+  MC_GH_FACTS=""; command -v mc_repo_truth >/dev/null 2>&1 && mc_repo_truth
+  # A released review-block park stays parked while its BLOCK stands (BH-9260).
+  command -v mc_rbp_ready_hold >/dev/null 2>&1 && mc_rbp_ready_hold && { STATE=BLOCKED_HUMAN; WHY="$MC_RBP_WHY"; }
+  SINCE=$(mc_transition "$KEY" "$STATE" "$WHY" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC")
+  if [ "$STATE" = READY ]; then MC_STEP_LOG=1; fi
+  mc_step ready-checks
+  # `ci=absent` and `ci=flake`, not `ci=none`, in every line a person reads
+  # (BH-636): "none" reads as "nothing to report" when what it means is "GitHub
+  # never built this head" or "the runs were killed", which are the two things
+  # the reader would act on.
+  CIWORD=$(mc_ci_word "$CI" "${MC_FLAKE:-}")
+  # BH-3630: the verdict and CI word of a provenance park, in the page's own
+  # words, for bin/blocked-resolver.sh (removed in any other state).
+  mc_prov_detail_put "$KEY" "$STATE" "$WHY" "$HEAD" "$VERDICT" "$CIWORD"
+  mc_budget_check "$KEY" "$STATE" "$SINCE" "$URL" "$WHY (verdict=$VERDICT ci=$CIWORD mergeState=$MSTATE mode=$MODE)"
+  # ---- the stuck-state detector (2026-09-15) ------------------------------
+  # The backstop under every state in the table: a PR that has not moved in
+  # longer than its TTL says so ONCE per (PR, state, head) and, where a
+  # deterministic re-kick exists, gets it in the same tick (stuck_rekick).
+  # This is what #1045 and #1124/#1136 needed and no budget could give them —
+  # #1045 was inside WAIT_CI's budget for ten hours after its one alert, and a
+  # park the resolver owns pages never by design.
+  if mc_stuck_check "$KEY" "$STATE" "$SINCE" "$HEAD" "$URL" "$WHY" "verdict=$VERDICT ci=$CIWORD mergeState=$MSTATE mode=$MODE${MC_GH_FACTS:+; github: $MC_GH_FACTS}"; then
+    stuck_rekick "$KEY" "$STATE" "$WHY" "$SLUG" "$NUM" "$URL" "$HEAD" "$MSTATE" "$MGABLE" "${BASEREF:-}" "$PBASE" "$CI" "$VERDICT" "$REVIEWED" "${PROVIDER:-}" "$SINCE"
+  fi
+  # ---- the land trigger, before the state arms (BH-870) --------------------
+  # This project's base moved since the last completed fan-out, so every open
+  # PR of it is offered one mechanical rebase. It runs HERE — after
+  # mc_transition, so it judges this tick's state, and before the arms, so a
+  # spawn takes the REBASING transition the way the NEEDS_REBASE arm's does.
+  # rc 0 means it spawned and this PR's tick is over.
+  mc_step land-rebase
+  land_rebase_arm && return 0
+  # ---- actions, behind the flags ------------------------------------------
+  mc_step "arm:$STATE"
+  case "$STATE" in
+    RED_TWICE)
+      # THE PARK IS THE HAND-OFF. RED_TWICE is not a state this lane can move
+      # — the head has had its one rerun and is still red — so it is offered
+      # to bin/blocked-resolver.sh exactly like the BLOCKED_AGENT reasons, in
+      # the line shape br_handoff_lines reads, once per park.
+      [ "$PREV" = RED_TWICE ] && return 0
+      mc_log "$KEY RED_TWICE red-twice: CI is still red on ${HEAD:0:8} after its failed jobs were re-run once — handed to bin/blocked-resolver.sh (fix round on the branch, or a fresh rebuild against current main): $URL"
+      return 0 ;;
+    WAIT_MIGRATION)
+      # BH-9368: the alert, the apply dispatch and the gate re-run (fragment
+      # bh-9368-migration-gate). Not a resolver park.
+      command -v mc_miggate_arm >/dev/null 2>&1 && mc_miggate_arm
+      return 0 ;;
+    NEEDS_REBASE)
+      [ "$ACTIONS" = 1 ] || return 0

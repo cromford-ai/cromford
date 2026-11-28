@@ -1,0 +1,63 @@
+#   It reads the project's context (SLUG, QUEUE, PROVIDER, PBASE, TIGHT,
+#   INQ_IN_LIST, MAIN_RED, P) from the tick that forked it, and the flag globals
+#   (ACTIONS, MERGES, MODE) from the script. It writes nothing shared except
+#   through functions that take their own lock: mc_row_put, the counters, and
+#   the append-only attempts/cap files.
+pr_worker() {
+  local ROW="$1"
+  # 1 from the READY transition on: every later mc_step logs STEP_START/STEP_END
+  # (BH-6351, THE STEP LINES at bin/lib/fanin.sh mc_step).
+  local MC_STEP_LOG=0
+  IFS=$'\t' read -r NUM URL HEAD BR DRAFT MSTATE MGABLE PSTATE RAWINQ RAWLBL BASEREF UPDATED CROSS <<<"$ROW"
+  # The placeholders come straight back off again: every consumer below was
+  # written against "" for absent, and `-` is a tsv concern, not theirs.
+  [ "$RAWLBL" = "-" ] && RAWLBL=""
+  [ "$BASEREF" = "-" ] && BASEREF=""
+  [ "${UPDATED:--}" = "-" ] && UPDATED=""
+  [ -n "$NUM" ] || return 0
+  # One la_decide per (PR, head) per tick (BH-3806, mc_la_decide): the memo is
+  # this worker's, and a stale key from the forking shell must never answer.
+  MC_LA_MEMO_KEY=""
+  # The per-PR tick as well as the per-project one: a tick whose project list is
+  # short but whose PRs are slow is alive, and the heartbeat has to say so.
+  hb_tick merge-conductor "pr $NUM"
+  [ "$DRAFT" = true ] && return 0
+  KEY="$SLUG#$NUM"
+  # BH-1585 (review round 1): the open list reads each PR's merge state over
+  # REST, and a read that failed marks ONLY that row UNVERIFIABLE instead of
+  # blinding the repo. Such a row is not a state to classify: this PR's row is
+  # left exactly as it is and the PR waits for the next tick, the same answer an
+  # unverifiable decision read below gives. Every other PR proceeds.
+  # BH-1634: the skip counts toward the PR's streak, and the count rides the
+  # same single log line.
+  if [ "$MSTATE" = UNVERIFIABLE ]; then
+    local uc; uc=$(unverif_note "$P" "$KEY" "$URL")
+    mc_log "$KEY merge state UNVERIFIABLE this tick (the list's per-PR read failed) — row left as-is, retried next tick (unverifiable $uc/$(unverif_ticks_for "$P") ticks)"
+    return 0
+  fi
+  unverif_clear "$KEY"
+  mc_count_inc "$P" prs >/dev/null
+  # THIS TICK'S HOTFIX CLEARS ITS OWN LINE, on every exit path (BH-369): the PR
+  # that turns out not to be READY, the one whose lock another tick holds, the
+  # one whose merge fails. A marker that outlives its worker would defer the
+  # repo's plain PRs behind a PR nothing is merging. The answer comes from the
+  # marker the tick wrote before any worker started, so the parent and the
+  # worker cannot disagree about which PR is the emergency.
+  mc_step lock-probe
+  HOTFIX_THIS=0
+  if hotfix_pending_is "$P" "$NUM"; then HOTFIX_THIS=1; trap 'hotfix_pending_drop "$P" "$NUM"' EXIT; fi
+  # THE LOCK IS THIS PR'S, NOT THE PROJECT'S (2026-09-15). Everything below —
+  # the verdict read, the classifier, the rebase spawn, the re-review dispatch,
+  # the deploy-verify read — is about PR $NUM and nothing else, so it is guarded
+  # by PR $NUM's own flock. A worker of an earlier tick that is still here costs
+  # this PR one tick and costs the rest of the repo NOTHING; the whole-project
+  # skip it replaces cost 102 PR-ticks in the two hours of 2026-09-15 21:00Z.
+  # The fd is released by the kernel when this worker exits, so there is nothing
+  # to expire and no way to wedge a PR — provided no detached child inherits it,
+  # which is what the 9>&- on every setsid line in the lib is for.
+  exec 9>"$(mc_pr_lock "$P" "$NUM")"
+  mc_pr_lock_take || { mc_count_inc "$P" locked >/dev/null
+    # A PR another worker holds is a PR this tick's land fan-out did not reach,
+    # so the base sha must not be recorded as handled over it (BH-870).
+    [ "${LAND_FIRE:-0}" = 1 ] && mc_count_inc "$P" landdeferred >/dev/null
+    mc_log "$KEY: an earlier conductor worker still holds this PR's lock — skipped (every other PR of $P carries on)"

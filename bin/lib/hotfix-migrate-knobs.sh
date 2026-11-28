@@ -37,6 +37,16 @@
 # HMK_GATE_CHECKS is read from a second row, mc.migration_gate_checks.<project>
 # (BH-9368's row: the check names that are the migration-ledger gate itself).
 #
+# Two more rows (BH-9817), each a plain string, read by bin/lib/hotfix-migrate-
+# operator.sh for the needs-operator stop. Absent, unreadable or invalid = empty,
+# and that lib's code fallback applies:
+#   hotfix_migrate.operator_step.<project>    -> HMK_OPERATOR_STEP
+#       one line, 1..400 printable chars, never a `/migrate` comment command.
+#       {path} {file} {branch} are filled in per file.
+#   hotfix_migrate.workflow_refuses.<project> -> HMK_WORKFLOW_REFUSES
+#       a comma list of statement keywords ([A-Z ]{1,40} each) the workflow's
+#       allow-list refuses, e.g. GRANT,UPDATE,CREATE POLICY
+#
 # AN INVALID KEY IS IGNORED with one stderr line. It never reaches a dispatch.
 # An unreadable or absent row sets no key, so the env values and the defaults
 # stay, as they did before the row existed. HMK_SRC says which case it was:
@@ -83,6 +93,11 @@ _hmk_ok() {
                    [ -n "$v" ] || return 1
                    for w in $v; do grep -qxE '[A-Za-z0-9._-]+\.ya?ml' <<<"$w" || return 1; done ;;
     gate_checks)   grep -qxE '[A-Za-z0-9 ._/:()-]{0,400}' <<<"$v" ;;
+    operator_step) [ "$(printf '%s' "$v" | wc -l)" = 0 ] || return 1
+                   grep -qxE '[[:print:]]{1,400}' <<<"$v" || return 1
+                   case "$v" in */migrate*) return 1 ;; esac ;;
+    workflow_refuses)
+                   grep -qxE '[A-Z][A-Z ]{0,39}(,[A-Z][A-Z ]{0,39})*' <<<"$v" ;;
     *) return 1 ;;
   esac
 }
@@ -92,7 +107,7 @@ hmk_conf() {
   HMK_DISPATCH_REF=""; HMK_BRANCH_INPUT=""; HMK_FILE_FORM=""; HMK_GLOB=""
   HMK_PER_FILE=""; HMK_APPROVE_HEAD=""; HMK_BEFORE_MERGE=""; HMK_NEEDS_QUIET=""
   HMK_LOCAL_GATE=""; HMK_GATE_WORKFLOWS=""; HMK_LOG_CAP_KB=""; HMK_GATE_CHECKS=""
-  HMK_REQUIRE_WORD=""
+  HMK_REQUIRE_WORD=""; HMK_OPERATOR_STEP=""; HMK_WORKFLOW_REFUSES=""
   HMK_SRC=""
   case "$p" in ''|-) HMK_SRC=no-project; return 0 ;; esac
   _hmk_ensure_client || { HMK_SRC=no-client; return 0; }
@@ -152,6 +167,22 @@ hmk_conf() {
     else echo "hotfix-migrate-knobs: mc.migration_gate_checks.$p value is not a list of check names; ignored" >&2
     fi
   fi
+  # BH-9817's rows: the needs-operator step and the workflow's refuse list.
+  local ok
+  for k in operator_step workflow_refuses; do
+    rc=0; v=$(setting_get "hotfix_migrate.$k.$p" 2>/dev/null) || rc=$?
+    [ "$rc" = 0 ] && [ -n "$v" ] || continue
+    ok=0; _hmk_ok "$k" "$v" && ok=1
+    if [ "$ok" = 0 ]; then
+      echo "hotfix-migrate-knobs: hotfix_migrate.$k.$p value is not valid; ignored (the code fallback applies)" >&2
+      continue
+    fi
+    case "$k" in
+      operator_step)    HMK_OPERATOR_STEP="$v" ;;
+      workflow_refuses) HMK_WORKFLOW_REFUSES="$v" ;;
+    esac
+  done
+  export HMK_OPERATOR_STEP HMK_WORKFLOW_REFUSES
   export HMK_DISPATCH_REF HMK_BRANCH_INPUT HMK_FILE_FORM HMK_GLOB HMK_PER_FILE HMK_APPROVE_HEAD \
          HMK_BEFORE_MERGE HMK_NEEDS_QUIET HMK_LOCAL_GATE HMK_GATE_WORKFLOWS HMK_LOG_CAP_KB HMK_GATE_CHECKS HMK_REQUIRE_WORD
   return 0

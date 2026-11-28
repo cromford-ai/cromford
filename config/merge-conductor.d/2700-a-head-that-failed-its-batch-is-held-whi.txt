@@ -1,0 +1,64 @@
+    # A head that failed its batch is held while it carries that patch (BH-8186);
+    # mc_fbh_apply sets STATE and WHY. A clear lets the gate below decide.
+    elif command -v mc_fbh_apply >/dev/null 2>&1 && mc_fbh_apply; then
+      :
+    elif ! { FR_STATE=""; if command -v bej_reentry_gate >/dev/null 2>&1; then bej_reentry_gate "$SLUG" "$NUM" "$KEY" "$URL" "$HEAD" "$MSTATE"
+             else fr_reentry_gate "$SLUG" "$NUM" "$KEY" "$URL" "$HEAD" "$MSTATE"; fi; }; then
+      # BH-3776: CLEAN, or UNSTABLE only through Mergify's own leftover checks,
+      # and a batch failure that is not this PR's (bin/lib/mc-foreign-red.sh).
+      # BH-4428: first, Mergify's own verdict — a PR it did not name, or one of
+      # several tested alone on the same red main, goes back in; the PR it
+      # named gets one comment naming the failing checks (bin/lib/mc-batch-eject.sh).
+      # BH-4550: a member whose batch's failing suites reproduce with it merged
+      # alone onto the base is parked by the gate itself (FR_STATE).
+      STATE="${FR_STATE:-WAIT_CI}"; WHY="${FR_WHY:-$EJWHY}"
+    # >>> eject culprit (BH-5819): the last question before a requeue. A human
+    # dequeue or a failed solo check makes this head the culprit (dqwculprit +
+    # reejected). Asked here, after every other gate, so its comments read is
+    # never spent on a head that would not be re-queued anyway (bh-3776 R3/R4).
+    elif [ "$PROVIDER" = mergify ] && mc_attempt_has "ejected $KEY $HEAD" 2>/dev/null \
+         && mc_eject_culprit_mark "$SLUG" "$NUM" "$KEY" "$HEAD" "$EJSOLO" >/dev/null 2>&1; then
+      EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
+      if [ "${EJN:-0}" -ge 2 ]; then STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
+        command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
+        command -v mc_eu_why >/dev/null 2>&1 && WHY="$WHY$(mc_eu_why "$KEY" "$HEAD")"
+      else STATE=WAIT_CI; WHY="ejected on ${HEAD:0:8} as the culprit: never re-queued; only a new head clears it"; fi
+    # <<< eject culprit
+    elif [ "$MERGES" != 1 ]; then
+      mc_log "$KEY would REQUEUE $KEY $HEAD (merge mode off) — every check is green at this head, the approval is bound to it and the merge is clean${FR_LINE:+; $FR_LINE}"
+      STATE=WAIT_CI; WHY="$EJWHY"
+    # The pre-queue gate before the requeue (BH-6161): the head merged onto
+    # current main must pass a run dispatched after its ejection. Before the
+    # budget, so a held head spends no requeue unit (the READY arm's order).
+    elif command -v ec_requeue_gate >/dev/null 2>&1 \
+         && ! ec_requeue_gate "$SLUG" "$NUM" "$URL" "$HEAD" "$PBASE" "$(ec_last_at "$SLUG" "$NUM" "$HEAD")"; then
+      case "$EC_PQ_WORD" in
+        red)    STATE=BLOCKED_HUMAN; WHY="$EC_PQ_WHY" ;;
+        rebase) STATE=NEEDS_REBASE;  WHY="prequeue after ejection: $EC_PQ_WHY" ;;
+        *)      STATE=WAIT_CI;       WHY="queue-ejected: $EC_PQ_WHY" ;;
+      esac
+    elif ! mc_tick_budget_take "$P" requeue "${MC_REQUEUE_CAP:-5}"; then
+      mc_log "$KEY REQUEUE_DEFERRED $KEY $HEAD — this project has spent its ${MC_REQUEUE_CAP:-5} re-queues for this tick; re-offered on the next one"
+      STATE=WAIT_CI; WHY="$EJWHY"
+    else
+      # The mark BEFORE the write, like every other attempt in this lane: a
+      # requeue we tried and could not finish must not be tried again every five
+      # minutes, and a crash between the two costs this head its one re-entry
+      # rather than an unbounded loop.
+      mc_requeued_record "$KEY" "$HEAD"
+      RQERR=$(mc_requeue_mergify "$SLUG" "$URL" "$HEAD"); RQRC=$?
+      case "$RQRC" in
+        0|2) STATE=QUEUED; WHY="requeued on ${HEAD:0:8} after a flake ejection"
+             command -v mc_fbh_clear >/dev/null 2>&1 && mc_fbh_clear "$KEY" "$HEAD" bystander
+             mc_attempt_clear crdequeue "$KEY" "$HEAD" 2>/dev/null   # BH-2275: back in after a cleared CR
+             mc_log "REQUEUED $KEY $HEAD — dequeued label off, $MC_MERGIFY_LABEL back on, Mergify acknowledged; its batch build decides from here"
+             command -v mclc_put >/dev/null 2>&1 && mclc_put in_queue "$P" "$SLUG" "$BR" "$NUM" "$HEAD" "requeued on ${HEAD:0:8} after a flake ejection"
+             fr_requeue_note "$SLUG" "$NUM" "$KEY" "$HEAD" ;;
+        3)   STATE=WAIT_CI; WHY="requeued on ${HEAD:0:8}, awaiting Mergify's witness"
+             mc_log "REQUEUE_UNWITNESSED $KEY $HEAD — ${RQERR:-Mergify acknowledged nothing}. The row waits; it is NOT merged directly"
+             fr_requeue_note "$SLUG" "$NUM" "$KEY" "$HEAD" ;;
+        *)   STATE=WAIT_CI; WHY="$EJWHY"
+             mc_log "REQUEUE_FAILED $KEY $HEAD — ${RQERR:-the requeue was refused}; the row keeps its ejection and a later tick tries again" ;;
+      esac
+    fi
+  fi

@@ -267,9 +267,29 @@ hm_wf_pr_num() {
 # It posts ONLY when the harness verdict is APPROVE and the PR's live head is the
 # sha that verdict judged. A head that moved, a head nobody could read, a BLOCK,
 # an empty or malformed sha: no approval.
+#
+# WHO POSTS IT (BH-9817), the rule bin/review-prs.sh applies to a lead verdict
+# (rp_author_is_reviewer_app). GitHub refuses (422) an approval by the PR's own
+# author, and on a pool builder the token in hand is the builders App, which
+# opened the PR. So:
+#   author = the reviewer (hub) App  -> the default credential (label default)
+#   author = anyone else             -> the reviewer App, GH_APP_PROFILE empty
+#                                       (label app/<slug>); a box that cannot arm
+#                                       it posts on the token in hand (caller)
+#   author not readable              -> the token in hand, as before
+# GH_TOKEN is put back exactly as it was after the POST.
+#
+# THE RESPONSE BODY IS KEPT. `gh api` prints a refused call's JSON body on
+# STDOUT and only `gh: <text> (HTTP <code>)` on stderr. Both go to
+# $BUILD/hotfix-approve.err, and GitHub's message and errors reach the comment.
+# A final status 422 sets HM_WF_APPROVE_TERMINAL=1: the caller stops with
+# needs-operator for this head (hm_op_stop). Any other failure is not terminal.
+# Sets HM_WF_APPROVE_HEAD, _STATUS, _MSG, _ERRORS (a JSON array) for the ledger.
 hm_wf_approve_head() {
-  local n head have body err rc
-  HM_WF_APPROVE_WHY=""
+  local n head author out have body err rc label app st msg errs
+  local _had_tok="${GH_TOKEN+x}" _tok="${GH_TOKEN:-}"
+  HM_WF_APPROVE_WHY=""; HM_WF_APPROVE_TERMINAL=0; HM_WF_APPROVE_HEAD=""
+  HM_WF_APPROVE_STATUS=""; HM_WF_APPROVE_MSG=""; HM_WF_APPROVE_ERRORS='[]'
   n=$(hm_wf_pr_num)
   if [ "${HM_VERDICT:-}" != APPROVE ]; then
     HM_WF_APPROVE_WHY="the harness verdict for this head is '${HM_VERDICT:-none}', not APPROVE. No approval posted, nothing dispatched."
@@ -280,7 +300,9 @@ hm_wf_approve_head() {
     return 1
   fi
   case "${n:-}" in ''|*[!0-9]*) HM_WF_APPROVE_WHY="no PR number in '$PR_URL'. No approval posted, nothing dispatched."; return 1 ;; esac
-  head=$(gh api "repos/$SLUG/pulls/$n" -q .head.sha 2>>"$BUILD/hotfix-gh.err")
+  # ONE read for the head and the author (BH-9403's A2b counts the pulls reads).
+  out=$(gh api "repos/$SLUG/pulls/$n" -q '.head.sha + " " + (.user.login // "")' 2>>"$BUILD/hotfix-gh.err")
+  read -r head author <<<"${out:-}"
   head=$(hm_wf_rtrim "${head:-}")
   if [ -z "$head" ]; then
     HM_WF_APPROVE_WHY="we could not read the PR's live head. No approval posted, nothing dispatched."
@@ -290,28 +312,83 @@ hm_wf_approve_head() {
     HM_WF_APPROVE_WHY="the head moved after the review (reviewed ${HM_REVIEWED_SHA:0:12}, live ${head:0:12}). No approval posted, nothing dispatched."
     return 1
   fi
+  HM_WF_APPROVE_HEAD="$head"
   have=$(gh api --paginate "repos/$SLUG/pulls/$n/reviews?per_page=100" \
            -q ".[] | select(.state == \"APPROVED\" and .commit_id == \"$head\") | .id" 2>>"$BUILD/hotfix-gh.err")
   [ -n "$(hm_wf_rtrim "${have:-}")" ] && return 0
   body="The harness review verdict for ${head} is APPROVE. This approval lets the migration workflow apply this PR's add-only SQL before the merge."
   err="$BUILD/hotfix-approve.err"
-  gh api -X POST "repos/$SLUG/pulls/$n/reviews" -f "commit_id=$head" -f event=APPROVE -f "body=$body" \
-    > /dev/null 2> "$err"
+  : > "$err"
+  label=caller
+  app=$(hm_op_reviewer_login 2>/dev/null)
+  author=$(hm_op_login_norm "${author:-}" 2>/dev/null)
+  if [ -n "$author" ] && [ -n "$app" ] && [ "$author" = "$app" ]; then
+    if command -v gh_auth_reset >/dev/null 2>&1; then gh_auth_reset; label=default; fi
+  elif [ -n "$author" ] && [ -n "$app" ] && command -v gh_auth_for >/dev/null 2>&1; then
+    GH_APP_PROFILE='' gh_auth_for "$SLUG" && label="$app"
+  fi
+  hm_wf_approve_post "$n" "$head" "$body" "$err"; rc=$?
+  if [ "$rc" != 0 ] && [ "$label" != default ] && cat "$err" 2>/dev/null | grep -qi 'own pull request'; then
+    # The identity that posted is the PR's author. The default credential may
+    # approve, the same rule bin/review-prs.sh applies (rp_author_is_reviewer_app).
+    if command -v gh_auth_reset >/dev/null 2>&1; then
+      gh_auth_reset; label=default
+      hm_wf_approve_post "$n" "$head" "$body" "$err"; rc=$?
+    fi
+  fi
+  if [ -n "$_had_tok" ]; then export GH_TOKEN="$_tok"; else unset GH_TOKEN; fi
+  [ "$rc" = 0 ] && return 0
+  st=$(grep -oE 'HTTP [0-9]{3}' "$err" 2>/dev/null | tail -n 1 | cut -c6-)
+  HM_WF_APPROVE_STATUS="$st"
+  # The JSON body is the line(s) gh printed on stdout; the last object wins.
+  msg=$(grep -E '^[[:space:]]*\{' "$err" 2>/dev/null | tail -n 1 | jq -r '.message // empty' 2>/dev/null | head -c 600)
+  HM_WF_APPROVE_ERRORS=$(grep -E '^[[:space:]]*\{' "$err" 2>/dev/null | tail -n 1 \
+    | jq -c '[.errors[]? | if type == "string" then . elif type == "object" then (.message // tostring) else tostring end | .[0:600]]' 2>/dev/null)
+  [ -n "$HM_WF_APPROVE_ERRORS" ] || HM_WF_APPROVE_ERRORS='[]'
+  errs=$(jq -r 'join("; ")' <<<"$HM_WF_APPROVE_ERRORS" 2>/dev/null | head -c 600)
+  HM_WF_APPROVE_MSG="$msg"
+  if [ -n "$st" ]; then
+    HM_WF_APPROVE_WHY="the approval did not post as $label (HTTP $st: ${msg:-$(grep -v '^[[:space:]]*{' "$err" | tr '\n' ' ' | cut -c1-300)}; errors: ${errs:-none}). Nothing dispatched."
+  else
+    HM_WF_APPROVE_WHY="the approval did not post as $label (gh exit $rc, no HTTP status: $(tr '\n' ' ' < "$err" | cut -c1-300)). Nothing dispatched."
+  fi
+  [ "$st" = 422 ] && HM_WF_APPROVE_TERMINAL=1
+  echo "hotfix-migrate: $HM_WF_APPROVE_WHY" >&2
+  return 1
+}
+
+# hm_wf_approve_post <num> <head> <body> <err-file>: one POST. The response
+# body (stdout) and gh's own line (stderr) are both appended to <err-file>,
+# and stdout is kept only when the call failed.
+hm_wf_approve_post() {
+  local out rc
+  out=$(gh api -X POST "repos/$SLUG/pulls/$1/reviews" -f "commit_id=$2" -f event=APPROVE -f "body=$3" 2>> "$4")
   rc=$?
-  if [ "$rc" != 0 ] && grep -qi 'own pull request' "$err" 2>/dev/null; then
-    # The App that opened the PR may not approve it. The default credential may,
-    # the same rule bin/review-prs.sh applies (rp_author_is_reviewer_app).
-    if command -v gh_auth_reset >/dev/null 2>&1; then gh_auth_reset; fi
-    gh api -X POST "repos/$SLUG/pulls/$n/reviews" -f "commit_id=$head" -f event=APPROVE -f "body=$body" \
-      > /dev/null 2>> "$err"
-    rc=$?
-    if command -v gh_auth_for >/dev/null 2>&1; then gh_auth_for "$SLUG" || true; fi
+  [ "$rc" != 0 ] && [ -n "$out" ] && printf '%s\n' "$out" >> "$4"
+  return "$rc"
+}
+
+# hm_wf_refused_head: rc 0 = the ledger of THIS fingerprint says GitHub refused
+# the approval (422) on a head that is still the live head, or the live head
+# cannot be read: stop, post nothing. rc 1 = go on. One pulls read, and only
+# when such a ledger exists.
+hm_wf_refused_head() {
+  local rh n live
+  [ "${HMK_APPROVE_HEAD:-0}" = 1 ] && [ -s "$LEDGER" ] || return 1
+  rh=$(jq -r --arg fp "$FP" 'if .fp == $fp and .decision == "needs-operator" then (.approve_refused.head // "") else "" end' "$LEDGER" 2>/dev/null)
+  [ -n "$rh" ] || return 1
+  n=$(hm_wf_pr_num)
+  live=$(gh api "repos/$SLUG/pulls/$n" -q .head.sha 2>>"$BUILD/hotfix-gh.err")
+  live=$(hm_wf_rtrim "${live:-}")
+  if [ -z "$live" ]; then
+    echo "hotfix-migrate: GitHub refused the approval on ${rh:0:12} and the live head cannot be read; nothing posted, nothing dispatched" >&2
+    return 0
   fi
-  if [ "$rc" != 0 ]; then
-    HM_WF_APPROVE_WHY="the approval did not post (gh exit $rc: $(tr '\n' ' ' < "$err" | cut -c1-200)). Nothing dispatched."
-    return 1
+  if [ "$live" = "$rh" ]; then
+    echo "hotfix-migrate: GitHub refused the approval on head ${rh:0:12} (needs-operator); no new review call, no new comment" >&2
+    return 0
   fi
-  return 0
+  return 1
 }
 
 # hm_wf_head_bound: a before-merge dispatch (HM_BEFORE_MERGE=1) runs only while
@@ -350,8 +427,9 @@ hm_wf_head_bound() {
 
 # hm_wf_pre_stop <headline> <note> <file-status> [attach]: a stop BEFORE any
 # dispatch, for a cause a later run can clear (checks not green yet, the quiet
-# window, the dispatch lock, a failed dispatch call, the approval POST, a moved or
-# unreadable head). A hotfix writes `hold`, as before. A before-merge PR writes
+# window, the dispatch lock, a failed dispatch call, an approval POST that failed
+# with any status but 422, a moved or unreadable head). A 422 on the approval
+# is terminal for the head and goes to hm_op_stop (needs-operator, BH-9817). A hotfix writes `hold`, as before. A before-merge PR writes
 # `retry`: the conductor does NOT park a `retry` proof as BLOCKED_HUMAN
 # (mc_hotfix_proof reads it as stale), so the PR takes the ordinary path
 # (mmh_decide / HELD_MIGRATION) and needs no person (BH-9403 refute review).
@@ -636,6 +714,12 @@ hm_workflow_body() {
   i=0
   while [ "$i" -lt "${#FILES[@]}" ]; do QL+=("not checked"); i=$((i+1)); done
 
+  # ── 0. a head GitHub already refused to approve (BH-9817) ────────────────
+  # A 422 on the approval is terminal for that head: the same head gets 0
+  # review calls and 0 comments. A new head is tried again (once, then it is
+  # terminal in turn). A head nobody can read stays stopped.
+  hm_wf_refused_head && return 3
+
   if [ "${HMK_PER_FILE:-0}" = 1 ]; then
     hm_wf_per_file
     return $?
@@ -708,6 +792,11 @@ hm_workflow_body() {
     fi
     [ -n "${HMK_BRANCH_INPUT:-}" ] && args+=(-f "$HMK_BRANCH_INPUT=$BRANCH")
     if [ "${HMK_APPROVE_HEAD:-0}" = 1 ] && ! hm_wf_approve_head; then
+      # A 422 is terminal for this head (BH-9817): needs-operator, not retry.
+      if [ "${HM_WF_APPROVE_TERMINAL:-0}" = 1 ] && declare -F hm_op_stop >/dev/null 2>&1; then
+        hm_op_stop approve-422
+        return $?
+      fi
       hm_wf_pre_stop "$HEAD_HOLD" "$HM_WF_APPROVE_WHY" hold "$BUILD/hotfix-approve.err"
       return $?
     fi
@@ -820,6 +909,10 @@ hm_wf_per_file() {
       if [ "${HMK_APPROVE_HEAD:-0}" = 1 ] && [ "$approved" = 0 ]; then
         if ! hm_wf_approve_head; then
           FST[i]=hold
+          if [ "${HM_WF_APPROVE_TERMINAL:-0}" = 1 ] && declare -F hm_op_stop >/dev/null 2>&1; then
+            hm_op_stop approve-422
+            return $?
+          fi
           hm_wf_pre_stop "$HEAD_HOLD" "$HM_WF_APPROVE_WHY" hold "$BUILD/hotfix-approve.err"
           return $?
         fi

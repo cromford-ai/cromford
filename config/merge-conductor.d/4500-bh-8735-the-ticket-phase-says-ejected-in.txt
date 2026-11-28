@@ -1,0 +1,75 @@
+          # BH-8735: the ticket phase says ejected in this tick, with why.
+          if command -v mclc_put >/dev/null 2>&1; then
+            if [ "$PROVIDER" = mergify ]; then QLCW="mergify dequeue: ${QDQ:-batch failed}; checks: ${QEWHY:-not read}"
+            else QLCW="queue ejection ($PROVIDER): checks: ${QEWHY:-not read}"; fi
+            mclc_put ejected "$P" "$SLUG" "${QBR:-}" "${QKEY##*#}" "$QHEAD" "$QLCW"
+          fi
+          [ "$MERGES" = 1 ] && command -v mc_qr_owe >/dev/null 2>&1 && mc_qr_owe "$SLUG" "$QKEY" "$QHEAD" "${QEC%%$'\t'*}"   # BH-10201: the leave is on record
+          # >>> batch victim (BH-9253)
+          # A head already requeued solo that is out again: the solo run
+          # ejected it. `bvreejected` ends mc_bv_requeue_live, so the head reads
+          # as ejected again and mc_bv_solo below answers park:solo-tried.
+          mc_attempt_has "batchvictim $QKEY $QHEAD" 2>/dev/null && { mc_attempt_has "bvreejected $QKEY $QHEAD" 2>/dev/null || mc_attempt_put "bvreejected $QKEY $QHEAD"; }
+          # A second ejection whose Mergify dequeue code is a batch failure
+          # (MC_BATCH_VICTIM_CODES) on a head with green own CI and a bound
+          # APPROVE is a batch victim: mc_bv_solo adds queue-solo, requeues it
+          # alone once per head and moves the row. rc 1 = park as before.
+          QBV=1
+          [ "${EJN:-1}" -ge 2 ] && command -v mc_bv_solo >/dev/null 2>&1 \
+            && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" && QBV=0
+          # <<< batch victim (BH-9253)
+          # >>> eject unknown (BH-9695)
+          # A second ejection with no named cause: one Mergify event read, and
+          # when that names nothing either, one more requeue (rc 0) instead of
+          # the park. rc 1 = park as before; rc 2 = park, no fix round yet (a
+          # budget is spent; the parked-row pass asks again next tick).
+          QEU=1
+          [ "$QBV" = 1 ] && [ "${EJN:-1}" -ge 2 ] && command -v mc_eu_requeue >/dev/null 2>&1 \
+            && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
+          # <<< eject unknown (BH-9695)
+          if [ "$QBV" = 0 ]; then
+            mc_log "$QKEY ejected again on ${QHEAD:0:8} (ejections: $EJN) — a batch victim, requeued solo instead of parked (BH-9253)"
+          elif [ "${QEU:-1}" = 0 ]; then
+            mc_log "$QKEY ejected again on ${QHEAD:0:8} (ejections: $EJN) — no named cause after the Mergify event read, requeued once more instead of parked (BH-9695)"
+          elif [ "${EJN:-1}" -ge 2 ]; then
+            mc_log "$QKEY EJECTED from the merge queue again on ${QHEAD:0:8} (ejections: $EJN, provider $PROVIDER)"
+            mc_transition "$QKEY" BLOCKED_HUMAN "queue-ejected-twice${QEWHY:+: $(ec_summary "$SLUG" "${QKEY##*#}")}$(command -v mc_eu_why >/dev/null 2>&1 && mc_eu_why "$QKEY" "$QHEAD")" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
+            mc_log "$QKEY BLOCKED_AGENT queue-ejected-twice — its batch build fails against current main, which its own checks never test; handed to bin/blocked-resolver.sh (its ladder: an agent fix round with the failing batch runs when they could be read, else merge main / re-run CI first; then a fresh rebuild): $QURL"
+            # BH-6000 part 5: the fix round starts now, with the two failing runs.
+            # Not on a deferred extra requeue (BH-9695 rc 2): the parked-row
+            # pass offers it again first.
+            [ "${QEU:-1}" = 2 ] || mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"
+          else
+            mc_log "$QKEY ejected from the merge queue on ${QHEAD:0:8} — cause: ${QEWHY:-not read (MC_EJECT_CAUSE=0)} (provider $PROVIDER)"
+            mc_transition "$QKEY" WAIT_CI "queue-ejected${QEWHY:+: $QEWHY}" "$QHEAD" "$QREV" "$QURL" "$QVERDICT" UNKNOWN "$QREC" >/dev/null
+          fi ;;
+      esac
+      exec 9>&-
+    done
+    # And once more after the loop: the arms above `continue` on a queue the
+    # provider could not read, and a fd left open here would still be holding
+    # that PR's lock when the open pass forks its worker for the same PR.
+    exec 9>&-
+    # >>> parked merged settle (BH-4562)
+    # A ROW THE DEQUEUE RACE ALREADY PARKED IS SETTLED ONCE GITHUB SAYS MERGED.
+    # Nothing else reads it: the open pass does not list a merged PR, the loop
+    # above reads QUEUED rows only, and the closed pass memos `merged` and moves
+    # on. One ETag-cached read per parked-queue row; OPEN, CLOSED or unreadable
+    # leaves the row to its owner (the resolver, the closed pass).
+    mapfile -t PROWS < <(awk -F'\t' -v p="$SLUG#" 'index($1,p)==1 && (($2=="BLOCKED_HUMAN" && $7 ~ /^queue-ejected-twice/) || ($2=="WAIT_CI" && $7 ~ /^queue-ejected/))' "$MC_ROWS" 2>/dev/null)
+    for QROW in "${PROWS[@]:-}"; do
+      [ -n "$QROW" ] || continue
+      IFS=$'\t' read -r QKEY QST QSINCE QHEAD QREV QAL QWHY QURL <<<"$QROW"
+      [ -n "$QURL" ] || continue
+      mc_only_has "$QKEY" || continue
+      exec 9>"$(mc_pr_lock "$P" "${QKEY##*#}")"
+      flock -n 9 || { exec 9>&-; mc_log "$QKEY: another conductor worker holds this PR's lock — the parked-merged check waits for the next tick"; continue; }
+      QV=$(mc_pr_view "$QURL" '"\(.STATE) \(.head.ref)"' 2>/dev/null) || QV=""
+      read -r QPS QBR <<<"$QV"
+      if [ "${QPS:-}" = MERGED ]; then
+        QREC=$(mc_record_for "$QURL" || true)
+        IFS=$'\t' read -r QVERDICT QPROV QREVIEWED QJOB QHEADBOUND <<<"$(mc_verdict "$QURL" "$QREC")"
+        mc_log "$QKEY was parked $QST ($QWHY) but GitHub reports it MERGED — settled from the dequeue park (BH-4562)"
+        conductor_settle "$QKEY" "$QURL" "$P" "$SLUG" "${QBR:-}" "$QREC" "$QJOB" "$QHEAD" "$QREV" "$QVERDICT" CLEAN "by:conductor (merge queue, settled from a dequeue park — BH-4562)"
+        mc_handoff_release "$QKEY" merged
+      elif [ "${QPS:-}" = OPEN ] && [ "$QST" = BLOCKED_HUMAN ]; then

@@ -107,6 +107,19 @@ trk_gh_list() {
   return "$rc"
 }
 
+# trk_gh_list_raw <max> — the issues list with each row as GitHub answers it
+# (bodies kept, pull requests dropped), for a lane that reads its own markers
+# in issue bodies (bin/staff/inspector-lever.sh, BH-9419). TRK_LIST_STATE
+# (open) and TRK_LIST_LABEL (ai-build) as trk_gh_list. At most <max> rows; the
+# list helper stops at 10 pages (1000 rows). rc as gh_rest_issue_list (0, 44,
+# 75); 1 and no call on a bad slug or <max>. Never in a subshell, so
+# GH_REST_STATUS stays set for the caller.
+trk_gh_list_raw() {
+  [[ "${TRK_SLUG:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "${1:-}" =~ ^[0-9]+$ ]] \
+    && command -v gh_rest_issue_list >/dev/null 2>&1 || return 1
+  gh_rest_issue_list "$TRK_SLUG" "${TRK_LIST_STATE:-open}" "${TRK_LIST_LABEL:-ai-build}" "$1"
+}
+
 # trk_gh_issue_page <page> — one raw page (per_page=100) of the OPEN ai-build
 # issues list, exactly as gh_rest answers it (BH-8497's paged board read in
 # bin/lib/triage-board-pages.sh). The args keep the order that read used, so

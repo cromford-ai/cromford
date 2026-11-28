@@ -52,7 +52,7 @@
       "max": 300,
       "unit": "seconds",
       "zero_means": null,
-      "note": "Read by bin/stale-build-reaper.sh. curl --max-time for each console call (the stale feed and the close POST). The jobs worker calls keep JOBS_TIMEOUT."
+      "note": "Read by bin/stale-build-reaper.sh. curl --max-time for each console call (the stale feed and the close POST), and the timeout of each GitHub read of the PR step (bin/lib/stale-build-pr.sh). The jobs worker calls keep JOBS_TIMEOUT."
     },
     {
       "env": "STALE_REAPER_PAGE",

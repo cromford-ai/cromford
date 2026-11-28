@@ -1,0 +1,12 @@
+{
+  "env": "WEIGHT",
+  "type": "int",
+  "default": 1,
+  "min": 1,
+  "max": 100,
+  "unit": "share weight",
+  "zero_means": null,
+  "required": false,
+  "note": "BH-7877. Per-project share weight in the fleet slot allocator, settings row `lane.fly-pool.<project>.weight` (project lowercased). A project gets free slots in proportion to its weight among the projects with queued work. No row, or a value that is not a whole number of at least 1, reads as 1. project-6-os is seeded 3. Has no effect while `lane.fly-pool.fleet_slots` (FLEET_SLOTS) is unset or 0.",
+  "read_in": "bin/lib/pool-alloc.sh"
+}

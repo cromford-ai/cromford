@@ -63,7 +63,7 @@ right crontab — but the files have no reason to exist there. To SEE a render,
 use `bin/render-cron.sh <box>`, `bin/render-cron.sh --out-dir <dir>` or
 `bin/render-diff.sh`.
 
-**Four rows here are still COMMITTED. The first is `rules/CLAUDE.md`** (BH-1336). It is rendered
+**Five rows here are still COMMITTED. The first is `rules/CLAUDE.md`** (BH-1336). It is rendered
 from `rules/topics/` by `bin/render-rules.sh`, and five scripts copy it verbatim
 onto every box and every builder — `bin/update-runners.sh`,
 `bin/sync-agent-rules.sh`, `fly/builder-runner.sh`, `bin/rules-drift-check.sh`
@@ -90,7 +90,11 @@ through its parents, so siblings that each add a fragment never trip it. The Fly
 fourth: it is rendered from `config/fly-pool.d/` (`.sh` fragments, the 4th field
 of its `catalog/splits.d/` row) by the same `bin/render-split.sh --write`, so
 the one command renders both rows and the same guard keeps a hand edit;
-`bin/fly-pool-build.sh` renders the same bytes.
+`bin/fly-pool-build.sh` renders the same bytes. The merge conductor driver
+`bin/merge-conductor.sh` (BH-10226) is the fifth: it is rendered from
+`config/merge-conductor.d/` (`.txt` fragments cut at comment-block starts) by
+the same `bin/render-split.sh --write`, so the one command renders all three
+render-split rows.
 
 **`worker/jobs/schema.sql` is NOT in git** (BH-6005). It is composed from
 `worker/jobs/schema.d/NNNN-<name>.sql` by `bin/schema-build.sh` and is
@@ -138,3 +142,4 @@ column.
 | `catalog/state-paths.json` | `bin/state-paths-build.sh --compose` |  |
 | `bin/lib/rb/plan.sh` | `bin/render-split.sh --write` | committed |
 | `bin/fly-pool.sh` | `bin/render-split.sh --write` | committed |
+| `bin/merge-conductor.sh` | `bin/render-split.sh --write` | committed |

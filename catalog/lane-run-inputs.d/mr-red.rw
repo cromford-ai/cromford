@@ -1,0 +1,11 @@
+# catalog/lane-run-inputs.d/mr-red.rw — the files one
+# `bin/staff/mr-red.sh work <payload>` run writes (BH-9532, C0 of #9532). A
+# write-back may carry these only. The ro snapshot is these plus mr-red.ro.
+# In C0 no lever has a _work function, so a run writes nothing but its log.
+#
+# NOT CARRIED (machine-local caches and logs, safe to lose):
+#   state/mr-red/checks/* (the check-run cache of bin/staff/mr-red-collect.d/
+#   10-drafts.sh; the tick writes it on the hub, never a work run),
+#   state/gh-budget/*, state/flags-cache/*.
+# Secrets and locks are never carried: env/*, locks/*.
+# logs/staff-mr-red.log rides back as the lane log (.lri/log-append).

@@ -1,0 +1,82 @@
+  # A fast-tracked child whose parent left the queue unmerged goes back onto the parent's branch (BH-5520).
+  # An owed Depends-On removal is retried first; a closed parent whose branch
+  # refuses the child parks it on the resolver-owned orphan reason.
+  MSF_ORPHAN=""
+  command -v msf_depends_settle >/dev/null 2>&1 && msf_depends_settle "$SLUG" "$KEY" "$NUM" "$ACTIONS"
+  if command -v msf_eligible >/dev/null 2>&1 && [ -n "$PBASE" ] && [ "${BASEREF:-}" = "$PBASE" ] \
+     && msf_check_revoke "$SLUG" "$KEY" "$NUM" "$URL" "$HEAD" "$ACTIONS"; then BASEREF="$MSF_BASE"; fi
+  MC_STACK=""; MC_STACK_BASE=""; MC_RT_THIS_TICK=0
+  [ -n "${MSF_ORPHAN:-}" ] && { MC_STACK=parent-closed-orphan; MC_STACK_BASE="$MSF_ORPHAN"; }
+  if [ -n "$PBASE" ] && [ -n "${BASEREF:-}" ] && [ "$BASEREF" != "$PBASE" ]; then
+    MC_STACK=wait; MC_STACK_BASE="$BASEREF"
+    # ONE read per (repo, parent branch) per tick (BH-1486): N children of one
+    # parent used to buy N copies of the same list. stack_parent_memo never
+    # stores NONE — a parent read that failed and a parent PR that does not
+    # exist are the same word, and caching either would keep a child waiting on
+    # a refusal for the rest of the tick.
+    # The read's own answer for the NONE arm (BH-3950): see mc_stack_parent.
+    MC_STACK_PARENT_ANS=$(mktemp "${TMPDIR:-/tmp}/mc-stackans.XXXXXX" 2>/dev/null) || MC_STACK_PARENT_ANS=""
+    IFS=$'\t' read -r PARSTATE PARURL <<<"$(stack_parent_memo "$P" "$SLUG" "$BASEREF")"
+    NANS=""; [ -n "$MC_STACK_PARENT_ANS" ] && { NANS=$(cat "$MC_STACK_PARENT_ANS" 2>/dev/null); rm -f "$MC_STACK_PARENT_ANS"; }
+    MC_STACK_PARENT_ANS=""
+    case "${PARSTATE:-NONE}" in
+      # A parent waiting on a human verdict (BH-3777) is the child's real wait:
+      # say so in the child's reason, or four children read "waiting for the
+      # parent to merge" while the parent waits on a person.
+      OPEN*)
+        PN=$(mc_nhv_parent_note "$SLUG" "${PARURL:-}")
+        [ -n "$PN" ] && MC_STACK_BASE="$BASEREF; $PN"
+        # A CONFLICTED CHILD OF AN OPEN PARENT GETS THE PARENT MERGED IN
+        # (BH-5519). mc_classify parks every stacked child STACKED_WAIT ahead of
+        # its DIRTY clause, so nothing else merges anything into this branch
+        # until the parent lands. The merge is the parent branch, never main
+        # (main's diff would ride into a PR read against the parent), one try
+        # per child head, on the rebase budget. A conflict stays STACKED_WAIT:
+        # the fix round merges origin/main, which is wrong for a stacked child,
+        # and mc_stack_follow hands it over once the parent merges.
+        #
+        # AND A CHILD OF A PARENT THAT MOVED GETS IT TOO, DIRTY OR NOT (BH-5796).
+        # A parent rebuilt or fixed while the child waits leaves a CLEAN child on
+        # the old parent commits; 14 review BLOCKs found that by hand. So the
+        # parent's tip is read (mc_stack_parent_moved, one fetch) and, when it
+        # is not in the child's history, the same parent merge runs, once per
+        # (child head, parent tip). MC_STACK_PARENT_FOLLOW=0 turns that half off;
+        # MC_STACK_PARENT_MERGE=0 still turns every parent merge off.
+        # A CONFLICT IS A FIX ROUND NOW, not a wait: the child is parked
+        # conflict-unresolvable, and bin/blocked-resolver.sh's round merges the
+        # PR's own base (the parent branch) for a stacked child, never main.
+        SMWHY=""; SMKEY=""; SMRC=""
+        if [ "$ACTIONS" = 1 ] && [ "${CROSS:--}" = false ]; then
+          if [ "${MC_STACK_PARENT_MERGE:-1}" != 0 ] && { [ "$MSTATE" = DIRTY ] || [ "$MGABLE" = CONFLICTING ]; }; then
+            SMWHY=dirty; SMKEY="stackmerge $KEY $HEAD"
+          elif [ "${MC_STACK_PARENT_MERGE:-1}" != 0 ] && [ "${MC_STACK_PARENT_FOLLOW:-1}" != 0 ]; then
+            SMPH=$(mc_stack_parent_moved "$SLUG" "$P" "$BR" "$HEAD" "$BASEREF"); SMPRC=$?
+            case "$SMPRC" in
+              0) SMWHY=moved; SMKEY="stackmerge $KEY $HEAD $SMPH" ;;
+              1) : ;;
+              *) mc_log "$KEY stacked parent tip of $BASEREF unreadable ($SMPH) — not followed this tick" ;;
+            esac
+          fi
+        fi
+        if [ -n "$SMKEY" ] && ! mc_attempt_has "$SMKEY" 2>/dev/null; then
+          if mc_tick_budget_take "$P" rebase "$REBASE_BUDGET"; then
+            mc_attempt_put "$SMKEY"; mc_count_inc "$P" rebases >/dev/null
+            SMOUT=$(mc_rebase "$SLUG" "$P" "$BR" "$HEAD" "$URL" "$BASEREF"); SMRC=$?
+            case "$SMRC" in
+              5) if [ "$SMWHY" = moved ]; then
+                   mc_log "$KEY STACK_PARENT_MOVED ${SMOUT:0:8}: merged the new tip ${SMPH:0:8} of $BASEREF, approval not rebound"
+                 else
+                   mc_log "$KEY STACK_PARENT_MERGED ${SMOUT:0:8} from $BASEREF, approval not rebound"
+                 fi
+                 MC_STACK_BASE="$MC_STACK_BASE; parent branch merged in as ${SMOUT:0:8}" ;;
+              1) SMOUT=$(printf '%s' "$SMOUT" | tr '\n' ' ' | sed 's/ *$//')
+                 mc_log "$KEY STACK_PARENT_CONFLICT $SMOUT — parked conflict-unresolvable for bin/blocked-resolver.sh's fix round (it merges $BASEREF, not main)"
+                 mc_transition "$KEY" BLOCKED_HUMAN "conflict-unresolvable: stacked child of $BASEREF (parent ${PARURL:-?}) — merging the parent's tip conflicts in: $SMOUT" \
+                   "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+                 return 0 ;;
+              *) mc_log "$KEY stacked parent merge from $BASEREF: not merged this tick (rc $SMRC)" ;;
+            esac
+          else
+            budget_spent "$P" rebase "$KEY"
+          fi
+        fi

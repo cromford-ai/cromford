@@ -1,0 +1,24 @@
+{
+  "libs": [
+    {
+      "id": "could-not-read",
+      "file": "bin/lib/could-not-read.sh",
+      "note": "BH-9594, the BH-9555 contract. The could-not-read classifier and recorder (docs/GH-REST.md §17, docs/STATE-STORES.md box_read_failures). bin/orphan-reconcile.sh calls lib_env_apply could-not-read <project> in a subshell, so a fail-closed exit there never stops the lane.",
+      "knobs": [
+        {
+          "env": "CNR_ENFORCE",
+          "read_in": "bin/lib/could-not-read.sh",
+          "type": "int",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "unit": "switch",
+          "zero_means": "off: cnr_record posts nothing and prints nothing; every caller logs and declines exactly as before",
+          "required": false,
+          "settable": true,
+          "note": "Kill row of cnr_record (POST /api/box-read-failures). 1 = a could-not-read GitHub read is recorded against the box and an ok read resets the box's count. No shadow mode. Read as ${CNR_ENFORCE:-1}. Rows: lib.could-not-read.<project>.cnr_enforce, then lib.could-not-read.cnr_enforce (seeded 1)."
+        }
+      ]
+    }
+  ]
+}

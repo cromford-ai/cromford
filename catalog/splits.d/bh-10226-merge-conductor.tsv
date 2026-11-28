@@ -1,0 +1,8 @@
+# catalog/splits.d/bh-10226-merge-conductor.tsv — the merge conductor driver bin/merge-conductor.sh
+# is a committed render of config/merge-conductor.d/ (bin/render-split.sh, BH-10226, C2 of #9704).
+# Mode 755: the conductor is executed. Extension txt (the default, so 3 fields): the fragments are
+# slices of one script, most of them inside the pr_worker function body, not scripts on their own.
+# EDIT the fragments, never the render. The fragments were made once by this exact command:
+# cut: bin/render-split.sh --cut bin/merge-conductor.sh --min-lines 60 --at '^ *# '
+# <render path> TAB <fragment dir>/ TAB <octal mode>
+bin/merge-conductor.sh	config/merge-conductor.d/	755

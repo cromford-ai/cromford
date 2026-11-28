@@ -1,0 +1,15 @@
+# @hub-lanes
+
+# ── STAFF INSPECTOR LEVER (BH-9419, C1 of #9187) ────────────────────────────
+# Hourly at :23. Samples hours_behind_main (the served-sha-watch state files
+# plus the console Pages lag) as the inspector staff agent's metric; the sample
+# settles the inspector's due lever actions. At staff.inspector.level = file or
+# act, for a Vercel project behind main for staff.inspector.target hours or
+# more whose newest production deployment is ERROR, records ONE lever action
+# and files one fix-main-red issue with the failing build step quoted, dry
+# while staff.inspector.lever_dry_run is 1. One line per run in
+# logs/staff-inspector-lever.log.
+# Off: flags/lane-off-staff-inspector-lever (bin/harness-ctl.sh off staff-inspector-lever),
+# or the staff kill flags (staff-off-all, staff-kill-all, staff-off-inspector,
+# staff-kill-inspector).
+23 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/inspector-lever.sh >> /root/harness/logs/staff-inspector-lever-cron.log 2>&1

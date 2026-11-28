@@ -1,0 +1,66 @@
+  # NEVER RE-QUEUE OVER A LEAD CR (BH-2275 review of #2277). Mergify stamps its
+  # `dequeued` label on every PR that leaves the queue — including one it (or
+  # mc_cr_dequeue) took out for a standing CHANGES_REQUESTED — and that label is
+  # exactly what arms the re-entry below, which runs BEFORE the READY arm's
+  # block gate. So when the row carries our crdequeue mark or that label, the
+  # CR is asked first (with the thread, so the reviewer's RESUME/MERGE counts):
+  # standing — or unreadable — leaves the row READY for the block gate to
+  # refuse; cleared lets the re-entry run as before.
+  # Whether a `bejv` line predates this tick's re-entry gate (BH-5819): only
+  # such a line can make this head the culprit by a failed solo check, in the
+  # re-entry arm below and in sdq_arm after it.
+  EJSOLO=0; [ "$QUEUE" = 1 ] && [ "$(mc_attempt_count bejv "$KEY" "$HEAD")" -gt 0 ] 2>/dev/null && EJSOLO=1
+  CRHOLD=0
+  if [ "$STATE" = READY ] && [ "$QUEUE" = 1 ] && [ "$PROVIDER" = mergify ] && command -v bg_cr_standing >/dev/null 2>&1 \
+     && { mc_attempt_has "crdequeue $KEY $HEAD" 2>/dev/null || grep -qE '(^|,)dequeued(,|$)' <<<"${RAWLBL:-}"; }; then
+    # BH-10316: this check can re-queue the row, so it reads the reviews live.
+    command -v mc_tm_forget >/dev/null 2>&1 && mc_tm_forget "$SLUG" "$NUM"
+    CRTHREAD=$(bg_read "repos/$SLUG/issues/$NUM/comments" created_at 2>/dev/null) || CRTHREAD=""
+    CRRC=0; bg_cr_standing "$SLUG" "$NUM" "$URL" "$HEAD" "$CRTHREAD" >/dev/null || CRRC=$?
+    if [ "$CRRC" != 1 ]; then
+      CRHOLD=1
+      mc_log "$KEY not re-queued: a standing CHANGES_REQUESTED (lead/human BLOCK)$([ "$CRRC" = 2 ] && printf ' could not be ruled out (reviews unreadable)') — the block gate owns this row"
+    fi
+  fi
+  if [ "$STATE" = READY ] && [ "$QUEUE" = 1 ] && [ "$CRHOLD" = 0 ] && \
+     { mc_ejection_live "$KEY" "$HEAD" \
+       || [ -n "$(mc_requeued_mark "$KEY" "$HEAD")" ] \
+       || { [ "$PROVIDER" = mergify ] && grep -qE '(^|,)dequeued(,|$)' <<<"${RAWLBL:-}"; }; }; then
+    EJN=$(mc_eject_head_strikes "$KEY" "$HEAD")
+    EJWHY="queue-ejected — push a fix; the next head is enqueued on its own merits"
+    command -v ec_head_why >/dev/null 2>&1 && QS2=$(ec_head_why "$SLUG" "$NUM" "$HEAD") && [ -n "$QS2" ] && EJWHY="queue-ejected: $QS2 — push a fix; the next head is enqueued on its own merits"
+    # A batch victim requeued solo on this head (BH-9253) is not parked while
+    # the solo run is in the queue: its `reejected` line predates the requeue.
+    if command -v mc_bv_requeue_live >/dev/null 2>&1 && mc_bv_requeue_live "$KEY" "$HEAD"; then
+      STATE=WAIT_CI; WHY="batch-victim: requeued solo on ${HEAD:0:8}, waiting for Mergify to acknowledge — never re-queued twice"
+    elif [ "${EJN:-0}" -ge 2 ]; then
+      STATE=BLOCKED_HUMAN; WHY="queue-ejected-twice"
+      command -v ec_summary >/dev/null 2>&1 && QS2=$(ec_summary "$SLUG" "$NUM") && [ -n "$QS2" ] && WHY="queue-ejected-twice: $QS2"
+      command -v mc_eu_why >/dev/null 2>&1 && WHY="$WHY$(mc_eu_why "$KEY" "$HEAD")"
+    elif [ "$PROVIDER" != mergify ] || [ "${MC_QUEUE_REENTRY:-1}" = 0 ]; then
+      STATE=WAIT_CI; WHY="$EJWHY"
+    elif [ -n "$(mc_requeued_mark "$KEY" "$HEAD")" ]; then
+      STATE=WAIT_CI; WHY="requeued on ${HEAD:0:8}, waiting for Mergify to acknowledge — never re-queued twice"
+    elif mc_tick_ejected_now "$P" "$KEY" "$HEAD"; then
+      # The settle pass of THIS tick ejected it. Let the ejection stand for one
+      # tick: the row has to be able to SAY `queue-ejected` to whoever reads it,
+      # and Mergify's own check on this head still carries the failure that
+      # ejection was read from — polling it for a witness seconds later would
+      # take that failure for an acknowledgement and stamp the row QUEUED.
+      mc_log "$KEY ejected by this same tick on ${HEAD:0:8} — the re-entry waits one tick, so the row says queue-ejected and Mergify's check can move off the failure"
+      STATE=WAIT_CI; WHY="$EJWHY"
+    # A HEAD dequeue-watch NAMED THE CULPRIT of its batch (BH-3728; the lane,
+    # BH-3719, writes the mark) is not put back: a fix round owns it, and the
+    # fixed head is a new sha this mark does not match. Named once per head.
+    elif mc_attempt_has "dqwculprit $KEY $HEAD" 2>/dev/null; then
+      STATE=WAIT_CI; WHY="dequeue-watch named this head the culprit of its batch; a fix round owns it"
+      mc_attempt_has "dqwculpritlog $KEY $HEAD" 2>/dev/null || { mc_attempt_put "dqwculpritlog $KEY $HEAD"; mc_log "DQW_CULPRIT $KEY $HEAD — not re-queued: dequeue-watch named it the culprit and a fix round owns it"; }
+    # A CULPRIT HEAD IS NEVER RE-QUEUED (BH-5819, the operator 2026-10-08 on #5430):
+    # #5221/#5281/#5301 came back into batch #5455 on the same heads that had
+    # failed. Only a new head clears it. A bystander keeps the requeue below
+    # (mc_ejected_hold); MC_EJECTED_REQUEUE=never holds every ejected head.
+    elif mc_ejected_hold "$KEY" "$HEAD"; then
+      STATE=WAIT_CI; WHY="ejected on ${HEAD:0:8} as the culprit: never re-queued; only a new head clears it"
+      mc_attempt_has "ejectedheldlog $KEY $HEAD" 2>/dev/null || { mc_attempt_put "ejectedheldlog $KEY $HEAD"; mc_log "EJECTED_HELD $KEY $HEAD — not re-queued: this head was ejected, and only a new head clears an ejection"; }
+    elif [ "$MGABLE" != MERGEABLE ] || [ "$VERDICT" != APPROVE ] || [ "$REVIEWED" != "$HEAD" ]; then
+      STATE=WAIT_CI; WHY="$EJWHY"

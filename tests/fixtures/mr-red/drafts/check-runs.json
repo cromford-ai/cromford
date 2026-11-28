@@ -1,0 +1,8 @@
+{
+  "total_count": 3,
+  "check_runs": [
+    { "name": "harness-ci / tests (shard 3)", "status": "completed", "conclusion": "failure" },
+    { "name": "harness-ci / lint", "status": "completed", "conclusion": "success" },
+    { "name": "Mergify Merge Queue", "status": "completed", "conclusion": "neutral" }
+  ]
+}

@@ -1,0 +1,64 @@
+  # <<< project on a machine
+  local T0; T0=$(mc_now)
+  # ---- the per-project cadence hold (BH-1486) -------------------------------
+  # The cron fires every five minutes for the whole fleet; this is how ONE
+  # project asks for a longer effective cadence without a code deploy. A
+  # project whose last REAL tick started less than MC_TICK_SECS ago is held
+  # here — above use_token, above the PR list, above every GitHub read — and
+  # says so once. The knob is a settings row per project
+  # (`lane.merge-conductor.<project>.mc_tick_secs`, or the fleet-wide
+  # `lane.merge-conductor.mc_tick_secs`); its default is 0, which means "tick
+  # on every cron fire", which is exactly what this lane does today.
+  #
+  # NO METRICS LINE ON A HOLD, and that is load-bearing rather than tidy:
+  # mc_tick_metrics rewrites tick-<p>.json, `started_at` is what the age above
+  # is measured from, and a hold that stamped it would hold the project for
+  # ever. hb_tick has already run, so the heartbeat and lane-reaper still see a
+  # live lane.
+  local TICK_SECS LAST_T0
+  TICK_SECS=$(tick_secs_for "$P")
+  if [ "$TICK_SECS" -gt 0 ]; then
+    LAST_T0=$(jq -r '.started_at // 0' "$MC_STATE_DIR/tick-$(mc_safe_name "$P").json" 2>/dev/null)
+    case "$LAST_T0" in ''|*[!0-9]*) LAST_T0=0 ;; esac
+    # A missing or unparseable row means 0, which means the project TICKS: the
+    # fail-open answer, the same rule main_red_flag takes.
+    if [ "$LAST_T0" -gt 0 ] && [ $((T0 - LAST_T0)) -lt "$TICK_SECS" ]; then
+      mc_log "$(pause_label "$P")TICK $P held: its last tick started $((T0 - LAST_T0))s ago and mc_tick_secs=$TICK_SECS (lane.merge-conductor.$P.mc_tick_secs, or the fleet row) — this cron fire is skipped before any GitHub read (decision=held)"
+      return 0
+    fi
+  fi
+  # THE PARKS DELTA (BH-9075; bin/lib/mc/parks-delta.sh, MC_PARKS_DELTA_MODE, default off): no changed parks row and no pr/checks wake since the last walk skips this walk, before any GitHub read, with no metrics line (the cadence hold's rule).
+  if command -v mc_parks_delta_skip >/dev/null 2>&1 && mc_parks_delta_skip "$P"; then return 0; fi
+  # A PROJECT MERGES PAUSE (BH-1672): MERGES=0 for this project only (a fleet
+  # row matches here as well, so the fleet case is enforced twice). This
+  # function runs in the project's own backgrounded subshell, so the change
+  # never reaches another project, and every pr_worker forked below inherits
+  # it. MODE follows, exactly as the fleet case derives it; KILL is untouched.
+  if pause_active "$P" merges; then
+    MERGES=0; [ "$MODE" = merge ] && MODE=actions
+  fi
+  # THIS BOARD'S AUTO-MERGE TOGGLE (#2322), flags/automerge-disabled-<project>:
+  # the same effect as a project merges pause, in the same subshell. The fleet
+  # switch (automerge-disabled) is still KILL, read once at the top.
+  if flag_on "automerge-disabled-$P"; then
+    MERGES=0; [ "$MODE" = merge ] && MODE=actions
+  fi
+  SLUG=$("$H/bin/fleet-conf.sh" "$P" repo 2>/dev/null); [ -n "$SLUG" ] && [ "$SLUG" != "-" ] || return 0
+  use_token "$SLUG" || { mc_tick_metrics "$P" "$T0"; return 0; }
+  TIGHT=0; command -v review_tighten_active >/dev/null 2>&1 && review_tighten_active "$SLUG" && TIGHT=1
+  # Does this repo's main sit behind a merge queue, and WHOSE? One cached probe
+  # per repo per tick; everything below branches on the answer. `github` is
+  # GitHub's native queue (a merge_queue ruleset rule), `mergify` is the Mergify
+  # App reading .mergify.yml, `none` is today's synchronous path.
+  PROVIDER=$(mc_queue_provider "$SLUG")
+  command -v msf_eligible >/dev/null 2>&1 && msf_sweep "$SLUG"
+  # AN UNREADABLE PROBE HOLDS THE TICK (BH-2275). `unknown` is not `none`: a
+  # 5xx on .mergify.yml used to read as "no queue", and every READY PR on a
+  # Mergify repo was merged directly around it. Nothing on this repo moves this
+  # tick, ONE alert per repo per day says why, and the next tick probes again.
+  if [ "$PROVIDER" = unknown ]; then
+    mc_log "$SLUG merge-queue provider UNKNOWN this tick: the .mergify.yml probe could not be read — nothing merged or enqueued on $P; the next tick asks again (BH-2275)"
+    mc_queue_unknown_alert "$SLUG" "the .mergify.yml probe could not be read" >/dev/null 2>&1 || true
+    mc_tick_metrics "$P" "$T0"; return 0
+  fi
+  QUEUE=0; [ "$PROVIDER" != none ] && QUEUE=1

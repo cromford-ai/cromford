@@ -1,0 +1,11 @@
+{
+  "env": "MW_FIXTURE",
+  "read_in": "bin/staff/millwright-lever.sh",
+  "type": "string",
+  "default": "",
+  "unit": null,
+  "zero_means": null,
+  "required": false,
+  "settable": false,
+  "note": "BH-10124 test seam: a file bin/staff/millwright-lever.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources. The collector's read is the lib row lib.staff-millwright.mw_fixture."
+}

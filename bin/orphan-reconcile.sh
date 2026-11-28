@@ -324,6 +324,44 @@ fi
 # shellcheck source=bin/lib/gh-budget.sh
 [ -r "$HARNESS/bin/lib/gh-budget.sh" ] && . "$HARNESS/bin/lib/gh-budget.sh" 2>/dev/null
 
+# COULD NOT READ IS NOT A FACT (BH-9594, the BH-9555 contract). A board read
+# that answers 401/403/429/5xx or nothing is recorded against this box
+# (cnr_record, one row a run at most), and an open-list read that succeeds
+# records `ok`, which resets the box's failure count. OPTIONAL BY DESIGN: a box
+# mid-sync without the libs reads and declines exactly as before. The reads go
+# through cnr_retry, a placeholder that runs them once (BH-9555.3 owns the
+# backoff). The kill row lib.could-not-read.cnr_enforce (env CNR_ENFORCE) is
+# resolved in a subshell, the _OR_TFM shape, so a fail-closed exit there never
+# stops this lane.
+# shellcheck source=bin/lib/could-not-read.sh
+[ -r "$HARNESS/bin/lib/could-not-read.sh" ] && . "$HARNESS/bin/lib/could-not-read.sh" 2>/dev/null
+# shellcheck source=bin/lib/cnr-retry.sh
+[ -r "$HARNESS/bin/lib/cnr-retry.sh" ] && . "$HARNESS/bin/lib/cnr-retry.sh" 2>/dev/null
+command -v cnr_retry >/dev/null 2>&1 || cnr_retry() { shift; "$@"; }
+CNR_ENFORCE=$(
+  exec 3>&1
+  trap 'printf "%s" "${CNR_ENFORCE:-}" >&3' EXIT
+  command -v lib_env_apply >/dev/null 2>&1 || . "$HARNESS/bin/lib/lane-gate.sh" >/dev/null 2>&1 || exit 0
+  lib_env_apply could-not-read "$PROJECT" >/dev/null 2>&1)
+CNR_ENFORCE="${CNR_ENFORCE:-1}"
+CNR_BOX="" CNR_CRED=gh-pat CNR_DONE=""
+command -v cnr_record >/dev/null 2>&1 && [ "$CNR_ENFORCE" != 0 ] && CNR_BOX=$(cnr_box)
+# cnr_note <status|ok> [reason] — record once, log the lib's one line.
+cnr_note() {
+  local line
+  [ -n "$CNR_BOX" ] || return 0
+  line=$(cnr_record "$CNR_BOX" "$PROJECT" "$CNR_CRED" "$@")
+  [ -n "$line" ] && log "reconcile: $line"
+  return 0
+}
+# cnr_fail — on a could-not-read answer, the run's one failure record.
+cnr_fail() {
+  [ -z "$CNR_DONE" ] || return 0
+  [ "$(cnr_classify_status "${GH_REST_STATUS:-}" "${GH_REST_REASON:-}" 2>/dev/null)" = could-not-read ] || return 0
+  CNR_DONE=1
+  cnr_note "${GH_REST_STATUS:-000}" "${GH_REST_REASON:-}"
+}
+
 TD=$(mktemp -d) || exit 0
 trap 'rm -rf "$TD"' EXIT
 
@@ -344,7 +382,8 @@ fi
 # the thread itself is fetched later and only for the issues that need it. The
 # state=all list is number/state/closed_at only, because it exists to answer
 # "is blocker #M still open, and if not when did it close".
-command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$REPO" || true
+# rc 0 is the App credential: the class a could-not-read is recorded under.
+command -v gh_auth_for >/dev/null 2>&1 && gh_auth_for "$REPO" && CNR_CRED=gh-app || true
 
 # WHY A FUNCTION AND NOT A `$( )`: GH_REST_STATUS is set in the shell that CALLS
 # the helper, and every read below is a plain command with `> file` so the
@@ -354,14 +393,16 @@ rest_decline() { # rest_decline <what> <rc>
   case "$2" in
     44) log "reconcile: $1 answered HTTP 404 — the board or its label is absent here, enqueued nothing" ;;
     *)  log "reconcile: $1 unverifiable (HTTP ${GH_REST_STATUS}${GH_REST_REASON:+ $GH_REST_REASON}) — enqueued nothing"
+        cnr_fail
         command -v gh_rest_alert >/dev/null 2>&1 \
           && gh_rest_alert "$PROJECT" orphan-reconcile "$1" || true ;;
   esac
 }
 
 RC=0
-gh_rest_issue_list "$REPO" open ai-build 200 > "$TD/open.raw.json" || RC=$?
+cnr_retry "${CNR_RETRY_BUDGET_S:-}" gh_rest_issue_list "$REPO" open ai-build 200 > "$TD/open.raw.json" || RC=$?
 if [ "$RC" != 0 ]; then rest_decline "the open ai-build list" "$RC"; exit 0; fi
+cnr_note ok
 # LABELS RIDE ALONG (2026-09-27). The reshape used to drop them, so a ticket
 # carrying the `hold` label (BH-2504) — which bin/run-build.sh's hold check
 # honours — read as an orphan here and was re-launched into a refusal on every
@@ -373,7 +414,7 @@ jq -c '[ .[] | {number, title, body, commentCount: (.comments // 0), updatedAt: 
 [ -s "$TD/open.json" ] || exit 0
 
 RC=0
-gh_rest_issue_list "$REPO" all ai-build 200 > "$TD/states.raw.json" || RC=$?
+cnr_retry "${CNR_RETRY_BUDGET_S:-}" gh_rest_issue_list "$REPO" all ai-build 200 > "$TD/states.raw.json" || RC=$?
 if [ "$RC" != 0 ]; then rest_decline "the all-states ai-build list" "$RC"; exit 0; fi
 jq -c '[ .[] | {number, state: ((.state // "") | ascii_upcase), closedAt: .closed_at} ]' \
   "$TD/states.raw.json" > "$TD/states.json" 2>/dev/null \
@@ -450,7 +491,7 @@ if [ "$PRL" = read ]; then
   # Only a lane that keeps a copy can miss one.
   [ "$WB_ON" = 1 ] && log "PRR_MISS $REPO#list why=$PRL_WHY"
   RC=0; PRL_T=$(date +%s)
-  gh_rest_pr_list_all "$REPO" open "$PRL_CAP" > "$TD/prs.raw.json" || RC=$?
+  cnr_retry "${CNR_RETRY_BUDGET_S:-}" gh_rest_pr_list_all "$REPO" open "$PRL_CAP" > "$TD/prs.raw.json" || RC=$?
   if [ "$RC" != 0 ]; then rest_decline "the open PR list" "$RC"; exit 0; fi
   prl_reshape "$TD/prs.raw.json" \
     || { log "reconcile: could not reshape the open PR list — enqueued nothing"; exit 0; }
@@ -1082,9 +1123,9 @@ while IFS=$'\t' read -r KIND NUM; do
   fi
   RC=0; CT=$(date +%s); C_READS=$((C_READS + 1))
   if [ "$KIND" = thread ]; then
-    gh_rest_issue_comments "$REPO" "$NUM" 200 > "$TD/extra/thread-$NUM.json" || RC=$?
+    cnr_retry "${CNR_RETRY_BUDGET_S:-}" gh_rest_issue_comments "$REPO" "$NUM" 200 > "$TD/extra/thread-$NUM.json" || RC=$?
   else
-    gh_rest GET "repos/$REPO/issues/$NUM" > "$TD/extra/blocker-$NUM.json" || RC=$?
+    cnr_retry "${CNR_RETRY_BUDGET_S:-}" gh_rest GET "repos/$REPO/issues/$NUM" > "$TD/extra/blocker-$NUM.json" || RC=$?
   fi
   if [ "$RC" = 0 ] && [ "$WB_ON" = 1 ] && [ -n "$CU" ]; then
     wb_cache_put "$WB_DIR/$KIND-$NUM" "$CU"$'\t'"$CT" < "$TD/extra/$KIND-$NUM.json" || true
@@ -1095,6 +1136,7 @@ while IFS=$'\t' read -r KIND NUM; do
       log "reconcile: the $KIND read for #$NUM answered HTTP 404 — absent, read the fail-closed way"
     else
       log "reconcile: the $KIND read for #$NUM unverifiable (HTTP ${GH_REST_STATUS}${GH_REST_REASON:+ $GH_REST_REASON}) — read the fail-closed way"
+      cnr_fail
       command -v gh_rest_alert >/dev/null 2>&1 \
         && gh_rest_alert "$PROJECT" orphan-reconcile "$KIND #$NUM" || true
     fi

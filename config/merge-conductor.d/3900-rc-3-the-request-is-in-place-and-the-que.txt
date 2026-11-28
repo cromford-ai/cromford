@@ -1,0 +1,66 @@
+          # rc 3: the request is in place and the QUEUE never answered. That is
+          # a standing condition on the REPO — Mergify told us so in as many
+          # words on project-5 #510: "The product Merge Queue needs to be
+          # activated" — or it is simply slow, and nothing about THIS PR.
+          # Burning the two-strike path would park every READY PR on the repo in
+          # BLOCKED_HUMAN for one dashboard toggle.
+          #
+          # AND IT NEVER MERGES AROUND THE QUEUE (BH-2199). Until 2026-09-24 this
+          # arm fell back to a DIRECT merge. #2196 landed that way at 21:09Z over
+          # a lead CHANGES_REQUESTED, while Mergify was running batches and was
+          # only slow to acknowledge. rc 3 only ever comes from Mergify, and the
+          # provider is `mergify` only when the repo's .mergify.yml declares
+          # queue_rules — the repo chose a queue to keep main green, so the
+          # conductor HOLDS: no merge, no strike, the budget unit goes back, the
+          # row stays READY with our label on (the queue may still pick it up;
+          # mc_mergify_inqueue then classifies it QUEUED), ONE alert per repo per
+          # day, and the ask is repeated every MC_MERGIFY_REASK_TICKS held ticks
+          # (the throttle above the budget take). A direct merge in this state
+          # is an explicit lead action, never the conductor's. That includes a
+          # hotfix: it still heads the tick's order, so it is asked first.
+          3) mc_tick_budget_give "$P" merge
+             mc_attempt_put_n mergifyhold "$KEY" "$HEAD"
+             mc_queue_inactive_alert "$SLUG" "$URL" "${ERR:-}" >/dev/null 2>&1 || true
+             HWORD=""; [ "$HOTFIX_THIS" = 1 ] && HWORD="HOTFIX "
+             mc_log "$KEY MERGE_HELD: ${HWORD}the $PROVIDER queue acknowledged nothing at ${HEAD:0:8} (${ERR:-no reason given}) — NOT merged directly: $SLUG's .mergify.yml has queue_rules, so the queue owns main. Row stays READY; the queue is asked again every $(mergify_reask_ticks_for "$P") held ticks. A direct merge here is a lead action"
+             mc_ready_why "$KEY" "$HEAD" queue-held "MERGE_HELD: the $PROVIDER queue acknowledged nothing at ${HEAD:0:8} (${ERR:-no reason given}); the row stays READY and the queue is asked again" logged ;;
+          # rc 4 (BH-3806): the enqueue's own la_decide withheld the verdict, so
+          # nothing was labelled or asked. Only a gate/enqueue race reaches it
+          # (the gate above normally classifies such a row first). No strike;
+          # the budget unit goes back; `asked` keeps the tier-2 self-enqueue
+          # from posting the `@mergifyio queue` this refused.
+          4) mc_tick_budget_give "$P" merge
+             command -v ae_mark >/dev/null 2>&1 && ae_mark "$P" asked "$KEY" "$HEAD"
+             mc_log "$KEY NOT enqueued: ${ERR#refused: }"
+             mc_transition "$KEY" NEEDS_HUMAN_VERDICT "${ERR#refused: }" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null ;;
+          *) N=$(mc_attempt_count mergefail "$KEY" "$HEAD"); mc_attempt_put_n mergefail "$KEY" "$HEAD"
+             mc_log "$KEY enqueue FAILED on the $PROVIDER queue (${ERR:-no reason given}) attempt $((N+1))"
+             [ "$N" -ge 1 ] || mc_ready_why "$KEY" "$HEAD" enqueue-failed "enqueue FAILED on the $PROVIDER queue (${ERR:-no reason given}) attempt $((N+1)); the next tick tries again" logged
+             [ "$N" -ge 1 ] && { mc_transition "$KEY" BLOCKED_HUMAN "queue-enqueue-failed-twice: ${ERR:-?}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+               mc_log "$KEY BLOCKED_AGENT queue-enqueue-failed-twice: the $PROVIDER merge queue refused a READY PR twice (${ERR:-no reason given}) — handed to bin/blocked-resolver.sh (fresh rebuild against current main): $URL"; } ;;
+        esac
+        # BH-6744: record what the landing contract WOULD do with this head.
+        # After the enqueue, so it can never delay or change it; rc 0 always.
+        # Mode queue (the default) returns before its step mark, read or line.
+        command -v landing_shadow >/dev/null 2>&1 && landing_shadow "$P" "$SLUG" "$NUM" "$HEAD" "$KEY" "${RAWLBL:-}"
+      elif mc_step merge; ERR=$(mc_merge_locked "$P" mc_merge "$URL" "$HEAD"); RC=$?; [ "$RC" = 0 ]; then
+        mc_count_inc "$P" merges >/dev/null
+        mc_step settle
+        conductor_settle "$KEY" "$URL" "$P" "$SLUG" "$BR" "$REC" "$JOB" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" "by:conductor" "$ERR"
+      elif [ "$RC" = 99 ]; then
+        # Nothing was written — another PR of this project was merging — so this
+        # is not one of the two strikes, and the budget unit goes back.
+        mc_tick_budget_give "$P" merge
+        mc_log "$KEY not merged this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — the next tick tries again"
+        mc_ready_why "$KEY" "$HEAD" merge-lock "not merged this tick: another PR of $P held the project merge lock for ${MC_MERGE_LOCK_WAIT:-120}s — the next tick tries again" logged
+      else
+        N=$(mc_attempt_count mergefail "$KEY" "$HEAD"); mc_attempt_put_n mergefail "$KEY" "$HEAD"
+        mc_log "$KEY merge FAILED (${ERR:-no stderr}) attempt $((N+1))"
+        [ "$N" -ge 1 ] || mc_ready_why "$KEY" "$HEAD" merge-failed "merge FAILED (${ERR:-no stderr}) attempt $((N+1)); the next tick tries again" logged
+        [ "$N" -ge 1 ] && { mc_transition "$KEY" BLOCKED_HUMAN "merge-failed-twice: ${ERR:-?}" "$HEAD" "$REVIEWED" "$URL" "$VERDICT" "$MSTATE" "$REC" >/dev/null
+          mc_log "$KEY BLOCKED_AGENT merge-failed-twice: gh pr merge failed twice on a READY PR (${ERR:-no stderr}) — handed to bin/blocked-resolver.sh (fresh rebuild against current main): $URL"; }  # gh-guard-allow: prose in a log line, not a call
+      fi ;;
+  esac
+  return 0
+}
+

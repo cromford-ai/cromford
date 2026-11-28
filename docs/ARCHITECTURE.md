@@ -108,6 +108,8 @@ flowchart LR
 
 Every stage writes its phase and its priced model calls to the jobs D1, so the console and Mission Control show the ticket's state without reading a box.
 
+Ticket custody (BH-9554, [docs/CUSTODY.md](CUSTODY.md)) is the planned ownership authority. It is one `ticket_custody` row per open ticket in the jobs D1, with an owner lane, a lease that expires, a next action and a deadline. Its one write path is `bin/lib/jobs/custody.sh` over `/api/custody/*`. A lane that cannot reach it fails loud and does not fall back to files. Slice C0 ships the table, the routes and the library. The lanes call it from C2, the custodian lane acts on due rows from C1, and the owner checks read the lease from C3.
+
 ## Trust boundaries
 
 - A watcher box holds one project's secrets and nothing else. The hub holds the cross-project credentials (Vercel read access, the Fly API token).

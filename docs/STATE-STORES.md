@@ -92,6 +92,14 @@ refuses a NEW script that writes a `rows` path. The ratchet allowlists every
 | `state/gh-budget` | file | none yet | 7 | none yet |
 | `state/gh-policy-cache` | cache | `bin/lib/gh-policy-cache.sh` | allowlisted (`ALLOW_EXTRA`) | |
 
+Ticket custody (BH-9554) is a D1 table from its first commit:
+`ticket_custody` (one row per open ticket: owner lane, lease, next action,
+deadline) and `custody_actions` (the append-only action log), in the jobs D1.
+The `/api/custody/*` routes are its only writers, and `bin/lib/jobs/custody.sh`
+has no file fallback. In slice C0 no lane writes it yet, and the legacy
+artifact owners (ledger rows, open PRs, `state/` markers) are still what the
+owner checks read. See [CUSTODY.md](CUSTODY.md).
+
 `state/alerts` shows 0 in the census only because `bin/lib/alert-state.sh`
 builds its path in a function (`_as_dir`). The ratchet cannot see a path that
 comes from a function or from another file.
@@ -210,3 +218,30 @@ rollout did not name. To see them all:
 HARNESS_TEST_SANDBOX=1 tests/no-state-files.bh-4159-test.sh --list-segments
 HARNESS_TEST_SANDBOX=1 tests/no-state-files.bh-4159-test.sh --list
 ```
+
+## box_read_failures / box_cred_health (BH-9594)
+
+A GitHub read that answers 401, 403, 429, 5xx or nothing is a "could not
+read". It is not a fact about the board. These two D1 tables record such a
+read against the box that made it
+(`worker/jobs/schema.d/202611121922-bh-9594-box-read-failures.sql`).
+
+| Table | Rows | Writer | Readers | Retention |
+|---|---|---|---|---|
+| `box_read_failures` | one row per recorded failure: `box`, `project`, `cred_class` (`gh-app`, `gh-pat`, `board-api`, `jobs`), `status`, `reason`, `at` | `cnr_record` in `bin/lib/could-not-read.sh`, through `POST /api/box-read-failures` | `GET /api/box-read-failures?box=<box>` (the newest `box_read_failures.recent_max` rows, 20) | rule `box_read_failures.age`, `retention.box_read_failures.days` (14); the rows are diagnostic, so they are deleted |
+| `box_cred_health` | one row per box and credential class: `consecutive` (failures since the last ok), `last_status`, `last_failure_at`, `last_ok_at` | the same POST: a failure adds 1 in one upsert statement, an `ok` sets 0 | the same GET | none: at most boxes x 4 rows, overwritten in place |
+
+- The one writer in BH-9594 is `bin/orphan-reconcile.sh`. It records at most
+  one failure a run, and one `ok` after its open ai-build list read succeeds.
+- Box identity is the registry name (`$BOX_NAME`, else `bin/box-name.sh`). The
+  worker refuses a box name with a dot, so a host address is never stored.
+- Kill row `lib.could-not-read.cnr_enforce` (env `CNR_ENFORCE`, default 1): 0
+  posts nothing.
+
+## BH-9555.2 cg_pending_refusals
+
+## BH-9555.4 project_box_order
+
+## BH-9555.5 pr_records readers
+
+## BH-9555.6 gh_lane_budget_spend

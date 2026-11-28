@@ -46,3 +46,7 @@ state/merge-sweep-done.txt
 # bin/lib/sg-prime-relay.sh). Read only: an absent copy means no relay, and a
 # pool gate keeps its own cold base-run cache.
 state/selection-gate/prime.tsv
+# BH-7877: the fleet slot grant bin/fly-pool-tick.sh writes before ptb_split,
+# read by pa_clamp (bin/fly-pool.sh:5681, config/fly-pool.d/3550-fleet-alloc-clamp.sh,
+# bin/lib/pool-alloc.sh). Read only: no file means no clamp.
+state/fly-pool-alloc/$p

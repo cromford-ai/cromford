@@ -1009,6 +1009,35 @@ else:
 fleet["landing"] = landing
 # <<< landing block
 
+# >>> subagent share block (BH-10209)
+# The subagent share of execute $ per project and fleet, over the last
+# DORA_SUBAGENT_SHARE_DAYS days (not the digest window: the ticket asks for 7
+# days), from the sub_usd note tokens in fleet-cost.csv. The counting is
+# bin/dora_subagent.py; a failure here is status error, never a digest crash,
+# and nothing in this block pages.
+try:
+    import dora_subagent  # noqa: E402  (bin/ is on sys.path: it is this script's dir)
+except ImportError:
+    dora_subagent = None
+try:
+    SA_DAYS = int(ENV.get("DORA_SUBAGENT_SHARE_DAYS") or 7)
+except ValueError:
+    SA_DAYS = 7
+SA_STAGES = ENV.get("DORA_SUBAGENT_STAGES") or "execute"
+if dora_subagent is None:
+    subagent_share = {"status": "error", "days": SA_DAYS, "fleet": None, "projects": None,
+                      "unavailable": "n/a (bin/dora_subagent.py is not installed)"}
+else:
+    try:
+        subagent_share = dora_subagent.block(FC_PATH, UNTIL, SA_DAYS,
+                                             dora_subagent.split_stages(SA_STAGES))
+    except Exception as exc:  # noqa: BLE001  (a broken block must not end the digest)
+        subagent_share = {"status": "error", "days": SA_DAYS, "fleet": None, "projects": None,
+                          "unavailable": "n/a (the subagent share block failed: %s)"
+                                         % type(exc).__name__}
+fleet["subagent_share"] = subagent_share
+# <<< subagent share block
+
 with open(OUT_JSON, "w") as fh:
     json.dump(payload, fh, indent=1, sort_keys=False)
     fh.write("\n")
@@ -1137,6 +1166,16 @@ elif landing["status"] == "off":
 else:
     L.append("landing: " + landing["unavailable"])
 # <<< landing lines
+
+# >>> subagent share lines (BH-10209)
+if dora_subagent is not None:
+    try:
+        L.extend(dora_subagent.text_lines(subagent_share, MAX_ROWS))
+    except Exception as exc:  # noqa: BLE001
+        L.append("subagent share: n/a (%s)" % type(exc).__name__)
+else:
+    L.append("subagent share: " + subagent_share["unavailable"])
+# <<< subagent share lines
 
 top = [a for a in accounts if a["cost_usd"] > 0][:4]
 if top:

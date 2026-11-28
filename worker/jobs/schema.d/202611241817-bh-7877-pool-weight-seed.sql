@@ -1,0 +1,11 @@
+-- ── BH-7877: the project-6-os fleet slot weight ─────────────────────────────
+-- Reader: bin/lib/pool-alloc.sh (_pa_settings), from the .values of
+-- state/settings-cache.json (knob catalog/lanes.d/fly-pool.knobs.d/WEIGHT.json).
+-- Actor `seed`, not `registry-seed`: a registry-seed row is not in .values,
+-- so it would not apply. project-6-os is the primary product (the operator, ticket
+-- comment 6326016901): weight 3, every other project the code fallback 1.
+-- No lane.fly-pool.fleet_slots row is seeded: with no row the allocator is
+-- off and this weight changes nothing.
+-- No table is created here, so no index, RLS or retention rule applies.
+-- INSERT OR IGNORE: a re-apply changes nothing and an operator's value stays.
+INSERT OR IGNORE INTO settings (key,value,note,actor,updated_at) VALUES ('lane.fly-pool.project-6-os.weight','3','BH-7877: share weight of project-6-os in the fleet slot allocator (lane.fly-pool.fleet_slots); no row = 1 (bin/lib/pool-alloc.sh)','seed','2026-11-24T18:17:00Z');

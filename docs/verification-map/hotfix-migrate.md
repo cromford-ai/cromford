@@ -101,9 +101,37 @@ is logged and production (`mmh_decide`) still decides; a `hold` proof parks the
 PR BLOCKED_HUMAN, so it gets no merge-queue label; a `retry` proof parks
 nothing, and the PR takes the ordinary path.
 
+**needs-operator (BH-9817).** Two stops that no re-run can clear write the proof
+decision `needs-operator` (rc 3, so tier 2), and the conductor parks the PR
+BLOCKED_HUMAN like a `hold`. Before it parks, `mc_bm_operator_applied` asks the
+production ledger (`mmh_decide`). When it answers `applied` (a person did the
+operator step), the PR is released: no park, no alert. Any other answer keeps
+the park:
+
+- `outside-allowlist`: in `local_gate=advisory` mode, a FLAGGED statement whose
+  first keyword is on the row `hotfix_migrate.workflow_refuses.<project>` (seed
+  for project-6-os: what its `branch-allowlist.ts` refuses; code fallback in
+  `bin/lib/hotfix-migrate-operator.sh`). No approval, no dispatch, no lock.
+- `approve-422`: GitHub answered 422 to the approval. The ledger records
+  `approve_refused.{head,status,message,errors}`; a re-run on the same head makes
+  0 review calls and 0 comments, a new head is tried once.
+
+The approval goes out as the reviewer (hub) App, or on the default credential
+when that App opened the PR (the rule of `rp_author_is_reviewer_app` in
+`bin/review-prs.sh`). GitHub's response body is kept in
+`$BUILD/hotfix-approve.err` and in the comment. The comment has one
+`Operator step (<path>): <step>` line per file, from the row
+`hotfix_migrate.operator_step.<project>` (`{path}`, `{file}`, `{branch}` are
+filled in; a value with `/migrate` is refused) or a plain fallback. The fragment
+`bin/merge-conductor.d/bh-9817-held-operator-alert.sh` raises one
+`HELD_NEEDS_OPERATOR` alert once the PR is held longer than the row
+`hotfix_migrate.held_alert_hours` (seed 6), then at most one per
+`hotfix_migrate.held_alert_repeat_hours` (seed 24).
+
 | what | how |
 |---|---|
 | the row, the dispatch argv, the approval gate, the per-file loop, the outcome words, the checks wait that ignores the migration gate, the run-build trigger and the conductor proof read, against stubs | `HARNESS_TEST_SANDBOX=1 bash tests/hotfix-migrate-before-merge.bh-9403-test.sh` |
+| the needs-operator stop, the approval identity and the 422 body, the conductor park and the held alert, the seed rows | `HARNESS_TEST_SANDBOX=1 bash tests/hotfix-migrate-approve-422.bh-9817-test.sh` and `HARNESS_TEST_SANDBOX=1 bash tests/hotfix-migrate-needs-operator.bh-9817-test.sh` |
 | a REAL proof | the first add-only project-6 PR after the merge: its proof comment carries the run link; record it in `example-org/project-6#3687` (`docs/notes/2026-11-12-BH-9403-before-merge-apply.md`) |
 
 **What must never regress:**

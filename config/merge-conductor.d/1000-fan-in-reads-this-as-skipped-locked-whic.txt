@@ -1,0 +1,66 @@
+    # Fan-in reads this as skipped:locked, which keeps the PR's streak (BH-4842).
+    mc_fanin_mark_locked
+    [ "$(mc_row_field "$KEY" 2 2>/dev/null)" = READY ] && mc_ready_why "$KEY" "$HEAD" worker-locked "an earlier conductor worker still holds this PR's lock — skipped this tick" logged
+    return 0; }
+  REC=$(mc_record_for "$URL" || true)
+  # A PR bin/pr-owner-sweep.sh enrolled on this head is evaluated as ours
+  # (BH-3933). The check WRAPS the probe instead of joining its test: the marker
+  # lines stay at column 2 because tests/pr-dep-gate-rest.bh-994-test.sh extracts
+  # the block between them verbatim and runs it with no HEAD in scope.
+  if mc_enrolled_pr "$REC" "$BR" "$SLUG" "$NUM" "$HEAD"; then
+    mc_attempt_has "enrolled-pr $KEY $HEAD" || { mc_attempt_put "enrolled-pr $KEY $HEAD"; mc_log "$KEY enrolled by pr-owner-sweep on ${HEAD:0:7}: evaluated as ours"; }
+  else
+  # >>> harness pr probe
+  # THE BODY PROBE IS REST, NEVER `gh pr view` (BH-994, 2026-09-19). This is the
+  # tick's SECOND GraphQL body read per PR — the dep gate's was the first — and
+  # together they emptied the App installation's 6600 points/h GraphQL budget
+  # while its REST budget sat at 3141/6600. Between 17:53Z and 18:04Z every
+  # READY cromford row was held with merges=0 on four consecutive ticks;
+  # `gh pr view` answered "GraphQL: API rate limit already exceeded for
+  # installation ID 161623167" and the holds cleared by themselves when the
+  # window reset at 18:04:42Z. A GraphQL failure HERE is worse than a dep-gate
+  # hold: an unreadable body reads as "not a harness PR", so the tick writes the
+  # not-harness line and walks away from a PR that is ours.
+  #
+  # The read is pr_body_read -> mc_pr_view -> bin/lib/gh-rest.sh: the same REST
+  # contract every other decision read in this file goes through, so BH-994's
+  # endpoint is reached by ONE implementation, not a second `gh api` spelling.
+  # mc_is_harness_pr runs it only when the two cheap tests both miss (a build
+  # record, a ticket/* branch), so the common harness PR still costs no read at
+  # all — the same laziness as before, over the budget that has room.
+  #
+  # "NO MARKER" MUST MEAN WE LOOKED (BH-784). The body read is the last of the
+  # three tests and it is LAZY — most PRs never reach it — so the rc cannot be
+  # taken before the call, and mc_is_harness_pr runs it down a pipe where a
+  # variable set in the subshell dies. The flag file is how the rc gets back:
+  # pr_body_read writes it when GitHub refused, and the log line then says the
+  # body was unread instead of claiming the marker is absent from a body nobody
+  # saw. The decision is unchanged either way — no marker we can see, no build.
+  BODY_UNREAD="${TMPDIR:-/tmp}/mc-body-unread.$$.$NUM"; rm -f "$BODY_UNREAD"
+  if ! mc_is_harness_pr "$BR" "$REC" pr_body_read "$URL" "$BODY_UNREAD"; then
+    if [ -f "$BODY_UNREAD" ]; then WHYNH="body unread (HTTP $(mc_rest_status)) — asked again next tick"; NHKEY="not-harness-unread"
+    else WHYNH="no marker"; NHKEY="not-harness"; fi
+    rm -f "$BODY_UNREAD"
+    # Two dedupe keys, because they are two different sentences: the refused
+    # read gets ONE line while the outage lasts, and the real "no marker" still
+    # gets its own line when the body finally reads.
+    mc_attempt_has "$NHKEY $KEY" || { mc_attempt_put "$NHKEY $KEY"; mc_log "$KEY not a harness PR (branch $BR, no record, $WHYNH) — ignored"; }
+    return 0
+  fi
+  rm -f "$BODY_UNREAD"
+  # <<< harness pr probe
+  fi
+  # THE LANE'S HEALTH IS OBSERVED BEFORE ANY RETURN (BH-1019 review round 2).
+  # mc_lane_epoch is a LATCH: it compares the lane's condition now against the
+  # one last written and bumps on a change. A row that returns before reading it
+  # never observes the transition — and the sticky return below is exactly such
+  # a return, about five hundred lines above where MC_HB_PARKED is computed. So
+  # a no-verdict park, still sticky, sat through the whole down->up recovery
+  # without the epoch ever moving, and the release this change exists to give it
+  # depended on some OTHER lane (br_rereview, per resolver tick) happening to
+  # read the latch first. Read here, the observation is this row's own.
+  # THE OLD head-lag SPAN IS FOUR STEPS (BH-6670): lane-epoch, head-lag,
+  # handoff-sticky, park-holds. A kill names the one that was running, and the
+  # trail times each. bin/lib/fanin.sh holds a step timeout in a read-only one.
+  mc_step lane-epoch
+  MC_LANE_EPOCH=$(mc_lane_epoch)

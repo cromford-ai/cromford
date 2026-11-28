@@ -1,0 +1,64 @@
+  # The audit of a base-conflict rebase whose push GitHub already lists
+  # (BH-1677); rebase_consume below audits the one it reads itself.
+  mc_vr_run -w eject-rebased eject_rebased_moved "$KEY" "$SLUG" "$NUM" "$URL" "$HEAD"
+  # A cut verdict read (BH-8020) decides nothing on this PR this tick.
+  command -v mc_vr_end >/dev/null 2>&1 && ! mc_vr_end && return 0
+  mc_step rebase-result
+  # A FINISHED DETACHED REBASE IS READ FIRST (2026-09-14). Its result is the
+  # newest fact about this PR, and applying it is this tick's whole business
+  # with that PR — exactly as the inline rebase was.
+  rebase_consume "$KEY" "$SLUG" "$NUM" "$URL" "$REC" "$HEAD" "$REVIEWED" "$VERDICT" "$MSTATE" && return 0
+  # AN OWED lead-verdict PUBLISH IS RETRIED HERE (BH-4596). A rebind whose
+  # status POST failed (or ran with merges off) left a vs-owed file; it is paid
+  # on the first LATER tick its head is still the head and still approved, and
+  # voided otherwise. Before the rebind block on purpose: a rebind this tick
+  # has just tried, and a second POST in the same tick is not a retry. No owed
+  # file = one stat, no gh call. See mc_rebind_publish.
+  if [ "$ACTIONS" = 1 ]; then
+    if [ "$VERDICT" = APPROVE ] && [ "$REVIEWED" = "$HEAD" ]; then
+      mc_rebind_publish "$KEY" "$P" "$SLUG" "$NUM" "$URL" "$HEAD" || true
+    else
+      mc_rebind_publish "$KEY" "$P" "$SLUG" "$NUM" "$URL" "$HEAD" - || true
+    fi
+  fi
+  # PATCH-ID APPROVAL REBIND, before anything classifies. Two halves of one
+  # rule: remember the patch of an approved head while it IS the head, and
+  # when the head has moved, rebind the approval if the patch is the same
+  # one. A DIRTY PR is excluded — it needs the rebase first, and mc_rebase
+  # rebinds on its own push. See rebind_patch_id above.
+  if [ "$ACTIONS" = 1 ] && [ "$VERDICT" = APPROVE ] && [ -n "$REVIEWED" ] && [ "$REVIEWED" != "-" ]; then
+    if [ "$REVIEWED" = "$HEAD" ]; then
+      mc_git_locked "$P" mc_patch_id_remember "$REC" "$SLUG" "$P" "$NUM" "$HEAD" || true
+    elif [ "$MSTATE" != DIRTY ] && rebind_patch_id "$KEY" "$P" "$SLUG" "$NUM" "$URL" "$REC" "$REVIEWED" "$HEAD"; then
+      REVIEWED="$HEAD"
+    # THE OVERLAP REBIND IS THE SECOND CHANCE (W2-D, 2026-09-14), on exactly
+    # the heads patch-id could not vouch for: the merge that moved this PR's
+    # base touched no file this PR touches, so nothing a reviewer read has
+    # changed. Same guards as the line above — approved, a real reviewed sha,
+    # not DIRTY — and the same consequence, a rebind instead of a Fable call.
+    # MC_OVERLAP_REREVIEW=0 removes this arm and the elif chain is the one it
+    # was before.
+    elif [ "${MC_OVERLAP_REREVIEW:-1}" != 0 ] && [ "$MSTATE" != DIRTY ] && \
+         rebind_no_overlap "$KEY" "$P" "$SLUG" "$NUM" "$URL" "$REC" "$REVIEWED" "$HEAD"; then
+      REVIEWED="$HEAD"
+    fi
+  fi
+  # A STANDING LEAD MERGE ON THIS HEAD IS AN APPROVAL BOUND TO IT (BH-3778).
+  # On a governed repo, a lead/human MERGE or MERGE-WITH-NOTES row on the live
+  # head that la_decide lets the lane clear stands in for a builder APPROVE the
+  # head has moved past (or never had). Never over a builder BLOCK. Everything
+  # below is unchanged: the stacked park, CI, the block gate, the budget and
+  # mc_enqueue_mergify's per-head ask. See bin/lib/mc-lead-ready.sh.
+  if command -v mc_lead_ready >/dev/null 2>&1 \
+     && mc_lead_ready "$KEY" "$SLUG" "$NUM" "$HEAD" "$VERDICT" "$REVIEWED" "$HEADBOUND"; then
+    VERDICT=APPROVE; REVIEWED="$HEAD"
+  fi
+  mc_step ci-read
+  # THE CHECK-RUN READ IS MEMOISED ACROSS TICKS (BH-1486), on terminal answers
+  # only. The fingerprint is computed BEFORE the read on purpose: everything
+  # below that touches CI on this head — the red mark a few lines down, a
+  # flake kick, a rerun — appends to $MC_ATTEMPTS, so the number the NEXT tick
+  # compares against is already different and the memo is invalid by
+  # construction. A hit feeds the same `$CI` variable every arm below reads,
+  # so the classifier's inputs are the same words a fresh read would give.
+  MC_MEMO_FP=$(read_memo_fp "$KEY" "$HEAD")
