@@ -29,7 +29,8 @@
 //   W12 a nudge wake (kind issue, minute 'nudge:<dedupe>') on the ticket issue
 //       marks the PR once (settled 1); after the commit the PR is quiet, not
 //       unsettled on every tick; a webhook wake in the current minute beside
-//       it is still unsettled
+//       it is still unsettled; W12 and W12b run on one mocked clock for the
+//       test and the route, W12b across a minute boundary (BH-10490)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/index.js';
@@ -264,12 +265,21 @@ test('W11 a pruned wake never lowers the mark; the backstop commit refreshes the
   assert.deepEqual([r4.due, r4.reason], [false, 'quiet']);
 });
 
-test('W12 a nudge wake on the ticket issue marks the PR once, then it is settled and quiet', async (t) => {
+// W12 runs on one injected clock (BH-10490): node's mock timers pin Date for
+// the test AND the route (index.js reads nowIso() at the call), so every seed
+// is derived from the same millisecond value the route reads. seedMs is the
+// clock for the row, the nudge and the first two checks; routeMs is the clock
+// for the current-minute webhook wake and the last check.
+const isoAt = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const minuteAt = (ms) => isoAt(ms).slice(0, 16) + ':00Z';
+async function w12(t, seedMs, routeMs) {
   const o = await fresh(t); if (!o) return;
-  seedRow(o.db, { pr: 7, mark: 0, ago: 60 });
+  t.mock.timers.enable({ apis: ['Date'], now: seedMs });
+  o.db.prepare('INSERT INTO unblock_change_marks (repo, site, pr, head, mark, settled, fields, checked_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(REPO.toLowerCase(), 'queue', 7, H1, 0, 1, '{}', isoAt(seedMs - 60_000));
   // the shape POST /api/wakes/nudge writes: kind issue, minute 'nudge:<dedupe>'
   const id = Number(o.db.prepare('INSERT INTO wakes (repo, kind, key, event, minute, at) VALUES (?,?,?,?,?,?)')
-    .run(REPO, 'issue', '900', 'nudge:untriaged', 'nudge:untriaged-900', isoAgo(30)).lastInsertRowid);
+    .run(REPO, 'issue', '900', 'nudge:untriaged', 'nudge:untriaged-900', isoAt(seedMs - 30_000)).lastInsertRowid);
   const r = (await check(o.DB, [{ pr: 7, head: H1, issue: 900 }])).body.items[0];
   assert.deepEqual([r.due, r.reason, r.mark, r.settled], [true, 'wake', id, 1], 'a nudge minute is not the current minute');
   const c = await commit(o.DB, [{ pr: 7, head: H1, mark: r.mark, settled: r.settled, fields: {} }]);
@@ -277,7 +287,18 @@ test('W12 a nudge wake on the ticket issue marks the PR once, then it is settled
   const r2 = (await check(o.DB, [{ pr: 7, head: H1, issue: 900 }])).body.items[0];
   assert.deepEqual([r2.due, r2.reason], [false, 'quiet'], 'a nudge row must not keep the PR unsettled on every tick');
   // a webhook wake in the current minute beside the nudge is still unsettled
-  wake(o.db, { kind: 'issue', key: 900, ago: 0 });
+  t.mock.timers.setTime(routeMs);
+  o.db.prepare('INSERT INTO wakes (repo, kind, key, event, minute, at) VALUES (?,?,?,?,?,?)')
+    .run(REPO, 'issue', '900', 'x', minuteAt(routeMs), isoAt(routeMs));
   const r3 = (await check(o.DB, [{ pr: 7, head: H1, issue: 900 }])).body.items[0];
   assert.deepEqual([r3.due, r3.reason, r3.settled], [true, 'wake', 0]);
+}
+
+test('W12 a nudge wake on the ticket issue marks the PR once, then it is settled and quiet', async (t) => {
+  const ms = Date.parse('2026-11-27T20:12:30.000Z');
+  await w12(t, ms, ms);
+});
+
+test('W12b the same holds across a minute boundary: seed at :59.900, route call at :00.100 of the next minute', async (t) => {
+  await w12(t, Date.parse('2026-11-27T20:12:59.900Z'), Date.parse('2026-11-27T20:13:00.100Z'));
 });

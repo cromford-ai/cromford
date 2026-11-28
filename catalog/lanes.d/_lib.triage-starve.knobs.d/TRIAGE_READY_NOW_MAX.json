@@ -1,0 +1,10 @@
+{
+  "env": "TRIAGE_READY_NOW_MAX",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 50,
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10236: the launches tsv_ready_pass makes per pass. A ready ticket past it is appended to state/triage-state/<p>/deferred.keys, so bin/triage-gate.sh step 1d runs the next tick. Pool capacity stays with bin/run-build.sh. Code fallback 3, read as ${TRIAGE_READY_NOW_MAX:-3}; settings row lib.triage-starve[.<project>].triage_ready_now_max."
+}

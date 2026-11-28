@@ -46,6 +46,18 @@
 #     INSERT OR IGNORE (INSERT OR REPLACE and ON CONFLICT DO UPDATE flag)
 #   and a COMPUTED line from mtd_extract always flags: SQL built at run time
 #   is SQL this lint never read. UPDATE flags as a data rewrite.
+# CONTRACT-CHANGE HINT (BH-9929). A FLAGGED statement that is a non-additive
+# schema change (DROP or change a constraint, change a column type or
+# nullability, rename a column or table, DROP COLUMN, DROP TABLE) prints ONE
+# more line after its FLAGGED line:
+#   <file>: contract-change: this is a non-additive change (<class>). ...
+# It names the contract-change lane, the label and the marker line
+# `Contract-change: yes`, so a build files that ticket and does not clone a
+# table or add a 1:1 side table. The line carries no FLAGGED word and the exit
+# code does not change: every caller reads only the rc or greps FLAGGED.
+# DELETE and TRUNCATE get no hint (data, not schema). The class comes from
+# cc_class_of_stmt (bin/lib/contract-change.sh) when that lib is beside this
+# script; without it, no hint line is printed and nothing else changes.
 # Everything else flags: DO $$ blocks, CREATE FUNCTION/TRIGGER/EXTENSION,
 # DROP/TRUNCATE/DELETE, any GRANT (to anon/authenticated with its own message
 # — that one breaks the deny-by-default RLS posture), and the long tail of
@@ -67,6 +79,16 @@ fi
 # PRAGMA table_info(<t>), the table bare, "double-" or 'single-quoted'.
 PRAGMA_INFO_RE='^PRAGMA TABLE_INFO *\( *([A-Z0-9_]+|"[A-Z0-9_]+"|'"'"'[A-Z0-9_]+'"'"') *\)$'
 allow() { if [ "$IS_TS" = 1 ]; then echo "$F: allowed: $SNIP"; fi; }
+# shellcheck source=bin/lib/contract-change.sh
+[ -r "$(dirname "$0")/lib/contract-change.sh" ] && . "$(dirname "$0")/lib/contract-change.sh" 2>/dev/null
+# cc_hint — the contract-change line for the statement in $ST, or nothing.
+cc_hint() {
+  local cls
+  command -v cc_class_of_stmt >/dev/null 2>&1 || return 0
+  cls=$(cc_class_of_stmt "$ST" | cut -f1 | sort -u | paste -sd, -)
+  [ -n "$cls" ] || return 0
+  echo "$F: contract-change: this is a non-additive change ($cls). Do not clone the table or add a 1:1 side table. File a contract-change ticket: add the label contract-change (GitHub) or the line \"Contract-change: yes\" (board). The contract-change lane runs it as expand, migrate, contract."
+}
 classify_stream() {
   while IFS= read -r ST; do
     [ -n "$ST" ] || continue
@@ -100,7 +122,7 @@ classify_stream() {
       "DO "*|DO) echo "$F: FLAGGED (DO block — the endpoint classifier refuses procedural guards; TK-90/TK-130): $SNIP" ;;
       "CREATE FUNCTION "*|"CREATE OR REPLACE FUNCTION "*|"CREATE TRIGGER "*|"CREATE OR REPLACE TRIGGER "*|"CREATE EXTENSION "*) \
         echo "$F: FLAGGED (CREATE FUNCTION/TRIGGER/EXTENSION — outside the appliable allowlist): $SNIP" ;;
-      "DROP "*|"TRUNCATE "*|"DELETE "*) echo "$F: FLAGGED (destructive statement — never auto-merged): $SNIP" ;;
+      "DROP "*|"TRUNCATE "*|"DELETE "*) echo "$F: FLAGGED (destructive statement — never auto-merged): $SNIP"; cc_hint ;;
       "GRANT "*)
         if grep -qE 'TO +(ANON|AUTHENTICATED)\b' <<<"$U"; then
           echo "$F: FLAGGED (GRANT to anon/authenticated — breaks the deny-by-default RLS posture): $SNIP"
@@ -119,11 +141,11 @@ classify_stream() {
         # TK-197 constraint relaxation: bare DROP NOT NULL, anchored — a
         # trailing rider (CASCADE) or a second action falls through to FLAG.
         if [[ "$REST" =~ ^ALTER\ COLUMN\ \"?[A-Za-z0-9_]+\"?\ DROP\ NOT\ NULL$ ]]; then allow; continue; fi
-        echo "$F: FLAGGED (ALTER TABLE action outside the appliable allowlist): $SNIP" ;;
+        echo "$F: FLAGGED (ALTER TABLE action outside the appliable allowlist): $SNIP"; cc_hint ;;
       "ALTER TYPE "*)
         # TK-197 additive enum: endpoint classifier allows ALTER TYPE … ADD VALUE.
         if [[ "$U" == *" ADD VALUE"* ]]; then allow; continue; fi
-        echo "$F: FLAGGED (ALTER TYPE action outside the appliable allowlist): $SNIP" ;;
+        echo "$F: FLAGGED (ALTER TYPE action outside the appliable allowlist): $SNIP"; cc_hint ;;
       *) echo "$F: FLAGGED (outside the appliable allowlist): $SNIP" ;;
     esac
   done

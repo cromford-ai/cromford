@@ -1,0 +1,12 @@
+{
+  "env": "POOL_TICKET_LIVE_AGE_S",
+  "type": "int",
+  "default": 21600,
+  "min": 0,
+  "max": 2592000,
+  "unit": "seconds",
+  "required": false,
+  "read_in": "bin/lib/pool-ticket-live.sh",
+  "note": "BH-9922: a queued row whose .enqueued_at is at least this old reads its board ticket before a spawn (pool_ticket_live_gate, bin/lib/pool-ticket-live.sh). An archived, done, paused or deleted ticket ends the row FAILED with that reason and no machine. A release from an `after` hold always reads. 0 = read before every spawn. Read as ${POOL_TICKET_LIVE_AGE_S:-21600}.",
+  "settable": true
+}

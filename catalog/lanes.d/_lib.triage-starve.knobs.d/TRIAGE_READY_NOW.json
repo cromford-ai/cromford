@@ -1,0 +1,10 @@
+{
+  "env": "TRIAGE_READY_NOW",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off: a ready in-app ticket waits for a model shard or the starvation rescue, as before BH-10236",
+  "required": false,
+  "note": "BH-10236 switch for tsv_ready_pass. 1 = on each enforce pass, a ticket of the model set whose in-app board entry is not busy, has triageVerdict ready and waitingOn team gets one guarded bin/run-build.sh launch with no model call (the starvation rescue's own attempt, _tsv_inapp_try). Needs TRIAGE_STARVE_INAPP_LAUNCH=1. Code fallback 1, read as ${TRIAGE_READY_NOW:-1}; settings row lib.triage-starve[.<project>].triage_ready_now."
+}

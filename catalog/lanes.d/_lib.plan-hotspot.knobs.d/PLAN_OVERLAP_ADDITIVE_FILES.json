@@ -1,0 +1,10 @@
+{
+  "env": "PLAN_OVERLAP_ADDITIVE_FILES",
+  "read_in": "bin/lib/additive-overlap.sh",
+  "type": "string",
+  "default": "prisma/schema.prisma docs/DATABASE.md docs/API.md changelog.d/ .changeset/ docs/changes/",
+  "zero_means": null,
+  "required": false,
+  "settable": true,
+  "note": "BH-9922. Space-separated additive shared files; an entry that ends / is a directory (the bare dir or any path under it). A plan-overlap or plan-sibling inflight pair where both sides match the same entry is not held: a non-.prisma entry always, a .prisma entry when the two sides touch no common model/enum/type/view block and the other side changes no datasource or generator block (the line then names symbols=[model:X]). An unknown side stays a collision. off = the rule off. Read as the settings row lib.plan-hotspot.<project>.plan_overlap_additive_files, then lib.plan-hotspot.plan_overlap_additive_files, then env, then env/global.env, then this default."
+}

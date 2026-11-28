@@ -849,6 +849,9 @@ _tsh_gh_budget_low() {
 #   vector, which triage_prstates_ingest folds in above whenever it is newer.
 triage_prstates_refresh() {
   local h="${1:-}" p="${2:-}" u="${3:-}" slug ttl now n st ts rc armed=0 want stamp old age k bgh
+  local cnr_prs="" cnr_st="" cnr_rs="" budget=""
+  # BH-10453: reset every pass, so a key is never refused on an older pass.
+  TSH_CNR_KEYS=""; TSH_CNR_STATUS=""
   [ -n "$h" ] && [ -n "$p" ] && [ -s "$u" ] || return 0
   slug=$("$h/bin/fleet-conf.sh" "$p" repo 2>/dev/null) || slug=""
   [ -n "$slug" ] || return 0
@@ -863,6 +866,14 @@ triage_prstates_refresh() {
   # shellcheck source=bin/lib/gh-app-auth.sh
   command -v gh_auth_for >/dev/null 2>&1 \
     || { [ -r "$h/bin/lib/gh-app-auth.sh" ] && . "$h/bin/lib/gh-app-auth.sh"; }
+  # BH-10453: the could-not-read classifier and the retry seam. OPTIONAL BY
+  # DESIGN: a box without them reads once and stamps exactly as before.
+  # shellcheck source=bin/lib/could-not-read.sh
+  command -v cnr_classify_status >/dev/null 2>&1 \
+    || { [ -r "$h/bin/lib/could-not-read.sh" ] && . "$h/bin/lib/could-not-read.sh"; }
+  # shellcheck source=bin/lib/cnr-retry.sh
+  command -v cnr_retry >/dev/null 2>&1 \
+    || { [ -r "$h/bin/lib/cnr-retry.sh" ] && . "$h/bin/lib/cnr-retry.sh"; }
   ttl=$(triage_prstates_ttl "$h"); now=$(date +%s)
   # WHICH NUMBERS ACTUALLY NEED A CALL, decided before anything is spent
   # (BH-1079). Built first so a tick with nothing to look up — the common
@@ -893,7 +904,19 @@ triage_prstates_refresh() {
   for n in $want; do
     # BH-1485: the `_var` variant, so the rc-75 arm below can name the status.
     rc=0; st=""
-    gh_rest_pr_state_var st "$slug" "$n" || rc=$?
+    # BH-10453: through cnr_retry (backoff 2, 4, 8 s on a could-not-read,
+    # inside CNR_RETRY_BUDGET_S). After the first could-not-read of a pass,
+    # every later PR takes one read: 20 PRs x 14 s would hold the tick.
+    if command -v cnr_retry >/dev/null 2>&1; then
+      cnr_retry "$budget" gh_rest_pr_state_var st "$slug" "$n" || rc=$?
+    else
+      gh_rest_pr_state_var st "$slug" "$n" || rc=$?
+    fi
+    if [ "$rc" != 0 ] && [ "$rc" != 44 ] && command -v cnr_classify_status >/dev/null 2>&1 \
+       && [ "$(cnr_classify_status "${GH_REST_STATUS:-}" "${GH_REST_REASON:-}")" = could-not-read ]; then
+      cnr_prs="$cnr_prs $n"; budget=0
+      [ -n "$cnr_st" ] || { cnr_st="${GH_REST_STATUS:-000}"; cnr_rs="${GH_REST_REASON:-}"; }
+    fi
     if [ "$rc" = 0 ]; then
       case "$st" in
         open)   _tsh_prstates_put "$h" "$p" "$n" OPEN   "$now" || true ;;
@@ -915,6 +938,35 @@ triage_prstates_refresh() {
     fi
   done
   [ "$armed" = 1 ] && gh_auth_reset
+  [ -n "$cnr_prs" ] && _tsh_cnr_mark "$h" "$p" "$u" "$bgh" "$cnr_prs" "$cnr_st" "$cnr_rs"
+  return 0
+}
+
+# _tsh_cnr_mark <harness> <project> <units-file> <gh> <prs> <status> <reason>
+#   BH-10453. The PRs in <prs> could not be read this pass (a 401, 403, 429,
+#   5xx or no answer). Every unit key whose queue line names one of them, or
+#   whose deferral blocker PR is one of them, joins TSH_CNR_KEYS, and
+#   triage_shard_fp_put stamps none of them: a world built on an unread PR is
+#   not a world a shard owns. ONE cnr_record a pass (cred gh-app), its line to
+#   logs/<p>.log. The kill row CNR_ENFORCE=0 marks nothing and records nothing.
+_tsh_cnr_mark() {
+  local h="$1" p="$2" u="$3" bgh="$4" prs="$5" st="$6" rs="$7" k n hit line
+  if command -v cnr_enforce_resolve >/dev/null 2>&1; then cnr_enforce_resolve "$p" >/dev/null 2>&1; fi
+  [ "${CNR_ENFORCE:-1}" = 0 ] && return 0
+  for k in $(cut -f1 "$u" 2>/dev/null | awk '!s[$0]++'); do
+    hit=0
+    for n in $(awk -F'\t' -v k="$k" '$1==k && $2=="queue"{print $3}' "$u" 2>/dev/null \
+                 | grep -oE 'PR ?#[0-9]+' | grep -oE '[0-9]+'
+               _tsh_fp_blocker "$h" "$p" "$k" "$bgh" 2>/dev/null | awk '$1=="blocker-pr"{print $2}'); do
+      case " $prs " in *" $n "*) hit=1; break ;; esac
+    done
+    [ "$hit" = 1 ] && TSH_CNR_KEYS="$TSH_CNR_KEYS $k"
+  done
+  TSH_CNR_STATUS="$st"
+  if command -v cnr_record >/dev/null 2>&1; then
+    line=$(cnr_record "$(cnr_box)" "$p" gh-app "$st" "$rs" 2>/dev/null)
+    [ -n "$line" ] && echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$p] prstates refresh: $line" >> "$h/logs/$p.log" 2>/dev/null
+  fi
   return 0
 }
 
@@ -1113,9 +1165,20 @@ triage_shard_fp_fresh() {
 #   Called BEFORE the shard is launched, never after: a ledger written once the
 #   answer is back has already paid for it, and that is the single most
 #   expensive bug shape in this class.
+#   BH-10453: a key in TSH_CNR_KEYS (this pass's refresh could not read a PR
+#   it names) gets NO stamp: one log line and rc 0, so bin/lib/rt/shards.sh
+#   writes no ALERTS line. An older stamp stays as it is.
 triage_shard_fp_put() {
   local h="${1:-}" p="${2:-}" k="${3:-}" fp="${4:-}" f d
   [ -n "$fp" ] || return 1
+  if [ -n "${TSH_CNR_KEYS:-}" ] && [ "${CNR_ENFORCE:-1}" != 0 ]; then
+    case " $TSH_CNR_KEYS " in
+      *" $k "*)
+        echo "$(date -u '+%Y-%m-%d %H:%M:%SZ') [$p] triage shards: $k no fp stamp — PR read could not read (HTTP ${TSH_CNR_STATUS:-000})" \
+          >> "$h/logs/$p.log" 2>/dev/null || true
+        return 0 ;;
+    esac
+  fi
   f=$(triage_shard_fp_file "$h" "$p" "$k"); d=$(dirname "$f")
   mkdir -p "$d" 2>/dev/null || return 1
   printf '%s\n%s\n' "$fp" "$(date +%s)" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f"

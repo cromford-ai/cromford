@@ -191,10 +191,15 @@ ledger_db_reachable() {
 #         "absent": collapsing it into rc 1 is what carried files the ledger
 #         already held back through the classifier and into a second apply POST
 #         every time harness-jobs blinked.
+# LEDGER_STATUS is the row's status on rc 0, else "" (BH-9929: a
+# `contract-pending` row is re-asked, not skipped).
+LEDGER_STATUS=""
 ledger_has() {
   local rc
+  LEDGER_STATUS=""
   type job_ledger_get >/dev/null 2>&1 && [ -n "${HARNESS_SECRET:-}" ] || return 1
-  job_ledger_get migration "$PROJECT $1" >/dev/null 2>&1; rc=$?
+  LEDGER_STATUS=$(job_ledger_get migration "$PROJECT $1" 2>/dev/null); rc=$?
+  [ "$rc" = 0 ] || LEDGER_STATUS=""
   case "$rc" in
     0) ledger_db_reachable; return 0 ;;
     2) ledger_db_reachable; return 1 ;;
@@ -321,7 +326,13 @@ while IFS=$'\t' read -r NUM AUTHOR MC; do
     FN=$(basename "$F")
     # 0 present -> next file. 2 unknown -> hold the run (before the classifier,
     # before mig_job_open, before any POST). 1 absent -> fall through, as before.
-    ledger_has "$FN"; case $? in 0) continue ;; 2) HOLD "$FN" "$NUM" "$MC" ;; esac
+    # BH-9929: a `contract-pending` row (an approvable contract step that had
+    # no clearing verdict yet) is asked again, so a verdict posted after the
+    # merge is read inside the window.
+    ledger_has "$FN"; case $? in
+      0) case "$LEDGER_STATUS" in "contract-pending "*) ;; *) continue ;; esac ;;
+      2) HOLD "$FN" "$NUM" "$MC" ;;
+    esac
     if ! author_is_harness "$AUTHOR"; then
       ledger_put "$FN" "skipped non-harness PR#$NUM by $AUTHOR"
       mig_job_open "$FN"; mig_job_close done SKIPPED "non-harness PR#$NUM by $AUTHOR"
@@ -332,10 +343,42 @@ while IFS=$'\t' read -r NUM AUTHOR MC; do
     git -C "$RDIR" show "$MC:$F" > "$TMPD/$FN" 2>/dev/null || \
       { LOGLINE "$FN (PR #$NUM): cannot read file at merge commit — skipping this tick"; continue; }
     if ! "$BIN/check-migration-appliable.sh" "$PROJECT" "$TMPD" "$TMPD/$FN" > "$TMPD/report.txt" 2>&1; then
+      # >>> contract step (BH-9929): a FLAGGED file applies only as an approved
+      # contract step of the contract-change lane: switch on, label
+      # contract-step:contract, the jobs-worker step row with backup_ref +
+      # restore_ref, and a MERGE on the head by the Scope 4 rule (a --source
+      # human verdict for drop-table, drop-column, merge, type; the normal verdict
+      # for constraint, nullability, rename). The approver classifies
+      # THIS file ($TMPD/$FN, read at the merge commit): it must carry a
+      # contract statement and nothing else that is not additive, per
+      # statement and per action. cc_autopilot_approver
+      # (bin/lib/contract-change-authority.sh) decides. rc 3 (everything but
+      # the verdict) keeps the file `contract-pending` and asks again next
+      # tick; any other answer keeps the FLAGGED path below, unchanged.
+      CC_KEY=""; CC_LINE=""; CC_RC=1
+      if [ -r "$BIN/lib/contract-change-authority.sh" ] && . "$BIN/lib/contract-change-authority.sh" 2>/dev/null; then
+        CC_RC=0; CC_LINE=$(cc_autopilot_approver "$PROJECT" "$SLUG" "$NUM" "$TMPD/$FN" 2>/dev/null) || CC_RC=$?
+      fi
+      if [ "$CC_RC" = 0 ] && [ -n "$CC_LINE" ]; then
+        CC_KEY="$NUM $FN"; CC_BY=$(cut -f1 <<<"$CC_LINE")
+        LOGLINE "$FN (PR #$NUM): classifier-FLAGGED, approved contract step ($(cut -f3 <<<"$CC_LINE") of #$(cut -f2 <<<"$CC_LINE"), approved_by=$CC_BY) — applying"
+      elif [ "$CC_RC" = 3 ]; then
+        # One ledger row and one parked job row the first time, then a quiet
+        # re-ask per tick until the verdict clears it or the PR leaves the
+        # ${WINDOW_H}h window (then the parked job row is the human's page).
+        if [ "$LEDGER_STATUS" != "contract-pending PR#$NUM" ]; then
+          ledger_put "$FN" "contract-pending PR#$NUM"
+          mig_job_open "$FN"; mig_job_close parked FLAGGED "PR#$NUM contract step: waiting for the clearing verdict on the head"
+          LOGLINE "$FN (PR #$NUM): approvable contract step, no clearing verdict on the head yet — contract-pending, asked again each tick for ${WINDOW_H}h"
+        fi
+        continue
+      else
+      # <<< contract step (BH-9929)
       ledger_put "$FN" "flagged PR#$NUM"
       mig_job_open "$FN"; mig_job_close parked FLAGGED "PR#$NUM classifier"
       LOGLINE "$FN (PR #$NUM): classifier-FLAGGED — keeping the page-a-human path ($(head -1 "$TMPD/report.txt" | head -c 160))"
       continue
+      fi # contract step (BH-9929)
     fi
     # ---- deploy gate: the serving sha must CONTAIN the merge commit --------
     if ! git -C "$RDIR" cat-file -e "$SERVING^{commit}" 2>/dev/null || \
@@ -357,7 +400,7 @@ while IFS=$'\t' read -r NUM AUTHOR MC; do
     # "running" row rather than an apply the DB never heard about.
     mig_job_open "$FN"
     RES=$(curl -sf -m 300 -X POST -H "Authorization: Bearer $MIG_TOKEN" -H "Content-Type: application/json" \
-      -H "User-Agent: curl/8" -d "$(jq -nc --arg f "$FN" '{filename:$f, actor:"autopilot"}')" \
+      -H "User-Agent: curl/8" -d "$(jq -nc --arg f "$FN" --arg a "$([ "${CC_KEY:-}" = "$NUM $FN" ] && printf 'contract-change:%s' "$CC_BY" || printf autopilot)" '{filename:$f, actor:$a}')" \
       "$BASE/api/internal/migrations/apply") || FAIL "$FN" "$NUM" "apply POST failed (curl/HTTP error)"
     OK=$(jq -r '.ok // false' <<<"$RES" 2>/dev/null)
     ST=$(jq -r '.status // (if .alreadyApplied == true then "already-applied" else "unknown" end)' <<<"$RES" 2>/dev/null)
@@ -370,7 +413,16 @@ while IFS=$'\t' read -r NUM AUTHOR MC; do
       FAIL "$FN" "$NUM" "apply reported $ST but the status re-check did not answer"
     is_applied "$STATUS" "$FN" || \
       FAIL "$FN" "$NUM" "apply reported $ST but the app ledger does not list it applied"
+    if [ "${CC_KEY:-}" = "$NUM $FN" ]; then # contract step (BH-9929): who approved it
+      ledger_put "$FN" "applied PR#$NUM serving=${SERVING:0:8} approved_by=$CC_BY"
+      command -v cc_record >/dev/null 2>&1 || { [ ! -r "$BIN/lib/contract-change-record.sh" ] || . "$BIN/lib/contract-change-record.sh" 2>/dev/null; }
+      if command -v cc_record >/dev/null 2>&1; then
+        cc_record "$PROJECT" "$(cut -f2 <<<"$CC_LINE")" "$(cut -f3 <<<"$CC_LINE")" verdict="$(cut -f5 <<<"$CC_LINE")" \
+          approved_by="$CC_BY" >/dev/null 2>&1 || LOGLINE "$FN (PR #$NUM): the contract-change step row was not updated (cc_record failed) — the apply stands"
+      fi
+    else
     ledger_put "$FN" "applied PR#$NUM serving=${SERVING:0:8}"
+    fi
     mig_job_close done APPLIED "PR#$NUM serving=${SERVING:0:8}"
     LOGLINE "$FN (PR #$NUM) applied post-deploy (serving ${SERVING:0:8}) and verified via app ledger"
     "$HARNESS/bin/beat.sh" "$(jq -nc --arg p "$PROJECT" --arg akey "migautopilot:$PROJECT:$FN" \

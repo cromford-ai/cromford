@@ -783,7 +783,14 @@ for MF in "$POOL"/*.json; do
       # line: the `After:` clause can sit past the 120 characters DWHY keeps.
       DAFTER=""
       command -v defer_after_key >/dev/null 2>&1 && DAFTER=$(defer_after_key "$RLINE") || DAFTER=""
-      DMETA=$(jq -nc --argjson d "$DNEXT" --argjson x "$DTHS" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" '{deferrals:$d,deaths:$x} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end)')
+      # WHAT IT COLLIDES ON (BH-9922): the symbols and files the RESULT names,
+      # first 3 then a count, kept beside `after` so every later skip line can
+      # say why the row waits. Only with a blocker; cut to 200 characters.
+      DAFTER_ON=""
+      if [ -n "$DAFTER" ] && command -v defer_after_on >/dev/null 2>&1; then
+        DAFTER_ON=$(defer_after_on "$RLINE" | cut -c1-200) || DAFTER_ON=""
+      fi
+      DMETA=$(jq -nc --argjson d "$DNEXT" --argjson x "$DTHS" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" --arg ao "$DAFTER_ON" '{deferrals:$d,deaths:$x} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end) + (if $af == "" or $ao == "" then {} else {after_on:$ao} end)')
       # The sentinel is what tells this dir from a build that owes the board a
       # close-out: it has a RESULT and will never have a COMMENTED, so without
       # it bin/pipeline-health.sh pages "uncommented result >1h" for a build
@@ -931,9 +938,9 @@ for MF in "$POOL"/*.json; do
         # with `after` in it, past JOBS_QUEUE_DEFER_MAX too, and the spawn gate
         # (pool_after_gate) holds it with no machine until that blocker is done.
         if QROW requeue "$KEY" "$DWHY" "$ATT" "$DMETA" "$TICKET"; then
-        jq -nc --arg t "$TICKET" --arg k "$KEY" --argjson a "$ATT" --argjson d "$DNEXT" --argjson x "$DTHS" --arg ts "$(STAMP)" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,deaths:$x,enqueued_at:$ts} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end)' > "$QDIR/$KEY.json"
+        jq -nc --arg t "$TICKET" --arg k "$KEY" --argjson a "$ATT" --argjson d "$DNEXT" --argjson x "$DTHS" --arg ts "$(STAMP)" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" --arg ao "$DAFTER_ON" '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,deaths:$x,enqueued_at:$ts} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end) + (if $af == "" or $ao == "" then {} else {after_on:$ao} end)' > "$QDIR/$KEY.json"
         if [ -n "$DAFTER" ]; then
-          say "DEFERRED $KEY: waits for $DAFTER (stand-down $DNEXT) — row stays queued, held until $DAFTER is done"
+          say "DEFERRED $KEY: waits for $DAFTER (stand-down $DNEXT) — row stays queued, held until $DAFTER is done${DAFTER_ON:+; collides on $DAFTER_ON}"
           pool_after_loop_alert "$KEY" "$DAFTER" "$DNEXT" "$DWHY"
         else
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool build DEFERRED ($DWHY) — requeued attempt $DNEXT"

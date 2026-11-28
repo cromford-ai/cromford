@@ -1,0 +1,13 @@
+{
+  "env": "CNR_RETRY_BUDGET_S",
+  "read_in": "bin/lib/cnr-retry.sh",
+  "type": "int",
+  "default": 20,
+  "min": 0,
+  "max": 120,
+  "unit": "seconds",
+  "zero_means": "no retry: one read, as before BH-9555.3",
+  "required": false,
+  "settable": true,
+  "note": "BH-10453 (BH-9555.3). The time budget of cnr_retry for one read: a could-not-read answer (401, 403, 429, 5xx, no answer) is read again after 2, 4 and 8 s while elapsed + step fits the budget. A decision (200, 404, 422) is never retried. An empty budget argument reads this knob: env, else the row lib.could-not-read.cnr_retry_budget_s through lib_env_apply (once a shell), else 20. A value that is not a whole number reads 20; above 120 reads 120."
+}

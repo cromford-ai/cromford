@@ -331,6 +331,9 @@ export const api = {
   // BH-9258: the pool row of one project (gates_today: today's selection-gate counts).
   poolStatus: (project) => get(coordPath(`/api/pool/status?project=${encodeURIComponent(project)}`)),
   conflictHotspots: (project, limit) => get(`/api/coord/conflict-hotspots?project=${encodeURIComponent(project)}&limit=${encodeURIComponent(limit)}`),
+  // BH-9929: the contract-change step rows of one project (expand, migrate, contract), newest first.
+  // No limit asks for the worker's cap, the settings row lib.contract-change.contract_changes_list_max.
+  contractChanges: (project) => get(`/api/coord/contract-changes?project=${encodeURIComponent(project)}`),
   // BH-6061: the Fly idle reaper's last started-machine snapshot and its stops in the last 24 h.
   flyIdle: () => get('/api/coord/fly-idle'),
   // Lane liveness (2026-08-30): what is SUPPOSED to be ticking, and whether it

@@ -1,0 +1,11 @@
+{
+  "env": "MC_EJECT_REREAD",
+  "read_in": "bin/merge-conductor.d/bh-9438-eject-reread.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9438: 1 = an OPEN BLOCKED_HUMAN queue-ejected-twice park whose cause was recorded as `unknown (no Mergify dequeue reason)` (the label before BH-9229) has its Mergify dequeue comments read again, once per (PR, head). A conflict gets the ejectconflict mark and the hand-off release (a rebase, not a fix round); any other cause re-labels the park. 0 = off: no re-read. Settings row: lane.merge-conductor.mc_eject_reread."
+}

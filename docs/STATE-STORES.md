@@ -244,4 +244,26 @@ read against the box that made it
 
 ## BH-9555.5 pr_records readers
 
+`bin/lib/pr-record-readers.sh` (BH-10455) reads `pr_records` for two callers:
+the triage-gate queue-pending PR-state vector and the triage-state `#N` ref
+seam `_ts_pr_record_ref`.
+
+- Read: `pr_record_peek` (`GET /api/pr-records?repo=&number=`, index
+  `ux_pr_records_repo_number`). One jobs GET per PR. No write.
+- Served when the row is at most `PR_RECORD_MAX_AGE_S` old and its `state` is
+  `open`, `closed` or `merged`. Every other answer is a miss, and the caller
+  reads GitHub once, as before.
+- Kill row: `lib.pr-record.pr_record_readers` (`PR_RECORD_READERS`, default 1,
+  0 = off). Fragment:
+  `catalog/lanes.d/_lib.pr-record.knobs.d/PR_RECORD_READERS.json`.
+- Writers of the row: the webhook intake (`worker/jobs/src/lib/pr-record-intake.js`)
+  and the `pr_record_get` / `pr_record_put` callers. Retention: `pr_records.closed`
+  (14 d) and `pr_records.age` (90 d), `worker/jobs/src/routes/retention.d/bh-8067-pr-records.js`.
+- Proof: `tests/pr-state-table.bh-10455-test.sh` (call counts) and
+  `worker/jobs/test/pr-records-explain.bh-10455.test.js` (EXPLAIN at 50,000 rows).
+
+Other readers that already used the record: the merge conductor (BH-9938,
+BH-10257), pr-owner-sweep (BH-8481), orphan-reconcile (BH-8452), lifecycle
+(BH-8735) and pipeline-health.
+
 ## BH-9555.6 gh_lane_budget_spend

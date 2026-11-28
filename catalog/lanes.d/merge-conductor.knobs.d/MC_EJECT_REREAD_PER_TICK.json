@@ -1,0 +1,11 @@
+{
+  "env": "MC_EJECT_REREAD_PER_TICK",
+  "read_in": "bin/merge-conductor.d/bh-9438-eject-reread.sh",
+  "type": "int",
+  "default": 10,
+  "min": 0,
+  "max": 200,
+  "unit": "reads",
+  "zero_means": "off",
+  "note": "BH-9438: the most MC_EJECT_REREAD comment reads per project per conductor tick. A park over the cap waits for the next tick. 0 = off: no re-read. Settings row: lane.merge-conductor.mc_eject_reread_per_tick."
+}

@@ -1,0 +1,10 @@
+{
+  "env": "MERGED_ADVANCE_KEY_PR_PAGES",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 10,
+  "zero_means": null,
+  "required": false,
+  "note": "BH-10236: the pages of 100 closed PRs (newest update first) bin/merged-ticket-advance.sh reads once a run for the key PR map. A PR past the last page has no row, and its ticket is handled as before. Code fallback 3; settings row lib.merged-advance[.<project>].merged_advance_key_pr_pages."
+}

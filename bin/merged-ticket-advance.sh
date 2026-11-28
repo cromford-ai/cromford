@@ -182,6 +182,18 @@ case "$TRIES" in ''|*[!0-9]*|0) TRIES=3 ;; esac
 # route (BH-8786). knob lib.merged-advance MERGED_ADVANCE_DEPLOY_GRACE_S; 1800 is its fallback.
 GRACE="${MERGED_ADVANCE_DEPLOY_GRACE_S:-1800}"
 case "$GRACE" in ''|*[!0-9]*) GRACE=1800 ;; esac
+# BH-10236: the key PR of a ticket (bin/lib/merged-advance-key-pr.sh). knobs
+# lib.merged-advance MERGED_ADVANCE_KEY_PR (fallback 1, 0 = off: no closed-list
+# read, the lane as before) and MERGED_ADVANCE_KEY_PR_PAGES (fallback 3 pages
+# of 100 closed PRs, newest update first).
+KEYPR="${MERGED_ADVANCE_KEY_PR:-1}"
+case "$KEYPR" in 0) ;; *) KEYPR=1 ;; esac
+KPAGES="${MERGED_ADVANCE_KEY_PR_PAGES:-3}"
+case "$KPAGES" in ''|*[!0-9]*|0) KPAGES=3 ;; esac
+[ "$KPAGES" -le 10 ] || KPAGES=10
+# shellcheck source=bin/lib/merged-advance-key-pr.sh
+[ -r "$SELF/lib/merged-advance-key-pr.sh" ] && . "$SELF/lib/merged-advance-key-pr.sh" 2>/dev/null
+command -v mka_key_prs >/dev/null 2>&1 || KEYPR=0
 [ "$MAX" -gt 0 ] || exit 0
 
 # Same pacing as the parent close: the in-app tick calls this every time, and a
@@ -447,6 +459,20 @@ rc=$(_ma_get "$API/boards" "$TMP/boards.json")
 BIDS=$(jq -r '(.boards? // .) | .[]?.id' "$TMP/boards.json" 2>/dev/null) || BIDS=""
 [ -n "$BIDS" ] || exit 0
 
+# BH-10236: the merged PRs of the repo by ticket key, read once a run. An
+# unread page ends the read: the keys read so far stand, and a ticket with no
+# row is handled as before.
+: > "$TMP/keyprs.tsv"
+if [ "$KEYPR" = 1 ] && [ -n "$SLUG" ] && _ma_gh_ready; then
+  kp=1
+  while [ "$kp" -le "$KPAGES" ]; do
+    gh_rest GET "repos/$SLUG/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=$kp" > "$TMP/closed.json" 2>/dev/null || break
+    mka_key_prs < "$TMP/closed.json" >> "$TMP/keyprs.tsv" || break
+    [ "$(jq 'length' "$TMP/closed.json" 2>/dev/null)" = 100 ] || break
+    kp=$((kp + 1))
+  done
+fi
+
 : > "$TMP/cands.tsv"
 n=0
 while IFS= read -r bid; do
@@ -456,12 +482,23 @@ while IFS= read -r bid; do
   [ "$rc" = 200 ] || continue
   jq -r '(.tickets? // .) | .[]? | select(type == "object")
          | ((.status // "") | ascii_downcase) as $s
-         | select($s == "in_progress" or $s == "review")
+         | select($s == "in_progress" or $s == "review" or $s == "todo")
          | [ (.id | tostring), (.key // (.id | tostring)), $s,
              ((if (.reporter | type) == "object" then .reporter.userId else null end)
                // .reporterId // "") ]
          | @tsv' "$TMP/list-$n.json" 2>/dev/null >> "$TMP/cands.tsv"
 done <<<"$BIDS"
+# BH-10236: column 5 is the ticket's key PR (`-` = none). A `todo` ticket with
+# no key PR is not a candidate: it costs no request and no count.
+: > "$TMP/cands5.tsv"
+while IFS="$(printf '\t')" read -r c1 c2 c3 c4; do
+  [ -n "$c1" ] || continue
+  ck=$(mka_key_pick "$c2" < "$TMP/keyprs.tsv" 2>/dev/null) || ck=""
+  case "$ck" in ''|*[!0-9]*) ck=- ;; esac
+  [ "$c3" = todo ] && [ "$ck" = - ] && continue
+  printf '%s\t%s\t%s\t%s\t%s\n' "$c1" "$c2" "$c3" "${c4:--}" "$ck" >> "$TMP/cands5.tsv"
+done < "$TMP/cands.tsv"
+mv "$TMP/cands5.tsv" "$TMP/cands.tsv"
 
 # Start where the last capped run stopped (FAIRNESS above). An id no longer
 # on the list starts from the top.
@@ -480,8 +517,9 @@ S_NOLOCAL=0; S_NOPR=0; S_PROPEN=0; S_BEHIND=0; S_PEERUNREAD=0; S_AMBIG=0; S_SLIC
 EXAMINED=0; LEFT=0; IDX=0; STOPAT=""
 NCANDS=$(grep -c . "$TMP/cands.tsv" 2>/dev/null) || NCANDS=0
 
-while IFS="$(printf '\t')" read -r tid tkey tst trep; do
+while IFS="$(printf '\t')" read -r tid tkey tst trep tkpr; do
   [ -n "$tid" ] || continue
+  [ "$trep" = - ] && trep=""
   IDX=$((IDX + 1))
   if [ "$EXAMINED" -ge "$MAX" ]; then LEFT=$((NCANDS - IDX + 1)); STOPAT="$tid"; break; fi
 
@@ -493,7 +531,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     # goes first, so a client review ticket costs no request (as step 4).
     PEER=1; S_NOLOCAL=$((S_NOLOCAL + 1))
     if [ "$trep" = system ]; then to=done
-    elif [ "$tst" = in_progress ]; then to=review
+    elif [ "$tst" = in_progress ] || [ "$tst" = todo ]; then to=review
     else S_CREVIEW=$((S_CREVIEW + 1)); continue
     fi
     EXAMINED=$((EXAMINED + 1))
@@ -501,7 +539,11 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     rst=""
     [ "$rc" = 200 ] && { rst=$(jq -r '((.status? // .ticket.status? // "") | ascii_downcase)' "$TMP/t.json" 2>/dev/null) || rst=""; }
     if [ -z "$SLUG" ] || [ "$rst" != "$tst" ]; then S_PEERUNREAD=$((S_PEERUNREAD + 1)); continue; fi
-    prn=$(_ma_peer_pr "$TMP/t.json")
+    # BH-10236: a todo ticket's thread can name a PR it only refers to, so
+    # only its key PR counts. An open ticket with no PR address in its thread
+    # takes its key PR.
+    if [ "$tst" = todo ]; then prn=""; else prn=$(_ma_peer_pr "$TMP/t.json"); fi
+    [ -z "$prn" ] && [ "${tkpr:--}" != - ] && prn=$tkpr
     case "$prn" in
       '') S_NOPR=$((S_NOPR + 1)); continue ;;
       *[!0-9]*) S_AMBIG=$((S_AMBIG + 1)); continue ;;
@@ -513,6 +555,23 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
       1) S_PROPEN=$((S_PROPEN + 1)); continue ;;
       *) S_PEERUNREAD=$((S_PEERUNREAD + 1)); continue ;;
     esac
+    # BH-10236: on the 2 new paths (a todo ticket, or a PR found by the key in
+    # its title) a status change AFTER the merge is a person or the app that
+    # moved the ticket: it is never moved again, with or without a comment.
+    # A status history that cannot be read is UNKNOWN, never "not moved": the
+    # lane does nothing and counts peer-unread.
+    if [ "$tst" = todo ] || [ "$prn" = "${tkpr:--}" ]; then
+      mrc=0; mback=$(mka_moved_after "$PR_AT" < "$TMP/t.json") || mrc=$?
+      case "$mrc" in
+        1) ;;
+        0) S_BACK=$((S_BACK + 1))
+           MA_LOG "MERGED_ADVANCE_MOVED_BACK $tkey status changed $mback after PR #$prn merged $PR_AT"
+           continue ;;
+        *) S_PEERUNREAD=$((S_PEERUNREAD + 1))
+           MA_LOG "MERGED_ADVANCE_MOVED_BACK_UNKNOWN $tkey the status history of the ticket was not read; PR #$prn not used"
+           continue ;;
+      esac
+    fi
     jq -r '.body // ""' "$TMP/pr.json" > "$TMP/prbody.md" 2>/dev/null || : > "$TMP/prbody.md"
     splan="$TMP/prbody.md"
     stitle=$(jq -r '.title // ""' "$TMP/pr.json" 2>/dev/null) || stitle=""
@@ -669,7 +728,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
                     | select(contains("This is merged and") and contains($w))
                     | select(contains("not live on production yet") | not)] | length' "$TMP/t.json" 2>/dev/null) || mine=""
            case "$mine" in ''|*[!0-9]*|0) ;; *) already=1 ;; esac ;;
-      no)  if [ "$tst" != in_progress ]; then S_CREVIEW=$((S_CREVIEW + 1)); continue; fi
+      no)  if [ "$tst" != in_progress ] && [ "$tst" != todo ]; then S_CREVIEW=$((S_CREVIEW + 1)); continue; fi
            stg_hold=1 ;;
       *)   S_PEERUNREAD=$((S_PEERUNREAD + 1)); continue ;;
     esac
@@ -730,7 +789,11 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     body="$body<p>It is not live on production yet. It goes live with the next release.</p>"
   fi
   body="$body$probe_html"
-  if [ "$stg_hold" = 1 ]; then body="$body<p>The ticket stays in progress until the release is live.</p>"
+  # BH-10236: a todo ticket on a staging hold leaves todo. It goes to
+  # in_progress, where the app's own audit finds it at the release.
+  stg_todo=0; [ "$stg_hold" = 1 ] && [ "$tst" = todo ] && { stg_todo=1; to=in_progress; }
+  if [ "$stg_todo" = 1 ]; then body="$body<p>Moving it to in progress. It stays there until the release is live.</p>"
+  elif [ "$stg_hold" = 1 ]; then body="$body<p>The ticket stays in progress until the release is live.</p>"
   elif [ "$to" = done ]; then body="$body<p>Moving it to done.</p>"
   else body="$body<p>Moving it to review so you can check it.</p>"; fi
   jq -n --arg b "$body" '{body: $b}' > "$TMP/comment.json" 2>/dev/null || continue
@@ -738,7 +801,7 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
 
   if [ "$DRY" = 1 ]; then
     [ "$already" = 0 ] && printf 'DRYRUN POST %s\n%s\n' "$API/tickets/$tid/comments" "$body" >&2
-    [ "$stg_hold" = 1 ] && continue
+    [ "$stg_hold" = 1 ] && [ "$stg_todo" = 0 ] && continue
     printf 'DRYRUN POST %s {"toStatus":"%s"}\n' "$API/tickets/$tid/move" "$to" >&2
     [ "$to" = review ] && printf 'DRYRUN POST %s {"to":"client"}\n' "$API/tickets/$tid/turn" >&2
     continue
@@ -754,10 +817,11 @@ while IFS="$(printf '\t')" read -r tid tkey tst trep; do
     esac
   fi
   # BH-9876: comment only. The marker ends this lane's work for this token.
-  if [ "$stg_hold" = 1 ]; then
+  if [ "$stg_hold" = 1 ] && [ "$stg_todo" = 0 ]; then
     cm_put "$mkey" - "$mbase.moved"
     CONLY=$((CONLY + 1)); continue
   fi
+  [ "$tst" = todo ] && MA_LOG "MERGED_ADVANCE_TODO $tkey was todo; its PR #${pr##*/pull/} is merged"
   m=$(_ma_post "$API/tickets/$tid/move" "$TMP/move.json" \
         "advance-$PROJECT-$tid-$token-move" "$TMP/resp.json")
   case "$m" in

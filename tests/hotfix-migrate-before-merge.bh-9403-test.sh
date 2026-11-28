@@ -19,7 +19,8 @@
 #
 # Cases: K1-K4 the row; D1 the dispatch argv; A1-A5 the approval; L1-L4 the
 # per-file loop; B1-B5 binding the run to our dispatch; O1 the outcome table; R1 a refusal; I1 inert; C1-C4 the checks
-# wait; G1-G2 the local gate; X1 no workflow; E1 project-6 end to end; T1 the
+# wait; G1-G2 the local gate; CC1-CC7 the contract-change lane (BH-9929);
+# X1 no workflow; E1 project-6 end to end; T1 the
 # run-build trigger (project-5); M1-M5 the conductor; S1 the seed rows.
 #
 # Run: HARNESS_TEST_SANDBOX=1 bash tests/hotfix-migrate-before-merge.bh-9403-test.sh   (exit 0 = pass)
@@ -482,6 +483,101 @@ mkrow "$(jq -c 'del(.local_gate)' <<<"$MKROW")"; newcase
 RC=$(run_hm mk-os "$WTU")
 [ "$RC" = 2 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && [ "$(cnt "$FX/approve.log")" = 0 ] && ok \
   || bad "G2 strict (the default): rc 2, 0 dispatch, 0 approval (rc $RC)"
+
+# ============================================================================
+# CC. the contract-change lane on this apply path (BH-9929 review). This stage
+# applies SQL BEFORE the merge, so the la_decide hold cannot stop it. With the
+# project's contract-change switch on, a FLAGGED contract change goes on only
+# as an approved contract step (hm_contract_step), whatever local_gate says,
+# and the step row records who approved it. The approver
+# (cc_autopilot_approver) is pinned by tests/contract-change-autopilot.bh-9929-test.sh;
+# here it is a fixture: $T/cc-approver.rc and .line. cc_enabled reads $T/cc-switch.
+# ============================================================================
+for f in contract-change.sh contract-change-authority.sh contract-change-record.sh; do
+  [ ! -e "$HH/bin/lib/$f" ] || cp "$HH/bin/lib/$f" "$T/cc-orig-$f"
+done
+# scratch-closure-allow: the lane libs are fixtures here (the switch, the approver, the row writer); the real classifier is copied beside them
+cp "$REPO/bin/lib/contract-change.sh" "$HH/bin/lib/contract-change-real.sh"
+cat > "$HH/bin/lib/contract-change.sh" <<EOF
+. "$HH/bin/lib/contract-change-real.sh"
+cc_enabled() { return "\$(cat "$T/cc-switch")"; }
+EOF
+cat > "$HH/bin/lib/contract-change-authority.sh" <<EOF
+cc_autopilot_approver() {
+  printf '%s|%s|%s|%s\n' "\$@" >> "$T/cc-approver.calls"
+  [ -f "$T/cc-approver.line" ] && cat "$T/cc-approver.line"
+  return "\$(cat "$T/cc-approver.rc")"
+}
+EOF
+cat > "$HH/bin/lib/contract-change-record.sh" <<EOF
+cc_record() { printf '%s\n' "\$*" >> "$T/cc-record.calls"; return 0; }
+EOF
+CCF=prisma/sql/20261110000005_c.sql
+WTC="$T/wtc"; mkwt "$WTC" "$CCF=DROP TABLE report_choice_ext;"
+HEADC=$(git -C "$WTC" rev-parse HEAD)
+WTCU="$T/wtcu"; mkwt "$WTCU" "$CCF=DROP TABLE report_choice_ext;" "prisma/sql/20261110000006_u.sql=UPDATE t SET x=2 WHERE id=7;"
+HEADCU=$(git -C "$WTCU" rev-parse HEAD)
+# cc_case <switch-rc> <approver-rc> [approver-head] — fresh fixtures for one case
+cc_case() {
+  mkrow; newcase
+  rm -f "$T/cc-approver.calls" "$T/cc-record.calls" "$T/cc-approver.line"
+  printf '%s' "$1" > "$T/cc-switch"; printf '%s' "$2" > "$T/cc-approver.rc"
+  printf 'operator\t41\tcontract\t%s\tMERGE\n' "${3:-$HEADC}" > "$T/cc-approver.line"
+  printf '%s\n' "$HEADC" > "$FX/head.sha"
+  logok 20261110000005_c.sql > "$FX/log-20261110000005_c.sql"
+}
+# CC1 switch on, not an approved contract step: refused, never dispatched
+cc_case 0 1
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 2 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && [ "$(cnt "$FX/approve.log")" = 0 ] && ok \
+  || bad "CC1 an unapproved DROP TABLE with local_gate advisory: rc 2, 0 dispatch, 0 approval (rc $RC, dispatches $(cnt "$FX/dispatch.log"))"
+grep -q 'contract-change:' "$FX/comment.md" && grep -q 'File a contract-change ticket' "$FX/comment.md" && ok \
+  || bad "CC1 the proof names the lane (got: $(cat "$FX/comment.md" 2>/dev/null))"
+grep -qF "mk-os|o/p|$PRN|$WTC/$CCF" "$T/cc-approver.calls" && ok || bad "CC1 the approver judges the worktree file of this PR (got: $(cat "$T/cc-approver.calls" 2>/dev/null))"
+# CC2 the verdict is not there yet: hold, never dispatched
+cc_case 0 3
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 3 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && grep -q 'no clearing verdict stands on the head' "$FX/comment.md" && ok \
+  || bad "CC2 an approvable step with no verdict: rc 3 hold, 0 dispatch (rc $RC, dispatches $(cnt "$FX/dispatch.log"))"
+# CC3 an approved contract step: dispatched, the proof and the step row name the approver
+cc_case 0 0
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 0 ] && [ "$(cnt "$FX/dispatch.log")" = 1 ] && ok \
+  || bad "CC3 an approved contract step: rc 0, 1 dispatch (rc $RC, dispatches $(cnt "$FX/dispatch.log"): $(tail -3 "$FX/hm.err"))"
+grep -q 'Contract step (BH-9929): contract of #41, approved by operator' "$FX/comment.md" && ok \
+  || bad "CC3 the proof records who approved it (got: $(cat "$FX/comment.md" 2>/dev/null))"
+grep -qF "mk-os 41 contract verdict=MERGE approved_by=operator head_sha=$HEADC" "$T/cc-record.calls" 2>/dev/null && ok \
+  || bad "CC3 the step row gets verdict + approved_by (got: $(cat "$T/cc-record.calls" 2>/dev/null))"
+# CC4 the approved head is not the worktree head: hold
+cc_case 0 0 "$OTHER"
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 3 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && [ ! -s "$T/cc-record.calls" ] && ok \
+  || bad "CC4 an approval of another head: rc 3, 0 dispatch, no row write (rc $RC)"
+# CC5 switch off: today's advisory path, the approver is not asked. Since
+# BH-9817 today's advisory path stops a FLAGGED DROP (a keyword on the workflow
+# refuse list) with needs-operator: rc 3, no approval, no dispatch. The lane
+# must leave that path exactly as main has it.
+cc_case 1 1
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 3 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && [ "$(cnt "$FX/approve.log")" = 0 ] \
+  && [ ! -s "$T/cc-approver.calls" ] && [ ! -s "$T/cc-record.calls" ] \
+  && grep -q 'the migration workflow cannot apply this SQL' "$FX/comment.md" \
+  && ! grep -q 'contract-change:' "$FX/comment.md" && ok \
+  || bad "CC5 switch off keeps today's advisory path (BH-9817 needs-operator): rc 3, 0 dispatch, 0 approval, no approver call (rc $RC, dispatches $(cnt "$FX/dispatch.log"))"
+# CC6 the switch is unreadable: hold
+cc_case 2 0
+RC=$(run_hm mk-os "$WTC" HM_REVIEWED_SHA="$HEADC")
+[ "$RC" = 3 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && ok || bad "CC6 an unreadable switch: rc 3, 0 dispatch (rc $RC)"
+# CC7 an approved contract file beside a flagged non-contract file: refused
+cc_case 0 0 "$HEADCU"; printf '%s\n' "$HEADCU" > "$FX/head.sha"
+RC=$(run_hm mk-os "$WTCU" HM_REVIEWED_SHA="$HEADCU")
+[ "$RC" = 2 ] && [ "$(cnt "$FX/dispatch.log")" = 0 ] && grep -q 'not a contract change' "$FX/comment.md" && ok \
+  || bad "CC7 an UPDATE beside an approved contract file: rc 2, 0 dispatch (rc $RC)"
+# restore the closure's libs for the cases below
+rm -f "$HH/bin/lib/contract-change-real.sh"
+for f in contract-change.sh contract-change-authority.sh contract-change-record.sh; do
+  if [ -e "$T/cc-orig-$f" ]; then cp "$T/cc-orig-$f" "$HH/bin/lib/$f"; else rm -f "$HH/bin/lib/$f"; fi
+done
 
 # ============================================================================
 # X1. before-merge with no workflow: rc 4, 1 alert, no ledger, no proof

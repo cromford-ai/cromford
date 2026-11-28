@@ -56,8 +56,9 @@
   # and a write only on a transition.
   MC_HB_PARKED=0
   mc_hb_parked "$KEY" "$HEAD" "$MC_LANE_EPOCH" && MC_HB_PARKED=1
-  # The scan and the pre-arm guards cost a gh diff / a workflow dispatch, so
-  # they run only when everything cheaper already says READY.
-  SCAN=0; PREARM=0; DIFF_UNREAD=0; DIFF_WHY=""; MC_HIT_NAMES=""; MC_NEEDS_HV=""; DF=""
-  PRE=$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" 0 0 "$PREV" "${HEADBOUND:--}" | cut -f1)
-  if [ "$PRE" = READY ]; then
+  # ...and is this the first-verdict grace of a head no review ever bound to?
+  # (BH-9438, the noverdict-grace fragment, mc_nvg_in_grace.) The same
+  # NAMED-variable shape: mc_classify says `no verdict yet`, and
+  # headbound_review's moved mode buys no review inside the window.
+  MC_NV_GRACE=0
+  command -v mc_nvg_in_grace >/dev/null 2>&1 && mc_nvg_in_grace "$KEY" "$HEAD" "$REVIEWED" "$VERDICT" && MC_NV_GRACE=1

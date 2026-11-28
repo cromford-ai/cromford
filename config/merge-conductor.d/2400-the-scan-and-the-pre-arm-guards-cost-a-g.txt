@@ -1,3 +1,8 @@
+  # The scan and the pre-arm guards cost a gh diff / a workflow dispatch, so
+  # they run only when everything cheaper already says READY.
+  SCAN=0; PREARM=0; DIFF_UNREAD=0; DIFF_WHY=""; MC_HIT_NAMES=""; MC_NEEDS_HV=""; DF=""
+  PRE=$(mc_classify "$PSTATE" "$EFF" "$MGABLE" "$HEAD" "$REVIEWED" "$VERDICT" "$PROV" "$CI" "$REDS" "$TIGHT" 0 0 "$PREV" "${HEADBOUND:--}" | cut -f1)
+  if [ "$PRE" = READY ]; then
     # A DIFF WE COULD NOT READ IS NOT A CLEAN DIFF (BH-784), the same rule
     # bin/merge-sweep.sh's scan takes. An unread diff is an EMPTY file and the
     # scan finds the zero hits an empty file always has — so without the flag

@@ -1569,6 +1569,12 @@ pr_worker() {
   # and a write only on a transition.
   MC_HB_PARKED=0
   mc_hb_parked "$KEY" "$HEAD" "$MC_LANE_EPOCH" && MC_HB_PARKED=1
+  # ...and is this the first-verdict grace of a head no review ever bound to?
+  # (BH-9438, the noverdict-grace fragment, mc_nvg_in_grace.) The same
+  # NAMED-variable shape: mc_classify says `no verdict yet`, and
+  # headbound_review's moved mode buys no review inside the window.
+  MC_NV_GRACE=0
+  command -v mc_nvg_in_grace >/dev/null 2>&1 && mc_nvg_in_grace "$KEY" "$HEAD" "$REVIEWED" "$VERDICT" && MC_NV_GRACE=1
   # The scan and the pre-arm guards cost a gh diff / a workflow dispatch, so
   # they run only when everything cheaper already says READY.
   SCAN=0; PREARM=0; DIFF_UNREAD=0; DIFF_WHY=""; MC_HIT_NAMES=""; MC_NEEDS_HV=""; DF=""
@@ -3155,6 +3161,10 @@ tick_project() {
         # BH-9695: else a park with no named cause gets its one Mergify event
         # read and one more requeue (rc 0); rc 2 (a budget) waits a tick.
         case "$QWHY" in queue-ejected-twice*)
+          # BH-9438: a park labelled `unknown (no Mergify dequeue reason)`
+          # before BH-9229 is re-read once; a conflict (rc 0) goes to the
+          # rebase, not to a fix round.
+          command -v mc_ejr_reread >/dev/null 2>&1 && mc_ejr_reread "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" "$QWHY" && { exec 9>&-; continue; }
           if ! { command -v mc_bv_solo >/dev/null 2>&1 && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; }; then
             QEU=1; command -v mc_eu_requeue >/dev/null 2>&1 && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
             [ "$QEU" = 1 ] && mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"

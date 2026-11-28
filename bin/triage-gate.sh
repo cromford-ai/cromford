@@ -113,6 +113,13 @@ for _P in "$(dirname "$0")/lib/gh-rest.sh" "$HARNESS/bin/lib/gh-rest.sh"; do
   # shellcheck source=/dev/null
   [ -r "$_P" ] && { . "$_P"; break; }
 done
+# BH-10455: the queue-pending PR-state vector reads a fresh pr_records row
+# first (one jobs GET, no GitHub call). No lib (a box mid-sync) = the GitHub
+# read below, as before.
+for _P in "$(dirname "$0")/lib/pr-record-readers.sh" "$HARNESS/bin/lib/pr-record-readers.sh"; do
+  # shellcheck source=/dev/null
+  [ -r "$_P" ] && { . "$_P"; break; }
+done
 # BH-8497: the paged open-issue read for the GitHub-Issues fingerprint. No lib
 # (a box mid-sync) = the one `state=all` page this file always read.
 for _P in "$(dirname "$0")/lib/triage-board-pages.sh" "$HARNESS/bin/lib/triage-board-pages.sh"; do
@@ -1123,7 +1130,12 @@ if rq_any "$HARNESS" "$PROJECT"; then
         PRV=""; PRVST=""
         for n in $PRNUMS; do
           PRVST=""
-          if gh_rest_pr_state_var PRVST "$SLUG" "$n" 2>/dev/null && [ -n "$PRVST" ]; then
+          # BH-10455: a fresh pr_records row answers with no GitHub call; a
+          # miss or a row older than PR_RECORD_MAX_AGE_S is the same one
+          # gh_rest_pr_state_var read as before (bin/lib/pr-record-readers.sh).
+          _PRSV=gh_rest_pr_state_var
+          command -v prrd_pr_state_var >/dev/null 2>&1 && _PRSV=prrd_pr_state_var
+          if "$_PRSV" PRVST "$SLUG" "$n" 2>/dev/null && [ -n "$PRVST" ]; then
             PRVST=$(printf '%s' "$PRVST" | tr '[:lower:]' '[:upper:]')
           else
             PRVST=ERR

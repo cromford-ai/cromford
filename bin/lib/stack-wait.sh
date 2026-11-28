@@ -128,11 +128,24 @@ sw_row_put() {
 }
 
 # sw_pre <project> <KEY> <parent> — the pre-plan decision, one line:
-#   exempt | wait <hours> <cap> | capped <hours> <cap> | pending.
+#   exempt | queued <pr> | wait <hours> <cap> | capped <hours> <cap> | pending.
 #   A read outage is `pending`: the post-plan check still decides.
+#   queued (BH-9922): the parent branch's open PR is green on every check run
+#   and in its merge queue (as_branch_ready, bin/lib/after-stack.sh, on
+#   GH_AUTH_SLUG), so the child stacks on it with no pending plan check.
+#   POOL_AFTER_STACK_QUEUED=0 turns it off. A hotfix stays `exempt` first.
 sw_pre() {
   local row st since now cap waited
   if [ "${HOTFIX:-}" = 1 ]; then echo exempt; return 0; fi
+  # POOL_AFTER_STACK_QUEUED: catalog/lanes.d/fly-pool.knobs.d/POOL_AFTER_STACK_QUEUED.json; 1 is its fallback.
+  if [ "${POOL_AFTER_STACK_QUEUED:-1}" = 1 ] && [ -n "${GH_AUTH_SLUG:-}" ]; then
+    # shellcheck source=bin/lib/after-stack.sh
+    command -v as_branch_ready >/dev/null 2>&1 || . "${BASH_SOURCE[0]%/*}/after-stack.sh" 2>/dev/null
+    if command -v as_branch_ready >/dev/null 2>&1 && as_branch_ready "$GH_AUTH_SLUG" "$3" >/dev/null 2>&1 \
+       && [[ "${AS_PR:-}" =~ ^[0-9]+$ ]]; then
+      echo "queued $AS_PR"; return 0
+    fi
+  fi
   cap=$(sw_cap "$1")
   row=$(sw_row_get "$1" "$2" "$3") || { echo pending; return 0; }
   read -r st since <<<"$row"

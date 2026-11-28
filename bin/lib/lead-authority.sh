@@ -72,7 +72,9 @@
 #         the PR touches a protected path (empty otherwise), and
 #         LA_PROTECTED_PATHS names up to five of them (`, +N more`).
 #   rc 1  mode client only: the PR touches a protected path and needs a
-#         --source human verdict (THE CLIENT MODE); callers hold.
+#         --source human verdict (THE CLIENT MODE); callers hold. Also, in
+#         every mode and every repo, a contract step that drops a table or a
+#         column or merges tables (BH-9929, bin/lib/contract-change-authority.sh).
 #   rc 2  could not decide; LA_REASON says what was unreadable. Callers publish
 #         nothing on rc 2.
 # _la_mode <owner/repo>   LA_MODE and LA_MODE_SRC; rc 0 only for lane, rc 2
@@ -317,6 +319,16 @@ la_decide() {
   LA_REASON=""; LA_PROTECTED_HIT=""; LA_PROTECTED_PATHS=""
   case "$source" in human) LA_REASON="a human verdict"; return 0 ;; lead|conductor) ;; *) LA_REASON="unknown source '$source'"; return 2 ;; esac
   head=$(printf '%s' "$head" | tr 'A-F' 'a-f')
+  # >>> contract-change hook (BH-9929): a PR labelled contract-change:human, or
+  # with the body line CONTRACT-HUMAN-VERDICT: required (a DROP TABLE, DROP
+  # COLUMN or merge step), needs a --source human verdict, in
+  # every mode and in an ungoverned repo too. The logic: bin/lib/contract-change-authority.sh.
+  command -v cc_la_gate >/dev/null 2>&1 || { f="${BASH_SOURCE[0]%/*}/contract-change-authority.sh"; [ ! -r "$f" ] || . "$f"; }
+  if command -v cc_la_gate >/dev/null 2>&1; then
+    grc=0; cc_la_gate "$slug" "$pr" "$head" "$source" || grc=$?
+    case "$grc" in 0) ;; 3) return 0 ;; *) return "$grc" ;; esac
+  fi
+  # <<< contract-change hook (BH-9929)
   # One read of the rows per decision: the scope and the match both use it.
   _la_db_globs "$slug" || { LA_REASON="the protected paths of $slug could not be read (jobs worker, no cache younger than $(_la_cache_max)s)"; return 2; }
   if [ -z "$LA_GLOBS" ]; then

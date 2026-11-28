@@ -64,3 +64,11 @@ if [ "${KIND_HINT:-}" = web-task ]; then
   fi
 fi
 # <<< web-task hook (BH-7594)
+# >>> contract-step note (BH-9929)
+# A contract-change child is planned like any ticket, with one note: its step,
+# and the evidence file the PR stage's gate reads ($BUILD/contract-step.md).
+if [ -n "${CCH_STEP:-}" ] && command -v cc_plan_note >/dev/null 2>&1; then
+  UI_PLAN_NOTE="${UI_PLAN_NOTE:-}$(cc_plan_note "$CCH_STEP" "${CCH_PARENT:-}" "$BUILD") "
+  echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: step $CCH_STEP of #${CCH_PARENT:-?} — planned with the step note" >> "$BUILD/pipeline.log"
+fi
+# <<< contract-step note (BH-9929)

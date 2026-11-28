@@ -54,6 +54,11 @@ export PATH="$T/fakebin:$PATH"
 # The gate has its own suite (tests/review-probe.bh-9987-test.sh); here it is
 # off, so every case below runs on the premise it was written for.
 export REVIEW_PROBE_REQUIRE=0
+# TEST-CHANGE (BH-10236): the lane now reads the closed PR list once a run for
+# the key PR of a ticket (2 GitHub calls). That read has its own suite
+# (tests/merged-ticket-advance.todo.bh-10236-test.sh); here it is off, so every
+# case below counts the GitHub calls of the thread path it was written for.
+export MERGED_ADVANCE_KEY_PR=0
 # Nothing from the box reaches the lane (D60).
 unset GH_TOKEN GITHUB_TOKEN GH_ISSUES_REPO VERSION_URL VERSION_AUTH MERGED_ADVANCE_MAX \
       MERGED_ADVANCE_COOLDOWN_S MERGED_ADVANCE_DEPLOY_GRACE_S 2>/dev/null || true

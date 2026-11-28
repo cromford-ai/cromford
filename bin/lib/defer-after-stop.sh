@@ -308,3 +308,14 @@ dfs_stop_check() { # dfs_stop_check <project> <key> <ticket>
   _dfs_say "skipping $key: waits on $blk $prt — no machine; next re-check ${nxt:-?}"
   return 1
 }
+
+# dfs_mark_released <project> <key> — BH-9922: write defer-after.released in
+# the key's newest hub build record, so dfs_stop_check does not hold a row the
+# pool just released onto a stack base of its blocker's PR. rc 1 with no root
+# or no record.
+dfs_mark_released() {
+  local r="${HARNESS:-${H:-}}" rec
+  [ -n "$r" ] && [ -n "${1:-}" ] && [ -n "${2:-}" ] || return 1
+  rec=$(_dfs_newest "$r" "$1" "$2"); [ -n "$rec" ] || return 1
+  : > "$rec/defer-after.released"
+}

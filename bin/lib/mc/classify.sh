@@ -2464,7 +2464,18 @@ mc_classify() {
   # above acts on — nobody has adjudicated the code sitting here — so it gets
   # the same answer: the detached head-bound review (mc_rereview_spawn), still
   # behind the tick's CI-green debounce and still one review per (PR, head).
-  [ "$v" != APPROVE ] && { printf 'HEAD_MOVED\tno verdict bound to head %s — fresh detached review' "${head:0:8}"; return; }
+  #
+  # FIRST SIGHT IS NOT A DRIFT (BH-9438). MC_NV_GRACE=1 is the caller's
+  # mc_nvg_in_grace (bin/merge-conductor.d/bh-9438-noverdict-grace.sh): no review
+  # ever bound to this head, and the conductor first saw it less than
+  # MC_NOVERDICT_GRACE_S ago, so the builder's own verdict may still bind. Same
+  # state, its own reason; headbound_review buys nothing inside the window.
+  if [ "$v" != APPROVE ]; then
+    if [ "${MC_NV_GRACE:-0}" = 1 ] && { [ -z "$rev" ] || [ "$rev" = - ]; }; then
+      printf 'HEAD_MOVED\tno verdict yet on head %s — first-verdict grace, %ss left; no review bought' "${head:0:8}" "${MC_NVG_LEFT:-?}"; return
+    fi
+    printf 'HEAD_MOVED\tno verdict bound to head %s — fresh detached review' "${head:0:8}"; return
+  fi
   case "$ci" in
     # A HEAD WHOSE LATEST RUNS WERE KILLED IS NOT A HEAD WITH NOTHING ON IT
     # (BH-636). `checks none` sends a reader to "CI has not started"; what has
@@ -3497,6 +3508,17 @@ headbound_review() {
         esac
       fi
       # <<< conductor bound-verdict consume
+      # THE FIRST VERDICT MAY STILL BIND (BH-9438). After the free consumes and
+      # before any budget, daily-cap unit or spawn: a head no review ever bound
+      # to, first seen inside MC_NOVERDICT_GRACE_S, buys nothing yet. Said once
+      # per (PR, head). Moved mode only; a provenance read is unchanged. A
+      # BH-9693 buy (hnr=buy: a BLOCK already bound to this head) is a verdict,
+      # not "no verdict yet", so the grace never holds it.
+      if [ "$mode" = moved ] && [ "${MC_NV_GRACE:-0}" = 1 ] && [ "${hnr:-}" != buy ]; then
+        mc_attempt_has "nvgracelog $key $head" 2>/dev/null || { mc_attempt_put "nvgracelog $key $head"
+          mc_log "NV_GRACE $key ${head:0:8} — no verdict bound yet; first seen ${MC_NVG_AGE:-?}s ago, grace ${MC_NVG_GRACE:-?}s; no review bought"; }
+        return 0
+      fi
       # THE LANE IS DOWN: DO NOT BUY A READ IT CANNOT SERVE (BH-1019/BH-1090).
       # bin/claude-auth-check.sh probes `claude -p ok` end to end and keeps
       # state/claude-auth-down.txt; while this box is on that list, every

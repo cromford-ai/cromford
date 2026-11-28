@@ -366,6 +366,16 @@ PDC_PEND_HOT=${PDC_PEND_HOT:-0}
 # BUILD_DEFERRED on another key's open PR. Missing, the pool spawns as before.
 # shellcheck source=bin/lib/defer-after-stop.sh
 . "$HARNESS/bin/lib/defer-after-stop.sh" 2>/dev/null || true
+# BH-9922: as_pr_ready, the check that a blocker's PR is green and in the merge
+# queue (a waiting row then stacks on its head), and ptl_read, the board read
+# before a release or an old spawn. A tree without them holds and spawns as
+# before.
+# shellcheck source=bin/lib/after-stack.sh
+. "$HARNESS/bin/lib/after-stack.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/after-stack.sh" 2>/dev/null || true
+# shellcheck source=bin/lib/pool-ticket-live.sh
+. "$HARNESS/bin/lib/pool-ticket-live.sh" 2>/dev/null \
+  || . "$(dirname "${BASH_SOURCE[0]}")/lib/pool-ticket-live.sh" 2>/dev/null || true
 # BH-8335: ptr_build/ptr_push, a machine's own route to the Fly test host.
 # A tree without the lib ships no route, and the gate names the miss.
 # shellcheck source=bin/lib/pool-testhost-route.sh
@@ -2145,9 +2155,13 @@ pool_after_stuck_alert() {
 # machine would stand down again, and the reset would keep it under
 # JOBS_QUEUE_DEFER_MAX and DEFER_AFTER_LOOP_ALERT for ever (review of 99682a0c6).
 pool_after_gate() {
-  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d v prc
+  local JF="$1" KEY="$2" TICKET="$3" other rc att now sf so st age max why="" cyc rf ro rn rt keep d v prc sb="" on="" meta
   other=$(jq -r '.after // empty' "$JF" 2>/dev/null)
   [ -n "$other" ] || return 0
+  # BH-9922: what the wait collides on (the reap's `after_on`), said at the end
+  # of each skip line, so an operator sees why a row waits behind its blocker.
+  on=$(jq -r '.after_on // empty' "$JF" 2>/dev/null | head -c 200)
+  on="${on:+; collides on $on}"
   now=$(date -u +%s)
   # The wait's clock: <key>.after-since holds "<blocker>\t<epoch>", started on
   # the first held tick for that blocker.
@@ -2174,7 +2188,13 @@ pool_after_gate() {
          # project-6 conflicted. Past the ceiling the hold stays and ONE alert
          # per blocker per UTC day names the blocker as the thing to move. A
          # blocker that is only queued (no build, no PR) releases as before.
-         if [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
+         # BH-9922: a blocker PR that is open, green on every check run and in
+         # the merge queue is stacked on (the BH-1174 stack_base path), so the
+         # row builds on that PR's head now instead of waiting for the merge.
+         if [ "${_PAO_WHY:-}" = pr ] && command -v pool_after_stack_ready >/dev/null 2>&1 \
+            && pool_after_stack_ready "$JF" "$other"; then
+           why="stack: $other's PR #$_PAS_PR is green and in the merge queue (stack_base $_PAS_REF)"; sb="$_PAS_REF"
+         elif [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
            # A queued blocker may be a re-run whose PR is still open: read it.
            if [ "${_PAO_WHY:-}" = queued ]; then
              pr_exists_for_key_rest "$other"; prc=$?
@@ -2186,10 +2206,10 @@ pool_after_gate() {
              HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: AFTER CEILING — waited $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max); $other is only queued (no build, no open PR), so the hold is released and the ticket is offered again; its machine re-checks the overlap. If $other is stuck, that is the thing to move."
            else
              pool_after_stuck_alert "$other" "$KEY" "$((age / 60))" "$max"
-             say "skipping $KEY: waits for $other past the ceiling ($((age / 60)) min, POOL_AFTER_MAX_MIN=$max); $other is still in flight or its PR is open — no machine"; return 1
+             say "skipping $KEY: waits for $other past the ceiling ($((age / 60)) min, POOL_AFTER_MAX_MIN=$max); $other is still in flight or its PR is open — no machine$on"; return 1
            fi
          else
-           say "skipping $KEY: waits for $other (still in flight or its PR is open) — no machine"; return 1
+           say "skipping $KEY: waits for $other (still in flight or its PR is open) — no machine$on"; return 1
          fi ;;
       *) if [ "$max" -gt 0 ] && [ "$age" -ge $(( max * 60 )) ]; then
            # The blocker's state is unknown (its PR read did not answer): the
@@ -2197,7 +2217,7 @@ pool_after_gate() {
            why="ceiling: held $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max)"
            HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: AFTER CEILING — waited $((age / 60)) min for $other (POOL_AFTER_MAX_MIN=$max), and the PR read of $other did not answer, so the hold is released and the ticket is offered again; its machine re-checks the overlap. If $other is stuck, that is the thing to move."
          else
-           say "skipping $KEY: waits for $other, and its PR read did not answer — retried next tick"; return 1
+           say "skipping $KEY: waits for $other, and its PR read did not answer — retried next tick$on"; return 1
          fi ;;
     esac
   fi
@@ -2221,15 +2241,22 @@ pool_after_gate() {
   keep=0; [ "$rn" -ge 2 ] && keep=1
   [ "$keep" = 1 ] || d=0
   att=$(jq -r '.attempt // 0' "$JF" 2>/dev/null); case "$att" in ''|*[!0-9]*) att=0 ;; esac
-  if QROW requeue "$KEY" "released: $why" "$att" "{\"deferrals\":$d}" "$TICKET"; then
+  # BH-9922: the board ticket is read before a release. An archived, done,
+  # paused or deleted ticket ends the row here, with no machine.
+  if command -v pool_ticket_live_gate >/dev/null 2>&1 && ! pool_ticket_live_gate "$JF" "$KEY" "$TICKET" release; then return 1; fi
+  meta=$(jq -nc --argjson d "$d" --arg sb "$sb" '{deferrals:$d} + (if $sb == "" then {} else {stack_base:$sb} end)')
+  if QROW requeue "$KEY" "released: $why" "$att" "$meta" "$TICKET"; then
     :
   else
     say "$KEY: released ($why), but the ticket was abandoned by an operator — not re-offered"
     rm -f "$JF"
     return 1
   fi
-  jq -c --argjson d "$d" 'del(.after) | .deferrals = $d' "$JF" > "$JF.tmp" 2>/dev/null && mv -f "$JF.tmp" "$JF"
+  jq -c --argjson d "$d" --arg sb "$sb" 'del(.after, .after_on) | .deferrals = $d | (if $sb == "" then . else .stack_base = $sb end)' "$JF" > "$JF.tmp" 2>/dev/null && mv -f "$JF.tmp" "$JF"
   rm -f "$JF.tmp" "$sf" 2>/dev/null
+  # A stack release marks the key's newest record released, or dfs_stop_check
+  # holds the row again on the same open PR (bin/lib/defer-after-stop.sh).
+  [ -n "$sb" ] && command -v dfs_mark_released >/dev/null 2>&1 && { dfs_mark_released "$P" "$KEY" || true; }
   command -v psr_marker_clear >/dev/null 2>&1 && { psr_marker_clear "$P" "$KEY" after-since || true; }
   printf '%s\t%s\t%s\n' "$other" "$((rn + 1))" "$rt" > "$rf" 2>/dev/null
   command -v psr_marker_put >/dev/null 2>&1 && { psr_marker_put "$P" "$KEY" after-released "$other"$'\t'"$((rn + 1))"$'\t'"$rt" || true; }
@@ -2392,6 +2419,9 @@ pool_spawn_decision() {
   # the blocker is done, then released in the same tick. Before the HOLD read,
   # because a held row needs no other read.
   pool_after_gate "$JF" "$KEY" "$TICKET" || return 1
+  # 0b2. A row older than POOL_TICKET_LIVE_AGE_S reads its board ticket first
+  # (BH-9922): an archived, done, paused or deleted ticket gets no machine.
+  if command -v pool_ticket_live_gate >/dev/null 2>&1 && ! pool_ticket_live_gate "$JF" "$KEY" "$TICKET" spawn; then return 1; fi
   # >>> defer-after stop (BH-8880)
   # 0d. A key whose newest hub record is BUILD_DEFERRED `After: <KEY>` or
   # OVERLAP_DEFER on another key with an open PR gets no machine
@@ -4897,7 +4927,14 @@ for MF in "$POOL"/*.json; do
       # line: the `After:` clause can sit past the 120 characters DWHY keeps.
       DAFTER=""
       command -v defer_after_key >/dev/null 2>&1 && DAFTER=$(defer_after_key "$RLINE") || DAFTER=""
-      DMETA=$(jq -nc --argjson d "$DNEXT" --argjson x "$DTHS" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" '{deferrals:$d,deaths:$x} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end)')
+      # WHAT IT COLLIDES ON (BH-9922): the symbols and files the RESULT names,
+      # first 3 then a count, kept beside `after` so every later skip line can
+      # say why the row waits. Only with a blocker; cut to 200 characters.
+      DAFTER_ON=""
+      if [ -n "$DAFTER" ] && command -v defer_after_on >/dev/null 2>&1; then
+        DAFTER_ON=$(defer_after_on "$RLINE" | cut -c1-200) || DAFTER_ON=""
+      fi
+      DMETA=$(jq -nc --argjson d "$DNEXT" --argjson x "$DTHS" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" --arg ao "$DAFTER_ON" '{deferrals:$d,deaths:$x} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end) + (if $af == "" or $ao == "" then {} else {after_on:$ao} end)')
       # The sentinel is what tells this dir from a build that owes the board a
       # close-out: it has a RESULT and will never have a COMMENTED, so without
       # it bin/pipeline-health.sh pages "uncommented result >1h" for a build
@@ -5045,9 +5082,9 @@ for MF in "$POOL"/*.json; do
         # with `after` in it, past JOBS_QUEUE_DEFER_MAX too, and the spawn gate
         # (pool_after_gate) holds it with no machine until that blocker is done.
         if QROW requeue "$KEY" "$DWHY" "$ATT" "$DMETA" "$TICKET"; then
-        jq -nc --arg t "$TICKET" --arg k "$KEY" --argjson a "$ATT" --argjson d "$DNEXT" --argjson x "$DTHS" --arg ts "$(STAMP)" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,deaths:$x,enqueued_at:$ts} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end)' > "$QDIR/$KEY.json"
+        jq -nc --arg t "$TICKET" --arg k "$KEY" --argjson a "$ATT" --argjson d "$DNEXT" --argjson x "$DTHS" --arg ts "$(STAMP)" --arg sb "$SBASE" --arg hf "$MHF" --arg fs "$DFS" --arg af "$DAFTER" --arg ao "$DAFTER_ON" '{ticket_id:$t,key:$k,attempt:$a,deferrals:$d,deaths:$x,enqueued_at:$ts} + (if $sb == "" then {} else {stack_base:$sb} end) + (if $hf == "true" then {hotfix:true} else {} end) + (if $fs == "true" then {fresh_spawn:true} else {} end) + (if $af == "" then {} else {after:$af} end) + (if $af == "" or $ao == "" then {} else {after_on:$ao} end)' > "$QDIR/$KEY.json"
         if [ -n "$DAFTER" ]; then
-          say "DEFERRED $KEY: waits for $DAFTER (stand-down $DNEXT) — row stays queued, held until $DAFTER is done"
+          say "DEFERRED $KEY: waits for $DAFTER (stand-down $DNEXT) — row stays queued, held until $DAFTER is done${DAFTER_ON:+; collides on $DAFTER_ON}"
           pool_after_loop_alert "$KEY" "$DAFTER" "$DNEXT" "$DWHY"
         else
         HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] $KEY: pool build DEFERRED ($DWHY) — requeued attempt $DNEXT"
@@ -6930,6 +6967,11 @@ pool_walk_spawn() {
   # A release in the gate rewrote the file (BH-5967): the machine carries the
   # reset count, not the one read above.
   SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
+  # A stack release in the gate (BH-9922) added stack_base to the file: the
+  # machine builds on the blocker's PR head this tick.
+  if [ -z "$SSB" ]; then
+    SSB=$(jq -r '.stack_base // ""' "$JF" 2>/dev/null); case "$SSB" in *[!A-Za-z0-9._/-]*) SSB="" ;; esac
+  fi
   # SAY THE LINE THIS EXCEEDED. The WIP gate's exemption announces itself in
   # bin/run-build.sh; the pool's did not, and the tick line above only ever
   # reported the BUDGET — so a machine past the cap read as a cap that had never

@@ -1,0 +1,40 @@
+// project-3 schema fixture (BH-9922): the main side of the 2026-11-23 case.
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+}
+
+model Application {
+  id          String            @id @default(cuid())
+  status      ApplicationStatus @default(DRAFT)
+  email       String
+  createdAt   DateTime          @default(now())
+  forms       ApplicationForm[]
+}
+
+model ApplicationForm {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id])
+}
+
+model Recording {
+  id        String   @id @default(cuid())
+  title     String
+  createdAt DateTime @default(now())
+}
+
+model Event {
+  id      String   @id @default(cuid())
+  startAt DateTime
+}

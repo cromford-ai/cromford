@@ -302,4 +302,28 @@ fault of the box's credential.
 
 ## BH-9555.5 pr_records first
 
+Two PR-state reads ask the PR record (`pr_records`) before GitHub
+(BH-10455). The lib is `bin/lib/pr-record-readers.sh`.
+
+- `bin/triage-gate.sh`, the queue-pending PR-state vector: `prrd_pr_state_var`.
+  A fresh row gives the state with no GitHub call. A miss calls
+  `gh_rest_pr_state_var` once, as before. Line 3 of `state/<project>.queuefp`
+  keeps the same upper-case words (`OPEN`, `CLOSED`, `MERGED`).
+- `bin/lib/triage-state.sh` `_ts_fetch_refs`, through the seam
+  `_ts_pr_record_ref` (`bin/lib/triage-state.d/bh-9555-5-pr-record.sh`). A
+  served ref makes no `issues/<n>` read and spends no fetch cap.
+
+The fresh rule: the row exists, `age_s` is an integer from 0 to
+`PR_RECORD_MAX_AGE_S` (default 900), and `state` is `open`, `closed` or
+`merged`. The read is `pr_record_peek`: one jobs GET, never a GitHub call. A
+miss, a stale row or a failed jobs read makes the same one GitHub read as
+before. The readers do not write the GitHub answer back to the record.
+
+Kill row: `lib.pr-record.pr_record_readers` (knob `PR_RECORD_READERS`, default
+1). Set it to 0 and both readers read GitHub for every PR, with no jobs GET.
+
+Already served from the record before BH-10455: the merge conductor's open
+list and backstop ticks (BH-9938, BH-10257), pr-owner-sweep (BH-8481),
+orphan-reconcile (BH-8452), lifecycle (BH-8735) and pipeline-health.
+
 ## BH-9555.6 lane budget

@@ -16,6 +16,7 @@
 #               from the `## Reason` of Mergify's comment for this head
 #   checks      also from the payload JSON's dequeue_reason (code and
 #               checks) of that comment (BH-9229)
+#   conflict    also from the payload code CONFLICT_WITH_BASE_BRANCH (BH-9438)
 #   unknown     no comment for this head, or the comments could not be read
 # The settle arm writes it to one record file per PR, one EJECT_CAUSE log line,
 # and the row reason (`queue-ejected: <cause> (<detail>)`).
@@ -37,6 +38,12 @@
 #
 # No root of its own: the record lives under MC_STATE_DIR, and without it
 # nothing is written (D43).
+
+# EC_CLASSIFY_REV — the classifier's revision. Bump it when ec_classify learns
+#   a cause it answered `unknown` before: the BH-9438 re-read spends its
+#   still-unknown mark per revision, so every such head is read once more.
+#   1 = BH-9229 (payload checks codes); 2 = BH-9438 (payload conflict code).
+EC_CLASSIFY_REV=2
 
 # ec_knob <ENV> <default> — a merge-conductor lane knob for this project, a
 #   non-negative integer, else the default (the _bej_knob pattern).
@@ -74,7 +81,8 @@ _ec_left() {
 
 # ec_classify <head> — stdin: ONE Mergify comment body, in lines. Pure.
 #   Prints <cause>\t<detail>, or nothing when the body has no `## Reason`
-#   and no payload dequeue code that names failing checks.
+#   and no payload dequeue code that names failing checks or a base-branch
+#   conflict.
 #   Only the `## Reason` section is read for the cause: the status list, the
 #   Hint and the conditions checklist are on every comment, whatever the cause.
 ec_classify() {
@@ -95,6 +103,9 @@ ec_classify() {
     else case ",CHECKS_FAILED,BATCH_MAX_FAILURE_RESOLUTION_ATTEMPTS," in *",$code,"*) cnt=1 ;; esac; fi
     names=$(printf '%s\n' "$pd" | tail -n +2 | awk 'NF { o = o (o == "" ? "" : ", ") $0 } END { printf "%s", o }')
     if [ "$cnt" = 1 ] && [ -n "$names" ]; then printf 'checks\t%s\n' "$(_ec_clean "$names")"; return 0; fi
+    # BH-9438: a base-branch conflict in the current format has no `## Reason`
+    # heading; the payload code says it (tests/fixtures/bh-9438/, #8713).
+    if [ "$code" = CONFLICT_WITH_BASE_BRANCH ]; then printf 'conflict\t%s\n' "$code"; return 0; fi
   fi
   reason=$(printf '%s\n' "$body" | awk '
     /^##[[:space:]]/ { inr = ($0 ~ /^##[[:space:]]+Reason[[:space:]]*$/); if (inr) seen = 1; next }

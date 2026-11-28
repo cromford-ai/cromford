@@ -1,0 +1,55 @@
+{
+  "libs": [
+    {
+      "id": "prr-count",
+      "file": "bin/lib/prr-count.sh",
+      "note": "BH-10211 C0: the shadow-read counter of prr_read (bin/lib/prr-shadow.sh). Each shadow read adds 1 to agree, mismatch, miss (+ miss.<word>) or skip in logs/prr-count/<lane>/<UTC day>.tsv. bin/prr-shadow-ready.sh reads it and prints READY or NOT READY per gh_source lane, the evidence a person reads before moving lane.<id>.gh_source to record.",
+      "knobs": [
+        {
+          "env": "PRR_READY_HOURS",
+          "type": "int",
+          "default": 48,
+          "min": 1,
+          "max": 720,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-10211. READY needs the oldest kept counted shadow read of the lane to be at least this many hours old. Read in bin/prr-shadow-ready.sh as PRR_READY_HOURS (resolved by bin/lib/prr-count.sh), code fallback 48."
+        },
+        {
+          "env": "PRR_READY_MIN_AGREED",
+          "type": "int",
+          "default": 100,
+          "min": 1,
+          "max": 1000000,
+          "unit": "reads",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-10211. READY needs at least this many shadow reads where the record and GitHub agreed, summed over the kept day files. Read in bin/prr-shadow-ready.sh as PRR_READY_MIN_AGREED (resolved by bin/lib/prr-count.sh), code fallback 100."
+        },
+        {
+          "env": "PRR_COUNT_KEEP_DAYS",
+          "type": "int",
+          "default": 14,
+          "min": 3,
+          "max": 90,
+          "unit": "days",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-10211. The RETENTION of logs/prr-count: when prr_count_add creates a new day file, it deletes that lane's day files older than this many days. It is also the READY window. Read in bin/lib/prr-count.sh as PRR_COUNT_KEEP_DAYS, code fallback 14."
+        },
+        {
+          "env": "PRR_COUNT_LOCK_S",
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 10,
+          "unit": "seconds",
+          "zero_means": null,
+          "required": false,
+          "note": "BH-10211. The longest prr_count_add waits for the day file's lock. On a timeout it writes nothing and the lane goes on (an undercount; the READY check also counts PRR_SHADOW log lines). Read in bin/lib/prr-count.sh as PRR_COUNT_LOCK_S, code fallback 2."
+        }
+      ]
+    }
+  ]
+}

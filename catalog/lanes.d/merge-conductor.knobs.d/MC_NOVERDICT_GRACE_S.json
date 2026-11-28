@@ -1,0 +1,11 @@
+{
+  "env": "MC_NOVERDICT_GRACE_S",
+  "read_in": "bin/merge-conductor.d/bh-9438-noverdict-grace.sh",
+  "type": "int",
+  "default": 900,
+  "min": 0,
+  "max": 1500,
+  "unit": "s",
+  "zero_means": "off",
+  "note": "BH-9438: the seconds after the conductor first sees a PR head with no verdict and no reviewed sha (attempt line nvseen) during which it buys no head-bound re-review: the row is HEAD_MOVED `no verdict yet on head <h8> — first-verdict grace`, so the builder's own verdict can bind first. After the window the fresh detached review is bought as before. Max 1500, below the 1800 s HEAD_MOVED stuck TTL. 0 = off: the review is bought on first sight. Settings row: lane.merge-conductor.mc_noverdict_grace_s."
+}

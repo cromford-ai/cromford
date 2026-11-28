@@ -1,0 +1,10 @@
+{
+  "env": "MERGED_ADVANCE_KEY_PR",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "zero_means": "off: no closed-PR list read; a todo ticket is never a candidate and a ticket with no PR address in its thread is skipped (no-pr-in-thread), as before BH-10236",
+  "required": false,
+  "note": "BH-10236 switch for the key PR of a ticket (bin/lib/merged-advance-key-pr.sh). 1 = bin/merged-ticket-advance.sh reads the repo's closed PR list once a run; a merged PR whose title starts with the ticket key and a colon is that ticket's PR unless the title says slice or part. A todo ticket with a key PR takes the peer path (review or done; on a staging hold the staging comment and a move to in_progress). An in_progress or review ticket with no PR address in its thread takes its key PR. Code fallback 1; settings row lib.merged-advance[.<project>].merged_advance_key_pr."
+}

@@ -37,7 +37,7 @@ function unknownKey(args, schema, prefix = '') {
   const props = schema.properties ?? {};
   for (const [k, v] of Object.entries(args)) {
     const p = prefix + k;
-    if (!(k in props)) {
+    if (!Object.hasOwn(props, k)) {
       if (schema.additionalProperties === false) return p;
       continue;
     }

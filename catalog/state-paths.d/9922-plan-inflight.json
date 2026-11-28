@@ -1,0 +1,3 @@
+[
+    {"path": "plan-inflight", "class": "cache", "authority": "the open-PR file lists and schema patch blocks the PLAN in-flight check judges against (BH-6292 cache; BH-9922 .models)", "note": "state/plan-inflight/<project>/<pr>.<head sha>: one open PR's changed-file list; <pr>.<head sha>.models: the schema blocks its *.prisma patch changes (bin/lib/additive-overlap.sh ao_patch_blocks). Both written tmp+mv by bin/plan-sibling.sh inflight, keyed by head sha so a new push is a new key; each .models write deletes the .models files older than 7 days. A cache of GitHub answers, never a source of truth: losing it costs one files GET per PR. Machine-local, never carried"}
+]

@@ -740,8 +740,9 @@ fi
 # (the board URL resolver), the same as BH-1955. It files its children through
 # its own gh and app-board calls, never the filer, and the CIR pin below holds
 # it to that (BH-8964).
+# BH-9929 adds bin/lib/fc-contract-change.sh, the contract-change lane module: it files expand, migrate, contract through file_children --kind rollout, from the plan.sh contract-change hook only.
 CALLERS=$(cd "$DIR" && grep -rn 'file-children\.sh\|file_children\|fc_[a-z_]*(' bin/ fly/ cron/ --include='*.sh' 2>/dev/null \
-          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:|^bin/lib/slice-closeout\.sh:|^bin/lib/slice-board\.sh:|^bin/ci-image-rollout\.sh:' \
+          | grep -vE '^bin/lib/file-children\.sh:|^bin/lib/fc-issues\.sh:|^bin/lib/fc-board\.sh:|^bin/run-decompose\.sh:|^bin/run-rollout\.sh:|^bin/file-health-ticket\.sh:|^bin/lib/slice-remainder\.sh:|^bin/lib/slice-closeout\.sh:|^bin/lib/slice-board\.sh:|^bin/ci-image-rollout\.sh:|^bin/lib/fc-contract-change\.sh:' \
           | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')
 [ -z "$CALLERS" ] && ok || bad "only bin/run-decompose.sh (+ its lane module) and bin/run-rollout.sh may call the filer (found):
 $CALLERS"

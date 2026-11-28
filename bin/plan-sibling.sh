@@ -123,6 +123,11 @@ lane_switch plan-overlap-off && exit 0
 . "$HERE/lib/docs-overlap.sh" 2>/dev/null || true
 command -v docs_overlap_pair >/dev/null 2>&1 || docs_overlap_pair() { return 1; }
 command -v docs_overlap_drop >/dev/null 2>&1 || docs_overlap_drop() { cat; }
+# An additive shared file never defers alone (BH-9922): inflight judges a hot
+# prisma/schema.prisma hit against the open PR's patch. A box without the lib
+# keeps every hit as before.
+# shellcheck source=bin/lib/additive-overlap.sh
+. "$HERE/lib/additive-overlap.sh" 2>/dev/null || true
 command -v lib_env_apply >/dev/null 2>&1 && lib_env_apply plan-sibling "$PROJECT" >/dev/null 2>&1
 
 valid_key() { [[ "${1:-}" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$1" != . ] && [ "$1" != .. ]; }
@@ -273,6 +278,40 @@ if [ "$MODE" = inflight ]; then
     | awk -F'\t' -v me="$MYNUM" '{ split($2, t, "-") } t[1] != me' | sort -n -k1,1 > "$TMPD/prs"
   NP=$(awk 'NF' "$TMPD/prs" | wc -l | tr -d ' ')
   CDIR="$HARNESS/state/plan-inflight/$PROJECT"
+  AO_REPO_DIR="${PLAN_OVERLAP_REPO:-${REPOS_ROOT:-/root/repos}/$PROJECT}"; AO_PROJECT="$PROJECT"
+  # psib_models <pr> <sha> <files json|""> — BH-9922: the schema blocks the PR's
+  # patch changes (ao_patch_blocks over every *.prisma file's `.patch`; a file
+  # with no `.patch` is `?`), cached at $CDIR/<pr>.<sha>.models. A file list
+  # read from the cache has no patches: one files GET fills the .models file.
+  # Each write deletes the .models files older than 7 days. Prints the path to
+  # judge with, or `-` when the patch could not be read.
+  psib_models() {
+    local prn="$1" sha="$2" fj="$3" pm_cache="" rc=0
+    [ -n "$sha" ] && pm_cache="$CDIR/$prn.$sha.models"
+    [ -n "$pm_cache" ] && [ -s "$pm_cache" ] && { printf '%s\n' "$pm_cache"; return 0; }
+    if [ -z "$fj" ]; then
+      fj="$TMPD/fm.json"
+      gh_rest GET "repos/$SLUG/pulls/$prn/files" -F per_page=100 > "$fj" || rc=$?
+      [ "$rc" = 0 ] && [ "$(jq 'type' "$fj" 2>/dev/null)" = '"array"' ] || { printf -- '-\n'; return 0; }
+    fi
+    jq -r '.[] | select((.filename // "") | endswith(".prisma")) | if (.patch // "") == "" then "@@MISSING@@" else .patch end' "$fj" \
+      > "$TMPD/schema.patch" 2>/dev/null || : > "$TMPD/schema.patch"
+    if grep -qxF '@@MISSING@@' "$TMPD/schema.patch"; then echo '?' > "$TMPD/m"
+    else ao_patch_blocks "$TMPD/schema.patch" > "$TMPD/m"; fi
+    # No head sha: judge with this tick's temp file, never cached.
+    if [ -z "$pm_cache" ]; then
+      [ -s "$TMPD/m" ] && printf '%s\n' "$TMPD/m" || printf -- '-\n'
+      return 0
+    fi
+    if mkdir -p "$CDIR" 2>/dev/null; then
+      find "$CDIR" -maxdepth 1 -type f -name '*.models' -mtime +7 -delete 2>/dev/null
+      cp "$TMPD/m" "$pm_cache.tmp.$$" 2>/dev/null && mv -f "$pm_cache.tmp.$$" "$pm_cache" 2>/dev/null
+      rm -f "$pm_cache.tmp.$$"
+    fi
+    if [ -s "$pm_cache" ]; then printf '%s\n' "$pm_cache"
+    elif [ -s "$TMPD/m" ]; then printf '%s\n' "$TMPD/m"
+    else printf -- '-\n'; fi
+  }
   UNJ=""; INC=""; READ=0
   while IFS=$'\t' read -r PRN T SHA; do
     [ -n "$PRN" ] || continue
@@ -283,10 +322,11 @@ if [ "$MODE" = inflight ]; then
     if [ "$READ" -ge "$MAXR" ]; then INC=" incomplete=1"; break; fi
     READ=$((READ+1))
     [[ "$SHA" =~ ^[0-9a-f]{7,64}$ ]] || SHA=""
-    CF="$CDIR/$PRN.$SHA"
+    CF="$CDIR/$PRN.$SHA"; FJ=""
     if [ -n "$SHA" ] && [ -f "$CF" ]; then
       cp "$CF" "$TMPD/theirs"
     else
+      FJ="$TMPD/f.json"
       RC=0; gh_rest GET "repos/$SLUG/pulls/$PRN/files" -F per_page=100 > "$TMPD/f.json" || RC=$?
       NF=$(jq 'if type=="array" then length else -1 end' "$TMPD/f.json" 2>/dev/null)
       if [ "$RC" != 0 ] || [ -z "$NF" ] || [ "$NF" = -1 ]; then
@@ -300,11 +340,32 @@ if [ "$MODE" = inflight ]; then
         rm -f "$CF.tmp.$$"
       fi
     fi
-    HITS=$(grep -Fxf "$TMPD/theirs" "$TMPD/hotset" 2>/dev/null | head -3)
+    HITS=$(grep -Fxf "$TMPD/theirs" "$TMPD/hotset" 2>/dev/null)
     [ -n "$HITS" ] || continue
-    CSV=$(printf '%s\n' "$HITS" | awk '{ printf "%s%s,%s", (NR > 1 ? "," : ""), $0, $0 }')
-    psib_log "PLAN_INFLIGHT $KEY choice=after after=$OTHER pr=#$PRN files=[$CSV]$INC"
-    printf 'OVERLAP_DEFER %s vs %s files=[%s]\n' "$KEY" "$OTHER" "$CSV"
+    # BH-9922: a hit on an additive file is dropped when ao_pair_judge says
+    # safe; a .prisma hit is judged against this PR's patch blocks.
+    KEPT=""; ADD=""; SYMS=""
+    while IFS= read -r HP; do
+      [ -n "$HP" ] || continue
+      if command -v ao_pair_judge >/dev/null 2>&1 && AE=$(ao_entry "$HP"); then
+        MF=-
+        case "$AE" in *.prisma) MF=$(psib_models "$PRN" "$SHA" "$FJ") ;; esac
+        if ao_pair_judge "$HP ~ $HP" "$BUILD/plan.md" "$MF"; then ADD="$ADD$HP"$'\n'; continue; fi
+        [ -n "$AO_SYMBOLS" ] && SYMS="$SYMS${SYMS:+,}$AO_SYMBOLS"
+      fi
+      KEPT="$KEPT$HP"$'\n'
+    done <<< "$HITS"
+    if [ -z "$KEPT" ]; then
+      ACSV=$(head -3 <<<"$ADD" | awk 'NF' | awk '{ printf "%s%s,%s", (NR > 1 ? "," : ""), $0, $0 }')
+      psib_log "PLAN_INFLIGHT $KEY choice=build vs $OTHER additive-only pr=#$PRN files=[$ACSV]"
+      continue
+    fi
+    NK=$(grep -c . <<<"$KEPT")
+    CSV=$(head -3 <<<"$KEPT" | awk 'NF' | awk '{ printf "%s%s,%s", (NR > 1 ? "," : ""), $0, $0 }')
+    SYMS=$(tr ',' '\n' <<<"$SYMS" | awk 'NF && !s[$0]++ && ++n <= 3' | paste -sd, -)
+    EXTRA="${SYMS:+ symbols=[$SYMS]}"; [ "$NK" -gt 3 ] && EXTRA="$EXTRA more=$((NK - 3))"
+    psib_log "PLAN_INFLIGHT $KEY choice=after after=$OTHER pr=#$PRN files=[$CSV]$EXTRA$INC"
+    printf 'OVERLAP_DEFER %s vs %s files=[%s]%s\n' "$KEY" "$OTHER" "$CSV" "$EXTRA"
     exit 1
   done < "$TMPD/prs"
   if [ -n "$UNJ" ]; then

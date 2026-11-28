@@ -6,7 +6,7 @@
 - PR bodies: what/why, verify evidence, and end with the standard Claude Code attribution footer.
 
 ### Data & config iron laws
-- **Additive-only schema changes**; every migration that CREATEs a table must `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` (Supabase projects are deny-by-default RLS as standing policy).
+- **Additive-only schema changes**; every migration that CREATEs a table must `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` (Supabase projects are deny-by-default RLS as standing policy). Do not clone a table or add a one-to-one side table to get around the additive-only gate. File a contract-change ticket. Prefer a lookup table or a validated text column over a CHECK list for a set of values that grows. A contract-change ticket (label `contract-change`, or the body line `Contract-change: yes`) runs a non-additive change as expand, migrate, contract PRs (BH-9929).
 - **DB-driven assumptions:** model inputs, business parameters, targets, rates, thresholds, and mappings are DATABASE-driven, not hardcoded — editable in the app, code constant only as documented fallback. If you touch code with a hardcoded assumption, convert it as part of the change.
 - **Every limit is a knob (BH-7945):** every new limit, rate, threshold, price, timeout, cap or `max_tokens` is a knob: a seed row in the project's settings or config table, plus a code fallback with a comment that names the row. A literal with no row or knob read is a `[BLOCK hardcoded-knob]` in review.
 - **AI model config:** agents never hardcode `claude-*` model strings — resolve through the project's DB-backed resolver (seed a config row for new agents). A hardcoded model string in agent code is a bug; convert it.

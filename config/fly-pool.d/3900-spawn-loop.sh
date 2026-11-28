@@ -74,6 +74,11 @@ pool_walk_spawn() {
   # A release in the gate rewrote the file (BH-5967): the machine carries the
   # reset count, not the one read above.
   SDEF=$(jq -r '.deferrals // 0' "$JF" 2>/dev/null); case "$SDEF" in ''|*[!0-9]*) SDEF=0 ;; esac
+  # A stack release in the gate (BH-9922) added stack_base to the file: the
+  # machine builds on the blocker's PR head this tick.
+  if [ -z "$SSB" ]; then
+    SSB=$(jq -r '.stack_base // ""' "$JF" 2>/dev/null); case "$SSB" in *[!A-Za-z0-9._/-]*) SSB="" ;; esac
+  fi
   # SAY THE LINE THIS EXCEEDED. The WIP gate's exemption announces itself in
   # bin/run-build.sh; the pool's did not, and the tick line above only ever
   # reported the BUDGET — so a machine past the cap read as a cap that had never

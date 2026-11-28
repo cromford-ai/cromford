@@ -1,0 +1,10 @@
+{
+  "env": "MC_EJECT_REREAD_UNREAD_MAX",
+  "read_in": "bin/merge-conductor.d/bh-9438-eject-reread.sh",
+  "type": "int",
+  "default": 3,
+  "min": 1,
+  "max": 20,
+  "unit": "reads",
+  "note": "BH-9438: how many times the eject re-read (MC_EJECT_REREAD) may find the Mergify dequeue comments unreadable on one (PR, head) before it stops asking for that head. Each failure clears the ejreread mark so the next tick reads again; the failure that reaches this count keeps the mark, so a lasting outage costs this many reads, not one a tick. Settings row: lane.merge-conductor.mc_eject_reread_unread_max."
+}

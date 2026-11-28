@@ -211,12 +211,14 @@ if command -v mc_regen_table >/dev/null 2>&1; then
     "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
     "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
     "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')" \
+    "$(printf '.github/workflows/harness-ci.yml\tbin/render-ci-workflow.sh --write')" \
     "$(printf 'bin/lib/rb/plan.sh\tbin/render-split.sh --write')" \
     "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')" \
     "$(printf 'bin/merge-conductor.sh\tbin/render-split.sh --write')")
-  # Of the last seven rows five are still COMMITTED: rules/CLAUDE.md (BH-1336),
+  # Of the last eight rows six are still COMMITTED: rules/CLAUDE.md (BH-1336),
   # a render five box scripts copy verbatim, and docs/PR-OWNERSHIP.md
-  # (BH-5235.2), linked by path, and bin/lib/rb/plan.sh (BH-9704), the render
+  # (BH-5235.2), linked by path, .github/workflows/harness-ci.yml (BH-10228),
+  # the render of config/harness-ci/, and bin/lib/rb/plan.sh (BH-9704), the render
   # of config/rb-plan.d/, and bin/fly-pool.sh (BH-9704 C1), the render of
   # config/fly-pool.d/, and bin/merge-conductor.sh (BH-10226), the render of
   # config/merge-conductor.d/. worker/jobs/schema.sql, the composition of

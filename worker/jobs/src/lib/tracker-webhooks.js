@@ -43,6 +43,23 @@ export function deliveryIdOf(vendor, headers) {
   return DELIVERY_ID_RE.test(v) ? v : null;
 }
 
+// Checked BEFORE the body is read (BH-10532): the vendor secret is set and the
+// signature header has the only shape the HMAC below can match (hexEqual is
+// case-sensitive and hmacSha256Hex is lowercase). No HMAC here, so an unsigned
+// caller costs no body read. -> null (go on) or {status, error}. A bad shape
+// gets the same text as a bad HMAC, so a caller cannot tell the checks apart.
+const SIG_SHAPE = {
+  jira: { secret: "JIRA_WEBHOOK_SECRET", header: "x-hub-signature", re: /^sha256=[0-9a-f]{64}$/ },
+  linear: { secret: "LINEAR_WEBHOOK_SECRET", header: "linear-signature", re: /^[0-9a-f]{64}$/ },
+};
+export function trackerPreCheck(env, vendor, headers) {
+  const s = SIG_SHAPE[vendor];
+  if (!s) return { status: 500, error: "unknown vendor" };
+  if (!env[s.secret]) return { status: 503, error: `webhook receiver not configured (${s.secret} unset)` };
+  const sig = String(headers.get(s.header) || "");
+  return s.re.test(sig) ? null : { status: 401, error: "bad signature" };
+}
+
 // Jira Cloud: `X-Hub-Signature: sha256=<hex>` over the raw body, keyed on the
 // secret given when the webhook was registered. null = verified.
 export async function verifyJira(env, headers, raw) {

@@ -1,0 +1,54 @@
+{
+  "id": "staff-quartermaster-lever",
+  "name": "Staff quartermaster lever (samples orphan_usd_day, the $/day of Fly machines with no job row plus idle Orgo capacity; at level act, records one lever row per orphan pool machine, then probes it (dry) or stops it through bin/fly-idle-reaper.sh act)",
+  "scope": "hub",
+  "script": "bin/staff/quartermaster-lever.sh",
+  "cadence": "49 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-staff-quartermaster-lever",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "QM_LEVER_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/quartermaster-lever.sh",
+      "note": "BH-10123 test seam: epoch seconds used as the clock, only with HARNESS_TEST_SANDBOX=1 and only all-digit values. NOT settable from the control plane. The real knobs are settings rows: staff.quartermaster.level, staff.quartermaster.idle_min, staff.quartermaster.lever_dry_run, staff.quartermaster.stops_max_run, staff.quartermaster.snapshot_max_age_min, staff.quartermaster.act_timeout_s.",
+      "settable": false
+    },
+    {
+      "env": "QM_LEVER_LIB_ONLY",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/quartermaster-lever.sh",
+      "note": "BH-10123 test seam: 1 = load qm_action_verdict, qm_orphans and qm_candidates and return before the run. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/staff/quartermaster-lever.sh",
+      "note": "Test seam gate: bin/staff/quartermaster-lever.sh honors QM_LEVER_NOW only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-quartermaster-lever.log"
+  }
+}

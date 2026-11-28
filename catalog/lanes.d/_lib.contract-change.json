@@ -1,0 +1,54 @@
+{
+  "libs": [
+    {
+      "id": "contract-change",
+      "file": "bin/lib/contract-change.sh",
+      "note": "BH-9929: the contract-change lane (expand, migrate, contract) for a non-additive schema change. cc_enabled reads the per-project switch through lib_env_apply contract-change <project>; the step gate (bin/contract-change-gate.sh) reads the query-log window and the grep exclusions; the jobs worker reads the list cap.",
+      "knobs": [
+        {
+          "env": "CONTRACT_CHANGE_ENABLED",
+          "type": "int",
+          "default": 0,
+          "min": 0,
+          "max": 1,
+          "unit": "flag",
+          "zero_means": "off",
+          "required": false,
+          "note": "1 = the contract-change lane runs for this project (row lib.contract-change.<project>.contract_change_enabled). Code fallback ${CONTRACT_CHANGE_ENABLED:-0}. An unreadable registry is off (fail closed). Seeded on for project-6-os and project-3 (schema.d/202611260537-bh-9929-contract-change-switch.sql)."
+        },
+        {
+          "env": "CONTRACT_CHANGE_QUERY_LOG_WINDOW_H",
+          "type": "int",
+          "default": 168,
+          "min": 24,
+          "max": 2160,
+          "unit": "hours",
+          "zero_means": null,
+          "required": false,
+          "read_in": "bin/contract-change-gate.sh",
+          "note": "The shortest query-log window a migrate step may cite on its OLD-SHAPE-READS line (window=<h>h). Code fallback ${CONTRACT_CHANGE_QUERY_LOG_WINDOW_H:-168}: one week covers weekly crons."
+        },
+        {
+          "env": "CONTRACT_CHANGE_GREP_EXCLUDE",
+          "type": "string",
+          "default": "scripts/migrations/*,prisma/migrations/*,*.md",
+          "required": false,
+          "read_in": "bin/contract-change-gate.sh",
+          "note": "Comma-separated git pathspec globs the old-shape grep skips (migration history and docs name the old shape on purpose). Code fallback in bin/contract-change-gate.sh."
+        },
+        {
+          "env": "CONTRACT_CHANGES_LIST_MAX",
+          "type": "int",
+          "default": 100,
+          "min": 1,
+          "max": 500,
+          "unit": "rows",
+          "zero_means": null,
+          "required": false,
+          "read_in": "worker/jobs/src/routes/contract-changes.js",
+          "note": "The most rows GET /api/contract-changes returns (settings row lib.contract-change.contract_changes_list_max, read by the jobs worker). Code fallback 100 in worker/jobs/src/routes/contract-changes.js."
+        }
+      ]
+    }
+  ]
+}

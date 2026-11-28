@@ -46,11 +46,11 @@ crontab renders, `catalog/lanes.json`, `env-templates/global.env.example`) are
 git-ignored; `rules/CLAUDE.md` and `docs/PR-OWNERSHIP.md` are the committed
 renders that remain. Every member already carries its own head-bound APPROVE and green
 CI, and the train PR runs the full CI below in the merge queue before it lands.
-So the union check is the source validation, the nine `--check`s and
+So the union check is the source validation, the ten `--check`s and
 the three suites that pin this lane, not the whole corpus:
 
 ```bash
-HARNESS_TEST_SANDBOX=1 bin/verification-map-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/lanes-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-cron.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-env-example.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-rules.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-doc-sections.sh --check && HARNESS_TEST_SANDBOX=1 bin/schema-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/state-paths-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-split.sh --check && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-build-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-no-commit-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/generated-files-train-test.sh
+HARNESS_TEST_SANDBOX=1 bin/verification-map-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/lanes-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-cron.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-env-example.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-rules.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-doc-sections.sh --check && HARNESS_TEST_SANDBOX=1 bin/schema-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/state-paths-build.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-split.sh --check && HARNESS_TEST_SANDBOX=1 bin/render-ci-workflow.sh --check && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-build-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/verification-map-no-commit-test.sh && HARNESS_TEST_SANDBOX=1 bash tests/generated-files-train-test.sh
 ```
 
 `bin/verification-map-build.sh --check` is no longer a drift check.
@@ -87,6 +87,11 @@ every row of every `catalog/splits.d/*.tsv` file from its fragment dir and
 compares it with the committed render; its first subject is the PLAN-stage lib
 `bin/lib/rb/plan.sh`, rendered from `config/rb-plan.d/`. A new split adds its
 own registry file and needs no new line in the union command.
+
+`bin/render-ci-workflow.sh --check` is the fourth drift check (BH-10228). Its
+subject is `.github/workflows/harness-ci.yml`, the committed render of
+`config/harness-ci/`. Its `--write` refuses (exit 4) when a merge side edited
+the workflow by hand, so the train's regenerate never drops a hand edit.
 
 `bin/schema-build.sh --check` (BH-4987, BH-6005) validates
 `worker/jobs/schema.d/` and refuses the git-ignored render

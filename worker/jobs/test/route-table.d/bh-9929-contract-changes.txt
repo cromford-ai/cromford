@@ -1,0 +1,4 @@
+# CONTRACT CHANGES (BH-9929): the contract-change step ledger, one row per
+# (project, parent_ticket, step). Bearer-gated.
+POST /api/contract-changes
+GET /api/contract-changes

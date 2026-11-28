@@ -80,6 +80,12 @@ lane_switch plan-overlap-off && exit 0
 # shellcheck source=lib/docs-overlap.sh
 . "$(dirname "$0")/lib/docs-overlap.sh" 2>/dev/null || true
 command -v docs_overlap_pair >/dev/null 2>&1 || docs_overlap_pair() { return 1; }
+# An additive shared file (prisma/schema.prisma on different models,
+# docs/API.md, a change-log fragment) never defers alone (BH-9922). A box
+# without the lib keeps every such pair as a collision.
+# shellcheck source=lib/additive-overlap.sh
+. "$(dirname "$0")/lib/additive-overlap.sh" 2>/dev/null || true
+command -v ao_pair_judge >/dev/null 2>&1 || ao_pair_judge() { AO_SYMBOLS=""; AO_WHY="no lib"; return 1; }
 
 # <plan.md> is the documented argument; a build dir is accepted because that is
 # what every other gate in this pipeline is handed and a caller should not have
@@ -248,7 +254,12 @@ report() { # report <other-key> <pairs>
   { echo "OVERLAP_DEFER_SRC $KEY vs $1 touch=$TOUCH_SRC src=[$(printf '%s\n' "$SRC_TAGS" | paste -sd, -)]" \
       >> "$BUILD/pipeline.log"; } 2>/dev/null || :
   po_record sequenced "$1" "$2"
-  printf 'OVERLAP_DEFER %s vs %s files=[%s]\n' "$KEY" "$1" "$(pairs_csv "$2")"
+  # BH-9922: the colliding symbols of a kept additive pair, and the count of
+  # real pairs past the 3 the line carries. Both after files=[..], so every
+  # prefix reader (plan-after.sh, plan-sibling.sh, defer-after-stop.sh,
+  # defer-report.sh) still matches.
+  printf 'OVERLAP_DEFER %s vs %s files=[%s]%s%s\n' "$KEY" "$1" "$(pairs_csv "$2")" \
+    "${PO_SYMS:+ symbols=[$PO_SYMS]}" "$( [ "${PO_MORE:-0}" -gt 0 ] && printf ' more=%s' "$PO_MORE")"
   exit 1
 }
 
@@ -318,16 +329,49 @@ hotspot_log() { # hotspot_log <line> — stderr (the build's pipeline.log) and l
   mkdir -p "$HARNESS/logs" 2>/dev/null && printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$HARNESS/logs/plan-hotspot.log" 2>/dev/null
   return 0
 }
-judge() { # judge <other-key> <pairs> — report the code, non-fragment pairs (max 3); all safe -> log and go on
-  local pr real="" docs=""
+# other_blocks <other-key> <out> — the schema blocks the other build's plan.md
+# names (bin/lib/additive-overlap.sh ao_plan_blocks), from the newest local build
+# dir of that key, then plans/<project>-<key>/. rc 1 when this host has no plan
+# for it: the pair is then unjudged and kept (BH-9922).
+other_blocks() {
+  local d f="" sch
+  for d in "$HARNESS/builds/$PROJECT-$1-"*/plan.md; do
+    [ -s "$d" ] || continue
+    if [ -z "$f" ] || [ "$d" -nt "$f" ]; then f="$d"; fi
+  done
+  [ -n "$f" ] || { [ -s "$HARNESS/plans/$PROJECT-$1/plan.md" ] && f="$HARNESS/plans/$PROJECT-$1/plan.md"; }
+  [ -n "$f" ] || return 1
+  sch="$REPO_DIR/${3:-prisma/schema.prisma}"
+  command -v ao_plan_blocks >/dev/null 2>&1 && ao_plan_blocks "$f" "$sch" > "$2" 2>/dev/null
+}
+judge() { # judge <other-key> <pairs> — report the code, non-fragment, non-additive pairs (max 3); all safe -> log and go on
+  local pr real="" docs="" add="" ob="" n syms="" e
+  AO_REPO_DIR="$REPO_DIR"; AO_PROJECT="$PROJECT"
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     docs_overlap_pair "$pr" && { docs="$docs$pr"$'\n'; continue; }
-    fragment_safe "$pr" || real="$real$pr"$'\n'
+    fragment_safe "$pr" && continue
+    # BH-9922: an additive pair. The other side's blocks are read once per key.
+    if command -v ao_entry >/dev/null 2>&1 && e=$(ao_entry "${pr%% ~ *}"); then
+      if [ -z "$ob" ]; then
+        ob="$PHD/ob.$1"
+        other_blocks "$1" "$ob" "$e" || ob="-"
+      fi
+      if ao_pair_judge "$pr" "$BUILD/plan.md" "$ob"; then add="$add$pr"$'\n'; continue; fi
+      [ -n "$AO_SYMBOLS" ] && syms="$syms${syms:+,}$AO_SYMBOLS"
+    fi
+    real="$real$pr"$'\n'
   done <<< "$2"
-  [ -n "$real" ] && report "$1" "$(head -3 <<<"$real")"
+  if [ -n "$real" ]; then
+    n=$(grep -c . <<<"$real")
+    PO_MORE=$(( n > 3 ? n - 3 : 0 ))
+    PO_SYMS=$(tr ',' '\n' <<<"$syms" | awk 'NF && !s[$0]++ && ++n <= 3' | paste -sd, -)
+    report "$1" "$(head -3 <<<"$real")"
+  fi
   if [ -n "$docs" ] && [ "$docs" = "$2"$'\n' ]; then
     hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 docs-only files=[$(pairs_csv "$(head -3 <<<"$docs")")]"
+  elif [ -n "$add" ] && [ "$add" = "$2"$'\n' ]; then
+    hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 additive-only files=[$(pairs_csv "$(head -3 <<<"$add")")]"
   else
     hotspot_log "PLAN_HOTSPOT $KEY choice=build vs $1 fragment-only files=[$(pairs_csv "$(head -3 <<<"$2")")]"
   fi

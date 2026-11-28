@@ -227,12 +227,23 @@ done
 if [ -n "$BASEREF" ]; then
   B="$T/base"; mkdir -p "$B/bin"
   git -C "$DIR" show "$BASEREF:bin/check-migration-appliable.sh" > "$B/bin/check-migration-appliable.sh" && chmod +x "$B/bin/check-migration-appliable.sh"
+  # BH-9929 adds one `<file>: contract-change: ...` hint line after a FLAGGED
+  # non-additive statement (no FLAGGED word, same rc). Until the base
+  # classifier carries that hint, the hint lines are compared on their own
+  # (below) and left out of the byte comparison. Once the base has the hint,
+  # the comparison is full bytes again.
+  BASE_HINT=0; grep -q 'cc_hint' "$B/bin/check-migration-appliable.sh" && BASE_HINT=1
   for f in "$S"/*.sql ALL; do
     if [ "$f" = ALL ]; then set -- "$S"/*.sql; else set -- "$f"; fi
     WANT=$("$B/bin/check-migration-appliable.sh" p "$S" "$@" 2>&1); WRC=$?
     GOT=$("$CLS" p "$S" "$@" 2>&1); GRC=$?
+    if [ "$BASE_HINT" = 0 ]; then GOT=$(grep -v '^[^:]*: contract-change: ' <<<"$GOT"); fi
     [ "$WANT" = "$GOT" ] && [ "$WRC" = "$GRC" ] && ok || bad "P1 .sql parity for ${f##*/} (base rc $WRC, now rc $GRC)"$'\n'"base: $WANT"$'\n'"now:  $GOT"
   done
+  # The hint lines themselves: one after the DROP TABLE, none for the others.
+  H=$("$CLS" p "$S" "$S"/*.sql 2>&1 | grep ': contract-change: ')
+  [ "$(grep -c . <<<"$H")" = 1 ] && grep -q '3-drop.sql: contract-change: this is a non-additive change (drop-table)' <<<"$H" \
+    && grep -qF '"Contract-change: yes"' <<<"$H" && ok || bad "P1 the contract-change hint: one line, for 3-drop.sql only: $H"
 else
   skip "P1: no main/origin/main in this checkout to read the base classifier from"
 fi

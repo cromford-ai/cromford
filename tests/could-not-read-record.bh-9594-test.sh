@@ -14,7 +14,8 @@
 #   C3  cnr_record refuses cred class gh, box 192.0.2.5 / box.local and reason
 #       quota-reserve: 0 POSTs, rc 0
 #   S1  cnr_retry runs in the CURRENT shell (rc verbatim, GH_REST_STATUS kept);
-#       both triage-state hooks are placeholders (rc 1)
+#       _ts_cnr_skip on an unreadable out file and the _ts_pr_record_ref
+#       placeholder are rc 1
 #   S2  triage-state with the placeholders: _ts_fetch_refs makes 1 gh call per
 #       ref; _ts_record_run on a shard runs the recorder. With the hooks forced
 #       to 0, the fetch makes 0 calls and the record run records nothing
@@ -46,6 +47,11 @@ command -v node    >/dev/null || { echo "node missing — skipping"; exit 0; }
 node -e "require('node:sqlite')" 2>/dev/null || { echo "node:sqlite missing — skipping"; exit 0; }
 LWF_MJS="$DIR/tests/lib/ledger-worker-fake.bh-9064.mjs"
 export LWF_SECRET=fixture-secret
+# BH-10453: cnr_retry now retries a could-not-read read (2, 4, 8 s). This suite
+# pins ONE read per failing call (S1, O1-O5), so its budget is 0 (one read, the
+# behaviour it was written against). The backoff is pinned in
+# tests/triage-could-not-read.bh-9555-test.sh.
+export CNR_RETRY_BUDGET_S=0
 
 CNR="$DIR/bin/lib/could-not-read.sh"
 RETRY="$DIR/bin/lib/cnr-retry.sh"
@@ -174,7 +180,7 @@ check "C3 CNR_ENFORCE=0 prints nothing" "$out" ""
 check "C3 CNR_ENFORCE=0 adds no POST" "$(grep -c 'POST .*box-read-failures' "$CURL_LOG")" 1
 unset CURL_LOG CNR_DB JOBS_URL HARNESS_SECRET JOBS_RETRIES
 
-# ── S1 cnr_retry and the placeholder hooks ─────────────────────────────────
+# ── S1 cnr_retry and the hooks ─────────────────────────────────────────────
 s1() {
   . "$RETRY" 2>/dev/null || return 99
   f() { GH_REST_STATUS=401; return 75; }
@@ -183,7 +189,7 @@ s1() {
   printf '%s %s' "$rc" "$GH_REST_STATUS"
 }
 check "S1 cnr_retry rc and status" "$(s1)" "75 401"
-check "S1 _ts_cnr_skip placeholder" "$( . "$DIR/bin/lib/triage-state.d/bh-9555-3-cnr.sh" 2>/dev/null || exit 99; _ts_cnr_skip x y; echo $?)" 1
+check "S1 _ts_cnr_skip on an unreadable out file" "$( . "$DIR/bin/lib/triage-state.d/bh-9555-3-cnr.sh" 2>/dev/null || exit 99; _ts_cnr_skip x y; echo $?)" 1
 check "S1 _ts_pr_record_ref placeholder" "$( . "$DIR/bin/lib/triage-state.d/bh-9555-5-pr-record.sh" 2>/dev/null || exit 99; _ts_pr_record_ref o/r 1; echo $?)" 1
 
 # ── S2 triage-state with the hooks: today's behaviour ──────────────────────

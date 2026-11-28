@@ -25,6 +25,7 @@ import WaitingPanel from './WaitingPanel.js';
 import DeployQueuePanel from './DeployQueuePanel.js';
 import MergeTrainsPanel from './MergeTrainsPanel.js';
 import ConflictHotspotsPanel from './ConflictHotspotsPanel.js';
+import ContractChangesPanel from './ContractChangesPanel.js';
 import { SetupRunLink } from './SetupLine.js';
 import GateCountsPanel from './GateCountsPanel.js';
 import { ClientApprovalTag } from '../ui/ClientApprovalTag.js';
@@ -226,6 +227,7 @@ export function ProjectScreen({ project }) {
           <//>
           <${Section} title="PREPLAN ADOPTION" note="how many bought pre-plans a build used, from stage_events"><${PreplanAdoption} project=${project}/><//>
           <${Section} title="CONFLICT HOTSPOTS" note="files that conflicted or were rebased most, measured weekly on this project's box"><${ConflictHotspotsPanel} project=${project}/><//>
+          <${Section} title="CONTRACT CHANGES" note="schema changes run as expand, migrate and contract steps, with the backup and the verdict of each"><${ContractChangesPanel} project=${project}/><//>
 
           <${Section} title="LOG TAIL" note=${`fetched live from the ${project} box on request`}>
             <${LogPane}

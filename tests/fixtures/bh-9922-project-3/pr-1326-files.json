@@ -1,0 +1,59 @@
+[
+  {
+    "filename": "prisma/schema.prisma",
+    "status": "modified",
+    "additions": 2,
+    "deletions": 0,
+    "patch": "@@ -20,6 +20,8 @@ model Application {\n   email       String\n   createdAt   DateTime          @default(now())\n   forms       ApplicationForm[]\n+  websiteThankYouSentAt DateTime?\n+  mergedIntoId          String?\n }\n \n model ApplicationForm {"
+  },
+  {
+    "filename": "docs/DATABASE.md",
+    "status": "modified",
+    "patch": "@@ -1,3 +1,4 @@\n # Database\n+Application gains websiteThankYouSentAt and mergedIntoId.\n"
+  },
+  {
+    "filename": "changelog.d/TK-797.md",
+    "status": "added",
+    "patch": "@@ -0,0 +1 @@\n+TK-797: application merge.\n"
+  },
+  {
+    "filename": "prisma/migrations/20261123180000_fr797_application_merge/migration.sql",
+    "status": "added",
+    "patch": "@@ -0,0 +1,2 @@\n+ALTER TABLE \"Application\" ADD COLUMN \"websiteThankYouSentAt\" TIMESTAMP(3);\n+ALTER TABLE \"Application\" ADD COLUMN \"mergedIntoId\" TEXT;\n"
+  },
+  {
+    "filename": "src/app/backstage/applications/[applicationId]/page.tsx",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b\n"
+  },
+  {
+    "filename": "src/app/backstage/applications/[applicationId]/merge-button.tsx",
+    "status": "added",
+    "patch": "@@ -0,0 +1 @@\n+b\n"
+  },
+  {
+    "filename": "src/lib/applications/merge.ts",
+    "status": "added",
+    "patch": "@@ -0,0 +1 @@\n+b\n"
+  },
+  {
+    "filename": "src/lib/applications/website-thank-you.ts",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b\n"
+  },
+  {
+    "filename": "src/lib/comms/audience.ts",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b\n"
+  },
+  {
+    "filename": "src/lib/forms/service.ts",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b\n"
+  },
+  {
+    "filename": "src/lib/signups-sync.ts",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b\n"
+  }
+]

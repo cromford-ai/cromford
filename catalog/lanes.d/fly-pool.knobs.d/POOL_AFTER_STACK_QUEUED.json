@@ -1,0 +1,12 @@
+{
+  "env": "POOL_AFTER_STACK_QUEUED",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "switch",
+  "zero_means": "off",
+  "read_in": "bin/lib/after-stack.sh",
+  "note": "BH-9922: 1 = a row that waits on a blocker whose PR is open, green on every check run and in the merge queue is released onto a stack base of that PR's head (pool_after_gate, bin/lib/after-stack.sh), and its machine's stack plan gate stacks on it with no pending check (sw_pre answers `queued <pr>`, bin/lib/stack-wait.sh). 0 = off: the row waits for the merge, as before. Read as ${POOL_AFTER_STACK_QUEUED:-1}.",
+  "settable": true
+}

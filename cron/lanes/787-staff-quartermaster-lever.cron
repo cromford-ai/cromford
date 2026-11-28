@@ -1,0 +1,17 @@
+# @hub-lanes
+
+# ── STAFF QUARTERMASTER LEVER (BH-10123, C2 of #9423) ───────────────────────
+# Hourly at :49 (not a fly-idle-reaper pass minute, 2-59/5). Samples
+# orphan_usd_day: the $/day of started Fly machines with no job row for more
+# than staff.quartermaster.idle_min minutes (GET /api/fly-idle), plus the $/day
+# of idle Orgo capacity (catalog/orgo-plans.json pool minus GET
+# /api/orgo-computers). The sample settles the quartermaster's due lever
+# actions. At staff.quartermaster.level = act (seed: observe) it records ONE
+# lever action per orphan pool machine (at most
+# staff.quartermaster.stops_max_run), then runs bin/fly-idle-reaper.sh act
+# probe while staff.quartermaster.lever_dry_run is not 0, else act stop.
+# One summary line per run in logs/staff-quartermaster-lever.log.
+# Off: flags/lane-off-staff-quartermaster-lever (bin/harness-ctl.sh off
+# staff-quartermaster-lever), or the staff kill flags (staff-off-all,
+# staff-kill-all, staff-off-quartermaster, staff-kill-quartermaster).
+49 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff/quartermaster-lever.sh >> /root/harness/logs/staff-quartermaster-lever-cron.log 2>&1

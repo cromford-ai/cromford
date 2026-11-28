@@ -73,9 +73,23 @@
 #   <UTC> PRR_MISS lane=<l> key=<k> why=<word> fallback=<none|github>
 #   <UTC> PRR_STEP lane=<l> bad=<value>
 # Count one lane's mismatches: grep -c 'PRR_SHADOW lane=<l>' logs/prr-shadow.log
+#
+# Counter (BH-10211 C0): each shadow read also adds 1 to one kind in
+# <root>/logs/prr-count/<lane>/<UTC day>.tsv through prr_count_add
+# (bin/lib/prr-count.sh): agree (norms equal, no log line), mismatch (the
+# PRR_SHADOW line), miss + miss.<word> (the PRR_MISS fallback=none line),
+# skip (the GitHub read failed or a norm was empty). A BH-10213 hit-rc:<n>
+# answer is agree when <n> is the GitHub rc, else mismatch. The off and record steps
+# count nothing. The counter never changes prr_read's rc, out file or log.
+# Read it with: bin/prr-shadow-ready.sh <lane> | --all [--md]
 [ -n "${_PRR_SHADOW_LOADED:-}" ] && return 0
 _PRR_SHADOW_LOADED=1
 _PRR_SHADOW_DIR="${BASH_SOURCE[0]%/*}"
+if [ "$(type -t prr_count_add)" != function ]; then
+  # shellcheck source=bin/lib/prr-count.sh
+  . "$_PRR_SHADOW_DIR/prr-count.sh" 2>/dev/null
+fi
+_prr_count() { [ "$(type -t prr_count_add)" = function ] || return 0; prr_count_add "$@" 2>/dev/null; return 0; }
 
 _prr_shadow_log() {
   local root="${HARNESS:-${H:-}}"
@@ -182,14 +196,26 @@ prr_read() {
   "$gfn" "$out" "$@"; grc=$?
   if [ "$rc" != 0 ]; then
     _prr_shadow_log "PRR_MISS lane=$lane key=$key why=${why:-unknown} fallback=none"
+    _prr_count "$lane" miss "${why:-unknown}"
   elif [[ "$why" =~ ^hit-rc:([1-9])$ ]]; then
-    [ "${BASH_REMATCH[1]}" = "$grc" ] \
-      || _prr_shadow_log "PRR_SHADOW lane=$lane key=$key rc_record=${BASH_REMATCH[1]} rc_github=$grc"
+    if [ "${BASH_REMATCH[1]}" = "$grc" ]; then
+      _prr_count "$lane" agree
+    else
+      _prr_shadow_log "PRR_SHADOW lane=$lane key=$key rc_record=${BASH_REMATCH[1]} rc_github=$grc"
+      _prr_count "$lane" mismatch
+    fi
   elif [ "$grc" = 0 ]; then
     nr=$("$nfn" "$tmp" 2>/dev/null); ng=$("$nfn" "$out" 2>/dev/null)
-    if [ -n "$nr" ] && [ -n "$ng" ] && [ "$nr" != "$ng" ]; then
+    if [ -z "$nr" ] || [ -z "$ng" ]; then
+      _prr_count "$lane" skip
+    elif [ "$nr" != "$ng" ]; then
       _prr_shadow_log "PRR_SHADOW lane=$lane key=$key $(_prr_diff "$nr" "$ng")"
+      _prr_count "$lane" mismatch
+    else
+      _prr_count "$lane" agree
     fi
+  else
+    _prr_count "$lane" skip
   fi
   rm -f "$tmp"
   return "$grc"

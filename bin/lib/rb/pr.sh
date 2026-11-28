@@ -822,6 +822,65 @@ if [ -n "$ADDED_SQL" ] && ! "$HARNESS/bin/check-migration-appliable.sh" "$PROJEC
   echo "$(STAMP) [$PROJECT/$KEY] MIGRATION GATE: $NFLAG flagged statement(s) — forced tier 2" >> "$BUILD/pipeline.log"
 fi
 # <<< migration gate
+# >>> contract-change gate (BH-9929)
+# A contract-change STEP child (its ticket body has `Contract-step:`, filed by
+# bin/lib/fc-contract-change.sh) runs bin/contract-change-gate.sh before any PR
+# opens. The step's evidence lines (BACKUP, RESTORE-TESTED, BACKFILL-COUNTS,
+# OLD-SHAPE-READS ...) are $BUILD/contract-step.md, which the build writes.
+#   refused (rc 1) or could not run (rc 2, fail closed): no PR, nothing pushed,
+#     REVIEW_BLOCKED with the first reason, exit 6 — the blocked ladder
+#     (bin/blocked-resolver.sh) runs the fix round, as for the pre-push gate
+#   pass: the migration gate above still forces tier 2 (contract SQL stays
+#     FLAGGED for an ordinary path); the PR body gets a `## Contract step`
+#     section with `CONTRACT STEP: <step> of #<parent>` and the evidence lines,
+#     plus `CONTRACT-HUMAN-VERDICT: required` when the SQL drops a table, drops
+#     a column or merges tables. The `contract step labels` block after the
+#     create adds the labels and records the step row.
+# The per-project switch off (or unreadable): an ordinary PR, today's path.
+# Not a contract step, or no lib on the box: nothing here runs.
+CCG_STEP=""; CCG_PARENT=""; CCG_CLASSES=""; CCG_HUMAN=0
+# shellcheck source=bin/lib/contract-change.sh
+[ -r "$HARNESS/bin/lib/contract-change.sh" ] && . "$HARNESS/bin/lib/contract-change.sh" 2>/dev/null
+if command -v cc_step_of >/dev/null 2>&1 && [ -s "$BUILD/ticket-meta.json" ]; then
+  jq -r '.body // ""' "$BUILD/ticket-meta.json" > "$BUILD/contract-step-body.md" 2>/dev/null
+  CCG_STEP=$(cc_step_of "$BUILD/contract-step-body.md") || CCG_STEP=""
+fi
+if [ -n "$CCG_STEP" ]; then
+  CCG_ON=0; cc_enabled "$PROJECT" || CCG_ON=$?
+  if [ "$CCG_ON" != 0 ]; then
+    echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: step $CCG_STEP, but the lane is off for $PROJECT (cc_enabled rc=$CCG_ON) — an ordinary PR" >> "$BUILD/pipeline.log"
+    CCG_STEP=""
+  else
+    CCG_PARENT=$(cc_parent_of "$BUILD/contract-step-body.md") || CCG_PARENT=""
+    CCG_RC=0
+    "$HARNESS/bin/contract-change-gate.sh" "$PROJECT" "$WT" "$BASE" "$CCG_STEP" "$BUILD/contract-step.md" \
+      > "$BUILD/contract-gate.txt" 2>&1 || CCG_RC=$?
+    if [ "$CCG_RC" != 0 ]; then
+      CCG_WHY=$(sed -nE 's/^CONTRACT-GATE: (refused|could not run): //p' "$BUILD/contract-gate.txt" | head -1)
+      [ -n "$CCG_WHY" ] || CCG_WHY="the gate ended rc=$CCG_RC with no reason line"
+      echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: the $CCG_STEP gate refused (rc=$CCG_RC): $CCG_WHY — no PR" >> "$BUILD/pipeline.log"
+      command -v escalate_block >/dev/null 2>&1 && escalate_block "contract-change" \
+        "The contract-change $CCG_STEP step gate refused: $CCG_WHY. All reasons: contract-gate.txt."
+      RESULT "REVIEW_BLOCKED contract-change gate ($CCG_STEP): $CCG_WHY; see $BUILD/contract-gate.txt"
+      exit 6
+    fi
+    # The same files the gate read: scripts/migrations/ AND the project's
+    # migrations_glob row (cc_sql_added; project-6-os prisma/sql/). A row that
+    # turned unreadable since the gate read it holds for a human: fail closed.
+    CCG_FILES=$(cc_sql_added "$PROJECT" "$BASE" "$WT" 2>/dev/null) || CCG_HUMAN=1
+    for _ccg_f in $CCG_FILES; do
+      CCG_CLASSES="$CCG_CLASSES $(cc_classify_sql "$WT/$_ccg_f" 2>/dev/null | tr '\n' ' ')"
+    done
+    CCG_CLASSES=$(tr ' ' '\n' <<<"$CCG_CLASSES" | grep -v '^$' | sort -u | paste -sd' ' -)
+    cc_human_class $CCG_CLASSES && CCG_HUMAN=1
+    PREPR_SECTION="${PREPR_SECTION:-}"$'\n## Contract step\n\n'"CONTRACT STEP: $CCG_STEP of #${CCG_PARENT:-?}"$'\n'
+    [ "$CCG_HUMAN" = 1 ] && PREPR_SECTION="${PREPR_SECTION}CONTRACT-HUMAN-VERDICT: required"$'\n'"This step drops a table, drops a column, merges tables or changes a column type (${CCG_CLASSES}). It merges only on the owner's human verdict (bin/lead-verdict.sh post --source human), in lane mode too."$'\n'
+    [ "$CCG_STEP" = contract ] && PREPR_SECTION="${PREPR_SECTION}The apply path (migration-autopilot, or hotfix-migrate before the merge) applies this SQL to production only as this approved contract step: a --source human MERGE on the head for a drop-table, drop-column, merge or type class, the normal MERGE for a constraint, nullability or rename class. It records who approved it."$'\n'
+    PREPR_SECTION="${PREPR_SECTION}"$'\n'"$(cat "$BUILD/contract-step.md" 2>/dev/null)"$'\n\n'"$(tail -1 "$BUILD/contract-gate.txt")"$'\n'
+    echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: the $CCG_STEP gate passed (classes: ${CCG_CLASSES:-none}; human verdict: $([ "$CCG_HUMAN" = 1 ] && echo required || echo no))" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< contract-change gate (BH-9929)
 
 STAGE_END tier "$T_TIER"
 
@@ -1790,6 +1849,37 @@ if [ -n "$PR_URL" ] && [ "$HF_PR" = 1 ]; then
   fi
   hotfix_announce "$HARNESS" "$PROJECT" "$KEY" pr_open "PR opened $PR_URL" >/dev/null 2>&1 || true
 fi
+# >>> contract step labels (BH-9929)
+# The labels a contract step PR carries, as ONE separate REST write after the
+# create (the hotfix label's path): `contract-step:<step>`, and
+# `contract-change:human` when the gate block above found a drop-table,
+# drop-column, merge or type class (bin/lib/lead-authority.sh holds such a PR for a
+# human verdict; the PR body's CONTRACT-HUMAN-VERDICT line is the same signal,
+# so a failed label write does not open the hold). Then the step row is
+# recorded (cc_record, bin/lib/contract-change-record.sh). A failed label write
+# is one ALERTS line; a failed record is one pipeline.log line. Never a failed
+# build: the PR is open either way.
+if [ -n "$PR_URL" ] && [ -n "${CCG_STEP:-}" ]; then
+  CCG_SLUG=$(sed -nE 's#^https://github.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' <<<"$PR_URL")
+  CCG_NUM=$(sed -nE 's#^https://github.com/[^/]+/[^/]+/pull/([0-9]+)$#\1#p' <<<"$PR_URL")
+  CCG_LARGS=(-f "labels[]=contract-step:$CCG_STEP")
+  [ "${CCG_HUMAN:-0}" = 1 ] && CCG_LARGS+=(-f "labels[]=contract-change:human")
+  if [ -n "$CCG_SLUG" ] && [ -n "$CCG_NUM" ] \
+     && prr_write "$CCG_SLUG" "$CCG_NUM" labels - gh api -X POST "repos/$CCG_SLUG/issues/$CCG_NUM/labels" "${CCG_LARGS[@]}" >/dev/null 2>&1; then
+    echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: labelled $PR_URL contract-step:$CCG_STEP$([ "${CCG_HUMAN:-0}" = 1 ] && echo ' contract-change:human')" >> "$BUILD/pipeline.log"
+  else
+    echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE $PR_URL could NOT be labelled contract-step:$CCG_STEP — the autopilot keys a contract-step apply on this label, so it parks the SQL until somebody adds it (the human hold also reads the PR body)." >> "$ALERTS"
+  fi
+  # shellcheck source=bin/lib/contract-change-record.sh
+  command -v cc_record >/dev/null 2>&1 || { [ -r "$HARNESS/bin/lib/contract-change-record.sh" ] && . "$HARNESS/bin/lib/contract-change-record.sh" 2>/dev/null; }
+  if command -v cc_record >/dev/null 2>&1 && [ -n "${CCG_PARENT:-}" ]; then
+    CCG_EV() { sed -nE "s/^[[:space:]]*(- )?$1:[[:space:]]*(.*[^[:space:]])[[:space:]]*\$/\\2/p" "$BUILD/contract-step.md" 2>/dev/null | head -1; }
+    cc_record "$PROJECT" "$CCG_PARENT" "$CCG_STEP" pr_url="$PR_URL" head_sha="$(git rev-parse HEAD 2>/dev/null)" \
+      classes="${CCG_CLASSES:-}" backup_ref="$(CCG_EV BACKUP)" restore_ref="$(CCG_EV RESTORE-TESTED)" verdict=pending \
+      >/dev/null 2>&1 || echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: the step row was not recorded (cc_record failed); the autopilot treats a missing row as not approved" >> "$BUILD/pipeline.log"
+  fi
+fi
+# <<< contract step labels (BH-9929)
 # >>> full-ci label (BH-7241)
 # The target repo's full-CI label, when its own lane classifier says the PR
 # needs the full lane (bin/lib/rb-full-ci-label.sh). Off unless the project's

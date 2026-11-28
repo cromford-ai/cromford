@@ -23,6 +23,55 @@ fi
 echo "$(STAMP) [$PROJECT/$KEY] REVERT REASON: ${RV_LOG:-none}" >> "$BUILD/pipeline.log"
 # <<< revert reason (BH-6160)
 # <<< ticket meta
+# >>> contract-change hook (BH-9929)
+# A CONTRACT-CHANGE MASTER FILES ITS 3 STEPS, IT NEVER BUYS A PLAN. A ticket
+# with the label `contract-change` or the body line `Contract-change: yes`
+# (bin/lib/contract-change.sh cc_is_ticket) is a non-additive schema change.
+# It runs as 3 ordered children, expand, migrate and contract, each a PR with
+# its own gate and verdict (bin/lib/fc-contract-change.sh). This block sits
+# ABOVE the rollout hook, so a body that carries both a rollout section and
+# the marker is refused once here and never routed twice.
+#   - a child (its body has `Contract-step:`, or its title is `<KEY>.<n>`)
+#     falls through to the plan; the note block below names its step
+#   - the per-project switch off (cc_enabled rc 1, or 2 = unreadable): the
+#     ticket is planned as an ordinary ticket, which is today's behaviour; the
+#     migration gate still holds non-additive SQL at tier 2
+#   - on: the steps are filed, RESULT ROLLOUT_FILED 3 (or ROLLOUT_FAILED
+#     contract-change: <why>, and the next run resumes from children.txt)
+# Fail-open on every absence (no lib, no meta): the ordinary plan path.
+CCH_STEP=""; CCH_PARENT=""
+if [ -s "$BUILD/ticket-meta.json" ] && [ -r "$HARNESS/bin/lib/contract-change.sh" ]; then
+  # shellcheck source=bin/lib/contract-change.sh
+  . "$HARNESS/bin/lib/contract-change.sh" 2>/dev/null
+fi
+if command -v cc_is_ticket >/dev/null 2>&1 && cc_is_ticket "$BUILD/ticket-meta.json"; then
+  jq -r '.body // ""' "$BUILD/ticket-meta.json" > "$BUILD/ticket-body.md" 2>/dev/null
+  CCH_TITLE=$(jq -r '.title // ""' "$BUILD/ticket-meta.json" 2>/dev/null)
+  CCH_STEP=$(cc_step_of "$BUILD/ticket-body.md") || CCH_STEP=""
+  CCH_PARENT=$(cc_parent_of "$BUILD/ticket-body.md") || CCH_PARENT=""
+  if [ -z "$CCH_STEP" ] && ! grep -qE '^[[:space:]]*[A-Za-z]+-[0-9]+\.[0-9]+' <<<"$CCH_TITLE"; then
+    CCH_ON=0; cc_enabled "$PROJECT" || CCH_ON=$?
+    if [ "$CCH_ON" != 0 ]; then
+      echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: the lane is off for $PROJECT (cc_enabled rc=$CCH_ON) — planned as an ordinary ticket" >> "$BUILD/pipeline.log"
+    elif [ -x "$HARNESS/bin/run-rollout.sh" ] && "$HARNESS/bin/run-rollout.sh" --is-rollout "$BUILD/ticket-body.md" >/dev/null 2>&1; then
+      echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: refused — the body carries both a rollout section and the contract-change marker" >> "$BUILD/pipeline.log"
+      RESULT "ROLLOUT_FAILED contract-change: the body carries both a rollout section and the contract-change marker; keep one"
+      exit 0
+    else
+      echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: a contract-change master — filing expand, migrate, contract instead of planning it (no model call)" >> "$BUILD/pipeline.log"
+      CCH_LINE="ROLLOUT_FAILED contract-change: bin/lib/fc-contract-change.sh is missing"
+      # shellcheck source=bin/lib/fc-contract-change.sh
+      [ -r "$HARNESS/bin/lib/fc-contract-change.sh" ] && . "$HARNESS/bin/lib/fc-contract-change.sh" 2>/dev/null
+      command -v cc_file_steps >/dev/null 2>&1 \
+        && CCH_LINE=$(cc_file_steps "$PROJECT" "${TICKET:-}" "$KEY" "$BUILD" 2>>"$BUILD/pipeline.log" | tail -1)
+      [ -n "$CCH_LINE" ] || CCH_LINE="ROLLOUT_FAILED contract-change: the filer wrote no result line"
+      echo "$(STAMP) [$PROJECT/$KEY] CONTRACT-CHANGE: $CCH_LINE" >> "$BUILD/pipeline.log"
+      RESULT "$CCH_LINE"
+      exit 0
+    fi
+  fi
+fi
+# <<< contract-change hook (BH-9929)
 # >>> rollout hook
 # A ROLLOUT MASTER FILES ITS WAVES, IT NEVER BUYS A PLAN (BH-985, child .4 of
 # #816). A ticket whose body carries a `## Rollout` section is a sequence its

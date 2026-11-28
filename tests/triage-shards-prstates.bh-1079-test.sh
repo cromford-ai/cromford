@@ -66,6 +66,12 @@ echo "SOP for $P. Fetch the thread. Do the work." > "$H/prompts/$P.md"
 export FLEET_CONF="$DIR/fleet.conf"
 # Every budget case re-reads its fixture instead of a 60s-old cached answer.
 export GH_BUDGET_TTL_S=0
+# BH-10453: a could-not-read PR read (the RATELIMIT and gh-fail arms) now
+# retries and records a box failure. This suite counts ONE lookup per PR and
+# pins the carried-forward value, so the retry budget is 0 and the record is
+# off here. The retry and the record are pinned in
+# tests/triage-could-not-read.bh-9555-test.sh.
+export CNR_RETRY_BUDGET_S=0 CNR_ENFORCE=0
 
 for s in run-triage.sh triage-shard.sh triage-gate.sh gate-diff.sh; do
   sed -e "s|/root/harness|$H|g" -e "s|/root/repos|$T/repos|g" "$DIR/bin/$s" > "$H/bin/real-$s"

@@ -64,3 +64,25 @@ defer_after_loop_n() {
   case "$v" in ''|*[!0-9]*) v=12 ;; esac
   printf '%s' "$v"
 }
+
+# defer_after_on <text> — BH-9922: the label of what a deferral collides on,
+# for the pool's stand-down line and the queue meta `after_on`. Reads
+# `symbols=[a,b]` first, then `files=[p,q,p,q]` (the pairs folded to distinct
+# paths), as plan-overlap.sh and plan-sibling.sh write them. Prints the first
+# 3 distinct items comma-joined, then ` (+N more)`, where N is the items past 3
+# plus the `more=<n>` the line carries. Prints nothing, rc 1, when the text has
+# neither list.
+defer_after_on() {
+  local t="${1:-}" s="" f="" m=0 items n lbl
+  [[ "$t" =~ symbols=\[([^]]*)\] ]] && s="${BASH_REMATCH[1]}"
+  [[ "$t" =~ files=\[([^]]*)\] ]] && f="${BASH_REMATCH[1]}"
+  [[ "$t" =~ \ more=([0-9]+) ]] && m="${BASH_REMATCH[1]}"
+  items=$(printf '%s,%s\n' "$s" "$f" | tr ',' '\n' | awk 'NF && !seen[$0]++')
+  [ -n "$items" ] || return 1
+  n=$(wc -l <<<"$items" | tr -d ' ')
+  n=$(( n > 3 ? n - 3 + m : m ))
+  lbl=$(head -n 3 <<<"$items" | paste -sd, -)
+  printf '%s' "$lbl"
+  [ "$n" -gt 0 ] && printf ' (+%s more)' "$n"
+  return 0
+}

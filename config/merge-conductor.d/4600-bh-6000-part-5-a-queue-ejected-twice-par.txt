@@ -6,6 +6,10 @@
         # BH-9695: else a park with no named cause gets its one Mergify event
         # read and one more requeue (rc 0); rc 2 (a budget) waits a tick.
         case "$QWHY" in queue-ejected-twice*)
+          # BH-9438: a park labelled `unknown (no Mergify dequeue reason)`
+          # before BH-9229 is re-read once; a conflict (rc 0) goes to the
+          # rebase, not to a fix round.
+          command -v mc_ejr_reread >/dev/null 2>&1 && mc_ejr_reread "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL" "$QWHY" && { exec 9>&-; continue; }
           if ! { command -v mc_bv_solo >/dev/null 2>&1 && mc_bv_solo "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; }; then
             QEU=1; command -v mc_eu_requeue >/dev/null 2>&1 && { mc_eu_requeue "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"; QEU=$?; }
             [ "$QEU" = 1 ] && mc_eject_fix_now "$P" "$SLUG" "$QKEY" "$QHEAD" "$QURL"

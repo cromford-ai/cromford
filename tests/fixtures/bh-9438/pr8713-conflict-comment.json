@@ -1,0 +1,12 @@
+[
+  {
+    "id": 6561510714,
+    "user": {
+      "login": "mergify[bot]",
+      "type": "Bot"
+    },
+    "created_at": "2026-11-01T17:39:56Z",
+    "updated_at": "2026-11-02T04:49:31Z",
+    "body": "<!---\nDO NOT EDIT\n-*- Mergify Payload -*-\n{\"version\": 1, \"state\": \"dequeued\", \"queue_rule_name\": \"default\", \"queued_at\": \"2026-11-01T17:39:56.026241+00:00\", \"estimated_time_of_merge\": null, \"speculative_check_pr\": null, \"required_conditions\": [], \"left_at\": \"2026-11-01T17:56:16.328832+00:00\", \"dequeue_reason\": {\"code\": \"CONFLICT_WITH_BASE_BRANCH\", \"label\": \"conflict with base branch\", \"message\": \"The pull request conflicts with main\"}}\n-*- Mergify Payload End -*-\n-->\n\n### 🚫 Left the queue\n\n16 min in the queue, with no time running CI.\n\n**So far**\n\n- ✅ **Entered the queue** Sun 1 Nov, 17:39 · rule `default` · triggered by @operator with the [`@mergifyio queue` command](https://github.com/example-org/cromford/pull/8713#issuecomment-6561509624)\n- 🚫 **Left the queue** 17:56 · `47baee4`\n\n**Reason**\n\nThe pull request conflicts with `main`\n\n**Hint**\n\nYou should update or rebase your pull request. A pull request queued by a rule comes back to the queue once updated, as long as the rule still matches.\n\nIf it was queued with a command, post a new `@mergifyio queue` comment to requeue it.\n\nRequeued — the merge queue status continues in [this comment ↓](https://github.com/example-org/cromford/pull/8713#issuecomment-6569332352).\n\n<sub>Times in UTC · [dashboard](https://dashboard.mergify.com/orgs/example-org/repos/cromford/queues/status?branch=main&pull=8713) · [how the merge queue works](https://docs.mergify.com/merge-queue/)</sub>"
+  }
+]

@@ -2,7 +2,8 @@
 // routes/webhooks.js calls these; everything here but receiverKnobs is pure or
 // reads only memory.
 //
-//   bodyCapOf / readCappedBody  the body cap, checked BEFORE the HMAC
+//   bodyCapOf / readCappedBody  the body cap, checked BEFORE the HMAC (GitHub;
+//                               Jira and Linear since BH-10532)
 //   receiverKnobs / selfAppOf   the fleet's own Apps (HARNESS_SELF_APPS): an
 //                               echo of the harness's own write wakes nothing
 //   CLAIM_GUARD_SQL             the record statements' delivery-claim guard
@@ -10,11 +11,18 @@
 
 import { peekSetting, settingsRows } from "./settings-cache.js";
 
-// Fallback of the settings row webhook.github.max_body_bytes (schema.d/
-// 202611240325-bh-9934-webhook-receiver-knobs.sql). 5 MiB: no normal PR or push
-// delivery is near it, and GitHub caps a payload at 25 MB.
+// Fallback of the settings rows webhook.<vendor>.max_body_bytes: github
+// (schema.d/202611240325-bh-9934-webhook-receiver-knobs.sql), jira and linear
+// (schema.d/202611280232-bh-10532-tracker-webhook-body-caps.sql). 5 MiB: no
+// normal PR, push, issue or comment delivery is near it, and GitHub caps a
+// payload at 25 MB.
 export const WEBHOOK_MAX_BODY_BYTES = 5242880;
-export const MAX_BODY_KEY = "webhook.github.max_body_bytes";
+export const MAX_BODY_KEYS = {
+  github: "webhook.github.max_body_bytes",
+  jira: "webhook.jira.max_body_bytes",
+  linear: "webhook.linear.max_body_bytes",
+};
+export const MAX_BODY_KEY = MAX_BODY_KEYS.github;
 // The range a row value must be in to count; outside it the fallback applies.
 const CAP_MIN = 1024, CAP_MAX = 26214400;
 
@@ -25,11 +33,14 @@ export const SELF_ECHO_KEY = "webhook.github.self_echo_actions";
 export const SELF_ECHO_ACTIONS = ["pull_request.labeled", "pull_request.unlabeled",
   "issue_comment.created", "issue_comment.edited"];
 
-// The cap in bytes. peekSetting reads only the snapshot already in memory
-// (lib/settings-cache.js): an unsigned caller causes no D1 read. A cold
-// isolate, TTL 0 or a bad row value use the fallback.
-export function bodyCapOf(env) {
-  const v = peekSetting(env.DB, MAX_BODY_KEY);
+// The cap in bytes for one vendor (default github). peekSetting reads only the
+// snapshot already in memory (lib/settings-cache.js): an unsigned caller causes
+// no D1 read. A cold isolate, TTL 0, a bad row value or an unknown vendor use
+// the fallback.
+export function bodyCapOf(env, vendor = "github") {
+  const key = MAX_BODY_KEYS[vendor];
+  if (!key) return WEBHOOK_MAX_BODY_BYTES;
+  const v = peekSetting(env.DB, key);
   if (v !== null && /^\d{1,9}$/.test(v)) {
     const n = Number(v);
     if (n >= CAP_MIN && n <= CAP_MAX) return n;

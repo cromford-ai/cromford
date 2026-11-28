@@ -52,6 +52,7 @@ Two vocabularies, deliberately separate — conflating them is its own bug:
 | 15 | worktree-setup | `BUILD_DEFERRED resume branch locked` | resume branch held elsewhere | retried next tick |
 | 16 | worktree-setup | `BUILD_DEFERRED target branch not fetchable` | `TARGET_BRANCH` has no ref | retried next tick |
 | 17 | worktree-setup | PLAN | branch ready | — |
+| 17a | PLAN entry (pre-plan hooks) | `ROLLOUT_FAILED` | a contract-change master (BH-9929, lane on for the project) whose body ALSO carries a `## Rollout` section is refused with a literal `ROLLOUT_FAILED contract-change: …`. The same hook, and the rollout hook below it (BH-985), otherwise pass through the filer's own line (`ROLLOUT_FILED <n>` or `ROLLOUT_FAILED <why>`) as `RESULT "$CCH_LINE"` / `RESULT "$RH_LINE"`; a child (`Contract-step:` body or `<KEY>.<n>` title), the lane off, or a missing lib falls through to PLAN | **no plan session spent**; a filer failure resumes from `children.txt` on the next run |
 | 18 | PLAN | `BUILD_DEFERRED plan session produced no output` | empty plan (model cap/outage) | resume cap |
 | 19 | PLAN | `PLAN_BLOCKED` | plan.md line 1 OPENS with the parked marker (`PLAN_IS_BLOCKED`, BH-387); a ticket title that merely contains the word is not a park | terminal |
 | 20 | PLAN | `PLAN_STALE` | board thread moved during planning | re-run |

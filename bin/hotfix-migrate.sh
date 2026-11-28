@@ -303,6 +303,90 @@ hm_hold() { # hm_hold <why> [extra-file]
   local rc=$?; rm -f "$body"; return "$rc"
 }
 
+# >>> contract step (BH-9929)
+# hm_contract_step: the contract-change lane's check on this apply path. This
+# stage applies a before-merge PR's SQL to production BEFORE the merge
+# (project-6-os: workflow mode, local_gate advisory), so the la_decide hold at
+# the merge cannot stop it. Scope 6: an apply path accepts a contract step
+# only from the lane, and records who approved it. Runs only when the
+# appliability gate FLAGGED the files. Answers:
+#   rc 1  not this lane's business: no file has a contract class
+#         (cc_classify_sql), or the project's switch is off (cc_enabled rc 1).
+#         Today's path, unchanged.
+#   rc 0  every contract file is an approved contract step
+#         (cc_autopilot_approver: label contract-step:contract, the step row
+#         with backup_ref and restore_ref, no non-additive rider, and the
+#         Scope 4 verdict on the head), the head it judged is the worktree
+#         head, and every other file passes the gate alone. Sets HM_CC_LINE
+#         (the approver line) and HM_CC_BY.
+#   rc 3  hold: the switch is unreadable, the verdict is not there yet
+#         (approver rc 3), or the approved head is not the worktree head.
+#   rc 2  refuse: a contract class that is not an approved contract step, or a
+#         non-contract file the gate flags. Never passed to the workflow's
+#         allow-list, whatever local_gate says.
+# HM_CC_WHY says why for rc 2 and rc 3.
+HM_CC_LINE=""; HM_CC_BY=""; HM_CC_WHY=""
+hm_contract_step() {
+  local f cls any=0 erc=0 num line arc head wt_head
+  HM_CC_LINE=""; HM_CC_BY=""; HM_CC_WHY=""
+  # shellcheck source=bin/lib/contract-change-authority.sh
+  command -v cc_autopilot_approver >/dev/null 2>&1 \
+    || . "$HARNESS/bin/lib/contract-change-authority.sh" 2>/dev/null || return 1
+  # shellcheck source=bin/lib/contract-change.sh
+  command -v cc_classify_sql >/dev/null 2>&1 \
+    || . "$HARNESS/bin/lib/contract-change.sh" 2>/dev/null || return 1
+  for f in "${FILES[@]}"; do
+    cls=$(cc_classify_sql "$WT/$f" 2>/dev/null)
+    [ -n "$cls" ] && { any=1; break; }
+  done
+  [ "$any" = 1 ] || return 1
+  cc_enabled "$PROJECT" || erc=$?
+  case "$erc" in
+    0) ;;
+    1) return 1 ;;
+    *) HM_CC_WHY="the contract-change switch of $PROJECT could not be read, and this SQL carries a contract change (BH-9929)."; return 3 ;;
+  esac
+  num=$(sed -nE 's#^https://github.com/[^/]+/[^/]+/pull/([0-9]+)$#\1#p' <<<"$PR_URL")
+  [ -n "$num" ] || { HM_CC_WHY="the PR number could not be read from $PR_URL."; return 3; }
+  wt_head=$(git -C "$WT" rev-parse HEAD 2>/dev/null | tr 'A-F' 'a-f')
+  for f in "${FILES[@]}"; do
+    cls=$(cc_classify_sql "$WT/$f" 2>/dev/null)
+    if [ -z "$cls" ]; then
+      "$HARNESS/bin/check-migration-appliable.sh" "$PROJECT" "$WT" "$f" >/dev/null 2>&1 \
+        || { HM_CC_WHY="$f is flagged by the appliability gate and is not a contract change. A contract step carries nothing else that is not additive."; return 2; }
+      continue
+    fi
+    arc=0; line=$(cc_autopilot_approver "$PROJECT" "$SLUG" "$num" "$WT/$f" 2>/dev/null) || arc=$?
+    case "$arc" in
+      0) ;;
+      3) HM_CC_WHY="$f is an approvable contract step, but no clearing verdict stands on the head yet (Scope 4: a --source human MERGE for a drop-table, drop-column, merge or type class; the normal MERGE otherwise). Post the verdict, then run bin/hotfix-migrate.sh $PROJECT $BUILD again."; return 3 ;;
+      *) HM_CC_WHY="$f carries a contract change ($(printf '%s' "$cls" | sort -u | paste -sd, -)), and this PR is not an approved contract step of the contract-change lane (label contract-step:contract, the step row with backup and restore, contract and additive statements only). File a contract-change ticket."; return 2 ;;
+    esac
+    head=$(printf '%s' "$line" | cut -f4)
+    if [ -z "$wt_head" ] || [ "$head" != "$wt_head" ]; then
+      HM_CC_WHY="the verdict judged ${head:0:12}, but the worktree holds ${wt_head:0:12}. Nothing applied."; return 3
+    fi
+    [ -n "$HM_CC_LINE" ] || HM_CC_LINE="$line"
+  done
+  [ -n "$HM_CC_LINE" ] || return 1
+  HM_CC_BY=$(printf '%s' "$HM_CC_LINE" | cut -f1)
+  return 0
+}
+
+# hm_contract_record: after an applied contract step, one row update of the
+# lane's step ledger (cc_record: verdict and approved_by). Never fails the stage.
+hm_contract_record() {
+  [ -n "$HM_CC_LINE" ] || return 0
+  [ "$(jq -r '.decision // ""' "$LEDGER" 2>/dev/null)" = applied ] || return 0
+  # shellcheck source=bin/lib/contract-change-record.sh
+  command -v cc_record >/dev/null 2>&1 || . "$HARNESS/bin/lib/contract-change-record.sh" 2>/dev/null || return 0
+  cc_record "$PROJECT" "$(cut -f2 <<<"$HM_CC_LINE")" "$(cut -f3 <<<"$HM_CC_LINE")" \
+    verdict="$(cut -f5 <<<"$HM_CC_LINE")" approved_by="$HM_CC_BY" head_sha="$(cut -f4 <<<"$HM_CC_LINE")" >/dev/null 2>&1 \
+    || echo "hotfix-migrate: the contract-change step row was not updated (cc_record failed); the apply stands" >&2
+  return 0
+}
+# <<< contract step (BH-9929)
+
 hm_endpoint() {
   local bn=() f i n line st want decision arc body fjson rc
   local -a LINES=() STS=()
@@ -527,7 +611,26 @@ hm_main() {
   "$HARNESS/bin/check-migration-appliable.sh" "$PROJECT" "$WT" "${FILES[@]}" > "$BUILD/hotfix-gate.txt" 2>&1
   local grc=$?
   HM_GATE_NOTE=""
-  if [ "$grc" = 1 ] && [ "$MODE" = workflow ] && [ "${HMK_LOCAL_GATE:-strict}" = advisory ]; then
+  # >>> contract step (BH-9929): a FLAGGED contract change goes on only as an
+  # approved contract step (hm_contract_step); local_gate=advisory never lets
+  # an unapproved one through to the workflow's allow-list.
+  local ccrc=1
+  if [ "$grc" = 1 ]; then
+    hm_contract_step; ccrc=$?
+    case "$ccrc" in
+      0) grc=0
+         HM_GATE_NOTE=$(printf 'Contract step (BH-9929): %s of #%s, approved by %s (%s on %s). The appliability gate flags its contract statements by design; the contract-change lane cleared them.' \
+           "$(cut -f3 <<<"$HM_CC_LINE")" "$(cut -f2 <<<"$HM_CC_LINE")" "$HM_CC_BY" "$(cut -f5 <<<"$HM_CC_LINE")" "$(cut -f4 <<<"$HM_CC_LINE" | head -c 12)") ;;
+      # The why goes FIRST: the proof quotes only the first 1500 bytes of the
+      # gate report, and a long report (many flagged statements, tool
+      # warnings) would cut a why appended at the end.
+      2) { printf 'contract-change: %s\n\n' "$HM_CC_WHY"; cat "$BUILD/hotfix-gate.txt"; } > "$BUILD/hotfix-gate.cc.txt" \
+           && mv -f "$BUILD/hotfix-gate.cc.txt" "$BUILD/hotfix-gate.txt" ;;
+      3) hm_hold "$HM_CC_WHY" "$BUILD/hotfix-gate.txt"; return $? ;;
+    esac
+  fi
+  # <<< contract step (BH-9929)
+  if [ "$grc" = 1 ] && [ "$ccrc" != 2 ] && [ "$MODE" = workflow ] && [ "${HMK_LOCAL_GATE:-strict}" = advisory ]; then
     # local_gate=advisory: the workflow's own allow-list runs from main and
     # decides. Our gate's report rides in the proof, and a refusal comes back as
     # the outcome word `refused`.
@@ -563,11 +666,17 @@ hm_main() {
       hm_no_path "this project has neither /api/internal/migrations nor a dispatchable migration workflow; set HOTFIX_MIGRATE_WORKFLOW or ship the endpoint"
       return $? ;;
     workflow)
-      if declare -F hm_workflow >/dev/null 2>&1; then hm_workflow; return $?; fi
+      if declare -F hm_workflow >/dev/null 2>&1; then
+        local wrc=0; hm_workflow || wrc=$?
+        hm_contract_record
+        return "$wrc"
+      fi
       hm_no_path "workflow shape not installed: bin/lib/hotfix-migrate-workflow.sh missing"
       return $? ;;
     *)
-      hm_endpoint; return $? ;;
+      local erc2=0; hm_endpoint || erc2=$?
+      hm_contract_record
+      return "$erc2" ;;
   esac
 }
 

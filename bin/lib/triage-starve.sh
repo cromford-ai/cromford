@@ -48,6 +48,7 @@
 #   TRIAGE_STARVE_PASSES (3, 0 = off)  TRIAGE_STARVE_WINDOW_S (7200)
 #   TRIAGE_STARVE_FASTPATH_MAX (10)    TRIAGE_STARVE_FASTPATH_TIMEOUT_S (300)
 #   TRIAGE_STARVE_LOCK_WAIT_S (5)      TRIAGE_STARVE_INAPP_LAUNCH (1, 0 = off)
+#   TRIAGE_READY_NOW (1, 0 = off)      TRIAGE_READY_NOW_MAX (3): tsv_ready_pass
 # shellcheck shell=bash
 if [ -n "${TRIAGE_STARVE_LIB:-}" ]; then return 0 2>/dev/null; fi
 TRIAGE_STARVE_LIB=1
@@ -83,6 +84,10 @@ _tsv_knobs() {
   # lib.triage-starve[.<p>].triage_starve_inapp_launch: 0 = an in-app board
   # records `n/a: in-app board` and launches nothing (the pre-BH-9113 record).
   _TSV_INAPP=$(_tsv_int "${TRIAGE_STARVE_INAPP_LAUNCH:-1}" 1 0 1)
+  # lib.triage-starve[.<p>].triage_ready_now (fallback 1, 0 = off) and
+  # triage_ready_now_max (fallback 3): tsv_ready_pass, BH-10236.
+  _TSV_READY=$(_tsv_int "${TRIAGE_READY_NOW:-1}" 1 0 1)
+  _TSV_READY_MAX=$(_tsv_int "${TRIAGE_READY_NOW_MAX:-3}" 3 1 50)
   return 0
 }
 
@@ -313,6 +318,80 @@ tsv_pass() {
       </dev/null >/dev/null 2>&1 7>&- 8>&- 9>&-
   fi
   _tsv_locked "$d" _tsv_set "$d" 'BEGIN { n = split(ks, a, " "); for (i = 1; i <= n; i++) m[a[i]] = 1 } ($1 in m) { $8 = 1 }' -v ks="$keys"
+  return 0
+}
+
+# tsv_ready_pass <harness> <project> — BH-10236: a READY ticket on an in-app
+# board is owed a build on THIS pass. ts_tick calls it after tsv_pass, enforce
+# only. project-3, 2026-11-26: about 25 tickets were todo + triageVerdict ready
+# + waitingOn team, unbuilt, while each waited in the model set for a shard to
+# say `launch`; the starvation rescue above waits 3 passes and 2 hours.
+#   THE OWED SET: every key of this pass's model set (decisions.tsv column 3 =
+#   llm) whose board snapshot entry has a status outside _TSV_BUSY,
+#   triageVerdict ready and waitingOn team, in the decisions order. A key
+#   whose .enqueued marker holds its current input hash was tried: not owed.
+#   THE LAUNCH: _tsv_inapp_try, the starvation rescue's own guarded attempt
+#   (the .enqueued marker, the build-key lock, a build dir, a queue row, an
+#   open PR, triage-gate.sh --buildable-strict, the overlap guard, then
+#   bin/run-build.sh). No model call. The marker carries the input hash, so
+#   one (ticket, hash) launches at most once.
+#   THE CAP: TRIAGE_READY_NOW_MAX launches per pass. A key the cap left out is
+#   appended to deferred.keys, the owed list bin/triage-gate.sh step 1d reads,
+#   so the next tick runs and the key does not wait for a re-read timer.
+#   A declined key is not carried: its reason stands until its inputs move.
+#   ONE lane line per pass with something owed: `READY-NOW owed <n>, launched
+#   <m>[: <labels>][; waited: <label>=<reason> ...]`.
+#   TSV_READY_KEYS (in the caller's shell): the launched keys, each followed
+#   by a space; ts_tick adds them to the skip set, so no shard is bought.
+# A GitHub board is not read (bin/launch-fastpath.sh owns that launch). A live
+# builds pause withholds the pass. Every failure returns 0 with nothing done.
+tsv_ready_pass() {
+  local h="${1:-}" p="${2:-}" d k lab first out hv owed=0 n=0 launched="" waited="" capped="" ready owedrows
+  TSV_READY_KEYS=""
+  [ -n "$h" ] && [ -n "$p" ] || return 0
+  _tsv_knobs "$p"
+  [ "$_TSV_READY" = 1 ] && [ "$_TSV_INAPP" = 1 ] || return 0
+  command -v ts_hash_of >/dev/null 2>&1 || return 0
+  d=$(_tsv_dir "$h" "$p")
+  [ -r "$d/decisions.tsv" ] && [ -r "$d/world.json" ] || return 0
+  jq -e 'has("issues")' "$d/world.json" >/dev/null 2>&1 && return 0
+  ready=$(jq -r --arg busy "$_TSV_BUSY" '[to_entries[] | select(.key != "meta") | .value | if type == "array" then .[] else empty end
+      | select(type == "object" and .id != null)
+      | ((.status // "") | tostring | ascii_downcase) as $st
+      | select(((.triageVerdict // "") | tostring | ascii_downcase) == "ready"
+               and ((.waitingOn // "") | tostring | ascii_downcase) == "team"
+               and (($busy | index(" " + $st + " ")) == null))
+      | .id | tostring] | unique | .[]' "$d/world.json" 2>/dev/null) || return 0
+  [ -n "$ready" ] || return 0
+  owedrows=$(awk -F'\t' 'NR == FNR { r[$0] = 1; next } $3 == "llm" && ($1 in r) && !s[$1]++ { print $1 "\t" $2 }' \
+    <(printf '%s\n' "$ready") "$d/decisions.tsv" 2>/dev/null)
+  [ -n "$owedrows" ] || return 0
+  if command -v pause_active >/dev/null 2>&1 && pause_active "$p" builds 2>/dev/null; then
+    _tsv_log "$h" "$p" "READY-NOW withheld: builds pause"
+    return 0
+  fi
+  while IFS=$'\t' read -r k lab; do
+    [ -n "$k" ] || continue
+    case "$k" in *[!A-Za-z0-9._-]*) continue ;; esac
+    hv=$(PROJECT="$p" HARNESS="$h" ts_hash_of "$k" 2>/dev/null)
+    [ -n "$hv" ] && [ "$(cat "$d/$k.enqueued" 2>/dev/null)" = "$hv" ] && continue
+    owed=$((owed+1))
+    if [ "$n" -ge "$_TSV_READY_MAX" ]; then
+      waited="$waited $lab=cap"; capped="$capped$k"$'\n'
+      continue
+    fi
+    first=$(awk -F'\t' -v k="$k" '$1 == k { print $3; exit }' "$d/starve.tsv" 2>/dev/null)
+    case "$first" in ''|*[!0-9]*) first=$(_tsv_now) ;; esac
+    out=$(_tsv_inapp_try "$h" "$p" "$k" "$lab" "$first")
+    if [ "$out" = launched ]; then
+      n=$((n+1)); launched="$launched $lab"; TSV_READY_KEYS="$TSV_READY_KEYS$k "
+    else
+      out=${out#declined: }; waited="$waited $lab=${out// /_}"
+    fi
+  done <<<"$owedrows"
+  [ "$owed" -gt 0 ] || return 0
+  [ -z "$capped" ] || printf '%s' "$capped" >> "$d/deferred.keys" 2>/dev/null
+  _tsv_log "$h" "$p" "READY-NOW owed $owed, launched $n${launched:+:$launched}${waited:+; waited:$waited} (BH-10236: no model call)"
   return 0
 }
 

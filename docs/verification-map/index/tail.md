@@ -90,8 +90,12 @@ through its parents, so siblings that each add a fragment never trip it. The Fly
 fourth: it is rendered from `config/fly-pool.d/` (`.sh` fragments, the 4th field
 of its `catalog/splits.d/` row) by the same `bin/render-split.sh --write`, so
 the one command renders both rows and the same guard keeps a hand edit;
-`bin/fly-pool-build.sh` renders the same bytes. The merge conductor driver
-`bin/merge-conductor.sh` (BH-10226) is the fifth: it is rendered from
+`bin/fly-pool-build.sh` renders the same bytes. The CI workflow
+`.github/workflows/harness-ci.yml` (BH-10228) is the fifth: it is rendered from
+`config/harness-ci/` by `bin/render-ci-workflow.sh --write`, which carries the
+same merge guard (exit 4 when a side edited the workflow by hand). Its row sits
+just before the render-split rows, so they stay last. The merge conductor driver
+`bin/merge-conductor.sh` (BH-10226) is the sixth: it is rendered from
 `config/merge-conductor.d/` (`.txt` fragments cut at comment-block starts) by
 the same `bin/render-split.sh --write`, so the one command renders all three
 render-split rows.
@@ -140,6 +144,7 @@ column.
 | `docs/PR-OWNERSHIP.md` | `bin/render-doc-sections.sh --write` | committed |
 | `worker/jobs/schema.sql` | `bin/schema-build.sh --write` |  |
 | `catalog/state-paths.json` | `bin/state-paths-build.sh --compose` |  |
+| `.github/workflows/harness-ci.yml` | `bin/render-ci-workflow.sh --write` | committed |
 | `bin/lib/rb/plan.sh` | `bin/render-split.sh --write` | committed |
 | `bin/fly-pool.sh` | `bin/render-split.sh --write` | committed |
 | `bin/merge-conductor.sh` | `bin/render-split.sh --write` | committed |

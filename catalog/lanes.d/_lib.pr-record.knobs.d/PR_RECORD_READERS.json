@@ -1,0 +1,12 @@
+{
+  "env": "PR_RECORD_READERS",
+  "read_in": "bin/lib/pr-record-readers.sh",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 1,
+  "unit": "flag",
+  "zero_means": "triage-gate and triage-state read GitHub for every PR state, as before BH-10455",
+  "required": false,
+  "note": "BH-10455 (BH-9555.5). 1: the triage-gate queue-pending PR-state vector and the triage-state #N ref read answer a PR's open/closed/merged state from a pr_records row (pr_record_peek, one jobs GET, no GitHub call) when the row is at most PR_RECORD_MAX_AGE_S old. A miss, a stale row or a failed jobs read makes the same one GitHub read as before. 0: no jobs GET, every state is read from GitHub. Read through lane_knob (libs scope) when the caller has it, else from the environment; code fallback 1. Every value other than 0 is on."
+}

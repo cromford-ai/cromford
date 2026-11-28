@@ -1983,11 +1983,24 @@ if [ -n "${STACK_BASE:-}" ]; then
             # shellcheck source=bin/lib/stack-wait.sh
             command -v sw_pre >/dev/null 2>&1 || . "$HARNESS/bin/lib/stack-wait.sh" 2>/dev/null
             if command -v sw_pre >/dev/null 2>&1; then
-              read -r SWP_ACT SWP_H SWP_CAP <<<"$(sw_pre "$PROJECT" "$KEY" "$STACK_BASE" 2>/dev/null)"
+              # BH-9922: sw_pre answers `queued <pr>` only through mc_pr_queued,
+              # so the merge-conductor lib loads here, in this subshell only:
+              # none of its functions reach the build's own shell.
+              read -r SWP_ACT SWP_H SWP_CAP <<<"$(
+                if [ "${POOL_AFTER_STACK_QUEUED:-1}" = 1 ] && ! command -v mc_pr_queued >/dev/null 2>&1 \
+                   && [ -r "$HARNESS/bin/lib/merge-conductor-lib.sh" ] \
+                   && ( . "$HARNESS/bin/lib/merge-conductor-lib.sh" ) >/dev/null 2>&1 </dev/null; then
+                  . "$HARNESS/bin/lib/merge-conductor-lib.sh" >/dev/null 2>&1 </dev/null
+                fi
+                sw_pre "$PROJECT" "$KEY" "$STACK_BASE" 2>/dev/null)"
               SWP_N=$(sw_pkey "$STACK_BASE"); SWP_REF="#$SWP_N"; [ -n "$SWP_N" ] || SWP_REF="$STACK_BASE"
               case "${SWP_ACT:-}" in
                 exempt)
                   echo "$(STAMP) [$PROJECT/$KEY] stack-wait: hotfix exempt — stacking on $STACK_BASE" >> "$BUILD/pipeline.log" ;;
+                queued)
+                  # BH-9922: the parent PR is green and in its merge queue: stack
+                  # with no stack-wait-pending file, so the post-plan check does not run.
+                  echo "$(STAMP) [$PROJECT/$KEY] stack-wait: parent PR #$SWP_H is green and in its merge queue — stacking on $STACK_BASE" >> "$BUILD/pipeline.log" ;;
                 wait)
                   echo "$(STAMP) [$PROJECT/$KEY] stack-wait: parent branch $STACK_BASE is still open and $KEY has waited ${SWP_H}h of STACK_WAIT_CAP_H=${SWP_CAP}h — deferred before the plan" >> "$BUILD/pipeline.log"
                   RESULT "BUILD_DEFERRED stack-wait: parent branch $STACK_BASE is still open and $KEY has waited ${SWP_H}h of STACK_WAIT_CAP_H=${SWP_CAP}h — Blocked-by $SWP_REF; the child builds after the parent merges"

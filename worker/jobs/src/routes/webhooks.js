@@ -15,7 +15,7 @@ import {
 import { githubWakeOf } from "../lib/wake-of-repository.js";
 import {
   deliveryIdOf, verifyJira, verifyLinear, linearFresh, jiraKeyOf, linearKeyOf,
-  keyPrefix, jiraWakeOf, linearWakeOf, readWebhookConfig,
+  keyPrefix, jiraWakeOf, linearWakeOf, readWebhookConfig, trackerPreCheck,
 } from "../lib/tracker-webhooks.js";
 import { mapMergeQueueDelivery } from "../lib/merge-queue-intake.js";
 import { recordGithubGate } from "../lib/pr-gate-intake.js";
@@ -278,11 +278,22 @@ export const routes = [
   // an owner/repo slug; no row is 202 `unrouted` with no write. The wake is an
   // ordinary kind=issue row keyed on the ticket key, so bin/wake-loop.sh and
   // the triage gate treat it exactly as they treat a GitHub issue wake.
+  //
+  // BH-10532: the order is 405, then trackerPreCheck with NO body read (503
+  // secret unset, 401 signature header missing or the wrong shape), then the
+  // capped read (413 over webhook.<vendor>.max_body_bytes, bodyCapOf from
+  // memory only), then the unchanged HMAC (401). An unsigned caller cannot make
+  // the worker read or hash an unbounded body.
   [
     "*", "/webhooks/jira",
     async ({ req, env, t }) => {
       if (req.method !== "POST") return json(405, { error: "POST only" });
-      const raw = await req.text().catch(() => "");
+      const pre = trackerPreCheck(env, "jira", req.headers);
+      if (pre) return json(pre.status, { error: pre.error });
+      const cap = bodyCapOf(env, "jira");
+      const body = await readCappedBody(req, cap);
+      if (body.tooLarge) return json(413, { error: "payload too large", cap });
+      const raw = body.raw;
       const bad = await verifyJira(env, req.headers, raw);
       if (bad) return json(bad.status, { error: bad.error });
       const payload = parseObj(raw);
@@ -294,7 +305,12 @@ export const routes = [
     "*", "/webhooks/linear",
     async ({ req, env, t }) => {
       if (req.method !== "POST") return json(405, { error: "POST only" });
-      const raw = await req.text().catch(() => "");
+      const pre = trackerPreCheck(env, "linear", req.headers);
+      if (pre) return json(pre.status, { error: pre.error });
+      const cap = bodyCapOf(env, "linear");
+      const body = await readCappedBody(req, cap);
+      if (body.tooLarge) return json(413, { error: "payload too large", cap });
+      const raw = body.raw;
       const bad = await verifyLinear(env, req.headers, raw);
       if (bad) return json(bad.status, { error: bad.error });
       const payload = parseObj(raw);

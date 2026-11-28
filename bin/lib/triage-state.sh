@@ -990,6 +990,8 @@ ts_tick() {
   if [ "${TS_ROWS_OK:-0}" = 1 ] && [ -r "$(_ts_h)/bin/lib/triage-starve.sh" ] \
      && . "$(_ts_h)/bin/lib/triage-starve.sh"; then
     tsv_pass "$(_ts_h)" "${PROJECT:-}" || true
+    # BH-10236: a READY in-app ticket of the model set is launched on this pass, with no model call.
+    if declare -F tsv_ready_pass >/dev/null; then tsv_ready_pass "$(_ts_h)" "${PROJECT:-}" || true; TS_SKIPSET="${TS_SKIPSET:- }${TSV_READY_KEYS:-}"; fi
     _ts_ord=$(printf '%s\n' "${TICK_SCOPE:-}" | tsv_order_scope "$(_ts_h)" "${PROJECT:-}") \
       && [ -n "${TICK_SCOPE:-}" ] && [ -n "$_ts_ord" ] && TICK_SCOPE=$_ts_ord
   fi

@@ -140,10 +140,11 @@ WANT_ROW=$(printf '%s\n' \
   "$(printf 'docs/PR-OWNERSHIP.md\tbin/render-doc-sections.sh --write')" \
   "$(printf 'worker/jobs/schema.sql\tbin/schema-build.sh --write')" \
   "$(printf 'catalog/state-paths.json\tbin/state-paths-build.sh --compose')" \
+  "$(printf '.github/workflows/harness-ci.yml\tbin/render-ci-workflow.sh --write')" \
   "$(printf 'bin/lib/rb/plan.sh\tbin/render-split.sh --write')" \
   "$(printf 'bin/fly-pool.sh\tbin/render-split.sh --write')" \
   "$(printf 'bin/merge-conductor.sh\tbin/render-split.sh --write')")
-#    …and of the last seven rows five are still COMMITTED. rules/CLAUDE.md
+#    …and of the last eight rows six are still COMMITTED. rules/CLAUDE.md
 #    (BH-1336): five scripts copy it verbatim onto every box, so it cannot leave
 #    git yet, which is exactly why a train must regenerate it rather than hand
 #    merge two siblings' renders. docs/PR-OWNERSHIP.md (BH-5235.2) is linked by
@@ -151,6 +152,8 @@ WANT_ROW=$(printf '%s\n' \
 #    is composed from worker/jobs/schema.d/ and is NOT in git since BH-6005:
 #    every reader composes its own. (BH-5239.4 deleted the Cloud schema row.)
 #    catalog/state-paths.json (BH-8986) is not in git either.
+#    .github/workflows/harness-ci.yml (BH-10228) is the committed render of
+#    config/harness-ci/; its --write carries a merge guard.
 #    bin/lib/rb/plan.sh (BH-9704) is the committed render of config/rb-plan.d/.
 #    bin/fly-pool.sh (BH-9704 C1) is the committed render of config/fly-pool.d/,
 #    by the same command. bin/merge-conductor.sh (BH-10226) is the committed
