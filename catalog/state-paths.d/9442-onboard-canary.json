@@ -1,0 +1,3 @@
+[
+    {"path": "onboard-canary", "class": "box-local", "authority": "the hub onboard-canary lane's working list (BH-9442)", "note": "state/onboard-canary/<project>.json (bin/onboard-canary.sh): the pending canary PR of one project and its verdict, overwritten in place, one file per project. The settings rows onboard.<p>.canary and onboard.<p>.canary_gate are the record every box reads; a pending row with no file is adopted by the next --tick. Hub lane only, never carried"}
+]

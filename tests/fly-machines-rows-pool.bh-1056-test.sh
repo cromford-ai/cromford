@@ -147,6 +147,7 @@ track() { jq -nc --arg m "$1" --arg k "$2" --arg t "$3" '{machine:$m,key:$k,tick
 mklist() { printf '%s\n' "$1" > "$T/listing.json"; }
 reset() {
   rm -f "$H/state/fly-pool/tproj"/*.json "$H/state/fly-pool/tproj/.sweep.json"
+  rm -f "$H/state/fly-pool-listing/tproj.json"   # BH-9407 saved list
   rm -f "$H/state/build-queue/tproj"/*.json "$H/state/build-queue/tproj"/*.json.bad "$H/flags"/alerted-pool-*
   rm -f "$T/listing.json" "$T/live-rows.json" "$T/destroy-fail" "$T/destroy-gone"
   rm -f "$T/list-rc1" "$T/list-junk" "$T/status".* "$T/mid-counter" "$T/result.txt"
@@ -158,7 +159,8 @@ tick() {
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLY_BIN_DIR="$T/fakebin" \
            FLY_API_TOKEN_TPROJ=tok FLY_CALLS="$T/fly-calls.log" FIX="$T" \
            BOX_NAME=testbox REQ_SINK="$T/req.log" POOL_STOPPED_TTL_S=600 \
-           POOL_SWEEP_MAX_DESTROY=25 POOLDIR="$H/state/fly-pool/tproj"
+           POOL_SWEEP_MAX_DESTROY=25 POOLDIR="$H/state/fly-pool/tproj" \
+           POOL_LIST_RETRY_BACKOFF_S="0 0 0"   # BH-9407: retries without the waits
     env "$@" bash "$DIR/bin/fly-pool.sh" tproj >/dev/null 2>&1
     echo $? > "$T/tick.rc" )
 }
@@ -313,6 +315,20 @@ track "$MID1" "RE-1" "4"
 mklist "[]"
 tick FLY_MACHINES_ROWS=on
 [ "$(observes)" -eq 0 ] && ok || bad "§6b empty-beside-tracked expected zero observe, got $(observes): $(cat "$T/req.log")"
+
+# §6c (BH-9407) listing rc 1 with a fresh saved list: the sweep destroys from it,
+# and still NO observe: a saved list is never sent as this tick's listing.
+reset
+track "$MID1" "RE-1" "4"
+mkdir -p "$H/state/fly-pool-listing"
+jq -nc --arg u "$OLD" \
+  '[{id:"m6csaved",state:"stopped",region:"ewr",created_at:$u,updated_at:$u}]' \
+  > "$H/state/fly-pool-listing/tproj.json"   # stopped 1000 s: past the 600 s TTL
+touch "$T/list-rc1"
+tick FLY_MACHINES_ROWS=on
+[ "$(observes)" -eq 0 ] && ok || bad "§6c saved list expected zero observe, got $(observes): $(cat "$T/req.log")"
+grep -q 'machine destroy m6csaved' "$T/fly-calls.log" && ok \
+  || bad "§6c the saved list must drive the sweep: $(cat "$T/fly-calls.log")"
 
 # §7 advisory: live row for TK-1 with no file -> tick still spawns and logs it;
 # row absent -> no line; flag off -> no GET /api/machines.

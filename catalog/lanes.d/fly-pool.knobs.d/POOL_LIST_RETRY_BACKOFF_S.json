@@ -1,0 +1,9 @@
+{
+  "env": "POOL_LIST_RETRY_BACKOFF_S",
+  "type": "string",
+  "default": "2 5 15",
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9407: the waits before each retry of a failed pool `machines list` call, one space-separated number per retry (default: 3 retries, 4 calls). Only timeout, api and other failures are retried; auth, app-not-found, rc 126/127 and rc-0 answers are not. Empty = no retry. Read by pool_list_backoff as ${POOL_LIST_RETRY_BACKOFF_S-2 5 15}; \"2 5 15\" is the code fallback named by this knob. A value with a non-number is logged and falls back to \"2 5 15\".",
+  "read_in": "bin/fly-pool.sh"
+}

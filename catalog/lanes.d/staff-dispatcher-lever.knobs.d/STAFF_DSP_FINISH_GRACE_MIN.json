@@ -1,0 +1,11 @@
+{
+  "env": "STAFF_DSP_FINISH_GRACE_MIN",
+  "read_in": "bin/staff-dispatcher-lever.sh",
+  "type": "int",
+  "default": 20,
+  "min": 10,
+  "max": 1440,
+  "zero_means": null,
+  "note": "BH-9421 (lead BLOCK on #9469): minutes after a build job for the key finishes before the lever may release its still-claimed build_queue row. On the fly path fly-pool (every 10 min) closes the row only when it collects the result, so a finished build looks like an orphan until then. 20 = two fly-pool cycles. A build job opened at or after claimed_at always declines the release, whatever its status. Out of range is one warn line and the default.",
+  "settable": true
+}

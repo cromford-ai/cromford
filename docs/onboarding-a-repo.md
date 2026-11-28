@@ -100,6 +100,58 @@ deploy config. It calls no model and runs none of your repo's code. Its one
 write is the `.codegraph/` index inside the checkout. Add `--json` for a
 machine-readable report.
 
+## The canary PR
+
+After onboarding, the project is **held**: no ticket builds until a no-op PR
+goes green in the repo's own CI. Three repos were onboarded with a
+CI that was red on every PR and merged 0 of 16 PRs. The canary finds that
+before the first ticket does.
+
+- `bin/load-project.sh` (the `== onboarding canary ==` block) and the
+  onboarding runner's `ready` station run `bin/onboard-canary.sh --hold <p>`.
+  It writes the settings row `onboard.<p>.canary_gate=held` and opens one PR,
+  `[harness] onboarding canary, do not merge`, from the branch
+  `harness/onboard-canary-<yyyymmddhhmm>`. The PR's one commit writes
+  `.harness/onboard-canary.md`.
+- The hub lane `onboard-canary` reads the PR's check runs and commit statuses
+  every 5 minutes. Then it writes the verdict to `onboard.<p>.canary`
+  (`pending`, `green`, `red` or `no-checks`, with the head sha). Then it closes
+  the PR unmerged and deletes the branch.
+  - **green**: every check and status passed. The gate row goes to `released`
+    and tickets build.
+  - **red**: one check failed, or a check still ran at the timeout
+    (`ONBOARD_CANARY_TIMEOUT_MIN`, default 60). The project stays held. One
+    alert names the failing checks and the first error line.
+  - **no checks**: the repo has no workflows and no status after
+    `ONBOARD_CANARY_NOCHECK_GRACE_MIN` (default 10), or nothing reported at the
+    timeout. The project stays held, and one alert says "no checks".
+- While held, a build of the project answers
+  `BUILD_DEFERRED onboard-canary held: <state> <sha12>` and the next tick
+  offers it again (`bin/lib/rb/gates.d/onboard-canary.sh`). A project with no
+  gate row is never held. If the gate row cannot be read, the build runs, with
+  one log line: an outage of the settings store must not stop every build.
+- A hold is never silent. A project held for `ONBOARD_CANARY_HELD_ALERT_HOURS`
+  (default 24) with no override gets the alert `onboard-canary:<p>:held`. It
+  stays open until a green canary or `--override` releases the project. The
+  alert never releases the project by itself.
+
+Commands (on the hub):
+
+```bash
+bin/onboard-canary.sh --status [<project>]   # <p> <gate> <state> <sha12> <pr-url> <at>
+bin/onboard-canary.sh --start <project>      # run the canary again after a CI fix
+bin/onboard-canary.sh --override <project> "<reason>"   # release a held project
+```
+
+Use `--override` only for a repo that cannot have CI. It writes the row
+`onboard.<p>.canary_override=<reason>` and releases the gate. An empty reason
+is refused.
+
+Every Monday at 06:17Z the lane opens a canary for every fleet project
+(`--weekly`). A red weekly canary writes an alert and does not hold the
+project. To skip a project, set the row `onboard.<p>.canary_skip=<reason>`.
+Log: `logs/onboard-canary.log`. Off: `bin/harness-ctl.sh off onboard-canary`.
+
 ## Your first ticket
 
 Start small: a copy change or a small fix you can check in a minute. Open it

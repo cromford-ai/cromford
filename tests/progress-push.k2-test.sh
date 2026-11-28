@@ -53,7 +53,11 @@ cat > "$T/fakebin/curl" <<SH
 #!/bin/bash
 case "\$*" in
   */api/progress/stamps*)
-    printf '%s\n' "\$*" > "$T/GET.args"
+    # TEST-CHANGE (BH-9946): the jobs bearer now rides on a curl fd
+    # (-H @/dev/fd/3), so record that fd's content first, then the argv
+    # (the assertions below anchor on the URL at the end).
+    { for a in "\$@"; do case "\$a" in @/dev/fd/*) cat "\${a#@}" ;; esac; done
+      printf '%s\n' "\$*"; } > "$T/GET.args"
     [ "\$(cat "$T/mode")" = down ] && exit 7
     cat "$T/stamps-fixture"; printf '\n200'; exit 0 ;;
   */api/progress/dry-run*)

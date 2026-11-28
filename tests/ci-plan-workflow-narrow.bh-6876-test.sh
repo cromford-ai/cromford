@@ -47,6 +47,11 @@ EOF
 chmod +x "$T/impact.sh"
 "$DIR/bin/test-impact.sh" always --map "$T/map" > "$T/always" || { echo "FAIL: always set unreadable"; exit 1; }
 [ -s "$T/always" ] || { echo "FAIL: the always set is empty"; exit 1; }
+# The `*` rows of catalog/ci-batch-regression.d/ (BH-9439): the regression
+# union adds them to every batch, so the exact lists below carry them too.
+printf 'docs/x.md\n' > "$T/reg.changed"
+( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg.changed" ) 2>/dev/null \
+  | awk -F'\t' '$2 == "*" { print $1 }' | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done > "$T/regstar"
 : > "$T/notiers.tsv"
 HEADSHA=$(git -C "$DIR" rev-parse HEAD)
 
@@ -88,7 +93,7 @@ readers "$WF1" > "$T/r1"
 [ "$(grep -c . "$T/r1")" -ge 2 ] || bad "N1 fixture: the map must name at least 2 readers of $WF1 (got $(grep -c . "$T/r1"))"
 selects N1 "$WF1"
 [ -z "$(missing "$T/r1")" ] && ok || bad "N1: every reader of $WF1 must run: missing $(missing "$T/r1" | head -3 | paste -sd' ')"
-EXTRA=$(LC_ALL=C comm -13 <(LC_ALL=C sort -u "$T/r1" "$T/always") <(LC_ALL=C sort -u "$T/list"))
+EXTRA=$(LC_ALL=C comm -13 <(LC_ALL=C sort -u "$T/r1" "$T/always" "$T/regstar") <(LC_ALL=C sort -u "$T/list"))
 [ -z "$EXTRA" ] && ok || bad "N1: the list is the readers plus the always set, nothing else: $(head -3 <<<"$EXTRA" | paste -sd' ')"
 
 # ── N2. harness-ci.yml, a test-job edit, no git range.
@@ -104,8 +109,8 @@ WF3=.github/workflows/new.yaml
 [ -z "$(awk -F'\t' -v p="$WF3" '$2 == p' "$T/map")" ] || bad "N3 fixture: no map row may name $WF3"
 bplan "$WF3"
 { [ "$RC" = 0 ] && [ "$(out mode)" = batch-selected ]; } && ok || bad "N3: new.yaml must be batch-selected (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
-[ "$(LC_ALL=C sort -u "$T/list" 2>/dev/null)" = "$(readers "$WF3" | LC_ALL=C sort -u - "$T/always")" ] && ok \
-  || bad "N3: the list must be the always set plus the directory readers ($(grep -c . "$T/list" 2>/dev/null) vs $(grep -c . "$T/always") + $(readers "$WF3" | grep -c .))"
+[ "$(LC_ALL=C sort -u "$T/list" 2>/dev/null)" = "$(readers "$WF3" | LC_ALL=C sort -u - "$T/always" "$T/regstar")" ] && ok \
+  || bad "N3: the list must be the always set plus the directory readers plus the regression * rows ($(grep -c . "$T/list" 2>/dev/null) vs $(grep -c . "$T/always") + $(readers "$WF3" | grep -c .) + $(grep -c . "$T/regstar"))"
 
 # ── N4. other .github/ paths still escalate.
 for p in .github/actions/x/action.yml .github/CODEOWNERS .github/workflows/sub/x.yml; do

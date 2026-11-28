@@ -18,7 +18,8 @@
 #      state/impact-learn/seen.tsv is dropped. The first IMPACT_LEARN_MAX_EVENTS
 #      are kept, oldest first. A row with no class yet is not seen, so a later
 #      tick reads it again. With no candidate, the tick goes on only when
-#      expiry is on and origin/main tracks a learned edge.
+#      expiry is on and origin/main tracks a learned edge, or when
+#      `$H/bin/impact-learn.sh regression --list` names a suite (step 7c).
 #   4. The worktree. A detached scratch worktree of origin/main in the
 #      checkout ${REPOS_ROOT:-/root/repos}/<repo>. The lane runs the TREE'S own
 #      bin/impact-learn.sh and bin/test-impact.sh, so the reader of the
@@ -37,7 +38,17 @@
 #      ledger's own 30-day prune. Then `bin/impact-learn.sh expire` deletes in
 #      the worktree. An edge this tick wrote or re-confirmed is kept. A ledger
 #      or verb failure deletes nothing, warns once and learning goes on.
-#   8. The PR. More new edges, or more expiries, than IMPACT_LEARN_MAX_EDGES
+#   7c. Regression rows (BH-9439). When IMPACT_LEARN_REGRESSION_MIN > 0 (0 =
+#      off), the tree's `bin/impact-learn.sh regression` reads the records of
+#      bin/ci-batch-red-report.sh ($H/state/ci-batch-red/runs). A suite that
+#      turned IMPACT_LEARN_REGRESSION_MIN or more batches red in
+#      IMPACT_LEARN_REGRESSION_DAYS days, every member gate readable and none
+#      running it, gets catalog/ci-batch-regression.d/learned-<16hex>.txt
+#      (`<suite>\t*`), staged with `git add`. A verb failure drops what it
+#      wrote, warns once (impact-learn-regression) and learning goes on.
+#   8. The PR. The dirty guard takes the new edge files, the expiries and the
+#      new learned-<16hex>.txt files; anything else stops the tick. The edge
+#      count adds the regression files, so IMPACT_LEARN_MAX_EDGES caps the sum. More new edges, or more expiries, than IMPACT_LEARN_MAX_EDGES
 #      opens no PR and pages once (impact-learn-mass, impact-learn-mass-expire).
 #      IMPACT_LEARN_ACT=0 prints
 #      `would-open` and pushes nothing. Else one commit, a hold_push to
@@ -48,9 +59,14 @@
 #      seen.tsv, and lines older than the window are pruned. Nothing is
 #      marked on a failed, mass or dry tick.
 #
+# THE PR BODY lists the new edges, then the regression rows (suite, red
+# batches, run ids), then the expiries, then the counts. The would-open dry
+# print lists the same rows.
+#
 # OUTPUTS. One tick line in logs/impact-learn.log:
 #   <iso> impact-learn <slug> events=<n> candidates=<n> edges=<n> dead=<n>
 #     unreachable=<n> failed=<n> expired=<n|-|?>[ truncated] <outcome>
+# edges= counts the edge files and the regression files.
 # expired= is `-` when expiry is off or was not checked, `?` when the ledger or
 # the expire verb failed, else the deletions in the worktree (git status).
 # The learner's lines go to stdout, each prefixed `<repo>#<pr>: `.
@@ -59,6 +75,11 @@
 # Exit: 0 the tick ran (open, none, mass, would-open, opened) or the gate,
 # the hub check or the lock stopped it; 1 a read, the map, the push or the PR
 # failed.
+#
+# KNOBS (catalog/lanes.d/impact-learn-lane.json and its knobs.d/): IMPACT_LEARN_ACT,
+# _WINDOW_H, _MAX_EVENTS, _MAX_EDGES, _MAX_PATHS, _PR_STALE_H, _EXPIRE_PASSES,
+# _REGRESSION_MIN (3, 0 = off) and _REGRESSION_DAYS (7). Suite for step 7c:
+# tests/impact-learn-regression.bh-9439-test.sh.
 #
 # OFF: flags/lane-off-impact-learn-lane. Registry: catalog/lanes.d/impact-learn-lane.json.
 # Cron: cron/lanes/416-impact-learn-lane.cron. Suite:
@@ -139,6 +160,14 @@ IMPACT_LEARN_MAX_EDGES=$(kint "${IMPACT_LEARN_MAX_EDGES:-30}" 30 1 200)
 IMPACT_LEARN_MAX_PATHS=$(kint "${IMPACT_LEARN_MAX_PATHS:-10}" 10 1 100)
 IMPACT_LEARN_PR_STALE_H=$(kint "${IMPACT_LEARN_PR_STALE_H:-48}" 48 1 720)
 IMPACT_LEARN_EXPIRE_PASSES=$(kint "${IMPACT_LEARN_EXPIRE_PASSES:-30}" 30 0 1000)
+# BH-9439 (step 7c). Fallbacks for the rows lane.impact-learn-lane.impact_learn_regression_min
+# (3; 0 = off) and lane.impact-learn-lane.impact_learn_regression_days (7).
+IMPACT_LEARN_REGRESSION_MIN=$(kint "${IMPACT_LEARN_REGRESSION_MIN:-3}" 3 0 100)
+IMPACT_LEARN_REGRESSION_DAYS=$(kint "${IMPACT_LEARN_REGRESSION_DAYS:-7}" 7 1 30)
+# The records bin/ci-batch-red-report.sh writes (its STATE/runs), and the
+# regression list the learned rows go into.
+RUNS_DIR="$H/state/ci-batch-red/runs"
+RD=catalog/ci-batch-regression.d
 # The one clock read. IMPACT_LEARN_NOW is the suite's seam.
 case "${IMPACT_LEARN_NOW:-}" in ''|*[!0-9]*) NOW=$(date -u +%s) ;; *) NOW=$IMPACT_LEARN_NOW ;; esac
 ISO=$(date -u -d "@$NOW" '+%Y-%m-%dT%H:%M:%SZ')
@@ -150,6 +179,11 @@ tick() { # tick <outcome> — the one log line of this run.
 }
 warn() { # warn <id> <text>
   "$H/bin/lane-alert.sh" --severity warn --id "$1" impact-learn-lane "$2" >/dev/null 2>&1
+}
+REG_WARNED=0
+reg_warn() { # reg_warn <text> — the one impact-learn-regression warn of a tick
+  [ "$REG_WARNED" = 1 ] && return 0
+  REG_WARNED=1; warn impact-learn-regression "$1"
 }
 
 d=$(mktemp -d "${TMPDIR:-/tmp}/impact-learn.XXXXXX") || { tick mktemp-failed; exit 1; }
@@ -209,14 +243,26 @@ mark_seen() {
 }
 
 # No candidate: the tick goes on only to expire, when expiry is on and
-# origin/main tracks at least one learned edge.
+# origin/main tracks at least one learned edge, or to learn a regression row,
+# when the hub's own verb lists one (BH-9439; it reads files, no budget).
 if [ "$N_CAND" = 0 ]; then
+  n_reg=0
+  if [ "$IMPACT_LEARN_REGRESSION_MIN" -gt 0 ] && [ -d "$RUNS_DIR" ]; then
+    rc=0
+    "$H/bin/impact-learn.sh" regression --list --runs "$RUNS_DIR" --now "$NOW" \
+      --days "$IMPACT_LEARN_REGRESSION_DAYS" --min "$IMPACT_LEARN_REGRESSION_MIN" < /dev/null > "$d/reglist" 2>/dev/null || rc=$?
+    if [ "$rc" = 0 ]; then
+      n_reg=$(grep -c '^regression ' "$d/reglist")
+    else
+      reg_warn "bin/impact-learn.sh regression --list failed (rc $rc) on $RUNS_DIR; no regression row learned this tick"
+    fi
+  fi
   n_tracked=0
   if [ "$IMPACT_LEARN_EXPIRE_PASSES" -gt 0 ] && git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1 \
      && git -C "$REPO_DIR" fetch -q origin main >/dev/null 2>&1; then
     n_tracked=$(git -C "$REPO_DIR" ls-tree --name-only origin/main -- "$LD/" 2>/dev/null | grep -cE "^$LD/[0-9a-f]{16}\.tsv\$")
   fi
-  if [ "$n_tracked" = 0 ]; then mark_seen; tick none; exit 0; fi
+  if [ "$n_tracked" = 0 ] && [ "$n_reg" = 0 ]; then mark_seen; tick none; exit 0; fi
 fi
 
 # ── 4. the worktree ─────────────────────────────────────────────────────────
@@ -335,16 +381,42 @@ if [ "$IMPACT_LEARN_EXPIRE_PASSES" -gt 0 ]; then
   fi
 fi
 
+# ── 7c. regression rows (BH-9439) ───────────────────────────────────────────
+# The tree's own verb writes catalog/ci-batch-regression.d/learned-<16hex>.txt
+# for each suite that turned IMPACT_LEARN_REGRESSION_MIN or more batches red in
+# IMPACT_LEARN_REGRESSION_DAYS days with no member gate running it. The files
+# are staged here; the step-9 commit takes the whole index. A verb failure
+# warns once, drops what it wrote, and learning goes on.
+if [ "$IMPACT_LEARN_REGRESSION_MIN" -gt 0 ] && [ -d "$RUNS_DIR" ]; then
+  rc=0
+  "$WT/bin/impact-learn.sh" regression --runs "$RUNS_DIR" --now "$NOW" --root "$WT" \
+    --days "$IMPACT_LEARN_REGRESSION_DAYS" --min "$IMPACT_LEARN_REGRESSION_MIN" < /dev/null > "$d/reg.out" 2>&1 || rc=$?
+  sed 's|^|regression: |' "$d/reg.out"
+  if [ "$rc" = 0 ]; then
+    git -C "$WT" add -- "$RD" >/dev/null 2>&1 || rc=add
+  fi
+  if [ "$rc" != 0 ]; then
+    git -C "$WT" reset -q -- "$RD" >/dev/null 2>&1
+    git -C "$WT" clean -q -f -- "$RD" >/dev/null 2>&1
+    reg_warn "bin/impact-learn.sh regression failed (rc $rc) in a worktree of origin/main of $SLUG; no regression row learned this tick"
+  fi
+fi
+
 # ── 8. the dirty guard and the edge count ───────────────────────────────────
 git -C "$WT" status --porcelain --untracked-files=all > "$d/status" 2>/dev/null
+reg_re="^(\?\?|A ) $RD/learned-[0-9a-f]{16}\.txt\$"
 ok_re="^\?\? $LD/[0-9a-f]{16}\.tsv\$"
 case "$EXPIRED" in ''|*[!0-9]*) ;; *) ok_re="^(\?\?| D) $LD/[0-9a-f]{16}\.tsv\$" ;; esac
-dirty=$(grep -Ev "$ok_re" "$d/status" | head -1)
+dirty=$(grep -Ev "$ok_re" "$d/status" | grep -Ev "$reg_re" | head -1)
 if [ -n "$dirty" ]; then
   warn impact-learn-dirty "the learner left '$dirty' in the worktree of $SLUG; no PR opened"
   tick dirty; exit 1
 fi
-N_EDGES=$(grep -c '^?? ' "$d/status")
+# N_EDGES counts the new learned-edge files and the new regression files, so
+# IMPACT_LEARN_MAX_EDGES caps the sum.
+N_LD=$(grep -c "^?? $LD/" "$d/status")
+N_REG=$(grep -cE "$reg_re" "$d/status")
+N_EDGES=$((N_LD + N_REG))
 case "$EXPIRED" in ''|*[!0-9]*) N_EXP=0 ;; *) EXPIRED=$(grep -c '^ D ' "$d/status"); N_EXP=$EXPIRED ;; esac
 if [ "$N_EDGES" = 0 ] && [ "$N_EXP" = 0 ]; then mark_seen; tick none; exit 0; fi
 if [ "$N_EDGES" -gt "$IMPACT_LEARN_MAX_EDGES" ]; then
@@ -357,7 +429,12 @@ if [ "$N_EXP" -gt "$IMPACT_LEARN_MAX_EDGES" ]; then
 fi
 
 # The edge list, one line per new fragment: `<path>\t<suite>\t<source>\t<date>`.
-sed -n 's/^?? //p' "$d/status" | LC_ALL=C sort | while IFS= read -r f; do grep -v '^#' "$WT/$f" | head -1; done > "$d/edges"
+sed -n "s|^?? \($LD/\)|\1|p" "$d/status" | LC_ALL=C sort | while IFS= read -r f; do grep -v '^#' "$WT/$f" | head -1; done > "$d/edges"
+# The regression list, one line per new file: `<suite>\t<red batches>\t<run csv>`,
+# from the verb's comment line.
+grep -E "$reg_re" "$d/status" | sed -E 's/^(\?\?|A ) //' | LC_ALL=C sort | while IFS= read -r f; do
+  sed -n 's/^# bin\/impact-learn\.sh regression: \([^ ]*\) turned \([0-9]*\) merge-queue batches red in [0-9]* days (runs \([0-9,]*\)); .*/\1\t\2\t\3/p' "$WT/$f" | head -1
+done > "$d/regrows"
 # The expired list, one line per deleted fragment: the data line from HEAD,
 # then `\t<passes>` from the verb's `expire` line for that file.
 sed -n 's/^ D //p' "$d/status" | LC_ALL=C sort | while IFS= read -r f; do
@@ -376,6 +453,7 @@ fi
 if [ "$IMPACT_LEARN_ACT" = 0 ]; then
   echo "would-open edges=$N_EDGES expired=$N_EXP"
   awk -F'\t' '{ printf "  %s -> %s (%s, %s)\n", $1, $2, $3, $4 }' "$d/edges"
+  awk -F'\t' '{ printf "  regression %s -> * (red=%s, runs %s)\n", $1, $2, $3 }' "$d/regrows"
   awk -F'\t' '{ printf "  expire %s -> %s (passes=%s)\n", $1, $2, $5 }' "$d/exprows"
   tick would-open; exit 0
 fi
@@ -398,18 +476,25 @@ if ! hold_push "${SLUG#*/}" none "$WT" origin HEAD "$BR" "${lease:-new}" >/dev/n
   warn impact-learn-push "the push of $BR to $SLUG failed; no PR opened"
   tick push-failed; exit 1
 fi
-{ if [ "$N_EDGES" -gt 0 ]; then
+{ if [ "$N_LD" -gt 0 ]; then
     printf 'The merge queue ejected these culprits for a suite the impact map did not select.\n'
     printf 'Each row below adds that suite to the selection for the path, so the builder gate runs it next time.\n\n'
     awk -F'\t' '{ printf "- `%s` → `%s` (from %s, %s)\n", $1, $2, $3, $4 }' "$d/edges"
+  fi
+  if [ "$N_REG" -gt 0 ]; then
+    [ "$N_LD" -gt 0 ] && printf '\n'
+    printf 'These suites turned %s or more merge-queue batches red in %s days, and no member gate ran them.' \
+      "$IMPACT_LEARN_REGRESSION_MIN" "$IMPACT_LEARN_REGRESSION_DAYS"
+    printf ' Each row adds the suite to every builder gate, run on HEAD merged with main:\n\n'
+    awk -F'\t' '{ printf "- `%s` (%s red batches: runs %s)\n", $1, $2, $3 }' "$d/regrows"
   fi
   if [ "$N_EXP" -gt 0 ]; then
     [ "$N_EDGES" -gt 0 ] && printf '\n'
     printf 'Expired (passed ≥%s times with no failure since the edge'"'"'s date):\n\n' "$IMPACT_LEARN_EXPIRE_PASSES"
     awk -F'\t' '{ printf "- `%s` → `%s` (from %s, %s; passed %s times)\n", $1, $2, $3, $4, $5 }' "$d/exprows"
   fi
-  printf '\nEvents read: %s. Candidates: %s. Edges: %s. Dead edges dropped: %s. Unreachable heads: %s. Expired: %s.\n' \
-    "$N_EVENTS" "$N_CAND" "$N_EDGES" "$N_DEAD" "$N_UNREACH" "$N_EXP"
+  printf '\nEvents read: %s. Candidates: %s. Edges: %s. Regression rows: %s. Dead edges dropped: %s. Unreachable heads: %s. Expired: %s.\n' \
+    "$N_EVENTS" "$N_CAND" "$N_LD" "$N_REG" "$N_DEAD" "$N_UNREACH" "$N_EXP"
   printf '\nA new row adds a suite to a selection. A row expires when its suite passed IMPACT_LEARN_EXPIRE_PASSES (%s) times with no failure after the row'"'"'s date, read from the suite_results ledger.\n' \
     "$IMPACT_LEARN_EXPIRE_PASSES"
 } > "$d/body"

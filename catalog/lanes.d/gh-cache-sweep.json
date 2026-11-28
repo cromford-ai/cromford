@@ -1,0 +1,23 @@
+{
+  "id": "gh-cache-sweep",
+  "name": "gh shim cache missed-webhook sweep",
+  "scope": "hub",
+  "script": "bin/gh-cache-sweep.sh",
+  "cadence": "*/5 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-gh-cache-sweep",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/gh-cache-sweep.log"
+  }
+}

@@ -94,7 +94,9 @@ grep -qxF "$(printf 'tests/launch-fastpath-test.sh\treads\tbin/orphan-reconcile.
   && ok || bad "W: T1.32 reads bin/orphan-reconcile.sh as data, and --why must say reads (got: $(grep launch-fastpath "$T/why-one-orc" | tr '\t' ' ' | head -3))"
 # Every --why row is three tab-separated fields with a known kind — a reviewer
 # reads the column, so an unknown word there is a claim nobody defined.
-BADROW=$(awk -F'\t' 'NF != 3 || $2 !~ /^(self|reads|named|source|learned|closure|always|full)$/' "$T"/why-1478 "$T"/why-1481 "$T"/why-1496)
+# `regression` is the batch-fail list kind (BH-6838); a `*` row of it
+# (BH-9439) is in every selection.
+BADROW=$(awk -F'\t' 'NF != 3 || $2 !~ /^(self|reads|named|source|learned|closure|always|full|regression)$/' "$T"/why-1478 "$T"/why-1481 "$T"/why-1496)
 [ -z "$BADROW" ] && ok || bad "W: malformed --why rows: $(head -3 <<<"$BADROW")"
 # The suites --why names are exactly the suites plain select names.
 cut -f1 "$T/why-1481" | LC_ALL=C sort -u > "$T/why-1481.suites"

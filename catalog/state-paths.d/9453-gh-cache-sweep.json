@@ -1,0 +1,3 @@
+[
+    {"path": "gh-cache-sweep", "class": "cache", "authority": "the gh shim cache sweep (BH-9453)", "note": "state/gh-cache-sweep/<repo>.tsv (the last open PR and issues rows read from GitHub), <repo>.stamp (v1 <sweep_start> <chain_start> <period_s>) and .last-run: bin/gh-cache-sweep.sh. Each is written tmp+mv. Losing the directory restarts each repo's chain: nothing is covered until the next complete sweep. One record and one stamp per registry repo. Machine-local, never carried"}
+]

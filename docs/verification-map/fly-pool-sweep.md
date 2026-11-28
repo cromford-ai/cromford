@@ -67,13 +67,41 @@ There is **no UI route.** The operator surfaces are files and one console tile:
     down for every verb)
 - `logs/ALERTS.log` — three shapes, each deduped by a dated flag under `flags/`:
   - `machine destroy <id> FAILED rc=<n>: <flyctl's error> — still in <app>; the sweep retries it next tick` (once per machine per UTC day)
-  - `machines list for <app> unusable (<reason>) — dead-machine sweep skipped; stopped machines are not being reclaimed until it answers` (once per project per day)
+  - `machines list for <app> unusable (<reason>; class <class>, <n> tries) — dead-machine sweep skipped; stopped machines are not being reclaimed until it answers` (once per project per day, `flags/alerted-pool-listing-<p>-<day>`)
+  - `machines list for <app> unusable (<reason>; class <class>, <n> tries) — dead-machine sweep ran from the saved list (<age> s old), destroy only; no requeue` (BH-9407; once per project per day, `flags/alerted-pool-listing-saved-<p>-<day>`)
   - `<KEY> still tracked on <id> which Fly no longer returns after the reap — the dead path did not close it` (once per key per day)
 - `state/fly-pool/<project>/.sweep.json` — a DOTFILE, deliberately: every reader
   of that directory globs `*.json` and must not see it as a machine. Shape:
   `{at, listing:"ok", listed, ttl_s, capped, stopped:[{machine,state,age_s}], unaged:[id], destroyed:[id], destroy_failed:[{machine,rc,error}], orphan_jobs:[{machine,key,ticket_id}]}`,
-  or `{at, listing:"failed", reason}` when the listing could not be used — an
-  unknown is written as an unknown, never as a zero.
+  or `{at, listing:"failed", reason, class, tries}` when the listing could not be used — an
+  unknown is written as an unknown, never as a zero. BH-9407: a sweep that ran
+  from the saved list writes the "ok" shape with `listing:"saved"` plus
+  `saved_age_s`, `class`, `reason`, `tries`, and `orphan_jobs` is always `[]`
+  (the orphan pass does not run on a saved list).
+- `state/fly-pool-listing/<project>.json` (BH-9407) — a cache path
+  (`catalog/state-paths.d/9407-fly-pool-listing.json`), not a pool record: the last
+  usable `machines list` answer, minus every machine a destroy of that tick
+  removed (`destroy_machine` writes them to `$LISTING.destroyed`). Written tmp +
+  mv after the sweep. Its mtime is the time Fly gave the answer; a saved-list
+  tick rewrites it without the destroyed machines and keeps the mtime. One
+  overwritten file per project: no growth, no retention job.
+
+**Listing retry and the saved list (BH-9407, alert 61289).** A failed
+`machines list` call is retried with the waits in `POOL_LIST_RETRY_BACKOFF_S`
+(default `2 5 15`: 4 calls). Each failure gets one class:
+`auth` (401/403/unauthorized/forbidden/expired token), `app-not-found`,
+`timeout` (rc 124, timed out, deadline exceeded), `api` (5xx, 429, rate limit,
+a rc-0 answer that is not an array) or `other`. `auth`, `app-not-found`,
+rc 126/127, rc-0 answers and `[]` beside tracked files are not retried. The
+reason text is scrubbed of the Fly token (`pool_list_scrub`) before it reaches
+`fly-pool.log`, ALERTS.log or `.sweep.json`. When every try fails and
+`state/fly-pool-listing/<p>.json` is a non-empty JSON array younger than
+`POOL_LIST_SAVED_MAX_AGE_S` (default 600), the SWEEP (only) runs from it:
+`LIST_OK` stays 0, so the REAP asks `machine status`, no `machines_observe`
+is sent, no build is requeued, the orphan pass and `pool_orphan_rows_step`
+do not run. Every sweep gate (tracked file, `REAPED_IDS`, state, TTL, unaged,
+`POOL_SWEEP_MAX_DESTROY`) still applies. `fly-pool.log` gets one
+`machines list try <n> failed (<class>) — retry <i> of <k> in <s> s` line per retry.
 - `state/fly-pool/.parity.json` (BH-2522) — a DOTFILE at the top level, so no
   reader that globs `state/fly-pool/*/` or `<p>/*.json` sees it. Shape:
   `{at, box, verdict:"parity"|"drift"|"unknown", flag, flag_source, flip, sig, projects:{<p>:{status, files, rows, young, file_without_row:[id], row_without_file:[id], unreadable:[file]}}, reason?}`.
@@ -100,6 +128,8 @@ named in `fly-pool.log` and skipped, never clamped):
 |---|---|---|
 | seconds a machine must have been stopped | `POOL_STOPPED_TTL_S` (env/global.env) → `bin/jobs-client.sh setting-get pool_stopped_ttl_s` → default | `600` |
 | destroys per tick | `POOL_SWEEP_MAX_DESTROY` (env/global.env) → default | `25` |
+| waits before each `machines list` retry (BH-9407) | `POOL_LIST_RETRY_BACKOFF_S` (fly-pool lane knob) → default; empty = no retry | `2 5 15` |
+| max age of the saved list the sweep may use (BH-9407) | `POOL_LIST_SAVED_MAX_AGE_S` (fly-pool lane knob) → default; `0` = never | `600` |
 | Fly machine registry rows | `FLY_MACHINES_ROWS` env (`on`/`off`) → `bin/jobs-client.sh setting-get fly_machines_rows` exact `on`/`off` → off | `off` (seeded); flipped `on` by `bin/fly-pool-rows-parity.sh` after file/row parity, only while the row is still the seed (BH-2522) |
 
 No seed row is needed: an absent settings row means "use the documented
@@ -110,13 +140,14 @@ fallback" (see [settings-knobs.md](settings-knobs.md)).
 | what | how |
 |---|---|
 | the sweep: TTL, the bound, the knobs, every negative, the failed-destroy alert | `HARNESS_TEST_SANDBOX=1 bash tests/fly-pool-sweep-test.sh` |
+| the listing retry, error classes, token scrub, saved list (age, boundary, destroy only, no orphan pass), knobs (BH-9407) | `HARNESS_TEST_SANDBOX=1 bash tests/fly-pool-sweep.bh-9407-test.sh` |
 | liveness off the listing, requeue/park of a job whose machine is gone, the snapshot keys, the builder-record retirement | `HARNESS_TEST_SANDBOX=1 bash tests/fly-orphan-jobs-test.sh` |
 | the snapshot shape for projects with no sweep | `HARNESS_TEST_SANDBOX=1 bash tests/fleet-status-fly-test.sh` |
 | the registry row writes: observe, put, close, advisory, and fail-open behavior | `HARNESS_TEST_SANDBOX=1 bash tests/fly-machines-rows-pool.bh-1056-test.sh` |
 | file/row parity, the backfill, the seed-only flip and its negatives, the tick wiring (BH-2522) | `HARNESS_TEST_SANDBOX=1 bash tests/fly-pool-rows-parity.bh-2522-test.sh` |
 | the stale-build sweep reading rows (flag on) or hub files (flag off), never ssh (BH-2522) | `HARNESS_TEST_SANDBOX=1 bash tests/sweep-stale-builds-rows.bh-2522-test.sh` |
 | parity on a live hub, read-only | `HARNESS=/root/harness bin/fly-pool-rows-parity.sh --json` (no `--backfill`/`--flip`: it writes only `.parity.json`) and `bin/jobs-client.sh setting-get fly_machines_rows` |
-| the suites read one clock and no network | `bin/test-determinism-lint.sh tests/fly-pool-sweep-test.sh tests/fly-orphan-jobs-test.sh tests/fly-machines-rows-pool.bh-1056-test.sh` |
+| the suites read one clock and no network | `bin/test-determinism-lint.sh tests/fly-pool-sweep-test.sh tests/fly-pool-sweep.bh-9407-test.sh tests/fly-orphan-jobs-test.sh tests/fly-machines-rows-pool.bh-1056-test.sh` |
 | on a live hub, after a tick | `grep 'sweep ' /root/harness/logs/fly-pool.log \| tail` and `HARNESS=/root/harness bin/fleet-fly-block.sh \| jq '.[] \| {stopped_machines, sweep_at, sweep_listing}'` |
 
 **Preconditions / seed needs:** a project with `flags/fly-pool-<p>` AND

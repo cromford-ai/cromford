@@ -47,7 +47,9 @@ cat > "$T/fakebin/curl" <<EOF
 printf '%s\n' "\$@" >> "$T/log/argv"; echo ---- >> "$T/log/argv"
 prev=""; post=0; body=""
 for a in "\$@"; do
-  if [ "\$prev" = -H ]; then case "\$a" in @*)
+  # TEST-CHANGE (BH-9946): jobs calls now pass the bearer on a curl fd
+  # (-H @/dev/fd/3); skip it so only the lead-verdict header file is captured.
+  if [ "\$prev" = -H ]; then case "\$a" in @/dev/fd/*) ;; @*)
     f="\${a#@}"; cat "\$f" > "$T/log/hdr"; stat -c %a "\$f" > "$T/log/hdr-mode"; printf '%s' "\$f" > "$T/log/hdr-path" ;;
   esac; fi
   [ "\$prev" = -X ] && [ "\$a" = POST ] && post=1

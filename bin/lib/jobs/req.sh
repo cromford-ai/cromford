@@ -143,26 +143,35 @@ _jobs_not_configured() {
 JOBS_HTTP=""
 JOBS_BODY=""
 # _jobs_curl <method> <path> <body> <body-arg> — one HTTP attempt; prints the
-# payload, a newline and the status code. Both _jobs_req retry loops call it.
+# payload, a newline and the status code. Both _jobs_req retry loops and
+# _jobs_req_file call it.
+#
+# THE BEARER NEVER GOES ON ARGV (BH-9946). `ps -eo args` shows the argv of every
+# process to every user on the machine, and the old default put the header with
+# HARNESS_SECRET there for each jobs call (a pool machine showed it on
+# 2026-11-24). The header now rides on curl's fd 3: curl gets `-H @/dev/fd/3`
+# and the command ends with `3<<<"authorization: Bearer ..."`. Bash builds the
+# here-string itself (a pipe on bash >= 5.1; on an older bash a temp file it
+# unlinks at once), so no process shows the token, no exec runs and nothing is
+# left on disk. Why not a 0600 file (the r2 form): mktemp plus two rm calls cost
+# 3 exec forks per jobs call and broke the BH-7432 pool-tick fork budget
+# (240 -> 330 forks, cap 300). The redirect applies to the curl command only, so
+# stdin and the caller's own fd 3 do not change. JOBS_AUTH_VIA_FILE (the BH-7188
+# opt-in) is no longer read. There is no argv fallback: if bash cannot build the
+# here-string, curl does not run and the rc is non-zero (a transport failure).
 _jobs_curl() {
-  local auth="authorization: Bearer $HARNESS_SECRET" hf="" rc
-  # BH-7188: a secret read off the hub (keychain, file) never goes on argv: curl
-  # reads the header from a 0600 file. No file, no request (never fall back to argv).
-  if [ -n "${JOBS_AUTH_VIA_FILE:-}" ]; then
-    hf=$(umask 077; mktemp "${TMPDIR:-/tmp}/jobs-auth.XXXXXX" 2>/dev/null) || return 1
-    printf 'authorization: Bearer %s\n' "$HARNESS_SECRET" > "$hf" || { rm -f "$hf"; return 1; }
-    auth="@$hf"
-  fi
+  local rc
   if [ -n "$3" ]; then
     curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-      -X "$1" -H "$auth" \
-      -H "content-type: application/json" --data-binary "$4" "$JOBS_URL$2" 2>/dev/null
+      -X "$1" -H @/dev/fd/3 \
+      -H "content-type: application/json" --data-binary "$4" "$JOBS_URL$2" 2>/dev/null \
+      3<<<"authorization: Bearer $HARNESS_SECRET"
   else
     curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-      -X "$1" -H "$auth" "$JOBS_URL$2" 2>/dev/null
+      -X "$1" -H @/dev/fd/3 "$JOBS_URL$2" 2>/dev/null \
+      3<<<"authorization: Bearer $HARNESS_SECRET"
   fi
   rc=$?
-  [ -z "$hf" ] || rm -f "$hf"
   return "$rc"
 }
 _jobs_req() { # _jobs_req <method> <path> [json-body]
@@ -232,17 +241,10 @@ _jobs_req_file() {
   [ -n "${HARNESS_SECRET:-}" ] || { _jobs_log "HARNESS_SECRET unset"; return 1; }
   [ -n "${JOBS_URL:-}" ] || { _jobs_not_configured; return 1; }
   [ -s "$file" ] || { _jobs_log "$method $path empty body file"; return 1; }
-  local auth="authorization: Bearer $HARNESS_SECRET" hf=""
-  if [ -n "${JOBS_AUTH_VIA_FILE:-}" ]; then # BH-7188: see _jobs_curl
-    hf=$(umask 077; mktemp "${TMPDIR:-/tmp}/jobs-auth.XXXXXX" 2>/dev/null) || { _jobs_log "$method $path mktemp failed"; return 1; }
-    printf 'authorization: Bearer %s\n' "$HARNESS_SECRET" > "$hf" || { rm -f "$hf"; return 1; }
-    auth="@$hf"
-  fi
-  out=$(curl -sS -m "$JOBS_TIMEOUT" --connect-timeout 3 -w $'\n%{http_code}' \
-    -X "$method" -H "$auth" \
-    -H "content-type: application/json" --data-binary "@$file" "$JOBS_URL$path" 2>/dev/null)
+  # BH-9946: the same transport as _jobs_req, so the bearer rides on curl's
+  # fd 3 here too; curl reads the body from the caller's file.
+  out=$(_jobs_curl "$method" "$path" 1 "@$file")
   rc=$?
-  [ -z "$hf" ] || rm -f "$hf"
   if [ "$rc" -ne 0 ]; then _jobs_log "$method $path transport rc=$rc"; return 1; fi
   JOBS_HTTP="${out##*$'\n'}"
   local payload="${out%$'\n'*}"

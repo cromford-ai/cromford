@@ -146,7 +146,12 @@ selected "N1 nested" bin/lib/archie-fm-watch/common.sh
 
 # ── D1. a README under bin/lib/ selects only what names it or its own directory.
 selected D1 bin/lib/br/opt/README.md
-{ cat "$T/always"; specific bin/lib/br/opt/README.md; } | LC_ALL=C sort -u > "$T/d1.allowed"
+# The `*` rows of catalog/ci-batch-regression.d/ (BH-9439) join every batch by
+# design, so they are allowed too; any other root-row suite is still an extra.
+printf 'bin/lib/br/opt/README.md\n' > "$T/d1.changed"
+( cd "$DIR" && bin/test-impact.sh regression --changed "$T/d1.changed" ) 2>/dev/null \
+  | awk -F'\t' '$2 == "*" { print $1 }' > "$T/d1.regstar"
+{ cat "$T/always"; specific bin/lib/br/opt/README.md; cat "$T/d1.regstar"; } | LC_ALL=C sort -u > "$T/d1.allowed"
 EXTRA=$(LC_ALL=C comm -13 "$T/d1.allowed" <(LC_ALL=C sort -u "$T/list"))
 [ -z "$EXTRA" ] && ok || bad "D1: suites selected only through a root row: $(head -3 <<<"$EXTRA") ($(printf '%s\n' "$EXTRA" | grep -c .) total)"
 grep -qxF tests/blocked-resolver-opt-hooks.bh-1468-test.sh "$T/list" && ok \

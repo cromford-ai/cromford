@@ -50,8 +50,9 @@ run() {
 # TEST-CHANGE (BH-7276): and agent-call-no-tools (an added agent-call.sh call sets AGENT_CALL_NO_TOOLS=1).
 # TEST-CHANGE (BH-7273): and plan-diff-bind (the committed plan.md and the diff name the same files).
 # TEST-CHANGE (BH-8918): and name-guard (a diff adds no product-board deny term outside an allow-listed path).
+# TEST-CHANGE (BH-9946): and curl-bearer-argv (an added line in bin/ puts no bearer token on argv).
 # The list still pins every id exactly.
-WANT="agent-call-no-tools agent-push alert-writers changelog-headers checks-tree date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q index-on-create-table jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal name-guard plan-diff-bind project-loop route-fragments schema-fragment schema-fragment-name scratch-closure split-host-growth switch test-sources tier-wording"
+WANT="agent-call-no-tools agent-push alert-writers changelog-headers checks-tree curl-bearer-argv date-bomb determinism discipline-dupes fast-lints-data fixture-hygiene grep-q index-on-create-table jobs-client-modules lanes-knob-delta lib-root marker-reason model-id-delta model-literal name-guard plan-diff-bind project-loop route-fragments schema-fragment schema-fragment-name scratch-closure split-host-growth switch test-sources tier-wording"
 run bash "$RP" --list
 LIST_IDS=$(printf '%s\n' "$OUT" | awk 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
 CAT_IDS=$( [ -r "$CAT" ] && grep -v '^#' "$CAT" | awk -F'\t' 'NF {print $1}' | sort | tr '\n' ' ' | sed 's/ $//')
@@ -68,7 +69,8 @@ if [ -r "$CAT" ]; then
   # TEST-CHANGE (BH-7276): agent-call-no-tools, 26 -> 27.
   # TEST-CHANGE (BH-7273): plan-diff-bind, 27 -> 28.
   # TEST-CHANGE (BH-8918): name-guard, 28 -> 29.
-  [ "$rows" -eq 29 ] && ok || bad "R0b catalog has $rows rows (want 29)"
+  # TEST-CHANGE (BH-9946): curl-bearer-argv, 29 -> 30.
+  [ "$rows" -eq 30 ] && ok || bad "R0b catalog has $rows rows (want 30)"
   badnf=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' 'NF!=6 {print $1}')
   [ -z "$badnf" ] && ok || bad "R0b rows without exactly 6 TAB fields: $badnf"
   badval=$(grep -v '^#' "$CAT" | grep . | awk -F'\t' '

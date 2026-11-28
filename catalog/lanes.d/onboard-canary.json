@@ -1,0 +1,84 @@
+{
+  "id": "onboard-canary",
+  "name": "Onboarding canary",
+  "scope": "hub",
+  "script": "bin/onboard-canary.sh",
+  "cadence": "*/5 * * * *; 17 6 * * 1",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "lane-off-onboard-canary",
+    "aliases": []
+  },
+  "wired": true,
+  "knobs": [
+    {
+      "env": "ONBOARD_CANARY_TIMEOUT_MIN",
+      "type": "int",
+      "default": 60,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442: minutes after the canary PR opened at which a check still running makes the verdict red ('timeout after <n> min, still running: <names>'), and 0 checks makes it no-checks. The longest e2e suite seen on the failing repos ran under 30 min.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_CANARY_NOCHECK_GRACE_MIN",
+      "type": "int",
+      "default": 10,
+      "unit": "minutes",
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442: minutes after the canary PR opened at which 0 checks, 0 statuses and 0 workflows in the repo is the no-checks verdict. GitHub Actions registers its checks about 1 min after a PR opens.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_CANARY_CHECK_PAGES",
+      "type": "int",
+      "default": 5,
+      "unit": "pages",
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442: check-run pages (100 per page) the tick reads per pending canary head. Bounds the GitHub reads per tick.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_CANARY_HELD_ALERT_HOURS",
+      "type": "int",
+      "default": 24,
+      "unit": "hours",
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442 (lead review of #9490): hours a project may stay held (onboard.<p>.canary_gate=held, no override row) before --tick raises the alert onboard-canary:<p>:held. It alerts only; it never releases the gate.",
+      "settable": true
+    },
+    {
+      "env": "ONBOARD_CANARY_JOBS_CLIENT",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442 test seam: the jobs client path. Empty = bin/jobs-client.sh. NOT settable from the control plane.",
+      "settable": false
+    },
+    {
+      "env": "ONBOARD_CANARY_NOW",
+      "type": "string",
+      "default": "",
+      "unit": null,
+      "zero_means": null,
+      "read_in": "bin/onboard-canary.sh",
+      "note": "BH-9442 test seam: epoch seconds the script uses instead of the clock. Only all-digit values are used. NOT settable from the control plane.",
+      "settable": false
+    }
+  ],
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/onboard-canary.log"
+  }
+}

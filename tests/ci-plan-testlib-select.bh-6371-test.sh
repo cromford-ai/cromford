@@ -92,7 +92,12 @@ exact "$H" > "$T/t1.exact"
 [ "$(grep -c . "$T/t1.exact")" -ge 1 ] && ok || bad "T1: the map has no consumer of $H"
 selected T1 "$H"
 [ -z "$(missing "$T/t1.exact")" ] && ok || bad "T1: consumers of $H are missing: $(missing "$T/t1.exact" | head -3)"
-{ cat "$T/always"; covering "$H"; } | LC_ALL=C sort -u > "$T/t1.want"
+# The `*` rows of catalog/ci-batch-regression.d/ (BH-9439) join every batch
+# through the regression union, so the exact list carries them too.
+printf '%s\n' "$H" > "$T/t1.changed"
+( cd "$DIR" && bin/test-impact.sh regression --changed "$T/t1.changed" ) 2>/dev/null \
+  | awk -F'\t' '$2 == "*" { print $1 }' | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done > "$T/t1.regstar"
+{ cat "$T/always"; covering "$H"; cat "$T/t1.regstar"; } | LC_ALL=C sort -u > "$T/t1.want"
 LC_ALL=C sort -u "$T/list" > "$T/t1.got"
 cmp -s "$T/t1.want" "$T/t1.got" && ok \
   || bad "T1: the list must be the consumers plus the always set: extra $(LC_ALL=C comm -13 "$T/t1.want" "$T/t1.got" | head -3 | tr '\n' ' ') missing $(LC_ALL=C comm -23 "$T/t1.want" "$T/t1.got" | head -3 | tr '\n' ' ')"

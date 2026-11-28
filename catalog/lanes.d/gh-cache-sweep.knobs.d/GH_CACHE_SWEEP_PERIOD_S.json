@@ -1,0 +1,12 @@
+{
+  "env": "GH_CACHE_SWEEP_PERIOD_S",
+  "read_in": "bin/gh-cache-sweep.sh",
+  "type": "int",
+  "default": 900,
+  "min": 300,
+  "max": 86400,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9453: the time between two sweeps, counted in whole minutes (the cron runs every 5 minutes). The stamp carries it, and ghc_sweep_covers trusts a sweep for GH_CACHE_SWEEP_TRUST_PERIODS periods. Not a whole number is the code fallback 900; under 300 is 300.",
+  "settable": true
+}

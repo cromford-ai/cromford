@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_SHARD_MEM_MB",
+  "read_in": "bin/lib/triage-shards-lib.sh",
+  "type": "int",
+  "default": 300,
+  "min": 0,
+  "max": 1048576,
+  "unit": "MB",
+  "zero_means": "off",
+  "note": "BH-10267: the free memory one triage shard needs. A tick runs at most MemAvailable (from /proc/meminfo) divided by this number of shards, never more than TRIAGE_SHARD_CONCURRENCY and never less than 1, and logs `concurrency lowered` when the result is lower. 0 = no memory guard. Code fallback 300 in triage_shard_mem_slots. Per-project row: lane.run-triage.<project>.triage_shard_mem_mb."
+}

@@ -1,0 +1,11 @@
+{
+  "env": "POOL_LIST_SAVED_MAX_AGE_S",
+  "type": "int",
+  "default": 600,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "note": "BH-9407: when every try of a tick's `machines list` fails, the dead-machine sweep runs from state/fly-pool-listing/<p>.json (destroy only, no requeue, no orphan pass) while that file is younger than this. Age = now - file mtime. 0 = off: never sweep from the saved list. Read by pool_list_max_age as ${POOL_LIST_SAVED_MAX_AGE_S:-600}; 600 is the code fallback named by this knob. A non-number is logged and falls back to 600.",
+  "read_in": "bin/fly-pool.sh"
+}

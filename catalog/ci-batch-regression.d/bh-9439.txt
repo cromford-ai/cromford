@@ -1,0 +1,30 @@
+# catalog/ci-batch-regression.d/bh-9439.txt — the whole-repo ratchets that
+# ejected merge-queue batches (BH-9439). Format:
+# catalog/ci-batch-regression.d/README.md.
+#
+# Source: 14 days of the cromford queue (2026-10-27 to 2026-11-10), 114 of
+# 303 batches red. The builder gate selected each suite below only as `full`
+# (rank 7, "unknown reach") and the cap of 80 cut it, so the first run on the
+# PR's tree was the batch. A `*` row ranks `regression` (1), inside the cap, and
+# the fresh-main pass runs it on HEAD merged with main (a `*` row is also an
+# `always` reason).
+#
+# 37 red batches: a state/ file in the diff (whole-tree ratchet).
+tests/no-state-files.bh-4159-test.sh	*
+# 12 red batches: a flag file in the diff (whole-tree ratchet).
+tests/no-flag-files.bh-4154-test.sh	*
+# 6-7 red batches each: the share registry counts (whole-repo registry).
+tests/share-registry-exact.bh-6760-test.sh	*
+tests/share-registry-guard.bh-6494-test.sh	*
+tests/share-registry-repo.bh-6797-test.sh	*
+# 6-7 red batches: the determinism lint over every test file.
+tests/test-determinism-lint-test.sh	*
+# 6-7 red batches: the always-list cut over the whole corpus.
+tests/test-impact-always-cut.bh-8098-test.sh	*
+# 6-7 red batches: the stage route seed over every route.
+tests/stage-route-seed.bh-2536-test.sh	*
+# 6-7 red batches: the ci-plan SPA worker split over the whole tree.
+tests/ci-plan-spa-worker.bh-4969-test.sh	*
+# prequeue-red, 10 PRs parked: green alone, red merged with main (the lane
+# registry count).
+tests/lanes-registry-test.sh	*

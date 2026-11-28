@@ -150,6 +150,14 @@ done
 printf 'tests/a-test.sh\n%s\ntests/c-test.sh\n' "$S" > "$T/all.txt"
 # c is nightly, so the nightly plan is never empty and the batch always drops one.
 printf 'tests/c-test.sh\tnightly\t5\t-\tr\n' > "$T/ctiers.tsv"
+# The batch's regression union reads the REAL catalog/ci-batch-regression.d/
+# through the real bin/test-impact.sh (never the fake seam), so each batch list
+# ends with its `*` rows (BH-9439), sorted, the ones already listed left out.
+# withreg <suite>... — that exact batch list.
+printf 'docs/x.md\n' > "$T/reg.changed"
+( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' \
+  | LC_ALL=C sort -u | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done > "$T/regstar"
+withreg() { printf '%s\n' "$@"; printf '%s\n' "$@" > "$T/wr.in"; grep -vxF -f "$T/wr.in" "$T/regstar"; }
 cat > "$T/fake-impact.sh" <<'FAKE'
 #!/bin/bash
 OUT=""; while [ $# -gt 0 ]; do case "$1" in --out) OUT="$2"; shift ;; esac; shift; done
@@ -174,7 +182,7 @@ MQ=(CI_EVENT=pull_request TI_PR_HEAD_REF=mergify/merge-queue/x)
 
 # C1. a batch drops S, and the output is S once.
 plan "${MQ[@]}" CI_QUARANTINE="$S $S"
-{ [ "$RC" = 0 ] && [ "$(cat "$T/list")" = "tests/a-test.sh" ]; } && ok \
+{ [ "$RC" = 0 ] && [ "$(cat "$T/list")" = "$(withreg tests/a-test.sh)" ]; } && ok \
   || bad "C1: the batch must drop $S (rc=$RC): $(cat "$T/list" 2>/dev/null) / $OUT"
 [ "$(out quarantine)" = "$S" ] && ok || bad "C1: quarantine= must be '$S' deduped: '$(out quarantine)'"
 has "tiers: quarantine $S — out of the batch" "$OUT" && ok || bad "C1: the drop must reach the log: $OUT"
@@ -182,11 +190,11 @@ has "tiers: quarantine $S — out of the batch" "$OUT" && ok || bad "C1: the dro
 plan "${MQ[@]}" CI_QUARANTINE="tests/*.sh bin/x.sh tests/does-not-exist-test.sh $S"
 [ "$(out quarantine)" = "$S" ] && ok || bad "C1b: only the real suite survives: '$(out quarantine)'"
 plan "${MQ[@]}" CI_QUARANTINE="tests/*.sh"
-{ [ "$(out quarantine)" = "-" ] && [ "$(cat "$T/list")" = "$(printf 'tests/a-test.sh\n%s' "$S")" ]; } && ok \
+{ [ "$(out quarantine)" = "-" ] && [ "$(cat "$T/list")" = "$(withreg tests/a-test.sh "$S")" ]; } && ok \
   || bad "C1b: a glob alone quarantines nothing: '$(out quarantine)' $(cat "$T/list")"
 # C2. unset: the full list and quarantine=-.
 plan "${MQ[@]}"
-{ [ "$RC" = 0 ] && [ "$(cat "$T/list")" = "$(printf 'tests/a-test.sh\n%s' "$S")" ] && [ "$(out quarantine)" = "-" ]; } && ok \
+{ [ "$RC" = 0 ] && [ "$(cat "$T/list")" = "$(withreg tests/a-test.sh "$S")" ] && [ "$(out quarantine)" = "-" ]; } && ok \
   || bad "C2: unset changes nothing (rc=$RC, quarantine='$(out quarantine)'): $(cat "$T/list")"
 # C2b. the push corpus=0 path writes quarantine= too.
 printf '#!/bin/bash\necho %s\n' "'{\"workflow_runs\":[]}'" > "$T/fake-gh"; chmod +x "$T/fake-gh"

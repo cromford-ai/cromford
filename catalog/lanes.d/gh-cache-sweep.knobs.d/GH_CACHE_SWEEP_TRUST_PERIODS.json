@@ -1,0 +1,12 @@
+{
+  "env": "GH_CACHE_SWEEP_TRUST_PERIODS",
+  "read_in": "bin/gh-cache-sweep.sh",
+  "type": "int",
+  "default": 2,
+  "min": 1,
+  "max": 8,
+  "unit": "periods",
+  "zero_means": null,
+  "note": "BH-9453: how many sweep periods one clean sweep vouches for a shim cache entry. The sweep writes it into each stamp, and ghc_sweep_covers trusts the stamp while now - sweep start < this x GH_CACHE_SWEEP_PERIOD_S. Not a whole number is the code fallback 2; under 1 is 1, over 8 is 8.",
+  "settable": true
+}

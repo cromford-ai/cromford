@@ -1,0 +1,11 @@
+{
+  "env": "BR_ROW_MAX_SECS",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9468-row-cap.sh",
+  "note": "BH-9468 (#9369 fix 4): the time one row of the rung loop may spend before its first rung entry point or state write (br_cron_unlock, br_record, br_json_edit and the rest of the commit list in _brrc_wrap). A row that reaches none of them in this time is stopped (TERM, then KILL after BR_ROW_KILL_GRACE_SECS), logged `row cap: <p>/<rkey> carried`, takes no rung, and the loop goes on to the next row. A row past its first rung or write is never stopped, so a fix round, a pool build, a push or a comment is never cut. Not armed in a one-PR run or a hopped rung. 0 = off: a row reads for as long as it takes, as before. Settings row: lane.blocked-resolver.br_row_max_secs."
+}

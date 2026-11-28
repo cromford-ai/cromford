@@ -1209,7 +1209,10 @@ rp_rehydrate() { # rp_rehydrate <num> <sha> [gh-only]
 command -v gh_rest_pr_list_all >/dev/null 2>&1 || exit 0
 RP_LISTF=$(mktemp "${TMPDIR:-/tmp}/review-prs-list.XXXXXX") || exit 0
 gh_rest_pr_list_all "$SLUG" open 100 > "$RP_LISTF" 2>/dev/null || { rm -f "$RP_LISTF"; exit 0; }
-PRS=$(jq -r '.[] | select(.draft | not) | [.number, .head.sha, .user.login, .title] | @tsv' "$RP_LISTF") || { rm -f "$RP_LISTF"; exit 0; }
+# BH-9442: an onboarding canary PR (head harness/onboard-canary-*, opened and
+# closed unmerged by bin/onboard-canary.sh) is never reviewed: a review is a paid
+# call, and an APPROVE here would merge a PR whose only job is to run the CI.
+PRS=$(jq -r '.[] | select(.draft | not) | select((.head.ref // "") | startswith("harness/onboard-canary-") | not) | [.number, .head.sha, .user.login, .title] | @tsv' "$RP_LISTF") || { rm -f "$RP_LISTF"; exit 0; }
 rm -f "$RP_LISTF"
 [ -n "$PRS" ] || exit 0
 # BH-1606: the MERGE_HELD dedupe files of this repo's closed PRs go. A PR this

@@ -39,3 +39,4 @@ project-loop	delta	cmd	bin/project-loop-lint.sh --base <fork> .	jq	a new hub lan
 fixture-hygiene	delta	cmd	bin/fixture-hygiene.sh check --tree . --base <fork>	-	a new test line carries a tailnet or RFC1918 address, or a SECRET/TOKEN= literal without fixture (BH-5789)
 tier-wording	delta	cmd	bin/lint-tier-wording.sh --base <fork> .	-	this diff adds no "tier-2 waits for a human" wording to rules or prompts
 name-guard	delta	suite	tests/name-guard.bh-8918-test.sh	python3	this diff adds no product-board deny term outside an allow-listed path (BH-8918)
+curl-bearer-argv	delta	cmd	bin/curl-bearer-argv-lint.sh --base <fork> .	-	an added line in bin/ puts authorization: Bearer $VAR on argv where ps shows it; send it from a 0600 header file (secret, BH-9946)

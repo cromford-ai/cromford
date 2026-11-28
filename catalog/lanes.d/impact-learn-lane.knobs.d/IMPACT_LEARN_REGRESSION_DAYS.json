@@ -1,0 +1,11 @@
+{
+  "env": "IMPACT_LEARN_REGRESSION_DAYS",
+  "type": "int",
+  "default": 7,
+  "min": 1,
+  "max": 30,
+  "zero_means": null,
+  "required": false,
+  "note": "BH-9439: the window, in days, of the red-batch records (state/ci-batch-red/runs) that step 7c counts toward IMPACT_LEARN_REGRESSION_MIN. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_REGRESSION_DAYS:-7}.",
+  "unit": "days"
+}

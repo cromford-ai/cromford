@@ -81,6 +81,43 @@ triage_shards_max() {
   printf '%s\n' "$v"
 }
 
+# triage_shard_concurrency [harness] -> tickets a tick prepares at the same
+# time, and the most sessions ONE tick starts (BH-10267). DEFAULT 20 (the operator,
+# 2026-11-26), 1 to 100. Text that is not a number reads as 20; 0 reads as 1.
+# The value 1 is the kill switch: one ticket prepared at a time and one
+# session started for each tick. Rows: lane.run-triage[.<project>].triage_shard_concurrency
+# (bin/run-triage.sh applies them with lane_env_apply before this is read).
+triage_shard_concurrency() {
+  local v; v=$(_tsh_env "${1:-${HARNESS:-${H:-}}}" TRIAGE_SHARD_CONCURRENCY 20)
+  case "$v" in ''|*[!0-9]*) v=20 ;; esac
+  [ "${#v}" -gt 4 ] && v=100
+  v=$((10#$v))
+  [ "$v" -lt 1 ] && v=1
+  [ "$v" -gt 100 ] && v=100
+  printf '%s\n' "$v"
+}
+
+# triage_shard_mem_slots <n> [harness] [meminfo] -> "<n for this tick>\t<free MB>"
+#   The free-memory guard (BH-10267). Each shard is one agent session, and a
+#   box has 16 GB: the number for this tick is at most MemAvailable divided by
+#   TRIAGE_SHARD_MEM_MB (default 300). It only LOWERS the number, never under 1,
+#   and it never fails a tick: no meminfo, no MemAvailable line, or the row at 0
+#   leave the number as it is and print `-` for the free MB.
+triage_shard_mem_slots() {
+  local n="${1:-1}" h="${2:-${HARNESS:-${H:-}}}" mi="${3:-/proc/meminfo}" per kb free s
+  per=$(_tsh_env "$h" TRIAGE_SHARD_MEM_MB 300)
+  case "$per" in ''|*[!0-9]*) per=300 ;; esac
+  [ "${#per}" -gt 7 ] && per=1048576
+  per=$((10#$per))
+  kb=""
+  [ "$per" -gt 0 ] && [ -r "$mi" ] && kb=$(awk '$1=="MemAvailable:"{print $2; exit}' "$mi" 2>/dev/null)
+  case "$kb" in ''|*[!0-9]*) printf '%s\t-\n' "$n"; return 0 ;; esac
+  free=$(( kb / 1024 )); s=$(( free / per ))
+  [ "$s" -lt 1 ] && s=1
+  [ "$s" -gt "$n" ] && s=$n
+  printf '%s\t%s\n' "$s" "$free"
+}
+
 # triage_shard_timeout [harness] -> per-shard agent-call timeout in seconds
 #   The tick's own 10800 stays the default: a shard is one ticket, but a ticket
 #   whose thread needs an hour still needs an hour. This is a ceiling, not a

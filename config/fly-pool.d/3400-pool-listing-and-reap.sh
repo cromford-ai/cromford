@@ -12,34 +12,34 @@
 # as "everything is gone" would requeue every running build on one flaky call.
 # Unusable means: fall back to the per-machine `machine status` this loop has
 # always used, and skip the sweep entirely rather than sweep on a guess.
-LISTING=""; LIST_OK=0; LIST_WHY=""
+LISTING=""; LIST_OK=0; LIST_WHY=""; LIST_CLASS=""; LIST_TRIES=0; LIST_SAVED=""; LIST_SAVED_AGE=""
 if [ -n "${POOL_APP:-}" ]; then
   LISTING=$(mktemp "${TMPDIR:-/tmp}/pool-listing.XXXXXX") || LISTING=""
 fi
 if [ -n "$LISTING" ]; then
-  trap 'rm -f -- "$FLY" "$LISTING" "$LISTING.err" "$LISTING.rows"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
-  if timeout 30 "$FLY" machines list -a "$APP" --json > "$LISTING" 2>"$LISTING.err"; then
-    if jq -e 'type=="array"' "$LISTING" >/dev/null 2>&1; then
-      LIST_OK=1
-    else
-      LIST_WHY="flyctl did not print a machine array: $(head -c 120 "$LISTING" 2>/dev/null | tr '\n\r\t' '   ')"
-    fi
-  else
-    LIST_WHY=$(head -1 "$LISTING.err" 2>/dev/null | cut -c1-120)
-    [ -n "$LIST_WHY" ] || LIST_WHY="machines list exited non-zero with no error text"
-  fi
-  if [ "$LIST_OK" = 1 ] && [ "$(jq -r 'length' "$LISTING" 2>/dev/null)" = 0 ] \
-     && ls "$POOL"/*.json >/dev/null 2>&1; then
-    LIST_OK=0; LIST_WHY=empty-with-tracked
-  fi
+  trap 'rm -f -- "$FLY" "$LISTING" "$LISTING.err" "$LISTING.rows" "$LISTING.destroyed"; [ -n "${RQ:-}" ] && rm -rf -- "$RQ"; command -v pp_release >/dev/null 2>&1 && pp_release; true' EXIT
+  # BH-9407: destroy_machine appends each machine it removed here, so the saved
+  # list (pool_list_save_good, after the sweep) never names one of them.
+  : > "$LISTING.destroyed"
+  # BH-9407: retries, the error class and the token scrub live in 3350.
+  pool_list_fetch
   if [ "$LIST_OK" = 0 ]; then
-    say "machines list unusable (${LIST_WHY:-no answer}) — liveness falls back to machine status, sweep skipped"
+    pool_list_saved_pick
+    say "machines list unusable (${LIST_WHY:-no answer}; class ${LIST_CLASS:-other}, $LIST_TRIES tr$([ "$LIST_TRIES" = 1 ] && echo y || echo ies)) — liveness falls back to machine status, $([ -n "$LIST_SAVED" ] && echo "sweep runs from the saved list (${LIST_SAVED_AGE} s old), destroy only" || echo "sweep skipped")"
     # A listing that fails every tick is a sweep that is silently dark, which is
-    # the exact failure this change exists to end. Once per project per day.
-    LAF="$HARNESS/flags/alerted-pool-listing-$P-$(date -u +%Y%m%d)"
+    # the exact failure this change exists to end. Once per project per day,
+    # per mode: dark, or swept from the saved list.
+    _LT="class ${LIST_CLASS:-other}, $LIST_TRIES tr$([ "$LIST_TRIES" = 1 ] && echo y || echo ies)"
+    if [ -n "$LIST_SAVED" ]; then
+      LAF="$HARNESS/flags/alerted-pool-listing-saved-$P-$(date -u +%Y%m%d)"
+      _LA="[pool/$P] machines list for $APP unusable (${LIST_WHY:-no answer}; $_LT) — dead-machine sweep ran from the saved list (${LIST_SAVED_AGE} s old), destroy only; no requeue"
+    else
+      LAF="$HARNESS/flags/alerted-pool-listing-$P-$(date -u +%Y%m%d)"
+      _LA="[pool/$P] machines list for $APP unusable (${LIST_WHY:-no answer}; $_LT) — dead-machine sweep skipped; stopped machines are not being reclaimed until it answers"
+    fi
     if [ ! -f "$LAF" ]; then
       mkdir -p "$HARNESS/flags" 2>/dev/null && touch "$LAF" 2>/dev/null
-      HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "[pool/$P] machines list for $APP unusable (${LIST_WHY:-no answer}) — dead-machine sweep skipped; stopped machines are not being reclaimed until it answers"
+      HARNESS="$HARNESS" "$HARNESS/bin/alert-line.sh" "$_LA"
     fi
   fi
 fi

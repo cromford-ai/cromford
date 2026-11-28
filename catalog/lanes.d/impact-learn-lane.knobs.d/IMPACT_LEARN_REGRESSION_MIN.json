@@ -1,0 +1,10 @@
+{
+  "env": "IMPACT_LEARN_REGRESSION_MIN",
+  "type": "int",
+  "default": 3,
+  "min": 0,
+  "max": 100,
+  "zero_means": "off",
+  "required": false,
+  "note": "BH-9439: a suite that turned this many merge-queue batches red in IMPACT_LEARN_REGRESSION_DAYS days, with every member gate readable and none running it, gets a learned * row in catalog/ci-batch-regression.d/ (step 7c); 0 turns it off. Read by bin/impact-learn-lane.sh as ${IMPACT_LEARN_REGRESSION_MIN:-3}."
+}

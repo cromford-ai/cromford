@@ -1,0 +1,12 @@
+{
+  "env": "GH_CACHE_SWEEP_MAX_PAGES",
+  "read_in": "bin/gh-cache-sweep.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 100,
+  "unit": "pages",
+  "zero_means": null,
+  "note": "BH-9453: the most 100-row pages one list read takes per repo. A full last pulls page makes the repo unreadable for this run (no record, no stamp). A full last issues page restarts the repo's chain (no drops; nothing fetched before this sweep is covered). Not a positive whole number is the code fallback 20.",
+  "settable": true
+}

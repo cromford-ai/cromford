@@ -29,6 +29,12 @@ has() { case "$2" in *"$1"*) return 0 ;; esac; return 1; }
 
 mklist() { local i; : > "$1"; for ((i = 1; i <= $2; i++)); do printf 'tests/s%04d-test.sh\n' "$i" >> "$1"; done; }
 mklist "$T/all.txt" 300; mklist "$T/sel.txt" 3
+# REGN: the `*` rows of the REAL catalog/ci-batch-regression.d/ (BH-9439). The
+# planner's regression union reads the real bin/test-impact.sh, never the fake,
+# so an escalated batch runs the 300 plus these; the count stays exact.
+printf 'docs/x.md\n' > "$T/reg.changed"
+REGN=$( ( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' \
+  | LC_ALL=C sort -u | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done | grep -c .)
 cat > "$T/fake.sh" <<'FAKE'
 #!/bin/bash
 OUT=""; CMD=""
@@ -77,8 +83,8 @@ bplan() {
 out() { printf '%s\n' "$GO" | sed -n "s/^$1=//p" | tail -1; }
 unreadable() { # unreadable <tag> — the last plan escalated as unreadable
   { [ "$RC" = 0 ] && [ "$(out mode)" = full ] && has "member labels unreadable" "$(out escalation)" \
-      && [ "$(grep -c . "$T/list")" = 300 ]; } && ok \
-    || bad "$1: must be mode=full, escalation 'member labels unreadable…' (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
+      && [ "$(grep -c . "$T/list")" = $((300 + REGN)) ]; } && ok \
+    || bad "$1: must be mode=full, escalation 'member labels unreadable…', 300 + $REGN regression * suites (rc=$RC mode=$(out mode) escalation='$(out escalation)' list=$(grep -c . "$T/list")) [$OUT]"
 }
 BODY12='This batch carries [#11](https://github.com/o/r/pull/11) and [#12](https://github.com/o/r/pull/12).'
 BODY_OK='This batch carries [#11](https://github.com/o/r/pull/11) and [#13](https://github.com/o/r/pull/13), #11 again.'
@@ -88,7 +94,7 @@ bplan CI_PR_BODY="$BODY12" GITHUB_STEP_SUMMARY="$T/sum"
 { [ "$RC" = 0 ] && [ "$(out mode)" = full ] && [ "$(out escalation)" = "the 'full' label on #12" ]; } && ok \
   || bad "M1: #12 labelled full must escalate (rc=$RC mode=$(out mode) escalation='$(out escalation)') [$OUT]"
 has "full: the 'full' label on #12" "$(out summary)" && ok || bad "M1: summary must say 'full: the 'full' label on #12': '$(out summary)'"
-[ "$(grep -c . "$T/list")" = 300 ] && ok || bad "M1: the corpus runs, got $(grep -c . "$T/list")"
+[ "$(grep -c . "$T/list")" = $((300 + REGN)) ] && ok || bad "M1: the corpus runs, 300 + $REGN regression *, got $(grep -c . "$T/list")"
 grep -qx 'api repos/o/r/pulls/12' "$T/sink" && ok || bad "M1: #12 must be read as repos/o/r/pulls/12: $(cat "$T/sink")"
 
 # ── M2. a gh that fails.

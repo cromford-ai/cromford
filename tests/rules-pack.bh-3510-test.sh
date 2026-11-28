@@ -344,7 +344,8 @@ to=$(js o8 '[.components[]|select(.rc == 124)|.id]|join(",")')
 # TEST-CHANGE (BH-7276): 27 with agent-call-no-tools (the AGENT_CALL_NO_TOOLS delta lint).
 # TEST-CHANGE (BH-7273): 28 with plan-diff-bind (the plan-to-diff binding check).
 # TEST-CHANGE (BH-8918): 29 with name-guard
-[ "$(js o8 '.components|length')" = 29 ] && ok || bad "R8 $(js o8 '.components|length') components (want 29)"
+# TEST-CHANGE (BH-9946): 30 with curl-bearer-argv (no bearer token on argv).
+[ "$(js o8 '.components|length')" = 30 ] && ok || bad "R8 $(js o8 '.components|length') components (want 30)"
 cnr=$(js o8 '.could_not_run - ["date-bomb"] | join(",")')
 [ -z "$cnr" ] && ok || bad "R8 could_not_run beyond date-bomb: $cnr"
 [ "$(js o8 '.components[]|select(.id=="route-fragments").state')" = green ] && ok \

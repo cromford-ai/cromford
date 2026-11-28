@@ -32,8 +32,9 @@
 # Stations: register prompt label box clone call obs_<station> from
 # bin/lib/onboard-stations.sh (BH-7934.1). An undefined function fails the step
 # with station_failed, never done. tracker fails with tracker_not_built until
-# wave 3. smoke is obs_smoke below. ready does nothing and beats done, which
-# sets the run done.
+# wave 3. smoke is obs_smoke below. ready runs bin/onboard-canary.sh --hold
+# (BH-9442: the project's tickets wait until a no-op canary PR is green in the
+# repo's CI) and beats done whatever the canary answers, which sets the run done.
 #
 # Exit codes: 0 idle, done, claim lost or cancelled; 1 a station failed (the
 # run is failed); 2 the worker is not configured, or did not answer after
@@ -128,7 +129,17 @@ _obr_station() {
       else echo "obs_$1 is not defined"; return 1; fi ;;
     tracker) echo "tracker connect is not built yet (wave 3)"; return 1 ;;
     smoke) obs_smoke ;;
-    ready) echo "ready: every earlier station is done" ;;
+    ready)
+      echo "ready: every earlier station is done"
+      # BH-9442: hold the project's tickets until a no-op canary PR is green in
+      # the repo's own CI (bin/onboard-canary.sh). Never fails the step: the
+      # line below is the canary state the setup screen shows.
+      if [ -x "$ROOT/bin/onboard-canary.sh" ]; then
+        "$ROOT/bin/onboard-canary.sh" --hold "$PROJECT" 2>&1 || echo "canary: OWED: bin/onboard-canary.sh --hold $PROJECT failed; run it by hand"
+      else
+        echo "canary: OWED: bin/onboard-canary.sh is missing on this box; run it --hold $PROJECT by hand"
+      fi
+      return 0 ;;
     *) echo "unknown station $1"; return 1 ;;
   esac
 }

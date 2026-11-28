@@ -44,6 +44,9 @@
 #   3. only when a red run is read this tick: the prequeue-gate.yml
 #      workflow_dispatch runs, titled `prequeue pr=<n> head=<sha> main=<sha>`.
 #      Unreadable = every gate of this tick is `?` (not a stop).
+#      Also the prequeue-group-gate.yml workflow_dispatch runs (BH-9439; the
+#      gate since BH-8327), titled `prequeue group=g<hex> main=<sha>`.
+#      Unreadable = only the per-PR runs are used (not a stop).
 #   4. each run with no record at its current run_attempt, oldest first, at
 #      most CI_BATCH_RED_MAX (the rest are `deferred`), gh_budget_low before
 #      each (low = the rest are deferred):
@@ -58,12 +61,21 @@
 #        a real harness`), or a failed shard whose log names no failing suite:
 #        `fail job:<name> other`.
 #      - members: each `#<n>` in the first line of head_commit.message.
-#      - red runs, per member: the newest gate run for that PR created before
-#        the batch, its `gate` job, and that job's log. The suites the gate RAN
+#      - red runs, per member: the newest gate created before the batch, of
+#        two candidates: the newest per-PR run for that PR (its `gate` job), and
+#        the newest group run, of the newest CI_BATCH_RED_GROUP_SCAN group runs
+#        created before the batch, that has a job `gate (<pr>, <head40>) / gate`
+#        (each group run's jobs read once a tick). Then that job's log. The
+#        verdict is the last `prequeue-verdict::<v> main=` (per-PR shape) or
+#        `##[notice]<v> main=<40> head=<40>` (group, ledger shape); the echoed
+#        script source line `prequeue-verdict::$V` is not a verdict, and a log
+#        with no verdict is `read`. The suites the gate RAN
 #        are its `impact-gate: done <suite> rc=` and `impact-gate: reused
 #        <suite> from` lines, and any `--- <suite> rc=` line. (The verdict's
 #        `suites=` field is the gate's FAILED suites, empty on a green verdict,
-#        so it cannot say what the gate ran.) Any gate read failure: `?`.
+#        so it cannot say what the gate ran; a ledger-mode gate runs no suite,
+#        so it ran an empty set.) Any gate read failure, a failed group jobs
+#        read in the scan included: `?`.
 #      - a jobs read or a needed shard log read that fails: one strike in
 #        runs/<id>.strikes; the third strike writes the record `unread`.
 #   5. latest.tsv (tmp + mv), from every record created in the window:
@@ -98,6 +110,12 @@
 #      percent for a week
 #      (docs/notes/2026-10-24-BH-8267-default-queue-batch-size.md). The cron line
 #      sends stdout to /dev/null; the log line stays the record.
+#      Before the tick line, one line to logs/ci-batch-red-gate.log (BH-9439;
+#      its own log, so the tick log keeps one line a tick; in --dry-run on
+#      stdout after the TSV):
+#      ci-batch-red-gate: repo=<r> days=<d> red=<n> gate_unread=<u> gate_unread_pct=<pct|->
+#      u = red runs in the window recorded unread, or with member PRs and a
+#      `gate <pr> ?` line or no gate line; pct = u*100/red truncated, - at red=0.
 #   9. once per ISO week (BH-8062), in logs/ci-batch-red-week.log (not the
 #      tick log, which keeps one line a tick):
 #      the last complete week (Mon 00:00Z to the next Mon 00:00Z, the week
@@ -127,6 +145,7 @@
 #   CI_BATCH_RED_KEEP_DAYS 30  (7..90)   record retention
 #   CI_BATCH_RED_TARGET_PCT 15 (1..100)  the weekly red-batch rate target (BH-8062)
 #   CI_BATCH_RED_WEEK_KEEP_DAYS 90 (30..730) week marker retention (BH-8062)
+#   CI_BATCH_RED_GROUP_SCAN 20 (1..100) group gate runs scanned per member (BH-9439)
 #   CI_BATCH_RED_EJECT_WINDOW_S 7200 (600..86400) an eject line this long after
 #                              a batch names its culprit PR (BH-9410)
 #   CI_BATCH_RED_MAINRED_WINDOW_S 7200 (600..86400) main red evidence this long
@@ -137,7 +156,7 @@
 # Kill switch: bin/harness-ctl.sh off ci-batch-red-report (flags/lane-off-ci-batch-red-report)
 # The lane id is the script name, as every cron lane's is (tests/lanes-registry-test.sh).
 # Tests: tests/ci-batch-red-report.bh-8048-test.sh, tests/ci-batch-red-week.bh-8062-test.sh,
-#   tests/ci-batch-red-causes.bh-9410-test.sh
+#   tests/ci-batch-red-causes.bh-9410-test.sh, tests/ci-batch-red-report.bh-9439-test.sh
 set -uo pipefail
 DRY=""; DAYS_ARG=""; CAUSES=""
 usage() { echo "usage: ci-batch-red-report.sh [--days N] [--dry-run | --causes]" >&2; exit 2; }
@@ -146,7 +165,7 @@ while [ $# -gt 0 ]; do
     --days) [ $# -ge 2 ] || usage; DAYS_ARG="$2"; shift ;;
     --dry-run) DRY=1 ;;
     --causes) CAUSES=1 ;;
-    -h|--help) sed -n '2,137p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,156p' "$0"; exit 0 ;;
     *) usage ;;
   esac
   shift
@@ -181,6 +200,9 @@ log() { if [ -n "$DRY$CAUSES" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$LO
 # The weekly line (step 9) has its own log, so the tick log keeps one line a tick.
 WLOG="$H/logs/ci-batch-red-week.log"
 wlog() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$WLOG" 2>/dev/null; fi; return 0; }
+# The gate-unread line (step 8, BH-9439) has its own log for the same reason.
+GLOG="$H/logs/ci-batch-red-gate.log"
+glog() { if [ -n "$DRY" ]; then echo "$*"; else echo "$(STAMP) $*" >> "$GLOG" 2>/dev/null; fi; return 0; }
 
 # knob <ENV> <default> <min> <max> — lane_knob (row, env, registry default)
 #   when the lane gate is loaded, else the env, else the default; a value that
@@ -205,6 +227,8 @@ KEEP_DAYS=$(knob CI_BATCH_RED_KEEP_DAYS 30 7 90)
 TARGET=$(knob CI_BATCH_RED_TARGET_PCT 15 1 100)
 # Fallback for the row lane.ci-batch-red-report.ci_batch_red_week_keep_days (BH-8062).
 WEEK_KEEP_DAYS=$(knob CI_BATCH_RED_WEEK_KEEP_DAYS 90 30 730)
+# Fallback for the row lane.ci-batch-red-report.ci_batch_red_group_scan (BH-9439).
+GSCAN=$(knob CI_BATCH_RED_GROUP_SCAN 20 1 100)
 CUT=$(( NOW - DAYS * 86400 ))
 SINCE=$(date -u -d "@$CUT" '+%Y-%m-%dT%H:%M:%SZ')
 # A gate run comes before its batch: the gate list reaches one day further back.
@@ -327,13 +351,20 @@ done < "$TMP/list"
 TODO=$(grep -c . < "$TMP/todo")
 
 # 3. the gate run list, only when a red run is to be read: `<pr> <created> <run_id>`
-GATES_OK=0; : > "$TMP/gates"
+GATES_OK=0; : > "$TMP/gates"; GGATES_OK=0; : > "$TMP/ggates"
 if head -n "$MAX" "$TMP/todo" | awk '$4 == "red" {f = 1} END {exit !f}'; then
   if list_runs prequeue-gate.yml "$GSINCE" "$TMP/gates.json" -f event=workflow_dispatch \
      && jq -r '.[] | ((.display_title // "") | capture("^prequeue pr=(?<pr>[0-9]+) head=[0-9a-f]{40}")) as $m
          | "\($m.pr) \((.created_at // "") | (try fromdateiso8601 catch 0)) \(.id)"' \
          "$TMP/gates.json" > "$TMP/gates" 2>/dev/null; then
     GATES_OK=1
+  fi
+  # The group runs (BH-9439): `<created> <run_id>`. A failed list leaves the per-PR path alone.
+  if list_runs prequeue-group-gate.yml "$GSINCE" "$TMP/ggates.json" -f event=workflow_dispatch \
+     && jq -r 'unique_by(.id)[] | select((.display_title // "") | test("^prequeue group=g[0-9a-f]+ main=[0-9a-f]{40}$"))
+         | "\((.created_at // "") | (try fromdateiso8601 catch 0)) \(.id)"' \
+         "$TMP/ggates.json" > "$TMP/ggates" 2>/dev/null; then
+    GGATES_OK=1
   fi
 fi
 
@@ -378,16 +409,47 @@ read_jobs() {
   done
   return 1
 }
+# gate_verdict — from a gate job log on stdin, the last verdict, or nothing.
+#   Per-PR shape: `::notice title=prequeue-verdict::<v> main=`. Group (ledger)
+#   shape: `##[notice]<v> main=<40> head=<40>`. The echoed script source line
+#   `... prequeue-verdict::$V main=...` matches neither.
+gate_verdict() {
+  sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z ?//; s/\r$//' \
+  | sed -nE 's/.*prequeue-verdict::([a-z-]+) main=.*/\1/p;
+             s/^##\[notice\](green|red|no-selection|conflict|could-not-run) main=[0-9a-f]{40} head=[0-9a-f]{40}( .*)?$/\1/p' \
+  | tail -n1
+}
 # gate_line <pr> <batch created> — `gate\t<pr>\t<verdict|?>\t<csv|->`
+#   The newer of the per-PR run (job `gate`) and the group run (job
+#   `gate (<pr>, <head40>) / gate`) created before the batch.
 gate_line() {
-  local pr="$1" before="$2" gid jid lg v csv
-  [ "$GATES_OK" = 1 ] || { printf 'gate\t%s\t?\t-\n' "$pr"; return; }
-  gid=$(awk -v p="$pr" -v b="$before" '$1 == p && $2 < b && $2 >= best { best = $2; id = $3 } END { if (id != "") print id }' "$TMP/gates")
-  [ -n "$gid" ] || { printf 'gate\t%s\t?\t-\n' "$pr"; return; }
-  if read_jobs "$gid" "$TMP/gjobs" \
-     && jid=$(jq -r 'map(select(.name == "gate"))[0].id // empty' "$TMP/gjobs") && [ -n "$jid" ] \
-     && lg=$(gh_ci_api "$REPO" --allow-escape-sequences "repos/$REPO/actions/jobs/$jid/logs" 2>/dev/null </dev/null) && [ -n "$lg" ]; then
-    v=$(printf '%s\n' "$lg" | sed -nE 's/.*prequeue-verdict::([a-z-]+).*/\1/p' | tail -n1)
+  local pr="$1" before="$2" pid="" pc=0 jid="" gc grid n=0 lg v csv
+  if [ "$GATES_OK" = 1 ]; then
+    read -r pc pid < <(awk -v p="$pr" -v b="$before" '$1 == p && $2 < b && $2 >= best { best = $2; id = $3 } END { if (id != "") print best, id }' "$TMP/gates")
+    pc=${pc:-0}
+  fi
+  if [ "$GGATES_OK" = 1 ]; then
+    # Newest first; a group run no newer than the per-PR candidate cannot win.
+    while read -r gc grid; do
+      [ "$gc" -gt "$pc" ] || break
+      n=$(( n + 1 )); [ "$n" -le "$GSCAN" ] || break
+      if [ ! -f "$TMP/gj.$grid" ]; then
+        [ -f "$TMP/gj.$grid.bad" ] && { printf 'gate\t%s\t?\t-\n' "$pr"; return; }
+        if read_jobs "$grid" "$TMP/gj.$grid.n"; then mv -f "$TMP/gj.$grid.n" "$TMP/gj.$grid"
+        else : > "$TMP/gj.$grid.bad"; printf 'gate\t%s\t?\t-\n' "$pr"; return; fi
+      fi
+      jid=$(jq -r --arg p "$pr" 'map(select((.name // "") | test("^gate \\(" + $p + ", [0-9a-f]{40}\\) / gate$")))[0].id // empty' "$TMP/gj.$grid" 2>/dev/null)
+      [ -n "$jid" ] && break
+    done < <(awk -v b="$before" '$1 < b' "$TMP/ggates" | sort -k1,1nr -k2,2nr)
+  fi
+  if [ -z "$jid" ]; then
+    [ -n "$pid" ] || { printf 'gate\t%s\t?\t-\n' "$pr"; return; }
+    if ! { read_jobs "$pid" "$TMP/gjobs" && jid=$(jq -r 'map(select(.name == "gate"))[0].id // empty' "$TMP/gjobs") && [ -n "$jid" ]; }; then
+      printf 'gate\t%s\t?\t-\n' "$pr"; return
+    fi
+  fi
+  if lg=$(gh_ci_api "$REPO" --allow-escape-sequences "repos/$REPO/actions/jobs/$jid/logs" 2>/dev/null </dev/null) && [ -n "$lg" ]; then
+    v=$(printf '%s\n' "$lg" | gate_verdict)
     csv=$(printf '%s\n' "$lg" | gate_ran)
     printf 'gate\t%s\t%s\t%s\n' "$pr" "${v:-read}" "${csv:--}"
   else
@@ -492,6 +554,7 @@ if [ ${#RECS[@]} -gt 0 ]; then
         if (nreal > 0 && NG[r] > 0 && NGR[r] == NG[r] && missall) ea++
         if (nreal > 0 && b) eb++
       }
+      for (r in R) if (K[r] == "red" && (U[r] || (P[r] != "-" && (NG[r] == 0 || NGR[r] < NG[r])))) gu++
       for (s in red) {
         gs = 0; for (r in R) if (K[r] == "green" && !U[r] && C[r] > first[s] && ((r, s) in RAN)) gs++
         gm = (s ~ /^job:/) ? "-" : ((s in known) ? missed[s] + 0 : "?")
@@ -515,11 +578,11 @@ if [ ${#RECS[@]} -gt 0 ]; then
       if (rd > 0 && ea * 2 > rd && eb * 2 > rd) cs = "A+B"
       else if (rd > 0 && ea * 2 > rd) cs = "A"
       else if (rd > 0 && eb * 2 > rd) cs = "B"
-      printf "%d %d %d %d %s %d %d\n", nr, ng, (nr + ng) ? int(nr * 100 / (nr + ng)) : 0, nu, cs, sa, sb > sum
+      printf "%d %d %d %d %s %d %d %d\n", nr, ng, (nr + ng) ? int(nr * 100 / (nr + ng)) : 0, nu, cs, sa, sb, gu > sum
     }' "${RECS[@]}" 2>/dev/null
 fi
-[ -s "$TMP/sum" ] || echo "0 0 0 0 C 0 0" > "$TMP/sum"
-read -r NRED NGREEN RATE NUNREAD CASE SA SB < "$TMP/sum"
+[ -s "$TMP/sum" ] || echo "0 0 0 0 C 0 0 0" > "$TMP/sum"
+read -r NRED NGREEN RATE NUNREAD CASE SA SB GUNREAD < "$TMP/sum"
 { printf 'suite\tkind\tred_batches\tgreen_batches_since\tgate_missed\tretry_green\tprs\n'
   LC_ALL=C sort -t "$(printf '\t')" -k3,3nr -k1,1 "$TMP/tsv"; } > "$TMP/latest.tsv"
 
@@ -561,6 +624,10 @@ elif ! { cp "$TMP/latest.tsv" "$STATE/.latest.tsv.tmp" 2>/dev/null && mv -f "$ST
   rm -f "$STATE/.latest.tsv.tmp" 2>/dev/null
   log "ci-batch-red: latest.tsv write failed in $STATE"
 fi
+# The gate-unread share (BH-9439): its own log, written before the tick line.
+GUNREAD=${GUNREAD:-0}
+if [ "${NRED:-0}" -gt 0 ]; then GPCT=$(( GUNREAD * 100 / NRED )); else GPCT=-; fi
+glog "ci-batch-red-gate: repo=$REPO days=$DAYS red=$NRED gate_unread=$GUNREAD gate_unread_pct=$GPCT"
 # 9. the weekly line: the last complete ISO week, once (BH-8062), in its own
 # log (logs/ci-batch-red-week.log).
 WEEK_END=$(( NOW - NOW % 86400 - ($(date -u -d "@$NOW" +%u) - 1) * 86400 ))

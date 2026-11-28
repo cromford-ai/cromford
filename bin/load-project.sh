@@ -31,6 +31,9 @@
 #      no way to reach from a Mac (BH-662)
 #   5. over ssh to the box: pulls /root/harness-checkout, syncs runtime, writes
 #      an env stub, runs bootstrap-machine.sh <project> (crons, clone, smoke)
+#   6. (after == LOADED ==) the onboarding canary (BH-9442): holds the project
+#      (settings row onboard.<p>.canary_gate=held) and opens one no-op PR; no
+#      ticket builds until that PR is green in the repo's CI. Never fatal.
 #
 # --tracker linear|jira (BH-7924) makes the project a Linear or Jira project.
 # It needs --prefix <KEY>: the Linear team key or the Jira project key, checked
@@ -520,6 +523,17 @@ echo "== browser QA =="
 bin/qa-wiring-check.sh "$PROJECT" || echo "browser QA is not wired for $PROJECT. Fix each OWED line above (docs/onboarding-a-repo.md, 'Wire browser QA'). The daily qa-wiring-sweep lane alerts until it is fixed."
 echo
 # <<< browser QA
+# Onboarding canary (BH-9442). project-12, project-13 and project-14 enrolled here and
+# merged 0 of 16 PRs: their CI was red on every PR. The project is held until a
+# no-op canary PR is green in the repo's own CI (bin/onboard-canary.sh, the
+# build gate bin/lib/rb/gates.d/onboard-canary.sh). Never fatal: the `||` keeps
+# the exit code.
+# >>> onboarding canary (BH-9442) -- tests/onboard-canary.bh-9442-test.sh runs this block
+echo "== onboarding canary =="
+bin/onboard-canary.sh --hold "$PROJECT" || echo "OWED: the onboarding canary did not start for $PROJECT. Run bin/onboard-canary.sh --hold $PROJECT on the hub (docs/onboarding-a-repo.md, 'The canary PR')."
+bin/onboard-canary.sh --status "$PROJECT" || true
+echo
+# <<< onboarding canary
 # ── THE DOORBELL (2026-09-16) ────────────────────────────────────────────────
 # Onboarding used to end here, and cromford is what that cost. docs/EVENTS.md
 # 4.3 designed the webhook as ONE ORG-LEVEL hook and told everyone there was

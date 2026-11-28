@@ -95,8 +95,19 @@ triage_signal_sfp() {
   pend=$(_tsh_fp_pending "$h" "$p" "$k" "$gh") || return 1
   case "$pend" in "pend absent "*) return 1 ;; esac
   if [ "$gh" = 1 ] && ! triage_signal_apps_ok "$h" "$p" "$k"; then return 1; fi
+  # This counter is for one process. In a parallel prepare worker it starts at 0,
+  # so there the slot directory below is the budget (BH-10267).
   [ "$TRIAGE_SIGNAL_READS" -lt "$(triage_signal_max_reads "$h")" ] || return 1
   if [ "$gh" = 1 ] && _tsh_gh_budget_low "$h" triage-signal >/dev/null 2>&1; then return 1; fi
+  # BH-10267: the tick prepares its tickets in parallel subshells, so a counter
+  # in a variable is one counter for each ticket. With _TSIG_SLOT_DIR set (by
+  # bin/lib/rt/shards.sh, a new directory for each tick) a read takes one of
+  # MAX_READS numbered slots there; mkdir is the atomic step. No slot = no read.
+  if [ -n "${_TSIG_SLOT_DIR:-}" ]; then
+    local _i=1 _m; _m=$(triage_signal_max_reads "$h")
+    while [ "$_i" -le "$_m" ] && ! mkdir "$_TSIG_SLOT_DIR/r$_i" 2>/dev/null; do _i=$((_i+1)); done
+    [ "$_i" -le "$_m" ] || return 1
+  fi
   TRIAGE_SIGNAL_READS=$((TRIAGE_SIGNAL_READS + 1))
   # This project's identities, in a subshell so one project's row never
   # reaches the next key's gate.

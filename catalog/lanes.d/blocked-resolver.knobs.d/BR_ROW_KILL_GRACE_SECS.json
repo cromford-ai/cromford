@@ -1,0 +1,11 @@
+{
+  "env": "BR_ROW_KILL_GRACE_SECS",
+  "type": "int",
+  "default": 10,
+  "min": 1,
+  "max": 300,
+  "unit": "seconds",
+  "zero_means": null,
+  "read_in": "bin/blocked-resolver.d/bh-9468-row-cap.sh",
+  "note": "BH-9468: after BR_ROW_MAX_SECS stops a row with TERM, the seconds the row's processes get to end before they are sent KILL. The cap stops a row only before its first rung or write, so a KILL never cuts a rung. Settings row: lane.blocked-resolver.br_row_kill_grace_secs."
+}

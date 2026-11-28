@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── ONBOARD-CANARY LANE (BH-9442) ────────────────────────────────────────────
+# Every 5 min: --tick reads the checks of every pending onboarding canary PR,
+# writes the verdict (settings row onboard.<p>.canary), releases a held project
+# on green, alerts once on red or no checks, then closes the PR unmerged.
+# Monday 06:17Z: --weekly opens a canary for every fleet project; a red one is
+# alerted, not paused. The flock is dedupe: a slow tick makes the next skip, it
+# never queues. Log: logs/onboard-canary.log. Doc: docs/onboarding-a-repo.md.
+# Off: flags/lane-off-onboard-canary (bin/harness-ctl.sh off onboard-canary).
+*/5 * * * * /root/harness/bin/hub-lease.sh check && flock -n /root/harness/locks/onboard-canary.lock /root/harness/bin/onboard-canary.sh --tick >> /root/harness/logs/onboard-canary-cron.log 2>&1
+17 6 * * 1 /root/harness/bin/hub-lease.sh check && flock -n /root/harness/locks/onboard-canary.lock /root/harness/bin/onboard-canary.sh --weekly >> /root/harness/logs/onboard-canary-cron.log 2>&1

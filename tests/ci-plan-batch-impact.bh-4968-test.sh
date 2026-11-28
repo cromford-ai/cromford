@@ -234,6 +234,12 @@ GO=$(cat "$T/go" 2>/dev/null)
 # ── 8-11. a fake selector, for the shapes the real one does not produce on demand.
 mklist() { local i; : > "$1"; for ((i = 1; i <= $2; i++)); do printf 'tests/s%04d-test.sh\n' "$i" >> "$1"; done; }
 mklist "$T/all.txt" 300; mklist "$T/sel30.txt" 30
+# REGN: the `*` rows of the REAL catalog/ci-batch-regression.d/ (BH-9439). The
+# regression union reads the real bin/test-impact.sh, never the fake, so the
+# batch in case 9 runs its 30 plus these; the count stays exact.
+printf 'console-ui/src/screens/Jobs.js\n' > "$T/reg.changed"
+REGN=$( ( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' \
+  | LC_ALL=C sort -u | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done | grep -c .)
 cat > "$T/fake.sh" <<'FAKE'
 #!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_SINK"
@@ -260,9 +266,9 @@ bplan console-ui/src/screens/Jobs.js -- "${FK[@]}" FAKE_NOREASON=1
 : > "$T/sink"; bplan console-ui/src/screens/Jobs.js -- "${FK[@]}"
 grep -q '^select ' "$T/sink" && ok || bad "9: a batch must ask test-impact select: $(cat "$T/sink")"
 # the reason is the plan's whole REASON: the select's, then the tier step's note
-grep -qx '::notice title=ci-plan::mode=batch-selected count=30 total=300 n=1 reason=selected: 1 changed path(s); tiers: .*' <<<"$OUT" && ok \
+grep -qx "::notice title=ci-plan::mode=batch-selected count=$((30 + REGN)) total=300 n=1 reason=selected: 1 changed path(s); tiers: .*" <<<"$OUT" && ok \
   || bad "9: the run page must carry the ci-plan notice [$OUT]"
-{ has "impact: 30 of 300 suites (selected: 1 changed path(s); tiers: " "$SUM" && has " — 1 shard(s), mode=batch-selected" "$SUM" \
+{ has "impact: $((30 + REGN)) of 300 suites (selected: 1 changed path(s); tiers: " "$SUM" && has " — 1 shard(s), mode=batch-selected" "$SUM" \
     && grep -qx 'escalation: -' <<<"$SUM"; } && ok \
   || bad "9: the step summary must carry the impact line and the escalation [$SUM]"
 

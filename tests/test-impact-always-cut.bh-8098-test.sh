@@ -148,6 +148,7 @@ generated-not-tracked.bh-5518-test.sh"
 # docs/notes/2026-11-15-BH-9729-always-remeasure.md).
 ALWAYS_MAX=70   # after 51, before 84; 57 with BH-8473; re-measured at 64 with BH-9729 (7 new suites, docs/notes/2026-11-15-BH-9729-always-remeasure.md)
 Z2_MAX=116      # after 88, before 118 (119 with this suite); 97 with BH-8473; re-measured at 106 with BH-9729
+Z2_STAR_MAX=10  # the `*` rows of catalog/ci-batch-regression.d/ (BH-9439: 10); learned rows raise it on purpose
 
 # in_tree <path> — rc 0 when the checkout holds <path>. A cd, not a rooted
 # path: the map reads a checkout tail it cannot bind as a whole-tree read.
@@ -184,10 +185,32 @@ n=$(grep -c . "$T/real.always")
 
 echo "R4: one prompt selects at most Z2_MAX"
 printf '%s\n' prompts/build-discipline.md > "$T/z2.changed"
-"$TI" select --map "$T/map" --changed "$T/z2.changed" > "$T/z2.out" 2> "$T/z2.err"; rc=$?
-n=$(grep -c . "$T/z2.out")
-[ "$rc" = 0 ] && [ "$n" -le "$Z2_MAX" ] && [ "$n" -lt 118 ] && ok "R4 Z2 selects $n suites (at most $Z2_MAX)" \
-  || bad "R4 Z2 rc=$rc selects $n (bound $Z2_MAX): $(grep '^impact:' "$T/z2.err")"
+"$TI" select --map "$T/map" --changed "$T/z2.changed" --why > "$T/z2.why" 2> "$T/z2.err"; rc=$?
+cut -f1 "$T/z2.why" | LC_ALL=C sort -u > "$T/z2.out"
+# Three bounds. A `*` row of catalog/ci-batch-regression.d/ (BH-9439, and the
+# rows the learner lane writes) joins every selection: the selector prints it
+# as `regression *` and as `always *`.
+#   core  — the selection less the suites that are there ONLY for a `*` row:
+#           at most Z2_MAX, as before BH-9439.
+#   star  — the `*` row suites: at most Z2_STAR_MAX. A new `*` row (by hand or
+#           learned) that passes it is a deliberate bump of Z2_STAR_MAX here.
+#   whole — every selected suite: at most Z2_MAX + Z2_STAR_MAX.
+# Every `*` row suite must be selected.
+( cd "$DIR" && "$TI" regression --changed "$T/z2.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' | LC_ALL=C sort -u > "$T/z2.star"
+awk -F'\t' -v sf="$T/z2.star" -v af="$T/real.always" '
+  FILENAME == sf { star[$1] = 1; next }
+  FILENAME == af { alw[$1] = 1; next }
+  { if (!($1 in star) || $1 in alw || !(($2 == "regression" || $2 == "always") && $3 == "*")) core[$1] = 1 }
+  END { for (s in core) n++; print n + 0 }' "$T/z2.star" "$T/real.always" "$T/z2.why" > "$T/z2.core"
+n=$(cat "$T/z2.core"); nall=$(grep -c . "$T/z2.out"); nstar=$(grep -c . "$T/z2.star")
+[ "$rc" = 0 ] && [ "$n" -le "$Z2_MAX" ] && [ "$n" -lt 118 ] && ok "R4 Z2 selects $n suites (at most $Z2_MAX; $nall with the regression * rows)" \
+  || bad "R4 Z2 rc=$rc selects $n (bound $Z2_MAX; $nall with the regression * rows): $(grep '^impact:' "$T/z2.err")"
+[ "$nstar" -le "$Z2_STAR_MAX" ] && ok "R4 $nstar regression * rows (at most $Z2_STAR_MAX)" \
+  || bad "R4 $nstar regression * rows, bound Z2_STAR_MAX=$Z2_STAR_MAX: a new * row joins every selection; raise the bound on purpose: $(paste -sd' ' - < "$T/z2.star")"
+[ "$rc" = 0 ] && [ "$nall" -le $((Z2_MAX + Z2_STAR_MAX)) ] && ok "R4 Z2 whole selection $nall (at most $((Z2_MAX + Z2_STAR_MAX)))" \
+  || bad "R4 Z2 whole selection $nall, bound Z2_MAX+Z2_STAR_MAX=$((Z2_MAX + Z2_STAR_MAX))"
+miss=$(LC_ALL=C comm -23 "$T/z2.star" "$T/z2.out" | paste -sd' ' -)
+[ -z "$miss" ] && ok "R4 every regression * suite is selected" || bad "R4 regression * suites not selected: $miss"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

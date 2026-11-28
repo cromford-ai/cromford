@@ -1,0 +1,11 @@
+{
+  "env": "BR_ROW_CARRY_MAX",
+  "type": "int",
+  "default": 1,
+  "min": 0,
+  "max": 100,
+  "unit": "ticks",
+  "zero_means": "off",
+  "read_in": "bin/blocked-resolver.d/bh-9468-row-cap.sh",
+  "note": "BH-9468: a row that BR_ROW_MAX_SECS stopped this many ticks in a row runs uncapped the next time it is dispatched (`row cap: <p>/<rkey> runs uncapped this tick`), so a row whose reads always take longer than the cap is late, never starved. The count lives in state/blocked-resolver/.row-carry[-<project>].tsv and drops when the row runs to an end or leaves the candidate list. 0 = off (no exemption): a row slower than the cap is stopped every tick (the starvation risk). Settings row: lane.blocked-resolver.br_row_carry_max."
+}

@@ -103,6 +103,7 @@ track() { # track <machine-id> [key] — one tracked pool machine
 }
 reset() { # reset — a clean tick: no tracked machines, no queue, no logs, no dedupe flags
   rm -f "$H/state/fly-pool/tproj"/*.json "$H/state/fly-pool/tproj/.sweep.json"
+  rm -f "$H/state/fly-pool-listing/tproj.json"   # BH-9407 saved list
   rm -f "$H/state/build-queue/tproj"/*.json "$H/flags"/alerted-pool-*
   rm -f "$T/destroy-fail" "$T/destroy-gone" "$T/list-rc1" "$T/list-junk" "$T/status".*
   : > "$H/logs/fly-pool.log"; : > "$H/logs/ALERTS.log"; : > "$T/fly-calls.log"
@@ -110,7 +111,8 @@ reset() { # reset — a clean tick: no tracked machines, no queue, no logs, no d
 }
 tick() { # tick [env...] — one real bin/fly-pool.sh pass, spawns off
   ( export PATH="$T/fakebin:$PATH" HARNESS="$H" FLY_BIN_DIR="$T/fakebin" \
-           FLY_API_TOKEN_TPROJ=tok FLY_CALLS="$T/fly-calls.log" FIX="$T" POOL_SPAWN=0 "$@"
+           FLY_API_TOKEN_TPROJ=tok FLY_CALLS="$T/fly-calls.log" FIX="$T" POOL_SPAWN=0 \
+           POOL_LIST_RETRY_BACKOFF_S="0 0 0" "$@"   # BH-9407: retries without the waits
     bash "$DIR/bin/fly-pool.sh" tproj >/dev/null 2>&1 )
 }
 calls() { grep -c "machine destroy $1" "$T/fly-calls.log" 2>/dev/null | tr -d ' '; }

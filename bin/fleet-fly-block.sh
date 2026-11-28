@@ -8,7 +8,7 @@
 #                  # the five below only when a sweep has run (BH-660):
 #                  "orphan_jobs": [{machine,key,ticket_id}, ...],
 #                  "stopped_machines": N, "destroy_failed": [...],
-#                  "sweep_at": "...", "sweep_listing": "ok"|"failed"}}
+#                  "sweep_at": "...", "sweep_listing": "ok"|"saved"|"failed"}}
 #
 # Sources (all optional — a project with none of them is reported with empty
 # arrays, never omitted): state/fly-pool/<project>/*.json is one file per live

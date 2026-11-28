@@ -59,6 +59,12 @@ done
 "$TI" map --out "$T/map" 2> "$T/map.err" || { echo "FAIL: the map could not be built: $(cat "$T/map.err")"; exit 1; }
 TI_DIR_ROWS=0 "$TI" map --out "$T/map0" 2> "$T/map0.err" || { echo "FAIL: the TI_DIR_ROWS=0 map could not be built"; exit 1; }
 ALWAYS=$("$TI" always | grep -c .)
+# REGS: the `*` rows of catalog/ci-batch-regression.d/ (BH-9439). The map
+# carries each as `<suite>\t*`, so every select prints it as an `always *` row
+# (and a `regression *` row). The always rows are exact: ALWAYS + REGS.
+printf 'docs/x.md\n' > "$T/reg.changed"
+REGS=$( ( cd "$DIR" && "$TI" regression --changed "$T/reg.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' \
+  | LC_ALL=C sort -u | while read -r s; do [ -f "$DIR/$s" ] && echo "$s"; done | grep -c .)
 
 # sel <label> <map> <path>... — a plain select with --why; sets N (suites), NA
 # (the `always` rows), OWN (N - NA) and RS (the reason line).
@@ -82,13 +88,13 @@ case "$RS" in "impact: $N of "*" (selected: 2 changed path(s))") ok ;; *) bad "Z
 [ "$OWN" -le "$Z1_OWN_MAX" ] && ok || bad "Z1: a lane script + its suite must select at most $Z1_OWN_MAX non-always suites (got $OWN own, $NA always: $(kinds z1))"
 kinds_in z1 'self|reads|named|source|closure|learned|regression|always' && ok || bad "Z1: an unexpected kind ($(kinds z1))"
 grep -qxF "tests/stuck-work-classify.bh-3781-test.sh	self	tests/stuck-work-classify.bh-3781-test.sh" "$T/z1.why" && ok || bad "Z1: the suite's own self row is missing"
-[ "$NA" = "$ALWAYS" ] && ok || bad "Z1: the always rows must equal 'bin/test-impact.sh always' ($ALWAYS; got $(kinds z1))"
+[ "$NA" = $((ALWAYS + REGS)) ] && ok || bad "Z1: the always rows must equal 'bin/test-impact.sh always' + the regression * rows ($ALWAYS + $REGS; got $(kinds z1))"
 
 # ── Z2: one prompt ──────────────────────────────────────────────────────────
 sel z2 "$T/map" prompts/build-discipline.md; Z2=$N; Z2_OWN=$OWN
 case "$RS" in "impact: $N of "*" (selected: 1 changed path(s))") ok ;; *) bad "Z2: the reason line must be selected (got '$RS')" ;; esac
 [ "$OWN" -le "$Z2_OWN_MAX" ] && ok || bad "Z2: one prompt must select at most $Z2_OWN_MAX non-always suites (got $OWN own, $NA always: $(kinds z2))"
-[ "$NA" = "$ALWAYS" ] && ok || bad "Z2: the always rows must equal 'bin/test-impact.sh always' ($ALWAYS; got $(kinds z2))"
+[ "$NA" = $((ALWAYS + REGS)) ] && ok || bad "Z2: the always rows must equal 'bin/test-impact.sh always' + the regression * rows ($ALWAYS + $REGS; got $(kinds z2))"
 [ -z "$(awk -F'\t' '$2 == "full"' "$T/z2.why")" ] && ok || bad "Z2: no full row"
 [ -z "$(awk -F'\t' '$2 == "closure" && $3 != "prompts/build-discipline.md"' "$T/z2.why")" ] && ok || bad "Z2: a closure row for another path"
 
@@ -96,8 +102,11 @@ case "$RS" in "impact: $N of "*" (selected: 1 changed path(s))") ok ;; *) bad "Z
 sel z3 "$T/map" docs/REMOTE-GATE.md; Z3=$N; Z3_OWN=$OWN
 case "$RS" in "impact: $N of "*" (selected: 1 changed path(s))") ok ;; *) bad "Z3: the reason line must be selected (got '$RS')" ;; esac
 [ "$OWN" -le "$Z3_OWN_MAX" ] && ok || bad "Z3: one doc must select at most $Z3_OWN_MAX non-always suites (got $OWN own, $NA always: $(kinds z3))"
-[ "$NA" = "$ALWAYS" ] && ok || bad "Z3: the always rows must equal 'bin/test-impact.sh always' ($ALWAYS; got $(kinds z3))"
-kinds_in z3 'source|reads|always' && ok || bad "Z3: kinds must be source, reads, always ($(kinds z3))"
+[ "$NA" = $((ALWAYS + REGS)) ] && ok || bad "Z3: the always rows must equal 'bin/test-impact.sh always' + the regression * rows ($ALWAYS + $REGS; got $(kinds z3))"
+# A `regression *` row (BH-9439) is in every selection; a regression row with
+# a path is still a kind this doc must not select.
+awk -F'\t' '!($2 == "regression" && $3 == "*")' "$T/z3.why" > "$T/z3n.why"
+kinds_in z3n 'source|reads|always' && ok || bad "Z3: kinds must be source, reads, always, and regression only on a * row ($(kinds z3))"
 
 # ── Z4: the knob is a real rollback ─────────────────────────────────────────
 sel z1off "$T/map0" bin/stuck-work.sh tests/stuck-work-classify.bh-3781-test.sh

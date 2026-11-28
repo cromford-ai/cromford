@@ -199,6 +199,27 @@ if [ "$SHARD_ON" = 1 ]; then
   # above zero on a box that wants a ceiling, and a unit over the cap is LEFT IN
   # SCOPE — re-armed below, offered again next tick — never parked in a list.
   SHARD_MAX=$(triage_shards_max "$HARNESS")
+  # >>> shard concurrency (BH-10267)
+  # A tick prepared its tickets one after another, and the work per ticket
+  # before the session starts (the fingerprints, the running build check, the
+  # overlap verdict) took minutes: 8 ready tickets needed 25 minutes to start.
+  # That work now runs for SHARD_CONC tickets at the same time, and ONE TICK
+  # starts at most SHARD_CONC sessions. It is a number for this tick of this
+  # project: a shard of another project, or an older shard, does not count
+  # (TRIAGE_SHARDS_MAX stays the box ceiling, off by default). The free-memory
+  # guard lowers it for this tick only. No lib function = one at a time and
+  # no ceiling, as before.
+  SHARD_CONC=1; SHARD_CONC_ON=0; SHARD_CONCHIT=""
+  if command -v triage_shard_concurrency >/dev/null 2>&1; then
+    SHARD_CONC_ROW=$(triage_shard_concurrency "$HARNESS")
+    SHARD_CONC="$SHARD_CONC_ROW"; SHARD_MEMFREE="-"; SHARD_CONC_ON=1
+    command -v triage_shard_mem_slots >/dev/null 2>&1 \
+      && IFS=$'\t' read -r SHARD_CONC SHARD_MEMFREE <<<"$(triage_shard_mem_slots "$SHARD_CONC_ROW" "$HARNESS")"
+    case "$SHARD_CONC" in ''|*[!0-9]*) SHARD_CONC="$SHARD_CONC_ROW" ;; esac
+    [ "$SHARD_CONC" -lt "$SHARD_CONC_ROW" ] \
+      && echo "$STAMP [$PROJECT] triage shards: concurrency lowered $SHARD_CONC_ROW -> $SHARD_CONC for this tick (free memory $SHARD_MEMFREE MB, $(_tsh_env "$HARNESS" TRIAGE_SHARD_MEM_MB 300) MB for each shard)" >> "$LOG"
+  fi
+  # <<< shard concurrency
   SHARD_INFLIGHT=0
   if [ "$SHARD_MAX" -gt 0 ]; then
     for L in "$HARNESS"/locks/triage-key-*.lock; do
@@ -262,7 +283,24 @@ if [ "$SHARD_ON" = 1 ]; then
     command -v triage_prstates_prune >/dev/null 2>&1 \
       && { triage_prstates_prune "$HARNESS" "$PROJECT" || true; }
   fi
-  for K in $(cut -f1 "$SHARD_UNITS" | awk '!seen[$0]++'); do
+  # >>> shard prepare (BH-10267)
+  # _rt_shard_prep <KEY>: the checks for ONE ticket that come before any cap
+  # and any spend. It runs in its own subshell, so the lines below are the same
+  # lines the loop had: a `continue` ends this ticket. The answer goes to
+  # $SHARD_PREP/<KEY> (verdict, then the three fingerprint values) and
+  # $SHARD_PREP/<KEY>.ov (the overlap verdict). It writes no cap counter and
+  # starts no session: the loop after it does that, one ticket at a time.
+  # The answers live in a temp directory of this tick, not under state/: they
+  # are read back a moment later and removed at the end of the dispatch. With
+  # no temp directory no worker runs, and each ticket is left in scope.
+  SHARD_PREP=$(mktemp -d 2>/dev/null) || SHARD_PREP=""
+  [ -n "$SHARD_PREP" ] && [ -d "$SHARD_PREP" ] && mkdir -p "$SHARD_PREP/slots" || SHARD_PREP=""
+  _TSIG_SLOT_DIR="${SHARD_PREP:+$SHARD_PREP/slots}"   # the thread-read budget of the tick, shared by the workers
+  _rt_shard_prep() (
+  SHARD_HELD=""; SHARD_RPARK=""; SHARD_TSS=""; SHARD_SAME=""; SHARD_NOSIG=""; SHARD_BUILD=""
+  SHARD_GO=""; SHARD_OV=""; SHARD_FP=""; SHARD_SFP=""; SHARD_TURN=""
+  # shellcheck disable=SC2066  # one pass on purpose: `continue` in the lines below ends this ticket
+  for K in "$1"; do
     if triage_shard_held "$HARNESS/locks/triage-key-$PROJECT-$K.lock"; then
       SHARD_HELD="$SHARD_HELD $K"; SHARD_HELD_N=$((SHARD_HELD_N+1)); continue
     fi
@@ -343,8 +381,65 @@ if [ "$SHARD_ON" = 1 ]; then
       echo "$STAMP [$PROJECT] triage shards: $K skipped — build running ($SHARD_BWHY); no shard bought, no slot used, re-offered next tick" >> "$LOG"
       SHARD_BUILD="$SHARD_BUILD $K"; continue
     fi
+    # >>> shard overlap verdict
+    # This shard's own line of the tick's overlap schedule (BH-475). Asked per
+    # key rather than handing every shard the whole graph: a shard owns exactly
+    # one ticket, and the other keys' waves are another session's business.
+    # Fail-open like the tick's own feed — no script, no answer, no sentence.
+    # Marker-delimited so tests/overlap-schedule-test.sh drives these exact
+    # lines against a stub scheduler instead of grepping the source for them.
+    SHARD_OV=""
+    [ -x "$HARNESS/bin/overlap-schedule.sh" ] && \
+      SHARD_OV=$("$HARNESS/bin/overlap-schedule.sh" "$PROJECT" --key "$K" 2>/dev/null)
+    # <<< shard overlap verdict
+    SHARD_GO=1
+  done
+  SHARD_V=lost
+  if [ -n "$SHARD_GO" ]; then SHARD_V=go
+  elif [ -n "$SHARD_HELD" ]; then SHARD_V=held
+  elif [ -n "$SHARD_RPARK" ]; then SHARD_V=rpark
+  elif [ -n "$SHARD_TSS" ]; then SHARD_V=tss
+  elif [ -n "$SHARD_SAME" ]; then SHARD_V=same
+  elif [ -n "$SHARD_NOSIG" ]; then SHARD_V=nosig
+  elif [ -n "$SHARD_BUILD" ]; then SHARD_V=build
+  fi
+  printf '%s' "$SHARD_OV" > "$SHARD_PREP/$1.ov"
+  printf '%s\n%s\n%s\n%s\n' "$SHARD_V" "$SHARD_FP" "$SHARD_SFP" "$SHARD_TURN" > "$SHARD_PREP/$1.tmp" \
+    && mv -f "$SHARD_PREP/$1.tmp" "$SHARD_PREP/$1"
+  )
+  SHARD_KEYS=$(cut -f1 "$SHARD_UNITS" | awk '!seen[$0]++')
+  SHARD_PIDS=""; SHARD_PN=0
+  for K in $SHARD_KEYS; do
+    [ -n "$SHARD_PREP" ] || break
+    _rt_shard_prep "$K" &
+    SHARD_PIDS="$SHARD_PIDS $!"; SHARD_PN=$((SHARD_PN+1))
+    if [ "$SHARD_PN" -ge "$SHARD_CONC" ]; then
+      for SHARD_PID in $SHARD_PIDS; do wait "$SHARD_PID" 2>/dev/null; done
+      SHARD_PIDS=""; SHARD_PN=0
+    fi
+  done
+  for SHARD_PID in $SHARD_PIDS; do wait "$SHARD_PID" 2>/dev/null; done
+  # <<< shard prepare
+  for K in $SHARD_KEYS; do
+    SHARD_V=lost; SHARD_FP=""; SHARD_SFP=""; SHARD_TURN=""; SHARD_OV=""
+    [ -n "$SHARD_PREP" ] && [ -r "$SHARD_PREP/$K" ] && { read -r SHARD_V; read -r SHARD_FP; read -r SHARD_SFP; read -r SHARD_TURN; } < "$SHARD_PREP/$K"
+    case "$SHARD_V" in
+      go)    SHARD_OV=$(cat "$SHARD_PREP/$K.ov" 2>/dev/null) ;;
+      held)  SHARD_HELD="$SHARD_HELD $K"; SHARD_HELD_N=$((SHARD_HELD_N+1)); continue ;;
+      rpark) SHARD_RPARK="$SHARD_RPARK $K"; continue ;;
+      tss)   SHARD_TSS="$SHARD_TSS $K"; continue ;;
+      same)  SHARD_SAME="$SHARD_SAME $K"; continue ;;
+      nosig) SHARD_NOSIG="$SHARD_NOSIG $K"; continue ;;
+      build) SHARD_BUILD="$SHARD_BUILD $K"; continue ;;
+      *)     echo "$STAMP [$PROJECT] triage shards: $K has no prepare answer (its worker died) — left in scope for the next tick" >> "$LOG"
+             SHARD_LEFT="$SHARD_LEFT $K"; continue ;;
+    esac
     if [ "$SHARD_MAX" -gt 0 ] && [ "$SHARD_INFLIGHT" -ge "$SHARD_MAX" ]; then
       SHARD_LEFT="$SHARD_LEFT $K"; continue
+    fi
+    # BH-10267: this tick has started its SHARD_CONC sessions.
+    if [ "$SHARD_CONC_ON" = 1 ] && [ "$SHARD_N" -ge "$SHARD_CONC" ]; then
+      SHARD_CONCHIT=1; SHARD_LEFT="$SHARD_LEFT $K"; continue
     fi
     # The dollar ceiling is checked against the rows that already exist, not
     # against a forecast: the shards this tick launches bill while they run, so
@@ -360,17 +455,6 @@ if [ "$SHARD_ON" = 1 ]; then
         SHARD_LEFT="$SHARD_LEFT $K"; continue
       fi
     fi
-    # >>> shard overlap verdict
-    # This shard's own line of the tick's overlap schedule (BH-475). Asked per
-    # key rather than handing every shard the whole graph: a shard owns exactly
-    # one ticket, and the other keys' waves are another session's business.
-    # Fail-open like the tick's own feed — no script, no answer, no sentence.
-    # Marker-delimited so tests/overlap-schedule-test.sh drives these exact
-    # lines against a stub scheduler instead of grepping the source for them.
-    SHARD_OV=""
-    [ -x "$HARNESS/bin/overlap-schedule.sh" ] && \
-      SHARD_OV=$("$HARNESS/bin/overlap-schedule.sh" "$PROJECT" --key "$K" 2>/dev/null)
-    # <<< shard overlap verdict
     SHARD_LINES=$(awk -F'\t' -v k="$K" '$1==k' "$SHARD_UNITS")
     SHARD_BOARD=$(printf '%s\n' "$SHARD_LINES" | awk -F'\t' '$2=="board"{print $3}')
     SHARD_QUEUE=$(printf '%s\n' "$SHARD_LINES" | awk -F'\t' '$2=="queue"{print $3}')
@@ -484,13 +568,15 @@ $SHARD_SOP"
   # queuefp drops the gate's PR-state vector with it, which is exactly why the
   # fingerprint stopped reading that file. The ledger is carried forward across
   # every cap deferral so the keys the cap did NOT withhold stay unchanged.
-  { [ "$SHARD_MAX" -gt 0 ] || [ -n "$SHARD_CAPHIT" ]; } && [ -n "$SHARD_LEFT" ] \
+  { [ "$SHARD_MAX" -gt 0 ] || [ -n "$SHARD_CAPHIT" ] || [ -n "$SHARD_CONCHIT" ]; } && [ -n "$SHARD_LEFT" ] \
     && rm -f "$HARNESS/state/$PROJECT.queuefp" "$HARNESS/state/$PROJECT.sweepfp"
   rm -f "$SHARD_UNITS"
+  [ -n "${SHARD_PREP:-}" ] && [ -d "$SHARD_PREP" ] && rm -rf "$SHARD_PREP"
   LANE_TICK dispatch
   SHARD_LEFT_TXT=""
   if [ -n "$SHARD_LEFT" ]; then
     if [ -n "$SHARD_CAPHIT" ]; then SHARD_LEFT_TXT=" — deferred to the next tick (cap $SHARD_CAPHIT):$SHARD_LEFT"
+    elif [ -n "$SHARD_CONCHIT" ]; then SHARD_LEFT_TXT=" — left in scope (concurrency $SHARD_CONC):$SHARD_LEFT"
     elif [ "$SHARD_MAX" -gt 0 ]; then SHARD_LEFT_TXT=" — left in scope (cap $SHARD_MAX):$SHARD_LEFT"
     else SHARD_LEFT_TXT=" — left in scope:$SHARD_LEFT"; fi
   fi

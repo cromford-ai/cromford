@@ -15,6 +15,8 @@
 #   or s-<sha12>, at most                  when the wake sync ran and no
 #   GH_CACHE_EVENT_MAX_S old (or one       .wake-down exists; the sync drops a
 #   ghc_sweep_covers vouches for)          changed object's entry first
+#   a repo's pulls or issues list or       the same, but only while
+#   search/issues entry (tag <repo>~r)     ghc_sweep_covers vouches for it
 #   any other entry past the TTL           one request with If-None-Match: a
 #                                          304 replays the entry and resets its
 #                                          fetch time (served `304`); a 200
@@ -278,10 +280,19 @@ ghc_touch() {
 }
 
 # ghc_drop <glob…> — remove the entries each glob names (expanded HERE, so the
-# caller passes it quoted); a glob that matches nothing is a no-op.
+# caller passes it quoted); a glob that matches nothing is a no-op. A drop of a
+# repo's lists (<dir>/<repo>~r~*) or of everything (<dir>/*~*~*) first writes
+# its time to <dir>/.rdrop.<repo> or <dir>/.rdrop._all: ghc_sweep_covers never
+# vouches for a list entry fetched at or before that time.
 ghc_drop() {
-  local g f
+  local g f b r
   for g in "$@"; do
+    b="${g##*/}"; r=""
+    case "$b" in '*~*~*') r=_all ;; *'~r~*') r="${b%'~r~*'}"; [[ "$r" =~ ^[a-z0-9._-]+__[a-z0-9._-]+$ ]] || r="" ;; esac
+    if [ -n "$r" ] && [ -d "${g%/*}" ]; then
+      { printf '%s\n' "$(ghc_now)" > "${g%/*}/.rdrop.$r.$$" && mv -f "${g%/*}/.rdrop.$r.$$" "${g%/*}/.rdrop.$r"; } 2>/dev/null
+      rm -f "${g%/*}/.rdrop.$r.$$" 2>/dev/null
+    fi
     for f in $g; do [ -f "$f" ] && rm -f "$f" 2>/dev/null; done   # unquoted on purpose: $g is the glob
   done
   return 0
@@ -468,13 +479,16 @@ ghc_main() {
         rm -rf "$work"
         return 0
       fi
-    elif [ "$GHC_EVENT_MAX" -gt 0 ] && [ "$age" -gt "$GHC_TTL" ] && [[ "$tag" =~ ~(n-[0-9]+|s-[0-9a-f]+)$ ]]; then
+    elif [ "$GHC_EVENT_MAX" -gt 0 ] && [ "$age" -gt "$GHC_TTL" ] && { [[ "$tag" =~ ~(n-[0-9]+|s-[0-9a-f]+)$ ]] \
+         || { [[ "$tag" =~ ^[^_].*~r$ ]] && [[ "${GHC_LPATH%%\?*}" =~ ^(repos/[^/]+/[^/]+/(pulls|issues)|search/issues)$ ]]; }; }; then
       # Past the TTL, scoped to one PR, issue or sha: the wake feed says when it
       # changed. Serve it while the feed is healthy, up to GHC_EVENT_MAX old.
+      # A repo's PR/issue list or search (tag <repo>~r, BH-9453) is served only
+      # while ghc_sweep_covers vouches for it, never on its age alone.
       ghc_wake_sync "$dir" "$now"; ws=$?
       if [ "$ws" = 0 ] && [ ! -e "$dir/.wake-down" ]; then
         if cp "$f" "$work/e" 2>/dev/null && ghc_read "$work/e"; then
-          if [ $((now - GHC_E_AT)) -le "$GHC_EVENT_MAX" ] || ghc_sweep_covers "$dir" "$tag" "$GHC_E_AT"; then
+          if { [[ "$tag" != *~r ]] && [ $((now - GHC_E_AT)) -le "$GHC_EVENT_MAX" ]; } || ghc_sweep_covers "$dir" "$tag" "$GHC_E_AT"; then
             ghc_replay "$work/e" cache "$GHC_INCLUDE"
             GHC_RC=$GHC_E_RC; GHC_SERVED=cache
             rm -rf "$work"

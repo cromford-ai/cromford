@@ -1,0 +1,12 @@
+{
+  "env": "GH_CACHE_SWEEP_OVERLAP_S",
+  "read_in": "bin/gh-cache-sweep.sh",
+  "type": "int",
+  "default": 120,
+  "min": 0,
+  "max": 3600,
+  "unit": "seconds",
+  "zero_means": null,
+  "note": "BH-9453: the issues window starts at the previous sweep start minus this, so clock skew does not lose a row. Not a whole number is the code fallback 120.",
+  "settable": true
+}

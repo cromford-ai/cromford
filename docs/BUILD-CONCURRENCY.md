@@ -538,6 +538,12 @@ TRIAGE_SHARDS=1       # default. 0 (or flags/triage-shards-off) restores the
                       # single session over the whole scope, byte for byte
 TRIAGE_SHARDS_MAX=0   # default: no cap, no census, nothing withheld.
                       # >0 caps CONCURRENT shards on this box (all projects)
+TRIAGE_SHARD_CONCURRENCY=20  # BH-10267: tickets one tick prepares at the same time, and
+                      # the most sessions one tick starts (this tick, this project;
+                      # not a box census). 1 = one ticket and one session per tick.
+                      # Rows: lane.run-triage[.<project>].triage_shard_concurrency
+TRIAGE_SHARD_MEM_MB=300      # free memory for each shard; lowers the number for one
+                      # tick (logged as `concurrency lowered`). 0 = no memory guard
 TRIAGE_SHARD_TIMEOUT=10800   # per-shard ceiling; a ticket that needs an hour still gets one
 ```
 

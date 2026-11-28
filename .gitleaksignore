@@ -35,8 +35,8 @@ tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-fp-ledger.bh-9064-test.sh:generic-api-key:91
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
 tests/agent-call-ledger-client.bh-9064-test.sh:generic-api-key:41
-tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
 tests/archie-heartbeat.bh-9127-test.sh:github-pat:42
+tests/archie-heartbeat.bh-9127-test.sh:generic-api-key:42
 tests/archie-merge.bh-9212-test.sh:generic-api-key:444
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
 tests/auth-canary-daily.bh-9125-test.sh:generic-api-key:115
@@ -107,6 +107,7 @@ tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:122
 tests/gh-app-ratchet-owner.bh-1984-test.sh:generic-api-key:135
 tests/gh-budget-report-served.bh-8066-test.sh:generic-api-key:102
 tests/gh-cache-event-valid.bh-9451-test.sh:generic-api-key:38
+tests/gh-cache-sweep.bh-9417-test.sh:generic-api-key:42
 tests/gh-default-auth-lanes-test.sh:generic-api-key:272
 tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:43
 tests/gh-shim-cache.bh-8066-test.sh:generic-api-key:464
@@ -136,7 +137,7 @@ tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:38
 tests/lead-report-transcript.bh-5915-test.sh:generic-api-key:114
 tests/lead-review-report.bh-8945-test.sh:generic-api-key:55
 tests/lead-review-report.bh-8945-test.sh:generic-api-key:145
-tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:101
+tests/lead-reviews-lib.bh-1948-test.sh:generic-api-key:104
 tests/lib-root-records.bh-2613-test.sh:generic-api-key:296
 tests/lib/box-move-fixture.bh-8322.sh:generic-api-key:23
 tests/lib/box-move-isolation-fixture.bh-8325.sh:generic-api-key:27

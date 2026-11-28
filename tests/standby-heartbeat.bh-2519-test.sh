@@ -43,7 +43,9 @@ cat > "$T/fakebin/curl" <<'SH'
 #!/bin/bash
 url=""; body=""; auth=noauth; prev=""
 for a in "$@"; do
-  case "$prev" in --data-binary|--data) body=$a ;; -H) case "$a" in authorization:*) auth=auth ;; esac ;; esac
+  case "$prev" in --data-binary|--data) body=$a ;; -H) case "$a" in authorization:*) auth=auth ;;
+    # TEST-CHANGE (BH-9946): the jobs bearer now rides on a curl fd (-H @/dev/fd/3).
+    @/dev/fd/*) grep -qi '^authorization: Bearer ' "${a#@}" 2>/dev/null && auth=auth ;; esac ;; esac
   case "$a" in http*://*) url=$a ;; esac
   prev=$a
 done

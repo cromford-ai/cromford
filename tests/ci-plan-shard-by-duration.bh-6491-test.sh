@@ -36,6 +36,12 @@ HEADSHA=$(git -C "$DIR" rev-parse HEAD 2>/dev/null) || HEADSHA=0123456789abcdef0
 # The selection: 93 suites. d0001..d0005 weigh 360 s; d0006..d0045 are in the
 # file at 10 s; d0046..d0093 are not in it and weigh the file median (10 s).
 : > "$T/sel"; for ((i = 1; i <= 93; i++)); do printf 'tests/d%04d-test.sh\n' "$i" >> "$T/sel"; done
+# REGN: the `*` rows of the REAL catalog/ci-batch-regression.d/ (BH-9439). The
+# planner's regression union reads the real bin/test-impact.sh, never the fake
+# seam, so each batch here runs the 93 plus these; the counts add REGN exactly.
+printf 'docs/x.md\n' > "$T/reg.changed"
+REGN=$( ( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg.changed" ) 2>/dev/null | awk -F'\t' '$2 == "*" { print $1 }' \
+  | LC_ALL=C sort -u | while read -r r; do [ -f "$DIR/$r" ] && echo "$r"; done | grep -c .)
 : > "$T/all"; for ((i = 1; i <= 980; i++)); do printf 'tests/d%04d-test.sh\n' "$i" >> "$T/all"; done
 mkdur() { # mkdur <file> — the 45-row ledger file of a real fetch
   { echo "# source: api"
@@ -87,8 +93,8 @@ maxshard() {
 # ── D1. sizing by time: at least 3 shards, none over 12 minutes.
 bplan CI_PLAN_DURATIONS_FILE="$T/dur.tsv"
 N1=$(out n)
-{ [ "$RC" = 0 ] && [ "$(out count)" = 93 ] && has "time (api), $N1 shard(s)" "$(out sizing)" && [ "${N1:-0}" -ge 3 ]; } && ok \
-  || bad "D1: 93 suites with five 360 s ones must be time-sized to >= 3 shards (rc=$RC count=$(out count) n=$N1 sizing=$(out sizing)) [$OUT] [$ERR]"
+{ [ "$RC" = 0 ] && [ "$(out count)" = $((93 + REGN)) ] && has "time (api), $N1 shard(s)" "$(out sizing)" && [ "${N1:-0}" -ge 3 ]; } && ok \
+  || bad "D1: 93 (+$REGN regression *) suites with five 360 s ones must be time-sized to >= 3 shards (rc=$RC count=$(out count) n=$N1 sizing=$(out sizing)) [$OUT] [$ERR]"
 if [ "${N1:-0}" -ge 1 ]; then
   M1=$(maxshard "$N1" "$T/dur.tsv")
   [ "${M1:-999999999}" -le 720000 ] && ok || bad "D1: every shard must be <= 720 s, the largest is ${M1} ms at n=$N1"
@@ -97,7 +103,7 @@ if [ "${N1:-0}" -ge 1 ]; then
   [ -n "$P1" ] && [ "$P1" = "$(( (M1 + 500) / 1000 ))" ] && ok || bad "D1: slowest est ${P1}s must be the split's max $(( (${M1:-0} + 500) / 1000 ))s [$(sizing)]"
 else bad "D1: no n to split by"; fi
 has "of budget 480s, cap 8" "$(sizing)" && ok || bad "D1: the default budget 480 s and cap 8 [$(sizing)]"
-has "impact: 93 of 980 suites (" "$OUT" && has " — $N1 shard(s), mode=batch-selected" "$OUT" && ok \
+has "impact: $((93 + REGN)) of 980 suites (" "$OUT" && has " — $N1 shard(s), mode=batch-selected" "$OUT" && ok \
   || bad "D1: the SUMMARY line keeps its format and carries n [$OUT]"
 
 # ── D2. no ledger: the count rule, logged.
@@ -105,14 +111,14 @@ for f in "$T/missing.tsv" "$T/none.tsv"; do
   bplan CI_PLAN_DURATIONS_FILE="$f"
   { [ "$RC" = 0 ] && [ "$(out n)" = 1 ]; } && ok \
     || bad "D2 $(basename "$f"): the count rule n=1, rc 0 (rc=$RC n=$(out n)) [$OUT] [$ERR]"
-  case "$(sizing)" in "count, ceil(93/120) cap 8 ("*")") ok ;; *) bad "D2 $(basename "$f"): the logged fallback line [$(sizing)]" ;; esac
+  case "$(sizing)" in "count, ceil($((93 + REGN))/120) cap 8 ("*")") ok ;; *) bad "D2 $(basename "$f"): the logged fallback line [$(sizing)]" ;; esac
 done
 has "(durations file unreadable)" "$(bplan CI_PLAN_DURATIONS_FILE="$T/missing.tsv"; sizing)" && ok || bad "D2: the missing file says why"
 has "(no data rows)" "$(bplan CI_PLAN_DURATIONS_FILE="$T/none.tsv"; sizing)" && ok || bad "D2: the none file says why"
 
 # ── D3. no file at all: the count rule, said as such.
 bplan
-{ [ "$RC" = 0 ] && [ "$(out n)" = 1 ] && [ "$(sizing)" = "count, ceil(93/120) cap 8 (no durations file)" ]; } && ok \
+{ [ "$RC" = 0 ] && [ "$(out n)" = 1 ] && [ "$(sizing)" = "count, ceil($((93 + REGN))/120) cap 8 (no durations file)" ]; } && ok \
   || bad "D3: unset must keep the count rule and say so (rc=$RC n=$(out n)) [$(sizing)]"
 
 # ── D4. the budget knob.
@@ -135,8 +141,8 @@ EXPECT="$N1" bplan CI_PLAN_DURATIONS_FILE="$T/flat.tsv"
 mkdir -p "$T/reuse"
 for ((i = 1; i <= 5; i++)); do printf 'tests/d%04d-test.sh\t6001\t360\n' "$i"; done > "$T/reuse/reused.tsv"
 bplan CI_PLAN_DURATIONS_FILE="$T/dur.tsv" CI_PLAN_REUSED_FILE="$T/reuse/reused.tsv"
-{ [ "$RC" = 0 ] && [ "$(out count)" = 88 ] && has "time (api)" "$(sizing)" && [ "${N1:-0}" -gt "$(out n)" ]; } && ok \
-  || bad "D6: sizing must run on the 88 that run, so n drops below $N1 (count=$(out count) n=$(out n)) [$OUT] [$ERR]"
+{ [ "$RC" = 0 ] && [ "$(out count)" = $((88 + REGN)) ] && has "time (api)" "$(sizing)" && [ "${N1:-0}" -gt "$(out n)" ]; } && ok \
+  || bad "D6: sizing must run on the 88 (+$REGN regression *) that run, so n drops below $N1 (count=$(out count) n=$(out n)) [$OUT] [$ERR]"
 
 # ── D7. the run page: an own-title notice and the step summary.
 bplan CI_PLAN_DURATIONS_FILE="$T/dur.tsv"

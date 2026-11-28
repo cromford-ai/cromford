@@ -76,7 +76,10 @@ reset_tick() {
   model_routes_fixture "$H" "$P" || exit 1
   : > "$H/logs/READY-QUEUE.log"
 }
-tick() { env TRIAGE_SHARDS=1 "$H/bin/run-triage.sh" "$P" >/dev/null 2>&1; }
+# TEST-CHANGE BH-10267: one tick starts at most TRIAGE_SHARD_CONCURRENCY sessions
+# (default 20). This suite is about the sweep list and its cap of 30, so the
+# tick runs with the number at 30; no assertion changed.
+tick() { env TRIAGE_SHARDS=1 TRIAGE_SHARD_CONCURRENCY=30 "$H/bin/run-triage.sh" "$P" >/dev/null 2>&1; }
 SD="$H/state/triage-shards/$P"
 
 # A1 — 31 older un-commented dirs sort BEFORE the fresh -remote dir; the fresh

@@ -55,6 +55,12 @@ CI_BATCH_ESCALATE_TSV="$T/no-such.tsv" aff worker docs/x.md && ok || bad "L3: an
 # ── The real planner with a fake selector.
 mklist() { local i; : > "$1"; for ((i = 1; i <= $2; i++)); do printf 'tests/s%04d-test.sh\n' "$i" >> "$1"; done; }
 mklist "$T/all.txt" 10; mklist "$T/sel.txt" 3
+# REGN: the `*` rows of the REAL catalog/ci-batch-regression.d/ (BH-9439). The
+# planner's regression union reads the real bin/test-impact.sh, so every batch
+# plan here adds them; the B6 counts add REGN, they do not ignore it.
+printf 'docs/x.md\n' > "$T/reg-changed"
+REGN=$( ( cd "$DIR" && bin/test-impact.sh regression --changed "$T/reg-changed" ) 2>/dev/null \
+  | awk -F'\t' '$2 == "*" { print $1 }' | LC_ALL=C sort -u | while read -r s; do [ -f "$DIR/$s" ] && echo "$s"; done | grep -c .)
 cat > "$T/fake.sh" <<'FAKE'
 #!/bin/bash
 OUT=""; CMD=""
@@ -100,8 +106,8 @@ bplan "$T/rules.tsv" worker/jobs/schema.sql;               want "B3 schema.sql" 
 bplan "$T/rules.tsv" bin/lib/jobs/cost.sh;                 want "B4 bin/lib/jobs" batch-selected 0 1
 bplan "$T/rules.tsv" bin/x.sh;                             want "B5 bin/x.sh" batch-selected 0 0
 bplan "$T/rules.tsv" docs/x.md;                            want "B6 docs" batch-selected 0 0
-[ "$(grep -c . "$T/list" 2>/dev/null)" = 3 ] && ok || bad "B6: docs alone still runs a non-empty list: $(cat "$T/list" 2>/dev/null)"
-[ "$(out count)" = 3 ] && ok || bad "B6: count=3, got '$(out count)'"
+[ "$(grep -c . "$T/list" 2>/dev/null)" = $((3 + REGN)) ] && ok || bad "B6: docs alone still runs a non-empty list (3 + $REGN regression *): $(cat "$T/list" 2>/dev/null)"
+[ "$(out count)" = $((3 + REGN)) ] && ok || bad "B6: count=3 + $REGN regression *, got '$(out count)'"
 bplan "$T/rules.tsv" docs/x.md console-ui/old.js bin/old.js; want "B6 rename out of console-ui (both paths)" batch-selected 1 0
 bplan "$T/rules.tsv" docs/x.md worker/jobs/a.js console-ui/b.js; want "B6 both" batch-selected 1 1
 # BH-7287: a selection input is an infra row; spa and worker stay on in infra mode.

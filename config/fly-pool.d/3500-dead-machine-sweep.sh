@@ -13,11 +13,23 @@
 #
 # It runs ONLY with a dedicated pool app (SPRAWL GUARD, above) and ONLY on a
 # usable listing.
+#
+# BH-9407: or on the SAVED list, when every try of this tick's listing failed
+# and pool_list_saved_pick found a fresh one. That run only destroys: LIST_OK
+# stays 0 (the REAP above asked `machine status`, no observe, no requeue), the
+# orphan pass is off (a saved list misses every machine spawned after it), and
+# pool_orphan_rows_step returns at once on LIST_OK=0. The orphan cost row and
+# every gate below read the same $LISTING, so they act on the same data.
 if [ -n "${POOL_APP:-}" ]; then
   SWEEP_F="$POOL/.sweep.json"   # dotfile: invisible to every *.json glob that reads this dir
-  if [ "$LIST_OK" != 1 ]; then
-    jq -nc --arg at "$(STAMP)" --arg why "${LIST_WHY:-no answer}" \
-      '{at:$at,listing:"failed",reason:$why}' > "$SWEEP_F.tmp" 2>/dev/null \
+  SWEEP_SRC=live
+  if [ "$LIST_OK" != 1 ] && [ -n "${LIST_SAVED:-}" ] && cp -f "$LIST_SAVED" "$LISTING" 2>/dev/null; then
+    SWEEP_SRC=saved
+  fi
+  if [ "$LIST_OK" != 1 ] && [ "$SWEEP_SRC" != saved ]; then
+    jq -nc --arg at "$(STAMP)" --arg why "${LIST_WHY:-no answer}" --arg c "${LIST_CLASS:-other}" \
+      --argjson n "${LIST_TRIES:-0}" \
+      '{at:$at,listing:"failed",reason:$why,class:$c,tries:$n}' > "$SWEEP_F.tmp" 2>/dev/null \
       && mv "$SWEEP_F.tmp" "$SWEEP_F" || rm -f "$SWEEP_F.tmp"
   else
     # KNOBS, resolved once per tick, with the fallback documented in
@@ -102,6 +114,7 @@ if [ -n "${POOL_APP:-}" ]; then
     # partial Fly listing orphans every row at once.
     ORPH=()
     for OMF in "$POOL"/*.json; do
+      [ "$SWEEP_SRC" = live ] || break
       [ -f "$OMF" ] || continue
       OMID=$(jq -r '.machine // ""' "$OMF" 2>/dev/null)
       [ -n "$OMID" ] && [ "$OMID" != null ] || continue
@@ -127,16 +140,22 @@ if [ -n "${POOL_APP:-}" ]; then
     jq -nc --arg at "$(STAMP)" --argjson listed "$NLISTED" --argjson ttl "$TTL_S" \
       --argjson capped "$CAPPED" --argjson stopped "$SW_STOPPED" --argjson unaged "$SW_UNAGED" \
       --argjson destroyed "$SW_DESTROYED" --argjson df "$SW_FAILED" --argjson oj "$SW_ORPHANS" \
-      '{at:$at,listing:"ok",listed:$listed,ttl_s:$ttl,capped:$capped,stopped:$stopped,
-        unaged:$unaged,destroyed:$destroyed,destroy_failed:$df,orphan_jobs:$oj}' \
+      --arg src "$SWEEP_SRC" --arg sage "${LIST_SAVED_AGE:-}" --arg c "${LIST_CLASS:-}" \
+      --arg why "${LIST_WHY:-}" --argjson n "${LIST_TRIES:-0}" \
+      '{at:$at,listing:(if $src=="saved" then "saved" else "ok" end),listed:$listed,ttl_s:$ttl,capped:$capped,stopped:$stopped,
+        unaged:$unaged,destroyed:$destroyed,destroy_failed:$df,orphan_jobs:$oj}
+       + (if $src=="saved" then {saved_age_s:($sage|tonumber? // null),class:$c,reason:$why,tries:$n} else {} end)' \
       > "$SWEEP_F.tmp" 2>/dev/null && mv "$SWEEP_F.tmp" "$SWEEP_F" || rm -f "$SWEEP_F.tmp"
     # ONE GREPPABLE LINE, and only when there is something to say: a count that
     # lives only in a JSON field is a count nobody reads (BH-660 asks for exactly
     # this). A clean tick stays quiet.
     if [ $((NSTOP + NUNAGED + NDESTROY + NFAIL + NORPH)) -gt 0 ]; then
-      say "sweep $P: listed=$NLISTED stopped=$((NSTOP + NUNAGED)) destroyed=$NDESTROY destroy_failed=$NFAIL orphans=$NORPH ttl=${TTL_S}s$([ "$CAPPED" = true ] && echo " capped")"
+      say "sweep $P: listed=$NLISTED stopped=$((NSTOP + NUNAGED)) destroyed=$NDESTROY destroy_failed=$NFAIL orphans=$NORPH ttl=${TTL_S}s$([ "$CAPPED" = true ] && echo " capped")$([ "$SWEEP_SRC" = saved ] && echo " listing=saved(${LIST_SAVED_AGE}s)")"
     fi
   fi
+  # BH-9407: keep this tick's usable list (or rewrite the saved one) minus every
+  # machine destroyed this tick, for the next tick whose listing fails.
+  command -v pool_list_save_good >/dev/null 2>&1 && pool_list_save_good
 fi
 # <<< dead-machine sweep
 

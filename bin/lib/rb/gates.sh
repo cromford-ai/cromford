@@ -837,6 +837,8 @@ if [ "${BUILDER_EXEC:-}" != 1 ] && [ -z "${RESUME_BUILD:-}" ]; then
 fi
 # <<< dispatch mode gate
 
+. "$RB_GATES_D/onboard-canary.sh"
+
 # >>> scheduler enforce gate (BH-6979)
 # With the settings row scheduler.mode=enforce, a ticket of a project in
 # scheduler.projects starts only from the scheduler's ready set

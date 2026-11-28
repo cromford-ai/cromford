@@ -7,6 +7,8 @@
 #                              [--map <file>]
 #   bin/impact-learn.sh expire --counts <file> --passes N [--out-dir <dir>]
 #                              [--keep <file>]
+#   bin/impact-learn.sh regression --runs <dir> --now <epoch> --days N
+#                              --min N [--root <dir>] [--list]
 #
 # --event     ONE dequeue_events row as JSON, the object shape
 #             dqw_events_list (bin/lib/jobs/dequeue-watch.sh) returns in .rows[].
@@ -61,6 +63,30 @@
 # the counts cannot be read, a line is malformed, a (date, suite) repeats
 # (nothing deleted), or a file is still there after rm (the files before it
 # are deleted); 2 usage (nothing read).
+#
+# REGRESSION (BH-9439). A suite that turned --min or more merge-queue batches
+# red in --days days, and that no member gate ran, gets a `*` row in the
+# batch-fail regression list, so every builder gate runs it. --runs is the
+# records directory of bin/ci-batch-red-report.sh (state/ci-batch-red/runs; its
+# RECORD FORMAT). A record counts for suite S when its header is `concl red`,
+# not `unread`, and created at or after now - days*86400; it has a line
+# `fail\t<S>\t<rc digits|trace>` with S a tests/[mc/]<x>.sh name (never a
+# `job:` failure); it has at least one `gate` line; no gate line has the
+# verdict `?`; and no gate line's csv names S. S qualifies at >= --min records.
+# --min 0 is off: nothing is read or printed.
+# --list prints `regression <S> red=<n> runs=<csv>` per suite and writes
+# nothing. Else, per suite: a suite that is not a file in --root, or that has a
+# `*` row in any <root>/catalog/ci-batch-regression.d/*.txt (this verb's own
+# file too, so a re-learned suite writes nothing), prints `keep <S> (<why>)`.
+# Else it writes catalog/ci-batch-regression.d/learned-<k>.txt, <k> the first
+# 16 hex of sha1(<S>), tmp + mv: one comment line `# bin/impact-learn.sh
+# regression: <S> turned <n> merge-queue batches red in <d> days (runs
+# <csv>); no member gate ran it.` and `<S>\t*`, and prints
+# `regression <S> red=<n> file=<path>`. The last line is
+# `impact-learn: regression written=<w> kept=<k>`.
+#
+# Exit (regression): 0 done (no records directory is 0 rows); 1 the records
+# cannot be read or a write failed (the files before it are written); 2 usage.
 set -uo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -71,7 +97,7 @@ OUT_DIR=""
 MAX_PATHS="${IMPACT_LEARN_MAX_PATHS:-10}"
 MAP=""
 
-usage() { sed -n '5,9p' "$0" >&2; exit 2; }
+usage() { sed -n '5,11p' "$0" >&2; exit 2; }
 
 # real_day <s> — true when <s> is a YYYY-MM-DD calendar day.
 real_day() {
@@ -144,9 +170,101 @@ expire_main() {
   return 0
 }
 
+# regression_main <args> — the regression verb (BH-9439); its own exit code.
+regression_main() {
+  local runs="" now="" days="" min="" root="$ROOT" lst=0 f s n rs k rd lf
+  local -a recs=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --list) lst=1 ;;
+      --runs|--now|--days|--min|--root)
+        [ $# -ge 2 ] || { echo "impact-learn: $1 needs a value" >&2; return 2; }
+        case "$1" in
+          --runs) runs="$2" ;; --now) now="$2" ;; --days) days="$2" ;;
+          --min) min="$2" ;; --root) root="$2" ;;
+        esac
+        shift ;;
+      *) echo "impact-learn: unknown argument '$1'" >&2; sed -n '5,11p' "$0" >&2; return 2 ;;
+    esac
+    shift
+  done
+  [ -n "$runs" ] || { echo "impact-learn: regression needs --runs <dir>" >&2; return 2; }
+  [[ "$now" =~ ^[0-9]{1,12}$ ]] || { echo "impact-learn: --now must be an epoch, got '$now'" >&2; return 2; }
+  [[ "$days" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "impact-learn: --days must be a positive integer, got '$days'" >&2; return 2; }
+  [[ "$min" =~ ^[0-9]{1,4}$ ]] || { echo "impact-learn: --min must be a whole number, got '$min'" >&2; return 2; }
+  [ "$((10#$min))" -gt 0 ] || return 0
+  min=$((10#$min)); days=$((10#$days))
+  rd="$root/catalog/ci-batch-regression.d"
+
+  if [ -d "$runs" ]; then
+    for f in "$runs"/[0-9]*; do
+      case "$f" in *.strikes|*.tmp) continue ;; esac
+      [ -f "$f" ] && recs+=("$f")
+    done
+  fi
+  # rows: `<suite>\t<n>\t<run csv>` for each suite at --min or more, by suite.
+  local rows="" written=0 kept=0
+  if [ "${#recs[@]}" -gt 0 ]; then
+    rows=$(awk -v cut="$(( now - days * 86400 ))" '
+      FNR == 1 {
+        n++; split($0, h, " ")
+        U[n] = (h[1] == "run" && h[2] ~ /^[0-9]+$/ && h[3] == "attempt" && h[5] == "created" && h[7] == "concl" \
+                && h[9] == "tree" && h[11] == "prs" && h[8] == "red" && h[13] != "unread" && h[6] + 0 >= cut)
+        ID[n] = h[2]; next
+      }
+      !U[n] { next }
+      { split($0, f, "\t") }
+      f[1] == "fail" && f[2] ~ /^tests\/(mc\/)?[A-Za-z0-9._-]+\.sh$/ && (f[3] ~ /^[0-9]+$/ || f[3] == "trace") {
+        if (!((n, f[2]) in FL)) { FL[n, f[2]] = 1; SL[n] = SL[n] SUBSEP f[2] }; next }
+      f[1] == "gate" { NG[n]++; if (f[3] == "?" || f[3] == "") BAD[n] = 1
+        m = split(f[4], g, ","); for (i = 1; i <= m; i++) GR[n, g[i]] = 1; next }
+      END {
+        for (r = 1; r <= n; r++) {
+          if (!U[r] || NG[r] == 0 || BAD[r]) continue
+          m = split(substr(SL[r], 2), fs, SUBSEP)
+          for (i = 1; i <= m; i++) if (!((r, fs[i]) in GR)) print fs[i] "\t" ID[r]
+        }
+      }' "${recs[@]}" 2>/dev/null | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -k2,2n \
+      | awk -F'\t' -v min="$min" '
+          $1 != s { if (s != "" && c >= min) print s "\t" c "\t" l; s = $1; c = 0; l = "" }
+          { c++; l = (l == "" ? $2 : l "," $2) }
+          END { if (s != "" && c >= min) print s "\t" c "\t" l }') || {
+      echo "impact-learn: cannot read the run records in $runs" >&2; return 1; }
+  fi
+  if [ "$lst" = 1 ]; then
+    [ -z "$rows" ] || awk -F'\t' '{ printf "regression %s red=%s runs=%s\n", $1, $2, $3 }' <<<"$rows"
+    return 0
+  fi
+  while IFS=$'\t' read -r s n rs; do
+    [ -n "$s" ] || continue
+    if [ ! -f "$root/$s" ]; then echo "keep $s (no such suite)"; kept=$((kept + 1)); continue; fi
+    f=""
+    for lf in "$rd"/*.txt; do
+      [ -f "$lf" ] || continue
+      awk -F'\t' -v s="$s" '/^[ \t]*(#|$)/ { next }
+        $1 == s { m = split($2, a, ","); for (i = 1; i <= m; i++) { gsub(/^[ ]+|[ ]+$/, "", a[i]); if (a[i] == "*") { found = 1; exit } } }
+        END { exit !found }' "$lf" && { f="$lf"; break; }
+    done
+    if [ -n "$f" ]; then echo "keep $s (a * row in $f)"; kept=$((kept + 1)); continue; fi
+    k=$(printf '%s' "$s" | sha1sum | cut -c1-16) && [ -n "$k" ] || { echo "impact-learn: cannot hash $s" >&2; return 1; }
+    lf="$rd/learned-$k.txt"
+    mkdir -p "$rd" 2>/dev/null && {
+      printf '# bin/impact-learn.sh regression: %s turned %s merge-queue batches red in %s days (runs %s); no member gate ran it.\n' \
+        "$s" "$n" "$days" "$rs"
+      printf '%s\t*\n' "$s"
+    } > "$rd/.learned-$k.txt.tmp" 2>/dev/null && mv "$rd/.learned-$k.txt.tmp" "$lf" 2>/dev/null && [ -f "$lf" ] || {
+      rm -f "$rd/.learned-$k.txt.tmp" 2>/dev/null
+      echo "impact-learn: cannot write $lf — $written row(s) written before it" >&2; return 1; }
+    echo "regression $s red=$n file=$lf"; written=$((written + 1))
+  done <<<"$rows"
+  echo "impact-learn: regression written=$written kept=$kept"
+  return 0
+}
+
 case "${1:-}" in
   record) ;;
   expire) shift; expire_main "$@"; exit $? ;;
+  regression) shift; regression_main "$@"; exit $? ;;
   *) usage ;;
 esac
 shift

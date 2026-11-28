@@ -1,0 +1,11 @@
+{
+  "env": "CI_BATCH_RED_GROUP_SCAN",
+  "read_in": "bin/ci-batch-red-report.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 100,
+  "unit": "runs",
+  "zero_means": null,
+  "note": "BH-9439: for each member PR of a red merge-queue batch, the lane reads the jobs of at most this many prequeue-group-gate.yml runs created before the batch, newest first, to find the member's `gate (<pr>, <head40>) / gate` job (each group run's jobs are read once a tick). A member whose job is not in those runs gets a `?` gate. A value outside 1..100 is the default. Settings key lane.ci-batch-red-report.ci_batch_red_group_scan."
+}

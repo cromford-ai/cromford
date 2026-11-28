@@ -1,0 +1,9 @@
+# @hub-lanes
+
+# ── GH SHIM CACHE SWEEP (BH-9453) ───────────────────────────────────────────
+# bin/gh-cache-sweep.sh: every GH_CACHE_SWEEP_PERIOD_S (default 900 s) it reads
+# each registry repo's open PRs and updated issues, drops the shim cache
+# entries of what changed with no webhook wake, and writes a per-repo stamp
+# that ghc_sweep_covers reads. Log: logs/gh-cache-sweep.log, one line a run.
+# Off via GH_CACHE_SWEEP=0 or flags/lane-off-gh-cache-sweep.
+*/5 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/gh-cache-sweep.sh >/dev/null 2>&1

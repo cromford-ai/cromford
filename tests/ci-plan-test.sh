@@ -71,6 +71,14 @@ mklist "$T/sel30.txt" 30
 mklist "$T/sel250.txt" 250
 : > "$T/empty.txt"
 printf 'bin/x.sh\n' > "$T/changed-bin.txt"
+# REGN: the `*` rows of the REAL catalog/ci-batch-regression.d/ (BH-9439). The
+# regression union reads the real bin/test-impact.sh (never the CI_PLAN_IMPACT
+# seam), so every batch plan of this fixture adds them. The batch counts below
+# stay exact; they add REGN, they do not ignore it.
+( cd "$DIR" && bin/test-impact.sh regression --changed "$T/changed-bin.txt" ) 2>/dev/null \
+  | awk -F'\t' '$2 == "*" { print $1 }' | LC_ALL=C sort -u \
+  | while read -r s; do [ -f "$DIR/$s" ] && echo "$s"; done > "$T/regstar.txt"
+REGN=$(grep -c . "$T/regstar.txt")
 
 plan() { # plan <event> [VAR=value ...] — one run; sets RC, OUT, GO (its GITHUB_OUTPUT)
   local ev="$1"; shift
@@ -168,7 +176,7 @@ grep -q '^select --changed' "$T/sink" && ok || bad "P2: the batch selection is b
 grep -q 'TI_EVENT=pull_request' "$T/sink" && bad "P2: the queue must not be judged as an ordinary PR: $(cat "$T/sink")" || ok
 plan pull_request TI_PR_HEAD_REF=mergify/merge-queue/0a1b2c3d TI_BASE= CI_PLAN_ESCALATION=-
 [ "$(out mode)" = full ] && ok || bad "P2: a merge-queue batch with no base must be mode=full, got '$(out mode)' [$OUT]"
-[ "$(grep -c . "$T/list")" = 980 ] && ok || bad "P2: the escalated batch must list every suite, got $(grep -c . "$T/list")"
+[ "$(grep -c . "$T/list")" = $((980 + REGN)) ] && ok || bad "P2: the escalated batch must list every suite (980 + $REGN regression *), got $(grep -c . "$T/list")"
 [ "$(out n)" = 8 ] && ok || bad "P2: 980 suites at 120 a shard is 9, capped at 8 — got '$(out n)'"
 [ "$(out escalation)" = "no batch base" ] && ok || bad "P2: the escalation must say why, got '$(out escalation)'"
 plan pull_request TI_PR_HEAD_REF=ticket/mergify/merge-queue-lookalike
@@ -246,14 +254,14 @@ plan pull_request "${QUEUE[@]}"
 lists tests/s0005-test.sh && bad "P14: a nightly-tier suite must not run in the batch" || ok
 lists tests/s0006-test.sh && ok || bad "P14: a guard whose path changed must run in the batch [$OUT]"
 lists tests/s0001-test.sh && ok || bad "P14: a suite with no tier row is batch"
-{ [ "$(out count)" = 979 ] && [ "$(grep -c . "$T/list")" = 979 ]; } && ok \
-  || bad "P14: count must be the tiered list (979), got count=$(out count) list=$(grep -c . "$T/list")"
+{ [ "$(out count)" = $((979 + REGN)) ] && [ "$(grep -c . "$T/list")" = $((979 + REGN)) ]; } && ok \
+  || bad "P14: count must be the tiered list (979 + $REGN regression *), got count=$(out count) list=$(grep -c . "$T/list")"
 has "tiers:" "$(out summary)" && ok || bad "P14: the summary must say the batch was tiered: '$(out summary)'"
 # P15. a diff that touches nothing it guards: the guard waits for the night.
 printf 'docs/x.md\n' > "$T/changed-docs.txt"
 plan pull_request "${QUEUE[@]}" CI_PLAN_CHANGED_FILE="$T/changed-docs.txt"
 lists tests/s0006-test.sh && bad "P15: a guard must skip a batch that touches nothing it guards" || ok
-[ "$(out count)" = 978 ] && ok || bad "P15: count must be 978, got $(out count)"
+[ "$(out count)" = $((978 + REGN)) ] && ok || bad "P15: count must be 978 + $REGN regression *, got $(out count)"
 has "guard tests/s0006-test.sh skipped" "$OUT" && ok || bad "P15: a skipped guard must be said in the plan log [$OUT]"
 # P16. a change to the guard itself always runs it.
 printf 'tests/s0006-test.sh\n' > "$T/changed-guard.txt"
@@ -276,7 +284,7 @@ OUT2=$("$PLAN" --tier weekly 2>&1); RC2=$?
 [ "$RC2" -eq 2 ] && ok || bad "P17: --tier takes only 'nightly' (rc=$RC2) [$OUT2]"
 # P18. a tier step that FAILS leaves the batch whole, and says so.
 plan pull_request "${QUEUE[@]}" CI_PLAN_TIERS="$T/no-such-tiers.sh"
-{ [ "$RC" -eq 0 ] && [ "$(out count)" = 980 ]; } && ok || bad "P18: a failed tier step must run every suite (rc=$RC count=$(out count))"
+{ [ "$RC" -eq 0 ] && [ "$(out count)" = $((980 + REGN)) ]; } && ok || bad "P18: a failed tier step must run every suite + $REGN regression * (rc=$RC count=$(out count))"
 has "::warning::" "$OUT" && ok || bad "P18: a failed tier step must be a warning [$OUT]"
 # P19. only the batch is tiered: an ordinary PR, a human push and a dispatch are not.
 plan pull_request CI_PLAN_TIER_FILE="$T/tiers.tsv"
@@ -288,10 +296,12 @@ plan workflow_dispatch CI_PLAN_TIER_FILE="$T/tiers.tsv"
 # P20. the REAL tier file and the REAL test-impact on a docs-only batch: the
 # nightly tier and the path-gated guards leave; the whole-tree leak guards stay.
 REAL_NIGHTLY=$(awk -F'\t' '$2 == "nightly"' "$DIR/catalog/test-tiers.tsv" | grep -c .)
+# A `*` regression row whose suite is nightly-tier runs in the batch anyway.
+REAL_REGBACK=$(awk -F'\t' -v rf="$T/regstar.txt" 'FILENAME == rf { r[$1] = 1; next } $2 == "nightly" && ($1 in r)' "$T/regstar.txt" "$DIR/catalog/test-tiers.tsv" | grep -c .)
 OUT=$(env CI_EVENT=pull_request TI_PR_HEAD_REF=mergify/merge-queue/real CI_PLAN_CHANGED_FILE="$T/changed-docs.txt" \
         GITHUB_OUTPUT="$T/go-real2" "$PLAN" --out "$T/list-real2" 2>&1); RC=$?
-{ [ "$RC" -eq 0 ] && [ "$(grep -c . "$T/list-real2")" = $((REAL_N - REAL_NIGHTLY - 1)) ]; } && ok \
-  || bad "P20: a docs-only batch runs every suite but $REAL_NIGHTLY nightly + 1 gated guard ($((REAL_N - REAL_NIGHTLY - 1))), got $(grep -c . "$T/list-real2") (rc=$RC) [$OUT]"
+{ [ "$RC" -eq 0 ] && [ "$(grep -c . "$T/list-real2")" = $((REAL_N - REAL_NIGHTLY - 1 + REAL_REGBACK)) ]; } && ok \
+  || bad "P20: a docs-only batch runs every suite but $REAL_NIGHTLY nightly + 1 gated guard, $REAL_REGBACK nightly back by a regression * row ($((REAL_N - REAL_NIGHTLY - 1 + REAL_REGBACK))), got $(grep -c . "$T/list-real2") (rc=$RC) [$OUT]"
 grep -qxF tests/pipeline-gaps-test.sh "$T/list-real2" && bad "P20: a nightly suite ran in the batch" || ok
 grep -qxF tests/share-mirror-clean-test.sh "$T/list-real2" && ok || bad "P20: the leak guards scan every path, so every batch runs them"
 grep -qxF tests/registry-no-commit-test.sh "$T/list-real2" && bad "P20: a docs-only batch touches nothing registry-no-commit guards" || ok

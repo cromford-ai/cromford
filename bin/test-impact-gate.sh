@@ -239,8 +239,9 @@
 # private ref refs/harness/fresh-main-<pid> (bounded by
 # TEST_IMPACT_GATE_FRESH_FETCH_S, 60 s; it never writes refs/remotes/origin/*),
 # merges it onto HEAD with `git merge-tree --write-tree`, snapshots that tree,
-# and runs the run list's `always` suites (the always list plus the learned `*`
-# rows) THERE instead of on HEAD. They move, they do not run twice. The order is
+# and runs the run list's `always` suites (the always list, the learned `*`
+# rows and the catalog/ci-batch-regression.d/ `*` rows: the selector prints
+# every `*` map row as `always`, BH-9439) THERE instead of on HEAD. They move, they do not run twice. The order is
 # segment A on HEAD (the --also learned tier, the fast and nightly tiers, and
 # self and reads picks), the fresh list on the merge, then the rest on HEAD;
 # all three share one budget, and the prep time is taken from it. A --also
@@ -762,8 +763,10 @@ FM=0; FM_WHY=""; FM_SHA=""; FM_PREP_S=0
 fm_off() { FM_WHY="$1"; echo "impact-gate: fresh-main: off ($1)"; }
 fresh_prep() {
   local br r tree fetch_s
-  # The run list's suites with an `always` row: the always list plus the
-  # learned `*` rows, in run-list order, after the cap and the skip list.
+  # The run list's suites with an `always` row: the always list, the learned
+  # `*` rows and the regression `*` rows (each `*` map row is also `always`;
+  # tests/test-impact-ratchets.bh-9439-test.sh F1 pins it), in run-list order,
+  # after the cap and the skip list.
   awk -F'\t' -v wf="$TMP/why" 'FILENAME == wf { if ($2 == "always") a[$1] = 1; next }
     ($0 in a) && !($0 in seen) { seen[$0] = 1; print }' "$TMP/why" "$TMP/run.list" > "$TMP/fm.suites"
   [ -s "$TMP/fm.suites" ] || { fm_off "no always or whole-repo suite in the run list"; return; }

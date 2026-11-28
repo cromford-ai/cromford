@@ -69,7 +69,7 @@ knob `ONBOARD_RUN_EXCERPT_BYTES`.
 | 4 | `box` | `obs_box` | the env stub and the crontab block on the box |
 | 5 | `clone` | `obs_clone` | `bin/bootstrap-machine.sh <project> --repos-only` |
 | 6 | `smoke` | `obs_smoke` (in `bin/onboard-run.sh`) | reads only: see below |
-| 7 | `ready` | none | beats `done`, which sets the run `done` |
+| 7 | `ready` | `bin/onboard-canary.sh --hold` | holds the project and starts the canary PR (BH-9442: no ticket builds until the canary is green in the repo's CI; see `docs/onboarding-a-repo.md`, "The canary PR"). The step's log shows the `canary:` line. It beats `done` whatever the canary answers, which sets the run `done` |
 
 Station 3 is `label` when the tracker is `github-issues`, else `tracker`.
 

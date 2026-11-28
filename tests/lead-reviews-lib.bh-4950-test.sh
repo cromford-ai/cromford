@@ -26,6 +26,9 @@ scratch_install_closure bin/jobs-client.sh "$H" >/dev/null || { echo "FAIL: cann
 # "<STUB_BODY>\n<STUB_CODE>", or exit STUB_EXIT without answering.
 cat > "$T/fakebin/curl" <<EOF
 #!/bin/bash
+# TEST-CHANGE (BH-9946): the jobs bearer now rides on a curl fd
+# (-H @/dev/fd/3), so record that fd's content into the argv log first.
+for a in "\$@"; do case "\$a" in @/dev/fd/*) cat "\${a#@}" >> "$T/log/argv" ;; esac; done
 printf '%s\n' "\$@" >> "$T/log/argv"; echo ---- >> "$T/log/argv"
 prev=""
 for a in "\$@"; do

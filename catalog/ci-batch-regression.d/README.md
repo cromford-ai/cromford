@@ -27,6 +27,20 @@ file). One row per line, tab separated:
 - A `#` line is a comment. Put the batch number and the failure class above
   each row.
 
+## Learned files (BH-9439)
+
+`bin/impact-learn-lane.sh` (step 7c) writes a second file-name class here:
+`learned-<16hex>.txt`, where `<16hex>` is the first 16 hex of the sha1 of the
+suite name. `bin/impact-learn.sh regression` writes one when a suite turned
+`IMPACT_LEARN_REGRESSION_MIN` (3) or more merge-queue batches red in
+`IMPACT_LEARN_REGRESSION_DAYS` (7) days, every member gate was readable, and
+no member gate ran it. It reads the records of `bin/ci-batch-red-report.sh`.
+The file is one comment line (the count and the run ids) and one row,
+`<suite>\t*`. The file name is the dedupe key, and a suite that already has a
+`*` row in any file here gets no learned file. The rows ride the lane's one
+PR. Do not write a `learned-*.txt` file by hand. To drop a learned row, delete
+its file in a PR.
+
 A row whose suite is not in the tree fails
 `tests/ci-plan-nightly-split.bh-6838-test.sh` (case A4). A fragment that cannot
 be read fails the map, so the selection is the whole corpus.

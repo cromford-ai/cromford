@@ -251,10 +251,29 @@ irr_thread_note() {
 irr_comments_note() {
   [ "${2:-}" = 0 ] && [ -r "${6:-}/rev" ] || return 0
   local base f; base=$(tr -dc '0-9' < "$6/rev")
-  [ -n "$base" ] && [ "$base" -ge 1 ] 2>/dev/null || return 0
+  [ -n "$base" ] || return 0
+  if [ "$base" = 0 ]; then irr_comments_seed "$@"; return 0; fi
   f=$(mktemp "${TMPDIR:-/tmp}/irr-note.XXXXXX") || return 0
   jq -c '{issue: null, comments}' "${1:-}" > "$f" 2>/dev/null && issue_record_put "${4:-}" "${5:-}" "$base" "$f" || true
   rm -f "$f"
+}
+# irr_comments_seed (BH-10485): the record had no row, so a comments-only
+# write cannot land (the worker needs a stored row for `issue: null`) and the
+# same thread would miss on every pass. One issues/N read, once per issue,
+# makes the write a whole thread (base 0), which creates the row; later reads
+# are record hits. A failed or odd issues/N read writes nothing, as before.
+irr_comments_seed() {
+  local repo="${4:-}" n="${5:-}" ij f rc=0
+  command -v gh_rest >/dev/null 2>&1 && _irr_args_ok "$repo" "$n" || return 0
+  ij=$(mktemp "${TMPDIR:-/tmp}/irr-seed.XXXXXX") || return 0
+  GH_REASON=record-miss:no-record gh_rest GET "repos/$repo/issues/$n" > "$ij" 2>/dev/null || rc=$?
+  if [ "$rc" = 0 ] && jq -e 'type == "object" and has("number") and has("state")' "$ij" >/dev/null 2>&1; then
+    f="$ij.t"
+    jq -c --slurpfile i "$ij" '{issue: $i[0], comments}' "${1:-}" > "$f" 2>/dev/null \
+      && issue_record_put "$repo" "$n" 0 "$f" || true
+    rm -f "$f"
+  fi
+  rm -f "$ij"
 }
 
 irr_read() {

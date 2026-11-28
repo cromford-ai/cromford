@@ -1,0 +1,110 @@
+{
+  "id": "staff-dispatcher-lever",
+  "name": "Staff dispatcher lever (BH-9421: sample ready_unqueued_2h, the ready and orphan-claimed build_queue rows; at level act, release or enqueue them through the queue API, dry run first)",
+  "scope": "hub",
+  "script": "bin/staff-dispatcher-lever.sh",
+  "cadence": "5,20,35,50 * * * *",
+  "boxes": [
+    "hub"
+  ],
+  "switch": {
+    "kind": "flag",
+    "name": "staff-off-all",
+    "aliases": []
+  },
+  "wired": true,
+  "stats": {
+    "cost_stage": null,
+    "cost_project_filter": null,
+    "lanes_row": false,
+    "log": "logs/staff-dispatcher-lever.log"
+  },
+  "knobs": [
+    {
+      "env": "STAFF_DSP_LEVER_ENABLED",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": "off",
+      "note": "BH-9421: 0 stops every run after the kill-flag check and before any read. Read by bin/staff-dispatcher-lever.sh as ${STAFF_DSP_LEVER_ENABLED:-1}; out of range is one warn line and the default.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_READY_AGE_MIN",
+      "type": "int",
+      "default": 120,
+      "min": 1,
+      "max": 10080,
+      "zero_means": null,
+      "note": "BH-9421: minutes a build_queue row stays `ready` (enqueued_at to the worker's as_of) before ready_unqueued_2h counts it and the lever may enqueue it. The ticket's 2h.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_CLAIM_AGE_MIN",
+      "type": "int",
+      "default": 30,
+      "min": 5,
+      "max": 1440,
+      "zero_means": null,
+      "note": "BH-9421: minutes a build_queue row stays `claimed` with no running build job before it counts as an orphan and the lever may release it. The ticket's 30 min; bin/jobs-watchdog.sh still releases every claim at 360 min.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_LEVER_MAX",
+      "type": "int",
+      "default": 3,
+      "min": 0,
+      "max": 50,
+      "zero_means": null,
+      "note": "BH-9421: new lever action rows per run (claims first, then ready rows). The rest is logged deferred=<n> and offered again next run. 0 = metric only: the sample is posted and no lever runs.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_LEVER_DRY_RUN",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "zero_means": null,
+      "note": "BH-9421: 1 = at level act, post dryRun:true action rows and write nothing to the queue. An operator reads the dry-run rows in the scorecard, then sets 0. 0 = live: the action row is posted, then the queue write runs.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_GATE_TIMEOUT_S",
+      "type": "int",
+      "default": 60,
+      "min": 5,
+      "max": 300,
+      "zero_means": null,
+      "note": "BH-9421: seconds bin/triage-gate.sh --buildable-strict may take before an enqueue. A timeout declines the row.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_RUN_TIMEOUT_S",
+      "type": "int",
+      "default": 600,
+      "min": 60,
+      "max": 3600,
+      "zero_means": null,
+      "note": "BH-9421: seconds one run of bin/staff-dispatcher-lever.sh may take. The script re-execs itself under timeout with this value after lane_env_apply.",
+      "settable": true
+    },
+    {
+      "env": "STAFF_DSP_FIXTURE",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam: a file bin/staff-dispatcher-lever.sh sources after its libs, only when HARNESS_TEST_SANDBOX=1. NOT settable from the control plane: it names a file a root lane sources.",
+      "settable": false
+    },
+    {
+      "env": "HARNESS_TEST_SANDBOX",
+      "type": "string",
+      "default": "",
+      "zero_means": null,
+      "note": "Test seam gate: bin/staff-dispatcher-lever.sh sources STAFF_DSP_FIXTURE only when this is 1 (the test harness sets it). Never set on a box, and NOT settable from the control plane.",
+      "settable": false
+    }
+  ]
+}

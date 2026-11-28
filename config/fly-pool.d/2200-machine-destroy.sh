@@ -28,10 +28,17 @@ destroy_machine() { # destroy_machine <machine-id> <why>   rc 0 = gone, 1 = stil
     return 1
   fi
   OUT=$(timeout 60 "$FLY" machine destroy "$MID" -a "$APP" --force 2>&1); DESTROY_RC=$?
-  if [ "$DESTROY_RC" = 0 ]; then say "destroyed $MID ($WHY)"; return 0; fi
+  # BH-9407: the saved list (pool_list_save_good) drops every machine named here.
+  if [ "$DESTROY_RC" = 0 ]; then
+    say "destroyed $MID ($WHY)"
+    [ -n "${LISTING:-}" ] && printf '%s\n' "$MID" >> "$LISTING.destroyed" 2>/dev/null
+    return 0
+  fi
   case "$OUT" in
     *"was not found in app"*|*"not found"*|*"Could not find"*)
-      DESTROY_GONE=1; say "destroy $MID: already gone ($WHY)"; DESTROY_RC=0; return 0 ;;
+      DESTROY_GONE=1; say "destroy $MID: already gone ($WHY)"; DESTROY_RC=0
+      [ -n "${LISTING:-}" ] && printf '%s\n' "$MID" >> "$LISTING.destroyed" 2>/dev/null
+      return 0 ;;
   esac
   # rc 124 is `timeout` killing flyctl, and flyctl then prints nothing at all —
   # an empty error body would read as "no reason given" rather than as the one

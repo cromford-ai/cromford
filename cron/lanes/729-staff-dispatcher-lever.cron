@@ -1,0 +1,12 @@
+# @hub-lanes
+
+# ── STAFF DISPATCHER LEVER (BH-9421) ────────────────────────────────────────
+# At :05, :20, :35 and :50 the dispatcher lever lane samples the
+# dispatcher's metric ready_unqueued_2h: build_queue rows `ready` for 2h, plus
+# rows `claimed` for 30 min with no running build job. Only at level act
+# (row staff.dispatcher.level, seeded observe) does it release or enqueue up to
+# STAFF_DSP_LEVER_MAX rows through the queue API, each after its action row,
+# and as a dry run until STAFF_DSP_LEVER_DRY_RUN=0. No model call, no GitHub
+# call; flock -n dedupes. Off: STAFF_DSP_LEVER_ENABLED=0, flags/staff-off-all,
+# staff-kill-all, staff-off-dispatcher or staff-kill-dispatcher.
+5,20,35,50 * * * * /root/harness/bin/hub-lease.sh check && /root/harness/bin/staff-dispatcher-lever.sh >/dev/null 2>&1

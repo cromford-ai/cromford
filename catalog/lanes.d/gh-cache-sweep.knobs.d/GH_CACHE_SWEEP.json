@@ -1,0 +1,12 @@
+{
+  "env": "GH_CACHE_SWEEP",
+  "read_in": "bin/gh-cache-sweep.sh",
+  "type": "int",
+  "default": 0,
+  "min": 0,
+  "max": 1,
+  "unit": null,
+  "zero_means": "off",
+  "note": "BH-9453: off until the rework that trusts the prr-sweep stamp; see the follow-up ticket (this lane's open-PR list read doubles the BH-9939 prr-sweep list read). 0 stops the sweep before it reads the registry or GitHub and before it writes state. Off means the shim cache falls back to GH_CACHE_EVENT_MAX_S for PR entries and to the TTL for list entries, which is the behaviour before this lane.",
+  "settable": true
+}

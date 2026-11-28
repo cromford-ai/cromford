@@ -46,7 +46,9 @@ printf '%s\n' "\$*" >> "$T/curl-all"
 URL="\${!#}"; M=GET; D=""
 while [ \$# -gt 0 ]; do case "\$1" in
   -X) M="\$2"; shift 2 ;; --data-binary) D="\$2"; shift 2 ;;
-  -H) case "\$2" in @*) cp "\${2#@}" "$W/hdr" ;; esac; shift 2 ;;
+  # TEST-CHANGE (BH-9946): jobs calls now pass the bearer on a curl fd
+  # (-H @/dev/fd/3); skip it so only the lead-verdict header file is captured.
+  -H) case "\$2" in @/dev/fd/*) ;; @*) cp "\${2#@}" "$W/hdr" ;; esac; shift 2 ;;
   *) shift ;; esac; done
 case "\$M \$URL" in
 $(lpp_curl_case M URL D)

@@ -1,0 +1,11 @@
+{
+  "env": "TRIAGE_SHARD_CONCURRENCY",
+  "read_in": "bin/lib/triage-shards-lib.sh",
+  "type": "int",
+  "default": 20,
+  "min": 1,
+  "max": 100,
+  "unit": "tickets",
+  "zero_means": null,
+  "note": "BH-10267: the tickets one triage tick prepares at the same time, and the most sessions one tick starts (bin/lib/rt/shards.sh). It is a number for one tick of one project: shards of other projects and older shards do not count (TRIAGE_SHARDS_MAX is the box ceiling). A ticket over the number is left in scope and offered again on the next tick. 1 = the kill switch: one ticket prepared at a time and one session started for each tick. This is not the behaviour before BH-10267 in 2 ways: all tickets of a tick are prepared before the first session starts, so a fingerprint can be up to one prepare round old at the start (the next tick's board read covers a comment that lands in between); and the old loop had no limit for each tick. The free-memory guard (TRIAGE_SHARD_MEM_MB) can lower the number for one tick. Code fallback 20 in triage_shard_concurrency; text that is not a number is 20. Fleet row: lane.run-triage.triage_shard_concurrency. Per-project row: lane.run-triage.<project>.triage_shard_concurrency."
+}

@@ -1,0 +1,17 @@
+2026-11-10T21:41:02.4410563Z ##[group]Run set -uo pipefail
+2026-11-10T21:41:02.4411204Z [36;1mset -uo pipefail[0m
+2026-11-10T21:41:02.4412871Z [36;1mif [ "${PQ_IMPACT_IN:-}" = ledger ] && [ -z "$LIST" ]; then[0m
+2026-11-10T21:41:02.4413310Z [36;1m  [ -n "$L" ] && echo "::notice title=prequeue-ledger::$L"[0m
+2026-11-10T21:41:02.4413902Z [36;1mfi[0m
+2026-11-10T21:41:02.4414417Z [36;1mecho "::notice title=prequeue-verdict::$V main=${PQ_MAIN//[^0-9a-f]/} head=${PQ_HEAD//[^0-9a-f]/} suites=$SUITES${WHY:+ why=$WHY}"[0m
+2026-11-10T21:41:02.4414950Z [36;1mexit 0[0m
+2026-11-10T21:41:02.4415533Z shell: /usr/bin/bash -e {0}
+2026-11-10T21:41:02.4415891Z env:
+2026-11-10T21:41:02.4416270Z   PQ_MAIN: 8e1c0d2a9b7f4c6e3a5d1b0f9c8e7a6d5b4c3a21
+2026-11-10T21:41:02.4416612Z   PQ_HEAD: 1f7f14b3c2d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5
+2026-11-10T21:41:02.4416955Z   PQ_IMPACT_IN: ledger
+2026-11-10T21:41:02.4417321Z ##[endgroup]
+2026-11-10T21:41:31.2158804Z ##[notice]selected=14 green=14 red=0 unverified=0 ledger=on reds=on reds_bad=0
+2026-11-10T21:41:31.2165120Z ##[notice]prequeue-invariants: total 19s wall 21s (9 run, 0 red)
+2026-11-10T21:41:31.2171969Z ##[notice]green main=8e1c0d2a9b7f4c6e3a5d1b0f9c8e7a6d5b4c3a21 head=1f7f14b3c2d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5 suites=
+2026-11-10T21:41:31.2296455Z Cleaning up orphan processes

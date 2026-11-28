@@ -8254,9 +8254,11 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
   # The row br_event acks against (bhw_event_ack), inside the subshell below.
   BHW_P="$P"; BHW_TKEY="${TKEY:--}"; BHW_URL="${URL:--}"
   [ "$BHW_ON" = 1 ] || BHW_P=""
+  command -v brrc_row_begin >/dev/null 2>&1 && brrc_row_begin "$P" "$RKEY"  # BH-9468: cap the row's read phase (BR_ROW_MAX_SECS)
   command -v br_opt_prof_row_begin >/dev/null 2>&1 && br_opt_prof_row_begin
   command -v brrb_begin >/dev/null 2>&1 && brrb_begin  # BH-9952: the rung time bound (BR_RUNG_MAX_SECS)
   (
+    command -v brrc_row_pid >/dev/null 2>&1 && brrc_row_pid
     exec 9>"$H/locks/blocked-resolver-$P-$RKEY.lock"
     # A HELD KEY LOCK IS A ROUND ALREADY RUNNING, and it says so (BH-5125): this
     # exit used to be silent. rc stays 0 on purpose, so the rung accounting
@@ -8266,25 +8268,21 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
       [ -n "$BHW_P" ] && bhw_ack "$P" "${TKEY:--}" "${URL:--}" lock-held
       exit 0
     }
-    # EVERY exit path drops the ledger row, a kill included — a slot a dead
-    # round still holds is a slot nothing ever gives back. And since BH-1363 it
-    # drops the round's WORKTREE first: the ledger row is freed only once the
-    # gigabytes are gone, so a slot is never handed back while its scratch tree
-    # is still on the disk.
+    # EVERY exit path drops the ledger row, a kill included: a slot a dead round
+    # holds is never given back. Since BH-1363 the round's WORKTREE goes first, so
+    # a slot is never handed back while its scratch tree is still on the disk.
     trap 'br_wt_drop "the round ended"; br_round_end' EXIT
-    # A SIGNAL CLEANS UP AFTER THE AGENT, NOT UNDER IT. Bash does run the EXIT
-    # trap when a signal kills it — but it runs it AT ONCE, abandoning the wait
-    # on the agent, and `timeout` has put that agent in a process group of its
-    # own, so a kill aimed at this lane leaves it writing into the worktree the
-    # EXIT trap is deleting. With this trap the round finishes waiting on its
-    # agent and then cleans up after it. 143 = 128 + SIGTERM, the rc a shell
-    # killed by that signal reports.
+    # A SIGNAL CLEANS UP AFTER THE AGENT, NOT UNDER IT. On a signal bash runs the
+    # EXIT trap AT ONCE and abandons the wait on the agent, which `timeout` put in
+    # its own process group, so it would write into the worktree being deleted.
+    # This trap waits for the agent, then cleans up. 143 = 128 + SIGTERM.
     trap 'br_wt_drop "the round was signalled"; mc_git_auth_clear 2>/dev/null; br_round_end; exit 143' TERM INT HUP
     command -v brrb_arm >/dev/null 2>&1 && brrb_arm
     br_one "$SRC" "$P" "$RKEY" "$REASON" "${URL:--}" "${REC:--}" "${TKEY:--}"
   ) </dev/null || RC=$?
   command -v brrb_end >/dev/null 2>&1 && brrb_end "$P" "$RKEY" "$SRC" "$REASON" && RC=124
   command -v br_opt_prof_row_end >/dev/null 2>&1 && br_opt_prof_row_end "$P" "$RKEY" "$SRC" "$REASON" "$RC"
+  command -v brrc_row_end >/dev/null 2>&1 && brrc_row_end "$P" "$RKEY" "$RC" && { RC=3; br_note_untouched "${PARKED:--}" "$PB"; }  # BH-9468: a stopped row is carried, no rung
   [ -n "$BHW_P" ] && bhw_ack "$P" "${TKEY:--}" "${URL:--}" dispatched
   BHW_P=""
   # rc 3 = the row is HELD and took no rung. PER_TICK counts RUNGS, so a held
@@ -8302,6 +8300,7 @@ for LINE in ${CANDS[@]+"${CANDS[@]}"}; do
     STOPREASON=writeback-failed; BR_EXIT=75; break
   fi
 done
+command -v brrc_tick_end >/dev/null 2>&1 && brrc_tick_end  # BH-9468: the row-cap carry ledger
 
 # ONE LINE PER TICK (BH-980), and only when there was something to do. An idle
 # tick stays quiet — CLAUDE.md's "if a run finds nothing new, exit quietly", and

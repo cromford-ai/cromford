@@ -81,6 +81,13 @@ FAKE
 chmod +x "$T/fake.sh" "$T/gh"
 : > "$T/notiers.tsv"
 printf 'console-ui/src/screens/Jobs.js\n' > "$T/changed"
+# REGN: the suites the real regression union adds to every batch of this
+# fixture (the `*` rows of catalog/ci-batch-regression.d/, BH-9439). The union
+# reads the real tree, so a batch list holds the 8 fixture suites plus these.
+# The counts below stay exact; they add REGN, they do not ignore it.
+REGN=$( ( cd "$DIR" && bin/test-impact.sh regression --changed "$T/changed" ) | LC_ALL=C sort -t "$(printf '\t')" -k1,1 -u \
+  | while IFS=$'\t' read -r s _; do [ -n "$s" ] && [ -f "$DIR/$s" ] && ! grep -qxF -- "$s" "$T/sel.txt" && echo "$s"; done | grep -c .)
+REG_TAIL=""; [ "$REGN" = 0 ] || REG_TAIL="; +$REGN regression"
 HEADSHA=$(git -C "$DIR" rev-parse HEAD)
 SHA21=2121212121212121212121212121212121212121
 SHA22=2222222222222222222222222222222222222222
@@ -129,7 +136,7 @@ inlist() { grep -qxF -- "$1" "$T/list"; }
 none_dropped() { # none_dropped <tag> — A1..A4 all run and prepush=off
   local s miss=""
   for s in $A1 $A2 $A3 $A4; do inlist "$s" || miss="$miss $s"; done
-  { [ "$RC" = 0 ] && [ -z "$miss" ] && [ "$(out prepush)" = off ] && [ "$(out count)" = 8 ]; } && ok \
+  { [ "$RC" = 0 ] && [ -z "$miss" ] && [ "$(out prepush)" = off ] && [ "$(out count)" = $((8 + REGN)) ]; } && ok \
     || bad "$1: nothing may be dropped (rc=$RC missing:${miss:- none} prepush=$(out prepush) count=$(out count)) [$OUT]"
 }
 
@@ -138,9 +145,9 @@ setup_green
 bplan
 for s in $A1 $A2 $A3 $A4; do check "P1 $s is dropped" '! inlist "$s"'; done
 for s in $A5 $A6 $X1 $X2; do check "P1 $s still runs" 'inlist "$s"'; done
-check "P1 rc 0, prepush=4, count 4 (rc=$RC prepush=$(out prepush) count=$(out count))" '[ "$RC" = 0 ] && [ "$(out prepush)" = 4 ] && [ "$(out count)" = 4 ]'
+check "P1 rc 0, prepush=4, count 4+$REGN (rc=$RC prepush=$(out prepush) count=$(out count))" '[ "$RC" = 0 ] && [ "$(out prepush)" = 4 ] && [ "$(out count)" = $((4 + REGN)) ]'
 check "P1 the line says dropped 4 of 4 for 2 members: $(grep 'prepush:' <<<"$OUT")" 'grep -qxF "ci-plan: prepush: dropped 4 of 4 listed suites (2 members, all with a green record on their head)" <<<"$OUT"'
-check "P1 the reason ends in '; prepush -4': $(out summary)" 'case "$(out summary)" in *"; prepush -4) — "*) true ;; *) false ;; esac'
+check "P1 the reason ends in '; prepush -4$REG_TAIL': $(out summary)" 'case "$(out summary)" in *"; prepush -4$REG_TAIL) — "*) true ;; *) false ;; esac'
 check "P1 mode stays batch-selected" '[ "$(out mode)" = batch-selected ]'
 check "P1 no gh call beyond the two member reads" '[ "$(sort "$T/sink" | tr "\n" " ")" = "api repos/o/r/pulls/21 api repos/o/r/pulls/22 " ]'
 P1_COUNT=$(out count)
@@ -235,12 +242,12 @@ check "P15 the plan job wrote prepush=on and the 4 suites" '[ "$(head -1 "$T/pp-
 bplan CI_PLAN_PREPUSH_FILE="$T/pp-drop.txt" CI_PLAN_ESCALATION="$PE" FAKE_GH_FAIL=21 -- --expect-n "$PN"
 check "P15 the shard agrees on n, makes no gh call and plans the same list (rc=$RC) [$OUT]" '[ "$RC" = 0 ] && [ ! -s "$T/sink" ] && cmp -s "$T/list" "$T/plan.list" && [ "$(out prepush)" = 4 ]'
 bplan CI_PLAN_ESCALATION="$PE" -- --expect-n "$PN"
-check "P15 a shard with no file drops nothing" '[ "$(grep -c . "$T/list")" = 8 ]'
+check "P15 a shard with no file drops nothing" '[ "$(grep -c . "$T/list")" = $((8 + REGN)) ]'
 setup_green; printf '## What\n' > "$T/bodies/22"; member 22 "$SHA22" "$T/bodies/22"
 bplan CI_PLAN_PREPUSH_FILE="$T/pp-off.txt"
 check "P15 an off plan writes prepush=off and nothing else" '[ "$(cat "$T/pp-off.txt")" = prepush=off ]'
 bplan CI_PLAN_PREPUSH_FILE="$T/pp-off.txt" CI_PLAN_ESCALATION=- -- --expect-n "$(out n)"
-check "P15 a shard of an off plan drops nothing (rc=$RC)" '[ "$RC" = 0 ] && [ "$(grep -c . "$T/list")" = 8 ]'
+check "P15 a shard of an off plan drops nothing (rc=$RC)" '[ "$RC" = 0 ] && [ "$(grep -c . "$T/list")" = $((8 + REGN)) ]'
 
 # ── P16. a shard whose file is unreadable or malformed.
 bplan CI_PLAN_PREPUSH_FILE="$T/no-such-file" CI_PLAN_ESCALATION=- -- --expect-n 1
